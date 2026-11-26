@@ -11,6 +11,7 @@ import path from "node:path";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
+import type { ServerCatalog } from "@/lib/db/server-catalog";
 import type { AdmittedForCatalog } from "@/lib/db/server-catalog-compose";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..");
@@ -112,4 +113,24 @@ export function withFieldRules(engine: EditableEngine): void {
     { field: "database", when: { field: "user", equals: "reader" } },
   ];
   (engine.connection.dialog as Record<string, unknown>).absentValues = [{ field: "user", value: "reader" }];
+}
+
+/**
+ * `catalog` with the record of each engine `legacyProvider` names replaced by a frozen copy whose offer of the legacy
+ * provider surface is the value given: a crafted catalog, which no composition answers and `installServerCatalog`
+ * refuses, for the test that holds the install to refuse a record whose offer disagrees with its id.
+ *
+ * @throws {Error} Naming the engine, for an engine `catalog` holds no record of.
+ */
+export function withLegacyProviderOffers(
+  catalog: ServerCatalog,
+  legacyProvider: Readonly<Record<string, boolean>>,
+): ServerCatalog {
+  const engines = new Map(catalog.engines);
+  for (const [id, offered] of Object.entries(legacyProvider)) {
+    const engine = engines.get(id);
+    if (engine === undefined) throw new Error(`the catalog holds no record of ${id}`);
+    engines.set(id, Object.freeze({ ...engine, offers: Object.freeze({ ...engine.offers, legacyProvider: offered }) }));
+  }
+  return Object.freeze({ engines, unavailable: catalog.unavailable });
 }

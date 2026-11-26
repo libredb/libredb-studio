@@ -2637,6 +2637,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "tests/unit/lib/provider-host/admission.test.ts": [
         "an engine id already served is refused",
+        "a lock entry named @libredb/studio is refused as PROVIDER_ID_COLLISION",
         "two admissions that overlap never register two packages serving one engine id, or one name twice",
       ],
     },

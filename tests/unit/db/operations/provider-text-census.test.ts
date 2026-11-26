@@ -591,7 +591,7 @@ const LEGACY_MAINTENANCE_ANSWER =
   "a legacy maintenance answer carried by reference through the host core's maintenance calls and providerMaintenance to its route, which answers it through its core scrubs";
 
 /**
- * The reason the server engine catalog's refusal of a connection's type is no provider text: `bundledEngineRefusal`
+ * The reason the server engine catalog's refusal of a connection's type is no provider text: `legacyProviderRefusal`
  * (src/lib/db/server-catalog.ts) writes each of its sentences, quoting only the type the operator's seed entry gave
  * and the closed refusal codes (C-96), and no package's code runs to build one.
  */

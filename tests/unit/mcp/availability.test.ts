@@ -89,6 +89,19 @@ describe("mcpConnectionUnavailable", () => {
     );
   });
 
+  test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", () => {
+    // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
+    // catalog whose offer disagrees with the id, so the answer follows the offer of a valid record.
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))], []),
+    );
+    const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
+    expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailoffer"))).toBe(
+      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
+    );
+    expect(mcpConnectionUnavailable(ADMIN, listed("sqlite"))).toBeNull();
+  });
+
   // A connection whose type names no provider (FND-1) has no row in any table, so its refusal is the one sentence every
   // surface gives it, before any posture is asked; an inherited key such as `constructor` reads no row either.
   test("answers the refusal's sentence for a connection whose type names no provider, before any posture", () => {

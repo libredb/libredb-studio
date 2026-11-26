@@ -15,7 +15,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { forgetServerCatalog, installServerCatalog, type PackageEngine } from "@/lib/db/server-catalog";
+import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
@@ -40,7 +41,7 @@ const MAIN = "acmeqmain";
 const BARE = "acmeqbare";
 const LOOSE = "acmeqloose";
 const providers = scratchDirectory("studio-query-package-");
-let engines: Map<string, PackageEngine>;
+let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
@@ -394,7 +395,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
   test("a refused package's engine and an unknown type answer as the server catalog answers them", async () => {
     forgetServerCatalog();
     installServerCatalog({
-      packages: new Map(engines),
+      engines: new Map([...composeServerCatalog([], []).engines, ...engines]),
       unavailable: new Map([["acmeqgone", Object.freeze(["PROVIDER_LOAD_FAILED"])]]),
     });
     const gone = await post({ connection: connectionOf("acmeqgone"), sql: "SELECT 1" });

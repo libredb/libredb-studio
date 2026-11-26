@@ -605,8 +605,29 @@ export function grantPackageClaims<K extends string>(
   return grantClaims(requests, STUDIO_CLAIM_RECORDS, seedOnly);
 }
 
+/** Studio's grant of each claim of one engine: one value per member of `ClaimGrants`, the engine's row of each table. */
+export type EngineGrants = { readonly [Member in keyof ClaimGrants<string>]: ClaimGrants<string>[Member][string] };
+
+/**
+ * Engine `id`'s row of each table of `grants`, transposed into one frozen record, member by member in the order the
+ * tables are built: the shape the server's engine catalog keeps for each engine (src/lib/db/server-catalog.ts).
+ */
+export function engineGrantsOf<K extends string>(grants: ClaimGrants<K>, id: K): EngineGrants {
+  return Object.freeze(
+    Object.fromEntries(GRANT_MEMBERS.map((member) => [member, grants[member][id]])),
+  ) as unknown as EngineGrants;
+}
+
 /** Studio's grant of every bundled declaration's claims. */
 const BUNDLED_GRANTS = grantClaims(BUNDLED_CLAIM_REQUESTS, STUDIO_CLAIM_RECORDS, SEED_ONLY_FIELDS);
+
+/**
+ * Studio's grant of each claim of bundled engine `id`, its row of every exported table below, which the legacy
+ * adapter's record of the engine holds (src/lib/provider-host/legacy-adapter/records.ts).
+ */
+export function bundledEngineGrants(id: DatabaseType): EngineGrants {
+  return engineGrantsOf(BUNDLED_GRANTS, id);
+}
 
 /** Studio's grant of `policy.writeReach`, which the seed schema and the connection form read. */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;

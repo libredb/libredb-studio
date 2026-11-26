@@ -3,7 +3,8 @@
  * opened through the package's own `open`, never through a legacy provider class, and kept in a cache of their own.
  *
  * The provider factory's entry points (./factory) answer a `DatabaseProvider`, which a contract session is not, so each
- * refuses a package's engine by name (`assertBundledEngine` in ./server-catalog) and imports no legacy module for it.
+ * refuses an engine whose record offers no legacy provider by name (`assertLegacyProvider` in ./server-catalog) and
+ * imports no legacy module for it.
  * This module is the package path beside them: `getOrCreatePackageSession`, the editor's session, cached, and
  * `openPackageSessionOnce`, Test Connection's, never cached. A caller that serves a package's engine resolves its
  * connection with `resolveConnection` (src/lib/seed/resolve-connection.ts), `engines` `bundled-and-package`, and calls
@@ -64,7 +65,7 @@ import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, Studio
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { frameCacheKey } from "./provider-cache-key";
 import { assertConnectionIsPlainData, assertExecutionContextIsPlainData } from "./provider-connection";
-import type { PackageConnection, PackageEngine } from "./server-catalog";
+import { type EngineConnection, type EngineRecord, servedPackage } from "./server-catalog";
 import type { DatabaseConnection, EditorExecutionContext } from "./types";
 
 /** A package's session the cache holds, with what its removal, sweep and calls read. */
@@ -75,7 +76,7 @@ export interface CachedPackageSession {
   readonly owner?: string;
   /** The frame of the key, `frameCacheKey`'s answer, which a key-scoped removal names. */
   readonly frame: string;
-  readonly engine: PackageEngine;
+  readonly engine: EngineRecord;
   /** The package's declared environment, which every call of the session is given. */
   readonly env: EnvReader;
   lastUsed: number;
@@ -116,12 +117,12 @@ function refused(sentence: string): DatabaseConfigError {
 }
 
 /** `connection` as the engine-neutral readers of its fields take it: they read no row keyed by its type. */
-function asRecord(connection: PackageConnection): DatabaseConnection {
+function asRecord(connection: EngineConnection): DatabaseConnection {
   return connection as unknown as DatabaseConnection;
 }
 
 /** Whether `connection` sets `field` to a value: present, and neither null nor empty. */
-function sets(connection: PackageConnection, field: string): boolean {
+function sets(connection: EngineConnection, field: string): boolean {
   if (!Object.hasOwn(connection, field)) return false;
   const value: unknown = Reflect.get(connection, field);
   return value !== undefined && value !== null && value !== "";
@@ -135,8 +136,8 @@ function sets(connection: PackageConnection, field: string): boolean {
  * @throws {DatabaseConfigError} Not-sent, with the sentence of the first check that refuses.
  */
 export function assertPackageOpenable(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
 ): void {
   try {
@@ -148,7 +149,7 @@ export function assertPackageOpenable(
 }
 
 /** The checks of `assertPackageOpenable`, in its order. */
-function checkOpenable(connection: PackageConnection, engine: PackageEngine, execution: EditorExecutionContext): void {
+function checkOpenable(connection: EngineConnection, engine: EngineRecord, execution: EditorExecutionContext): void {
   const { grants } = engine;
   const id = sanitize(engine.id);
   if (enabledProviderTypes() !== null) {
@@ -217,16 +218,17 @@ export interface OpenedPackageSession {
  * naming each refusal.
  */
 async function openPackage(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
   deadline: number,
   signal: AbortSignal,
 ): Promise<OpenedPackageSession> {
-  const env = packageEnvironment(engine.package.manifest);
+  const served = servedPackage(engine);
+  const env = packageEnvironment(served.manifest);
   const ctx = packageOpenContext({ connection, engine, execution, deadline, signal });
   const late = logLate(connection.id, "[DB] A provider package's open Studio stopped waiting for failed afterwards.");
-  const record = await openContractSession(engine.package.record.impl, ctx, engine.session, late);
+  const record = await openContractSession(served.record.impl, ctx, served.session, late);
   if (record.kind === "stopped") throw record.reason;
   if (record.kind === "refused") {
     throw new Error(
@@ -250,8 +252,9 @@ export function teardownPackageSession(
 }
 
 /** The name a not-closed list gives a package's session: its connection, and its package as its author. */
-function sessionName(connectionId: string, engine: PackageEngine): string {
-  return `${sanitize(connectionId)} (${engine.package.name} ${engine.package.version})`;
+function sessionName(connectionId: string, engine: EngineRecord): string {
+  const served = servedPackage(engine);
+  return `${sanitize(connectionId)} (${served.name} ${served.version})`;
 }
 
 /**
@@ -333,8 +336,8 @@ export async function evictIdlePackageSessions(maxIdleMs: number = IDLE_TIMEOUT_
  * or a cache close overtook it, in which case it closes what it opened and fails as overtaken, admitting nothing.
  */
 async function openCached(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
   flight: Flight<OpenMeta>,
 ): Promise<CachedPackageSession> {
@@ -379,8 +382,8 @@ async function openCached(
  * @throws The package's error by reference, marked not-sent.
  */
 export async function getOrCreatePackageSession(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
   wait?: OpenWait,
 ): Promise<CachedPackageSession> {
@@ -393,7 +396,7 @@ export async function getOrCreatePackageSession(
     allowExternalFileAccess,
     owner,
   });
-  const key = `package\u0000${engine.package.name}\u0000${frame}`;
+  const key = `package\u0000${servedPackage(engine).name}\u0000${frame}`;
   const cached = sessions.get(key);
   if (cached !== undefined) {
     cached.lastUsed = Date.now();
@@ -420,8 +423,8 @@ export async function getOrCreatePackageSession(
  * @throws The package's error by reference, marked not-sent.
  */
 export async function openPackageSessionOnce(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
   deadline: number,
   signal: AbortSignal,

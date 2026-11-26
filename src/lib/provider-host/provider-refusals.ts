@@ -14,8 +14,22 @@
  */
 import { DEFINITION_REFUSAL_RULES } from "@libredb/provider-sdk/calls";
 import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
-import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
+
+/**
+ * The rules across the whole set of admitted packages and Studio's bundled catalog (`catalogConflicts` in
+ * src/lib/db/server-catalog-compose.ts), each the rule of a `PROVIDER_CATALOG_CONFLICT` refusal. Kept here with the
+ * other closed rule lists, so a module that refuses a package reaches no record of the server's engine catalog.
+ */
+export const CATALOG_CONFLICT_RULES = Object.freeze([
+  "engine-id",
+  "fence-alias",
+  "query-dialect",
+  "tab-type",
+  "editor-language",
+] as const);
+
+export type CatalogConflictRule = (typeof CATALOG_CONFLICT_RULES)[number];
 
 /** Every code a provider package or its lock is refused with. */
 export const PROVIDER_REFUSAL_CODES = Object.freeze([
@@ -99,6 +113,7 @@ export const PROVIDER_REFUSAL_RULES = Object.freeze({
     "registered-engine",
     "registered-package",
     "inherited-name",
+    "legacy-package",
   ] as const),
   PROVIDER_CONTRACT_UNSUPPORTED: Object.freeze(["contract-not-served"] as const),
   PROVIDER_SCHEMA_INVALID: SCHEMA_REFUSAL_RULES,
@@ -191,6 +206,7 @@ const PACKAGE_SENTENCES: Readonly<Record<string, string>> = {
   "registered-engine": "it serves an engine id a package admitted earlier in this process serves",
   "registered-package": "a package of its name was admitted earlier in this process",
   "inherited-name": "it serves an engine id that names a member every JavaScript object inherits",
+  "legacy-package": "its name is the name LibreDB Studio serves its bundled engines under",
 };
 
 /** Why a package is refused at admission, by code and rule, for the rules whose sentence is fixed. */
@@ -283,10 +299,13 @@ export function sharedEngineRefusal(pkg: PackageName, others: readonly PackageNa
   });
 }
 
-/** The refusal of a package of an engine id collision found at admission: `registered-*` or `inherited-name`. */
+/**
+ * The refusal of a package of a collision found at admission: `registered-*`, `inherited-name`, or `legacy-package`, a
+ * package named as LibreDB Studio's legacy adapter serves its bundled engines.
+ */
 export function admittedCollisionRefusal(
   pkg: PackageName,
-  rule: "registered-engine" | "registered-package" | "inherited-name",
+  rule: "registered-engine" | "registered-package" | "inherited-name" | "legacy-package",
 ): PackageRefusal {
   return Object.freeze({
     code: "PROVIDER_ID_COLLISION",

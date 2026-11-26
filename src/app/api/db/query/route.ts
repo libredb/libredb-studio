@@ -21,7 +21,7 @@ import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import { getOrCreatePackageSession } from "@/lib/db/package-sessions";
-import { type PackageConnection, type PackageEngine, serverEngine } from "@/lib/db/server-catalog";
+import { type EngineConnection, type EngineRecord, serverEngine } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
@@ -146,13 +146,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    if (served.kind === "package") {
+    if (served.kind === "served" && !served.engine.offers.legacyProvider) {
       // THE QUERY ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the page bounds and the statement
       // timeout as for any engine, no console text bound (a row of Studio's keyed by engine, which a package has none
       // of); the fields it does not serve refused by name; the gate over the package's declared grammar; then the
       // package's session, cached per key, and the run through the host core.
       const { engine } = served;
-      const packaged = named as PackageConnection;
+      const packaged = named as EngineConnection;
       const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);
       if (bounds !== null) return NextResponse.json({ error: bounds }, { status: 400 });
       const bound = readBoundParams(body.params);
@@ -447,8 +447,8 @@ export async function POST(req: NextRequest) {
 async function runOnPackageSession(
   req: NextRequest,
   session: Parameters<typeof editorExecutionContext>[0],
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   run: { statement: string; options: QueryPrepareOptions; params: unknown[] | undefined; queryId: string | undefined },
 ) {
   const record = connection as unknown as DatabaseConnection;

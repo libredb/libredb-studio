@@ -1,50 +1,74 @@
 /**
  * The server's engine catalog (docs/providers/CONTRACT.md, clauses C-106 and C-107): the process's one answer to which
- * engine a connection's `type` names and what serves it. Studio's bundled catalog, plus the engines of the provider
- * packages boot admitted, composed once at boot by `composeServerCatalog` (./server-catalog-compose, which only the
- * boot imports) and installed here, read through `serverEngine` and `assertBundledEngine`.
+ * engine a connection's `type` names and what serves it. One record shape for every engine, `EngineRecord`, in one Map:
+ * the legacy adapter's records of the engines Studio still serves through its own legacy providers
+ * (src/lib/provider-host/legacy-adapter/records.ts), beside the records of the engines the provider packages boot
+ * admitted, composed once at boot by `composeServerCatalog` (./server-catalog-compose, which only the boot imports) and
+ * installed here, read through `serverEngine` and `assertLegacyProvider`.
  *
  * `serverEngine(type)` answers, in this order:
- * - `bundled`, for a type id of the `DatabaseType` union (`isDatabaseType`), so a package never shadows a bundled id;
- * - `package`, for an engine an admitted package serves, with Studio's composed record of it (`PackageEngine`);
+ * - `served`, for an engine the catalog's Map holds a record of, legacy or package alike, told apart by no kind: what
+ *   a caller may do with the engine is what its record offers (`offers`), and who serves it is its `source`;
  * - `unavailable`, for an engine only refused packages name in the providers lock, with the codes they were refused
  *   with, sorted, each once;
  * - `refused`, for anything else, with `typeIdRefusal`'s own answer, so an absent, malformed or unknown type gets
  *   exactly the refusal it got before any package existed.
- * Each lookup is a `Map` lookup, so a type a client sends that names an `Object.prototype` member, such as
- * `"constructor"`, is unknown and never an inherited member.
+ * The legacy ids and the admitted packages' ids are disjoint, since admission and the composer's `engine-id` rule refuse
+ * a package serving a legacy id, so a package never shadows a bundled engine. Each lookup is a `Map` lookup, so a type
+ * a client sends that names an `Object.prototype` member, such as `"constructor"`, is unknown and never an inherited
+ * member. No lookup asks whether the type is a `DatabaseType`: the Map is the one answer.
  *
- * Every server path that checks a connection's type before it reads a per-engine table checks it through
- * `assertBundledEngine`: `resolveConnection` (src/lib/seed/resolve-connection.ts), the choke point of every route, the
- * provider factory's entry points (./factory) and the open checks of MCP's connection context
- * (src/lib/mcp/context.ts); MCP's availability (src/lib/mcp/availability.ts), which `list_connections` and every MCP
- * tool answer before any open, reads `bundledEngineRefusal`'s message. A refused package's engine is refused there as
- * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
+ * An engine record holds:
+ * - `id`, an `EngineId`, a type brand with no value at run time: server code that holds an engine's id from the
+ *   catalog holds one, never a `DatabaseType`;
+ * - `source`: the name and version the engine is served under, and for a package's engine the admitted package
+ *   (`ServedPackage`, its directory, validated manifest, Studio's record of it and the session its declaration states),
+ *   null for a legacy engine, whose name is `@libredb/studio` at the root package.json's version
+ *   (src/lib/provider-host/legacy-adapter/identity.ts); `servedPackage` reads the package and raises a host defect for
+ *   a legacy record;
+ * - `catalog`, `connection`, `fieldRules`, `grants` and `statementGrammar`: the engine's catalog entry, its data-only
+ *   connection tables, its field rules, Studio's grant of each claim and the grammar its statements are confirmed
+ *   under, composed for a package from its declaration with the projections Studio's generator projects its own
+ *   declarations with, and for a legacy engine from Studio's committed tables, never from a declaration read at run
+ *   time;
+ * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
+ *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
+ *
+ * Every server path that needs a legacy `DatabaseProvider` for a connection checks its type through
+ * `assertLegacyProvider`, which reads the record's `legacyProvider` offer: `resolveConnection`
+ * (src/lib/seed/resolve-connection.ts), the choke point of every route, the provider factory's entry points (./factory)
+ * and the open checks of MCP's connection context (src/lib/mcp/context.ts); MCP's availability
+ * (src/lib/mcp/availability.ts), which `list_connections` and every MCP tool answer before any open, reads
+ * `legacyProviderRefusal`'s message. A refused package's engine is refused there as `ProviderUnavailableError`, an
+ * engine whose record offers no legacy provider as `PackageEngineUnsupportedError` until the request serves package
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection and the query route
- * serve an admitted engine in this Studio: each resolves its connection through `resolveConnection` with `engines`
- * `bundled-and-package`; Test Connection then validates the connection against the engine's field rules and opens one
- * session through the package (`testPackageConnection` in src/lib/api/test-connection.ts), and the query route runs a
- * statement on the engine's cached session (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over
- * src/lib/db/package-sessions.ts.
+ * serve an engine whose record offers no legacy provider in this Studio: each resolves its connection through
+ * `resolveConnection` with `engines` `bundled-and-package`; Test Connection then validates the connection against the
+ * engine's field rules and opens one session through the package (`testPackageConnection` in
+ * src/lib/api/test-connection.ts), and the query route runs a statement on the engine's cached session
+ * (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over src/lib/db/package-sessions.ts.
  *
- * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged:
- * server code that holds an admitted engine's id holds a `PackageEngineId`, never a `DatabaseType`.
+ * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
- * The catalog lives in a global under a registered symbol, as the host core does (src/lib/provider-host/instance.ts),
- * because Next.js loads instrumentation, which installs it, and each route handler, which reads it, as separate module
- * instances of one process. It is plain frozen data, Maps and the field rules' compiled patterns and closures, which
- * every bundle of one realm reads alike. It is installed once: a second install is a host defect, refused by name.
+ * The installed catalog lives in a global under a registered symbol, as the host core does
+ * (src/lib/provider-host/instance.ts), because Next.js loads instrumentation, which installs it, and each route
+ * handler, which reads it, as separate module instances of one process. It is plain frozen data, Maps and the field
+ * rules' compiled patterns and bound checks, which every bundle of one realm reads alike. It is installed once: a second
+ * install is a host defect, refused by name, and so is a catalog that lacks a legacy engine's record or holds a record
+ * whose `legacyProvider` offer disagrees with its id, because `assertLegacyProvider` narrows a type to `DatabaseType`
+ * from that offer: a record offers a legacy provider exactly when the legacy adapter serves its id.
  *
- * With nothing installed, the accessor answers from the bundled catalog alone. That is the documented state of every
- * process that runs no boot admission: the published library, the VS Code backend child, and a test that installs
+ * With nothing installed, the accessor answers from the legacy adapter's records alone. That is the documented state of
+ * every process that runs no boot admission: the published library, the VS Code backend child, and a test that installs
  * nothing. It is not a fallback for a failed boot: a boot whose admission cannot compose a catalog exits before it
  * serves (src/lib/provider-host/boot.ts).
  */
 import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
-import type { ClaimGrants } from "@/lib/db/claim-grants";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
 import type { DeclaredSession } from "@/lib/provider-host/core/contract-session";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -54,28 +78,22 @@ import {
   type TypeIdRefusal,
   UnknownProviderError,
 } from "./errors";
-import { isDatabaseType, quoteTypeId, typeIdRefusal } from "./type-id";
+import { quoteTypeId, typeIdRefusal } from "./type-id";
 
-declare const PACKAGE_ENGINE: unique symbol;
+declare const ENGINE: unique symbol;
 
-/** The id of an engine an admitted provider package serves: a type brand, with no value at run time. */
-export type PackageEngineId = string & { readonly [PACKAGE_ENGINE]: true };
-
-/** A connection of an engine an admitted provider package serves. */
-export type PackageConnection = Omit<DatabaseConnection, "type"> & { readonly type: PackageEngineId };
+/** The id of an engine the server's catalog serves, legacy or package alike: a type brand, with no value at run time. */
+export type EngineId = string & { readonly [ENGINE]: true };
 
 /**
- * A connection of any engine the server knows, bundled or served by a provider package, its type read as text: what the
- * engine-neutral readers of a connection's fields take (the cache key's frame, the connection fingerprint), which frame
- * the type as text and read no row keyed by it.
+ * A connection of any engine the server knows, its type read as text: what the engine-neutral readers of a connection's
+ * fields take (the cache key's frame, the connection fingerprint), which frame the type as text and read no row keyed
+ * by it, and what the package session path takes.
  */
 export type EngineConnection = Omit<DatabaseConnection, "type"> & { readonly type: string };
 
-/** Studio's grant of each claim of one engine, read through the grant reader (./claim-grants): one value per member. */
-export type PackageGrants = { readonly [Member in keyof ClaimGrants<string>]: ClaimGrants<string>[Member][string] };
-
-/** The engine's own row of each data-only connection table, projected from its declaration. */
-export interface PackageConnectionTables {
+/** The engine's own row of each data-only connection table. */
+export interface EngineConnectionTables {
   readonly fields: readonly FieldName[];
   readonly seedOnly: SeedOnlyTemplate | null;
   readonly refused: Readonly<Partial<Record<FieldName, string>>>;
@@ -99,53 +117,85 @@ export interface ServingPackage {
   readonly record: AdmittedProviderRecord;
 }
 
-/**
- * Studio's composed record of one engine an admitted package serves: the declaration's catalog entry, its connection
- * tables, its field rules, Studio's grant of each claim and what its sessions are declared to answer, and nothing else, so no SQL writing, connection form,
- * connection string, grammar, migration DDL or generator row exists for it.
- */
-export interface PackageEngine {
-  readonly id: PackageEngineId;
-  readonly package: ServingPackage;
-  readonly catalog: CatalogEntry;
-  readonly connection: PackageConnectionTables;
-  readonly fieldRules: FieldRuleSpec;
-  readonly grants: PackageGrants;
+/** The admitted package that serves an engine, with what a session of that engine is declared to answer. */
+export interface ServedPackage extends ServingPackage {
   /** What a session of the engine is declared to answer: the package's calls, its maintenance and monitoring panels. */
   readonly session: DeclaredSession;
-  /**
-   * The grammar the declaration states its statements in (`sqlText.grammar`), composed once by `grammarFromFacts`
-   * (./sql-grammar), which the confirmation gate reads them under with every claim that loosens it uncounted
-   * (`packageStatementAsks` in src/lib/sql/dangerous-query.ts). The package's own data, never a row of Studio's grammar
-   * table.
-   */
-  readonly statementGrammar: SqlGrammar;
 }
 
-/** The composed catalog: the engines admitted packages serve, and the codes of the refused packages naming the others. */
+/** Who serves an engine: the name and version it is served under, and the package, null for a legacy engine. */
+export interface EngineSource {
+  readonly name: string;
+  readonly version: string;
+  readonly package: ServedPackage | null;
+}
+
+/**
+ * What an engine offers the server paths that tell a legacy engine from a package's engine today, one member per
+ * difference, each true (and `ownWords` `"scrubbed"`) for a legacy engine, served by a legacy `DatabaseProvider`, and
+ * false (and `"code-only"`) for a package's engine, served through the provider contract.
+ */
+export interface EngineOffers {
+  /**
+   * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection and
+   * the query route reads one, through `assertLegacyProvider`.
+   */
+  readonly legacyProvider: boolean;
+  /** A plan of a statement (`explain`), built by the connected provider's strategy. */
+  readonly explain: boolean;
+  /** A key-space `database` on a query, read from a legacy provider's declarations. */
+  readonly database: boolean;
+  /** A server-level `catalog` on a query, a legacy catalog session. */
+  readonly catalog: boolean;
+  /** An unbounded page (`options.unlimited`); the provider contract always pumps a bounded one. */
+  readonly unboundedPage: boolean;
+  /** Studio's console text bound for the engine (`consoleTextByteLimit` in ./destructive-commands), read by its id. */
+  readonly consoleTextBound: boolean;
+  /** A query event that keeps the statement's and the error's text (src/lib/query-events). */
+  readonly queryEventText: boolean;
+  /** An SSH tunnel core opens for the connection. */
+  readonly sshTunnel: boolean;
+  /** Host files: the host path fields and the local file core admits for the connection. */
+  readonly hostFiles: boolean;
+  /** Test Connection's connect warnings and test-only cautions. */
+  readonly testCautions: boolean;
+  /**
+   * How the engine's own words reach the client: through core's scrub (`"scrubbed"`), or only as Studio's sentence
+   * naming their code (`"code-only"`, src/lib/api/package-errors.ts).
+   */
+  readonly ownWords: "scrubbed" | "code-only";
+}
+
+/**
+ * Studio's record of one engine the server serves, legacy or package alike; see the module's docblock for each
+ * member. It holds no SQL writing, connection form, connection string, migration DDL or generator row.
+ */
+export interface EngineRecord {
+  readonly id: EngineId;
+  readonly source: EngineSource;
+  readonly catalog: CatalogEntry;
+  readonly connection: EngineConnectionTables;
+  readonly fieldRules: FieldRuleSpec;
+  readonly grants: EngineGrants;
+  /**
+   * The grammar the engine's statements are confirmed under: for a package, the grammar its declaration states
+   * (`sqlText.grammar`), composed once by `grammarFromFacts` (./sql-grammar), which the confirmation gate reads with
+   * every claim that loosens it uncounted (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); for a legacy
+   * engine, its row of Studio's grammar table (`sqlGrammarFor`).
+   */
+  readonly statementGrammar: SqlGrammar;
+  readonly offers: EngineOffers;
+}
+
+/** The composed catalog: every engine's record, and the codes of the refused packages naming the others. */
 export interface ServerCatalog {
-  readonly packages: ReadonlyMap<string, PackageEngine>;
+  readonly engines: ReadonlyMap<string, EngineRecord>;
   readonly unavailable: ReadonlyMap<string, readonly string[]>;
 }
 
-/**
- * The rules across the whole set of admitted packages and Studio's bundled catalog (`catalogConflicts` in
- * ./server-catalog-compose), each the rule of a `PROVIDER_CATALOG_CONFLICT` refusal.
- */
-export const CATALOG_CONFLICT_RULES = Object.freeze([
-  "engine-id",
-  "fence-alias",
-  "query-dialect",
-  "tab-type",
-  "editor-language",
-] as const);
-
-export type CatalogConflictRule = (typeof CATALOG_CONFLICT_RULES)[number];
-
 /** What the server knows of a connection's type. */
 export type ServerEngine =
-  | { readonly kind: "bundled"; readonly id: DatabaseType }
-  | { readonly kind: "package"; readonly engine: PackageEngine }
+  | { readonly kind: "served"; readonly engine: EngineRecord }
   | { readonly kind: "unavailable"; readonly id: string; readonly codes: readonly string[] }
   | { readonly kind: "refused"; readonly refusal: TypeIdRefusal };
 
@@ -156,7 +206,7 @@ const CATALOG_KEY = Symbol.for("libredb-studio.server-engine-catalog");
 
 type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog };
 
-/** The refusal of a package engine, by the path that refused it. */
+/** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
     "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
@@ -170,35 +220,35 @@ function installed(): ServerCatalog | undefined {
 
 /** What the server knows of `value`, a connection's type as a client or a store gave it. */
 export function serverEngine(value: unknown): ServerEngine {
-  if (isDatabaseType(value)) return { kind: "bundled", id: value };
   const catalog = installed();
-  if (typeof value === "string" && catalog !== undefined) {
-    const engine = catalog.packages.get(value);
-    if (engine !== undefined) return { kind: "package", engine };
-    const codes = catalog.unavailable.get(value);
+  if (typeof value === "string") {
+    const engine = (catalog?.engines ?? LEGACY_ENGINES).get(value);
+    if (engine !== undefined) return { kind: "served", engine };
+    const codes = catalog?.unavailable.get(value);
     if (codes !== undefined) return { kind: "unavailable", id: value, codes };
   }
+  // Every legacy id is in the Map, installed or not (`installServerCatalog`), so the value names no engine and the
+  // type id check refuses it.
   return { kind: "refused", refusal: typeIdRefusal(value) as TypeIdRefusal };
 }
 
-/** The refusal of a request for an admitted package's engine `id` on the path `need`. */
-function packageEngineRefusal(id: string, need: EngineNeed): PackageEngineUnsupportedError {
-  return new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], id);
-}
-
 /**
- * The refusal of a connection type that is no bundled type id, or null for a bundled one: a refused package's engine
- * as `ProviderUnavailableError`, an admitted package's engine as `PackageEngineUnsupportedError` for `need`, and every
- * other value as `UnknownProviderError`, exactly as `assertDatabaseType` refuses it. A surface that answers a refusal
- * as text, as MCP's `list_connections` and its tools do, reads its message; every other one throws it through
- * `assertBundledEngine`.
+ * The refusal of a connection type whose engine offers no legacy provider, or null for one whose record offers it: a
+ * refused package's engine as `ProviderUnavailableError`, an engine whose record offers no legacy provider as
+ * `PackageEngineUnsupportedError` for `need`, and every other value as `UnknownProviderError`, exactly as
+ * `assertDatabaseType` refuses it. A surface that answers a refusal as text, as MCP's `list_connections` and its tools
+ * do, reads its message; every other one throws it through `assertLegacyProvider`.
  */
-export function bundledEngineRefusal(
+export function legacyProviderRefusal(
   value: unknown,
   need: EngineNeed,
 ): ProviderUnavailableError | PackageEngineUnsupportedError | UnknownProviderError | null {
   const engine = serverEngine(value);
-  if (engine.kind === "bundled") return null;
+  if (engine.kind === "served") {
+    return engine.engine.offers.legacyProvider
+      ? null
+      : new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], engine.engine.id);
+  }
   if (engine.kind === "unavailable") {
     return new ProviderUnavailableError(
       `The connection type ${quoteTypeId(engine.id)} is served by a provider package this LibreDB Studio refused when it started (${engine.codes.join(", ")}), so no provider can open it; the server's log names the package and why.`,
@@ -206,31 +256,64 @@ export function bundledEngineRefusal(
       engine.codes,
     );
   }
-  if (engine.kind === "package") return packageEngineRefusal(engine.engine.id, need);
   return new UnknownProviderError(engine.refusal);
 }
 
 /**
- * Refuses a connection type that is no bundled type id with `bundledEngineRefusal`'s answer.
+ * Refuses a connection type whose engine offers no legacy provider with `legacyProviderRefusal`'s answer.
  *
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
- * @throws {PackageEngineUnsupportedError} When an admitted package serves the engine.
+ * @throws {PackageEngineUnsupportedError} When the engine's record offers no legacy provider.
  * @throws {UnknownProviderError} When the type is absent, not text, or names no engine the server knows.
  */
-export function assertBundledEngine(value: unknown, need: EngineNeed): asserts value is DatabaseType {
-  const refusal = bundledEngineRefusal(value, need);
+export function assertLegacyProvider(value: unknown, need: EngineNeed): asserts value is DatabaseType {
+  const refusal = legacyProviderRefusal(value, need);
   if (refusal !== null) throw refusal;
+}
+
+/**
+ * The admitted package that serves `engine`.
+ *
+ * @throws {Error} A host defect: when `engine` is a legacy engine's record, which no package serves; only the package
+ * session path reads it, after the record's `legacyProvider` offer sent the request there.
+ */
+export function servedPackage(engine: EngineRecord): ServedPackage {
+  if (engine.source.package === null) {
+    throw new Error(
+      `The engine ${quoteTypeId(engine.id)} is served by LibreDB Studio's legacy adapter, which serves no provider package: a caller that reads a package of it is a host defect.`,
+    );
+  }
+  return engine.source.package;
 }
 
 /**
  * Installs `catalog` as the process's server catalog, once.
  *
- * @throws {Error} When a catalog is installed already: boot composes it once, and a second composition is a host defect.
+ * @throws {Error} When a catalog is installed already: boot composes it once, and a second composition is a host defect;
+ * when `catalog` lacks a record of a legacy engine, which every composed catalog holds; or when a record's
+ * `legacyProvider` offer disagrees with its id, since `assertLegacyProvider` narrows a type to `DatabaseType` from that
+ * offer: a record offers a legacy provider exactly when the legacy adapter serves its id.
  */
 export function installServerCatalog(catalog: ServerCatalog): void {
   const holder = globalThis as CatalogHolder;
   if (holder[CATALOG_KEY] !== undefined) {
     throw new Error("The server's engine catalog is already installed in this process: boot composes it once.");
+  }
+  for (const id of LEGACY_ENGINES.keys()) {
+    if (!catalog.engines.has(id)) {
+      throw new Error(
+        `The server's engine catalog holds no record of the legacy engine ${quoteTypeId(id)}: every composed catalog holds every legacy record.`,
+      );
+    }
+  }
+  for (const [id, engine] of catalog.engines) {
+    const legacy = LEGACY_ENGINES.has(id);
+    if (engine.offers.legacyProvider === legacy) continue;
+    throw new Error(
+      legacy
+        ? `The server's engine catalog's record of the legacy engine ${quoteTypeId(id)} offers no legacy provider: a record offers a legacy provider exactly when its engine is a legacy engine.`
+        : `The server's engine catalog's record of ${quoteTypeId(id)} offers a legacy provider, and the legacy adapter serves no engine of that id: a record offers a legacy provider exactly when its engine is a legacy engine.`,
+    );
   }
   holder[CATALOG_KEY] = catalog;
 }

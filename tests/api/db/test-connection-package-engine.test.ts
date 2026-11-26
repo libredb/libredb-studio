@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
-import { forgetServerCatalog, installServerCatalog, type PackageEngine } from "@/lib/db/server-catalog";
+import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
@@ -101,10 +101,10 @@ beforeAll(() => {
     ],
     [{ name: "acme-gone", version: "1.0.0", engines: ["acmetestgone"], code: "PROVIDER_LOAD_FAILED" }],
   );
-  const briefEngine = composed.packages.get("acmetestbrief") as PackageEngine;
+  const briefEngine = composed.engines.get("acmetestbrief") as EngineRecord;
   installServerCatalog({
-    packages: new Map([
-      ...composed.packages,
+    engines: new Map([
+      ...composed.engines,
       ["acmetestbrief", { ...briefEngine, catalog: { ...briefEngine.catalog, connectBudgetMs: 50 } }],
     ]),
     unavailable: composed.unavailable,

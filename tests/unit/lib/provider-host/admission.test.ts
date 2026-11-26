@@ -562,6 +562,23 @@ describe("before the import", () => {
     expect(fs.existsSync(sameName.sentinel)).toBe(false);
   });
 
+  test("a lock entry named @libredb/studio is refused as PROVIDER_ID_COLLISION", async () => {
+    // The name LibreDB Studio serves its bundled engines under (the legacy adapter's identity): a package of that name
+    // would share it with Studio's own engines, so it is refused before its import, whatever engine it serves.
+    const legacy = write({ name: "@libredb/studio" });
+    const refusal = refusalOf(await admit(verified(legacy)));
+    expect([refusal.code, refusal.rule, refusal.name, refusal.version]).toEqual([
+      "PROVIDER_ID_COLLISION",
+      "legacy-package",
+      "@libredb/studio",
+      "1.0.0",
+    ]);
+    expect(refusal.sentence).toBe(
+      "PROVIDER_ID_COLLISION: @libredb/studio 1.0.0: its name is the name LibreDB Studio serves its bundled engines under",
+    );
+    expect(fs.existsSync(legacy.sentinel)).toBe(false);
+  });
+
   test("two admissions that overlap never register two packages serving one engine id, or one name twice", async () => {
     // Both pass every check of admission; the check registerAdmission makes right before it registers refuses the second.
     const shared = names();
@@ -1082,6 +1099,7 @@ describe("what admission carries and reaches", () => {
       "registered-engine",
       "registered-package",
       "inherited-name",
+      "legacy-package",
     ]);
     expect(PROVIDER_REFUSAL_RULES.PROVIDER_MODULE_FORMAT).toEqual([
       "entry-commonjs",

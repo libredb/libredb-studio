@@ -4,7 +4,7 @@ import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
-import { assertBundledEngine, type PackageConnection, serverEngine } from "@/lib/db/server-catalog";
+import { assertLegacyProvider, type EngineConnection, serverEngine } from "@/lib/db/server-catalog";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
 import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
@@ -93,30 +93,31 @@ export type ConnectionBody = { connection?: DatabaseConnection; connectionId?: s
  */
 export type ServedEngines = "bundled" | "bundled-and-package";
 
-/** The check of a type on a route that serves package engines too: an admitted package's engine passes. */
+/** The check of a type on a route that serves package engines too: every engine the server's catalog serves passes. */
 function admitPackageEngine(type: unknown): void {
-  if (serverEngine(type).kind !== "package") assertBundledEngine(type, "route");
+  if (serverEngine(type).kind !== "served") assertLegacyProvider(type, "route");
 }
 
 /**
  * The connection a request names, resolved under `session`: an inline record of the caller's own, or the operator's
  * `seed:` entry, after the access decision and with its Vault references read. What it returns carries a type id,
  * since both branches refuse a type that is not one (FND-1), so a caller reads per-engine tables by it without a check
- * of its own. Both branches check the type through the server's engine catalog (`assertBundledEngine`,
+ * of its own. Both branches check the type through the server's engine catalog (`assertLegacyProvider`,
  * src/lib/db/server-catalog.ts), so an engine only a provider package serves is refused by name too: as
  * `PROVIDER_UNAVAILABLE` naming its refusal codes when its package was refused at boot, and as
- * `PACKAGE_ENGINE_UNSUPPORTED` when an admitted package serves it and `engines` is `bundled`.
+ * `PACKAGE_ENGINE_UNSUPPORTED` when `engines` is `bundled` and the engine's record offers no legacy provider.
  *
- * With `engines` `bundled-and-package`, an admitted package's engine passes the check instead, and its connection is
- * answered as a `PackageConnection`, which the caller tells apart by `serverEngine`; every other guard runs exactly as
- * for `bundled`. Only Test Connection and the query route pass it in this Studio.
+ * With `engines` `bundled-and-package`, every engine the catalog serves passes the check instead, and a connection of
+ * an engine whose record offers no legacy provider is answered as an `EngineConnection`, which the caller tells apart
+ * by the record `serverEngine` answers; every other guard runs exactly as for `bundled`. Only Test Connection and the
+ * query route pass it in this Studio.
  *
  * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
  * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's
  * fails the whole seed file before this resolves.
  * @throws {ProviderUnavailableError} When the type is an engine only refused provider packages name.
- * @throws {PackageEngineUnsupportedError} When the type is an engine an admitted provider package serves and `engines`
- * is `bundled`.
+ * @throws {PackageEngineUnsupportedError} When the type is an engine whose record offers no legacy provider and
+ * `engines` is `bundled`.
  * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
  * record that is not one.
  */
@@ -130,16 +131,16 @@ export async function resolveConnection(
   session: Principal,
   options: VisibilityOptions | undefined,
   engines: "bundled-and-package",
-): Promise<DatabaseConnection | PackageConnection>;
+): Promise<DatabaseConnection | EngineConnection>;
 export async function resolveConnection(
   body: ConnectionBody,
   session: Principal,
   /** Which credential a governed connection carries (src/lib/governance/visible.ts); nothing without governance. */
   options?: VisibilityOptions,
   engines: ServedEngines = "bundled",
-): Promise<DatabaseConnection | PackageConnection> {
+): Promise<DatabaseConnection | EngineConnection> {
   const checkType =
-    engines === "bundled" ? (type: unknown): void => assertBundledEngine(type, "route") : admitPackageEngine;
+    engines === "bundled" ? (type: unknown): void => assertLegacyProvider(type, "route") : admitPackageEngine;
   const { connection, connectionId } = body;
 
   /*

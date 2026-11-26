@@ -31,7 +31,7 @@ import {
   withheldProviderError,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
-import type { PackageConnection, PackageEngine } from "@/lib/db/server-catalog";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { hostCore } from "@/lib/provider-host/instance";
@@ -134,8 +134,8 @@ function testDeadlineSentence(budgetMs: number): string {
  * @throws {ConnectionError} When the open failed or the deadline ended the test.
  */
 export async function testPackageConnection(
-  connection: PackageConnection,
-  engine: PackageEngine,
+  connection: EngineConnection,
+  engine: EngineRecord,
   execution: EditorExecutionContext,
   route: string,
   now: number = Date.now(),
