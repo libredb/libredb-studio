@@ -937,8 +937,7 @@ export interface KindRowAction {
 /**
  * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
  * `agentUser` and `agentPassword`. The factory reads each engine's form from its record's `grants.agentCredentialForm`,
- * for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, Studio's grant of
- * the claim against the engine's review row, where null is the absent form. An agent credential
+ * Studio's grant of the claim against the engine's row of the grant register, where null is the absent form. An agent credential
  * beside a connection string is refused in every form, because the connection string's own credential would win.
  *
  * - absent: `agentUser` and `agentPassword`, both required.
@@ -1146,9 +1145,9 @@ export interface ProviderCapabilities {
    *
    * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
    * IP rule, so an exemption written for one column of one engine crosses into a second rule.
-   * Studio reads it from `GRANTED_MASKING_EXEMPT_COLUMNS` in `src/lib/db/claim-grants.ts`, its
-   * grant against the engine's review row, never from the
-   * provider: its producers of client capabilities answer that row (`clientCapabilities`,
+   * Studio reads it from the engine record's `maskingExemptColumns` grant, its grant against the
+   * engine's row of the grant register, never from the
+   * provider: its producers of client capabilities answer that grant (`clientCapabilities`,
    * docs/providers/CONTRACT.md clauses M-54 and M-57), and `tests/unit/db/masking-exemption-guard.test.ts`
    * holds the review rows equal to this declaration and measures the protected names each row reaches.
    * The embedded workspace and the published grid components take it from their embedder instead,
@@ -1417,10 +1416,9 @@ export interface ProviderCapabilities {
    * is already open, keyed by the RESOLVED FILE PATH rather than the connection id: the
    * second opener is usually a different connection record pointing at the same file.
    *
-   * Studio never reads this declaration where it decides: the provider cache key reads
-   * `GRANTED_SINGLE_WRITER_FILE` in `src/lib/db/claim-grants.ts`, and the single-writer borrow
-   * reads the engine record's `grants.singleWriterFile`, built from that table's row. The table
-   * is Studio's grant of the claim against the engine's review row, which
+   * Studio never reads this declaration where it decides: the provider cache key and the
+   * single-writer borrow read the engine record's `grants.singleWriterFile`, Studio's grant of the
+   * claim against the engine's row of the grant register, which
    * `tests/unit/db/compatibility.test.ts` holds equal to
    * this declaration for every shipped type-id (docs/providers/CONTRACT.md, clauses M-54 and
    * M-57). Absent reads as "this engine serves as many handles as we open", the ordinary case,
@@ -1461,9 +1459,9 @@ export interface ProviderCapabilities {
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
    * user-and-password form. Studio never reads this declaration where it decides: every agent acquisition
    * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine record's
-   * `grants.agentCredentialForm`, for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in
-   * `src/lib/db/claim-grants.ts`, Studio's grant of the claim against the engine's review row, and refuses a credential in a shape the form does not take before the provider
-   * connects (docs/providers/CONTRACT.md, clauses M-54 and M-57).
+   * `grants.agentCredentialForm`, Studio's grant of the claim against the engine's row of the grant register, and
+   * refuses a credential in a shape the form does not take before the provider connects (docs/providers/CONTRACT.md,
+   * clauses M-54 and M-57).
    * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
    * type-id. An engine declaration requests it at `policy.agentCredentialForm`, each shipped engine's request the
    * record's row, `pair` for the user-and-password form (clause M-58).
@@ -1735,7 +1733,7 @@ export interface ProviderCapabilities {
    * The connection reaches a whole server and names no catalog (#1530): each request runs in the
    * catalog the caller picks through `forCatalog()`. Absent means requests run where it points.
    *
-   * Studio honours it only where `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE` holds the engine and the
+   * Studio honours it only where the engine record's `serverLevelAtCatalogChoice` grant holds and the
    * connection names no database and no connection string (`catalogChoice` in
    * `src/lib/db/catalog-scope.ts`, docs/providers/CONTRACT.md clause M-57), and elsewhere refuses a
    * caller's catalog by name; `assertNotWholeServer` reads it as declared.

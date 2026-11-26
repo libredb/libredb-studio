@@ -833,7 +833,7 @@ describe("the legacy rows' single-writer file", () => {
 /**
  * `servesOneSession`, as the legacy rows of the grant register review it (docs/providers/CONTRACT.md, clause C-66): the
  * engines whose connections serve their object tree from one session, the editor's, each with the reason Studio's
- * census found. A host fact read only through `GRANTED_ONE_SESSION_ENGINES` by `sessionCapacity` in
+ * census found. A host fact read only through each engine record's `grants.servesOneSession` by `sessionCapacity` in
  * src/lib/db/session-capacity.ts, and never a claim an engine declaration requests. Every shipped engine has a row and
  * the rows are frozen, which the grant reader's load holds.
  */

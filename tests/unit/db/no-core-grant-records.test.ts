@@ -40,23 +40,16 @@ const ITEM_3 = { item: 3 } as const;
 
 /** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
 const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  { module: CLAIM_GRANTS, name: "GRANTED_ONE_SESSION_ENGINES", removedBy: ITEM_3 },
   ...[
-    "GRANTED_AGENT_CREDENTIAL_FORM",
     "GRANTED_DENIED_FILE_ACCESS_REFUSAL",
-    "GRANTED_HOST_PATH_FIELDS",
-    "GRANTED_MASKING_EXEMPT_COLUMNS",
     "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED",
     "GRANTED_MCP_EXPOSABLE",
     "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
     "GRANTED_MCP_STATEMENT_READ",
     "GRANTED_OPENS_LOCAL_FILE",
     "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION",
-    "GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE",
     "GRANTED_READ_ROOTS_REQUIRED",
-    "GRANTED_READS_FILE_ACCESS_POSTURE",
     "GRANTED_SEED_AGENT_CREDENTIAL",
-    "GRANTED_SINGLE_WRITER_FILE",
     "READ_ONLY_ENFORCED",
     "UNGRANTED_CLAIM_REFUSALS",
   ].map((name) => ({ module: CLAIM_GRANTS, name, removedBy: ITEM_3 })),
@@ -100,11 +93,6 @@ const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
 
 /** The grant records the engine table inventory cannot see or classifies otherwise, each with why. */
 const UNINVENTORIED_GRANT_RECORDS: readonly (Pick<GrantRecordEntry, "module" | "name"> & { readonly why: string })[] = [
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_ONE_SESSION_ENGINES",
-    why: "a list of engine ids, not a table keyed by engine",
-  },
   {
     module: CLAIM_GRANTS,
     name: "GRANTED_AGENT_EXECUTION_ENGINES",
@@ -187,8 +175,8 @@ describe("the exit of M3", () => {
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
     expect(claimTables).toHaveLength(1);
-    expect(grantedTables).toHaveLength(21);
-    expect(count('{"item":3}')).toBe(18);
+    expect(grantedTables).toHaveLength(15);
+    expect(count('{"item":3}')).toBe(11);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"milestone":"M7"')).toBe(5);
   });

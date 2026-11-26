@@ -47,8 +47,8 @@ import {
  *   `credentialDigest` or the fingerprint, whose rules are as whom a connection authenticates and
  *   which server it reaches, and the mode changes neither.
  * - The file-access posture (the non-admin DuckDB file-access change), for an engine that opens its
- *   editor handle under one: `GRANTED_READS_FILE_ACCESS_POSTURE` in `./claim-grants.ts` answers which, so
- *   this is not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
+ *   editor handle under one: the engine record's `readsFileAccessPosture` grant answers which, so this is
+ *   not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
  *   editor handle opens with `enable_external_access: 'false'` and a full-reach one without it, so the
  *   two must never share a cached handle: a caller of one posture would otherwise be handed the
  *   other's handle. (A seed a non-admin role can use gets one posture for every role in

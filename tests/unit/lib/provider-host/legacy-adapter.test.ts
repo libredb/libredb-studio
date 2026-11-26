@@ -26,6 +26,7 @@ import {
   projectConnectionForms,
   projectConnectionTables,
 } from "@/lib/db/engine-catalog/projection";
+import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { boundFunction } from "@/lib/db/function-table";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { sqlGrammarFor } from "@/lib/db/sql-grammar";
@@ -69,17 +70,30 @@ function ruleData(rule: ConnectionFieldRule | undefined) {
 }
 
 /**
- * The grant reader's exported table of each member of an engine's grants, and for each member the register holds and
- * no table projects, the register's legacy rows of it.
+ * Each shipped engine's request at the choice of database, `connection.serverLevelWithoutDatabase`, read against its
+ * legacy row as that gate reads it: true only where the request and the row both are.
+ */
+const SERVER_LEVEL_AT_CATALOG_CHOICE = Object.fromEntries(
+  SHIPPED_DATABASE_TYPES.map((id) => [
+    id,
+    BUNDLED_CLAIM_REQUESTS[id].connection.serverLevelWithoutDatabase &&
+      legacyRegisterTable("serverLevelWithoutDatabase")[id],
+  ]),
+) as Readonly<Record<DatabaseType, boolean>>;
+
+/**
+ * Each member of an engine's grants, for every shipped engine: the grant reader's exported table where a reader still
+ * reads one, the register's legacy rows of the member where the grant is the row, and, for a member the grant reader
+ * derives, that derivation written here from the rows.
  */
 const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Record<DatabaseType, unknown>>>> = {
   writeReach: grants.GRANTED_WRITE_REACH,
-  readsFileAccessPosture: grants.GRANTED_READS_FILE_ACCESS_POSTURE,
+  readsFileAccessPosture: legacyRegisterTable("readsFileAccessPosture"),
   deniedFileAccessRefusal: grants.GRANTED_DENIED_FILE_ACCESS_REFUSAL,
-  singleWriterFile: grants.GRANTED_SINGLE_WRITER_FILE,
+  singleWriterFile: legacyRegisterTable("singleWriterFile"),
   readRootsRequired: grants.GRANTED_READ_ROOTS_REQUIRED,
-  agentCredentialForm: grants.GRANTED_AGENT_CREDENTIAL_FORM,
-  maskingExemptColumns: grants.GRANTED_MASKING_EXEMPT_COLUMNS,
+  agentCredentialForm: legacyRegisterTable("agentCredentialForm"),
+  maskingExemptColumns: legacyRegisterTable("maskingExemptColumns"),
   exposable: grants.GRANTED_MCP_EXPOSABLE,
   statementRead: grants.GRANTED_MCP_STATEMENT_READ,
   metadataReadChangesState: grants.GRANTED_MCP_METADATA_READ_CHANGES_STATE,
@@ -87,9 +101,9 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   readOnlyEnforced: grants.READ_ONLY_ENFORCED,
   ungrantedRefusals: grants.UNGRANTED_CLAIM_REFUSALS,
   opensLocalFile: grants.GRANTED_OPENS_LOCAL_FILE,
-  hostPathFields: grants.GRANTED_HOST_PATH_FIELDS,
+  hostPathFields: legacyRegisterTable("hostPathFields"),
   serverLevelAtAdmission: grants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
-  serverLevelAtCatalogChoice: grants.GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
+  serverLevelAtCatalogChoice: SERVER_LEVEL_AT_CATALOG_CHOICE,
   sshTunnel: grants.GRANTED_SSH_TUNNEL_REFUSAL,
   agentCredential: grants.GRANTED_SEED_AGENT_CREDENTIAL,
   statementLanguage: grants.GRANTED_AGENT_STATEMENT_LANGUAGE,
@@ -155,7 +169,8 @@ describe("the legacy adapter's records", () => {
       const engine = legacyRecord(id);
       expect(Object.keys(engine.grants).sort()).toEqual(Object.keys(GRANT_TABLES).sort());
       for (const [member, table] of Object.entries(GRANT_TABLES)) {
-        expect(engine.grants[member as keyof EngineRecord["grants"]]).toBe(table[id] as never);
+        // Equal rather than identical: the grant reader copies a row's object value, such as a masking exemption.
+        expect([member, engine.grants[member as keyof EngineRecord["grants"]]]).toEqual([member, table[id] as never]);
       }
     }
   });
