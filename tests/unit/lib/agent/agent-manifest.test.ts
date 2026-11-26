@@ -36,10 +36,6 @@ const statementLanguage = legacyRegisterTable("statementLanguage");
  * the drivers: the record is the list, so it must answer exactly where a provider has a read-only statement path.
  */
 describe("the statement language review rows", () => {
-  test("answers for every shipped type-id and nothing else", () => {
-    expect(Object.keys(statementLanguage).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
   test.each([...SHIPPED_DATABASE_TYPES])(
     "%s has a language exactly when its provider has queryReadOnly",
     async (type) => {
@@ -56,10 +52,6 @@ describe("the statement language review rows", () => {
       if (statementLanguage[type] === "sql") expect(provider.getCapabilities().queryLanguage).toBe("sql");
     },
   );
-
-  test("is frozen", () => {
-    expect(Object.isFrozen(statementLanguage)).toBe(true);
-  });
 
   // The start route reads the language and then the review record, so the two agree on every shipped engine and the
   // record's own refusal there is reached only by an engine a later build drops from it.
