@@ -1,10 +1,12 @@
 /**
  * `POST /api/db/test-connection` for an engine a provider package serves (docs/providers/CONTRACT.md, clauses C-107 and
- * C-112), through the real `resolveConnection`, the factory's real one-shot open (`openEngineOnce`) and the real host
- * core: an admitted engine's connection is validated against its declaration's field rules and the open checks, each
- * refusal a not-sent configuration error, then one session opens through the package, its health is read and it is
- * closed; a package's own words never reach the client; a refused package's engine answers `PROVIDER_UNAVAILABLE`
- * naming the code. The factory's legacy entry points are stood in for and never reached.
+ * C-112), through the real `resolveServedConnection`, the factory's real one-shot open (`openEngineOnce`) and tunnel
+ * scope, each wrapped to record its calls, and the real host core: an admitted engine's connection is validated
+ * against its declaration's field rules and the open checks, each refusal a not-sent configuration error, then one
+ * session opens through the package, its health is read and it is closed; a package's own words never reach the client,
+ * and a failure is logged by its author, the package's as the package's and Studio's as Studio's; a refused package's
+ * engine answers `PROVIDER_UNAVAILABLE` naming the code. A legacy engine's connection runs the same test, told apart
+ * only by its record's offers. The factory's other entry points are stood in for and never reached.
  *
  * The packages are in-memory records whose functions call the hooks a case sets. The deadline case runs on an engine
  * record whose budget is 50 ms; it settles on the route's own answer, never on a timer the test awaits.
@@ -12,13 +14,15 @@
 // oxlint-disable no-await-in-loop -- each post runs after the one before, on one rate limiter cleared per post.
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { ProviderImpl } from "@libredb/provider-sdk/calls";
+import type { CallRefusal, ProviderImpl } from "@libredb/provider-sdk/calls";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
+import { HostDefectError, refusalError } from "@/lib/provider-host/access";
+import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { admittedFor, admittedManifest, withFieldRules } from "../../helpers/package-catalog";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 
@@ -32,8 +36,8 @@ mock.module("@/lib/auth", () => ({
   readSession: mock(async () => ({ kind: "authenticated", session: await mockGetSession() })),
 }));
 
-/** The factory's real one-shot open, taken before the factory is stood in for. */
-const { openEngineOnce } = await import("@/lib/db/factory");
+/** The factory's real one-shot open and one-shot tunnel scope, taken before the factory is stood in for. */
+const { openEngineOnce, withOneShotTunnel } = await import("@/lib/db/factory");
 
 /** Every call into the factory's legacy entry points, by name: none may happen for a package engine. */
 const factoryCalls: string[] = [];
@@ -41,8 +45,17 @@ const recorded = (name: string) => async (): Promise<never> => {
   factoryCalls.push(name);
   throw new Error(`the factory's ${name} was reached`);
 };
+/** The type of each connection the one-shot tunnel scope was entered for. */
+const tunnelled: string[] = [];
+/** The id of each engine record the one-shot open opened. */
+const opens: string[] = [];
+/** A case's stand-in for the one-shot open, which every case leaves the real one. */
+let openOverride: typeof openEngineOnce | undefined;
 mock.module("@/lib/db/factory", () => ({
-  withOneShotTunnel: recorded("withOneShotTunnel"),
+  withOneShotTunnel: (...args: Parameters<typeof withOneShotTunnel>) => {
+    tunnelled.push(args[0].type);
+    return withOneShotTunnel(...args);
+  },
   createDatabaseProvider: recorded("createDatabaseProvider"),
   findOpenSingleWriterProvider: () => {
     factoryCalls.push("findOpenSingleWriterProvider");
@@ -56,7 +69,10 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: recorded("removeProvider"),
   clearProviderCache: recorded("clearProviderCache"),
   getProviderCacheStats: () => ({ size: 0, connections: [] }),
-  openEngineOnce,
+  openEngineOnce: (...args: Parameters<typeof openEngineOnce>) => {
+    opens.push(args[1].id);
+    return (openOverride ?? openEngineOnce)(...args);
+  },
 }));
 
 const { POST } = await import("@/app/api/db/test-connection/route");
@@ -118,6 +134,9 @@ afterAll(forgetServerCatalog);
 
 beforeEach(() => {
   factoryCalls.length = 0;
+  tunnelled.length = 0;
+  opens.length = 0;
+  openOverride = undefined;
   seen.length = 0;
   hooks = healthyHooks();
   mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
@@ -137,6 +156,16 @@ async function routeAnswer(
 }
 
 const VALID = { type: "acmetested", host: "db.local", user: "writer" };
+
+/** The error the accessor builds for a call the host refused with `refusal`, after the package was called. */
+function hostDefect(refusal: CallRefusal): HostDefectError {
+  const error = refusalError(
+    { kind: "refused", called: true, refusals: [refusal] },
+    { caller: new AbortController().signal, deadlineSentence: "The open ran past its budget." },
+  );
+  if (!(error instanceof HostDefectError)) throw new Error(`expected a host defect, got ${error.name}`);
+  return error;
+}
 
 describe("POST /api/db/test-connection for a provider package's engine", () => {
   test("Test Connection opens an admitted engine's session through its package, reads its health and closes it", async () => {
@@ -271,5 +300,74 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       'The connection type "acmetestgone" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_LOAD_FAILED), so no provider can open it; the server\'s log names the package and why.',
     );
     expect(factoryCalls).toEqual([]);
+  });
+
+  test("Test Connection runs one test for a legacy and a package engine, told apart only by the record's offers", async () => {
+    for (const connection of [{ type: "sqlite", database: ":memory:" }, VALID]) {
+      const { status, body } = await routeAnswer(connection);
+      expect(status).toBe(200);
+      expect([body.success, body.message, typeof body.latency]).toEqual([true, "Connection successful", "number"]);
+    }
+    // The legacy record offers a tunnel, so its test entered the one-shot tunnel scope; the package's record offers none.
+    expect(tunnelled).toEqual(["sqlite"]);
+    expect(opens).toEqual(["sqlite", "acmetested"]);
+    expect(factoryCalls).toEqual([]);
+    expect(seen).toEqual(["open", "health", "close"]);
+  });
+
+  test("a host defect during a package engine's test is logged as Studio's, and the package's own error as the package's", async () => {
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    /** How many times each of the two attribution lines was logged since the last clear. */
+    const attributed = () => {
+      const lines = error.mock.calls.map(([line]) => String(line));
+      return {
+        studio: lines.filter((line) => line === "Unhandled error").length,
+        open: lines.filter((line) => line === "A provider package's open failed").length,
+        health: lines.filter((line) => line === "A provider package's health failed").length,
+      };
+    };
+    const monitoring = await import("@/lib/api/provider-monitoring");
+    const health = spyOn(monitoring, "readSessionHealthWithin");
+    try {
+      // A scope sent to a session that offers none is a request only Studio builds: Studio's defect.
+      const studio = hostDefect({ rule: "request-scope-not-offered", pointer: "/scope" });
+      openOverride = () => Promise.reject(studio);
+      const own = await routeAnswer(VALID);
+      expect([own.status, own.body.code, own.body.error]).toEqual([500, "INTERNAL_ERROR", studio.message]);
+      expect(attributed()).toEqual({ studio: 1, open: 0, health: 0 });
+
+      // The same defect raised while the session's health is read is Studio's too, and the session is still closed.
+      error.mockClear();
+      openOverride = undefined;
+      health.mockImplementationOnce(() => Promise.reject(studio));
+      const read = await routeAnswer(VALID);
+      expect([read.status, read.body.code, read.body.error]).toEqual([500, "INTERNAL_ERROR", studio.message]);
+      expect(attributed()).toEqual({ studio: 1, open: 0, health: 0 });
+      expect(seen).toEqual(["open", "close"]);
+
+      // A refinement that widens what the package declared is what the package answered: the package's defect.
+      error.mockClear();
+      openOverride = () => Promise.reject(hostDefect({ rule: "refinement-widens", pointer: "/console" }));
+      const widened = await routeAnswer(VALID);
+      expect([widened.status, widened.body.code, widened.body.error]).toEqual([
+        503,
+        "CONNECTION_ERROR",
+        "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words.",
+      ]);
+      expect(attributed()).toEqual({ studio: 0, open: 1, health: 0 });
+      const logged = error.mock.calls.find(([line]) => line === "A provider package's open failed")?.[1];
+      expect(String((logged as Error).message)).toStartWith(PACKAGE_DEFECT_PREFIX);
+
+      // A value the package's own open rejects with is the package's.
+      error.mockClear();
+      openOverride = undefined;
+      hooks.open = () => Promise.reject(new Error(randomUUID()));
+      const rejected = await routeAnswer(VALID);
+      expect([rejected.status, rejected.body.code]).toEqual([503, "CONNECTION_ERROR"]);
+      expect(attributed()).toEqual({ studio: 0, open: 1, health: 0 });
+    } finally {
+      health.mockRestore();
+      error.mockRestore();
+    }
   });
 });

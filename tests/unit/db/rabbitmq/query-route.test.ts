@@ -5,9 +5,9 @@
  * The provider is the real RabbitMQProvider; its management transport and its AMQP dial are seams this file writes,
  * and the AMQP peer is the fake peer on 127.0.0.1. Only the session and the provider lookup are replaced, as every
  * route test in this suite does, because the routes take both from modules with no seam: `@/lib/auth` for the
- * session and `@/lib/db` for the provider this file built (Test Connection imports `createDatabaseProvider` from
- * `@/lib/db/factory`, which `@/lib/db` re-exports, and reaches the replaced one too, as its positive control asserts).
- * The runner gives this file its own process, so the two replacements reach no other file.
+ * session, and `@/lib/db` and `@/lib/db/factory` for the provider this file built (Test Connection opens it through the
+ * factory's one-shot open, `openEngineOnce`, which answers it as a legacy record's open does, built and not connected).
+ * The runner gives this file its own process, so the replacements reach no other file.
  *
  * Every case asserts that the route reached the seam it targets (the management path it asked for, or the dial), so
  * a case whose route built some other provider fails instead of passing on an answer it never saw.
@@ -18,6 +18,7 @@
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as actualDb from "@/lib/db";
+import * as actualFactory from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
 import type { AmqpDial } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
@@ -67,6 +68,10 @@ mock.module("@/lib/db", () => ({
   getOrCreateProvider: mock(providerOf),
   getOrCreateMetadataProvider: mock(providerOf),
   createDatabaseProvider: mock(providerOf),
+}));
+mock.module("@/lib/db/factory", () => ({
+  ...actualFactory,
+  openEngineOnce: mock(async () => ({ form: "provider", provider: await providerOf() })),
 }));
 
 const { POST: query } = await import("@/app/api/db/query/route");

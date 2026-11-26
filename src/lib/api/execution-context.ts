@@ -71,7 +71,7 @@ export function sessionOwner(session: { idpSubject?: string }): string | undefin
  *
  * Built from the VERIFIED session role and the RESOLVED connection, never from the request body, so a
  * caller cannot widen what the provider is allowed to do. The db routes pass the result to
- * `getOrCreateProvider` (and `createDatabaseProvider` on the routes that build their own provider),
+ * `getOrCreateProvider` (and the factory's one-shot open, `openEngineOnce`, on Test Connection, which opens its own),
  * which hands it to the provider and folds it into the handle cache key.
  *
  * SQLite and DuckDB read the field it sets. SQLite refuses a denied connection because its

@@ -1,8 +1,8 @@
 /**
  * The button a user presses: Test Connection on a connection the browser supplies inline that sets a field only the
  * operator's seed file may set (`SEED_ONLY_FIELD_NAMES` in src/lib/db/connection-fields.ts, docs/SECURITY.md control
- * 3.48). The route resolves the connection with the real `resolveConnection`, which refuses it by name with 400, so no
- * provider is built. The session is mocked to an administrator, and the factory is replaced so a build would show here.
+ * 3.48). The route resolves the connection with the real `resolveServedConnection`, which refuses it by name with 400, so
+ * nothing is opened. The session is mocked to an administrator, and the factory is replaced so an open would show here.
  */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,9 +13,10 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 
-const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
+/** Test Connection's one-shot open, answering a legacy record's provider built and not connected. */
+const mockOpenEngineOnce = mock(async (...args: unknown[]) => {
   void args;
-  return createMockProvider();
+  return { form: "provider", provider: createMockProvider() };
 });
 
 const realAuth = await import("@/lib/auth");
@@ -26,7 +27,7 @@ mock.module("@/lib/auth", () => ({
 }));
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
-  createDatabaseProvider: mockCreateDatabaseProvider,
+  openEngineOnce: mockOpenEngineOnce,
 }));
 
 const { POST: testConnectionPost } = await import("@/app/api/db/test-connection/route");
@@ -35,7 +36,7 @@ const workDir = mkdtempSync(join(tmpdir(), "libredb-seed-only-inline-"));
 
 beforeEach(() => {
   clearRateLimitState();
-  mockCreateDatabaseProvider.mockClear();
+  mockOpenEngineOnce.mockClear();
 });
 
 afterAll(() => {
@@ -61,7 +62,7 @@ describe("Test Connection refuses an inline connection that sets a seed-only fie
         error: `${field} is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove ${field} from this connection.`,
         statusCode: 400,
       });
-      expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+      expect(mockOpenEngineOnce).not.toHaveBeenCalled();
     });
   }
 
@@ -70,6 +71,6 @@ describe("Test Connection refuses an inline connection that sets a seed-only fie
     await testConnectionPost(
       createMockRequest("/api/db/test-connection", { method: "POST", body: { connection } }) as never,
     );
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(mockOpenEngineOnce).toHaveBeenCalledTimes(1);
   });
 });

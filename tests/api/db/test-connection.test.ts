@@ -9,10 +9,11 @@ import { TransportError } from "@/lib/db/http/node-transport";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
-import type { DatabaseType, QueryWarning } from "@/lib/types";
+import type { QueryWarning } from "@/lib/types";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
+/** The build the factory's one-shot open (`openEngineOnce`, stood in for below) makes of a legacy record's provider. */
 const mockCreateDatabaseProvider = mock(async (connection?: unknown, options?: unknown, execution?: unknown) => {
   // The parameters are declared so `mock.calls` carries what the route built the provider from:
   // the connection proves the SSH tunnel endpoint was used (#457), and the execution context
@@ -35,6 +36,9 @@ const mockFindOpenSingleWriterProvider = mock((connection?: unknown, allowExtern
 });
 /** Whether a handle of ANY file-access posture holds the file (non-admin DuckDB file access). False by default. */
 const mockIsSingleWriterFileOpen = mock((): boolean => false);
+
+/** The connect budget the resolved record states while a case sets one, else the record's own. */
+let budgetOverride: number | undefined;
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -70,7 +74,15 @@ mock.module("@/lib/seed/resolve-connection", () => {
       }
       const connection = body.connection as { type?: unknown };
       // The catalog's record of the type, read as the real resolve reads it: a type that names no engine is refused there.
-      return { connection, engine: servedEngineRecord(connection.type) };
+      const engine = servedEngineRecord(connection.type);
+      // The case that needs the test's deadline to pass sets the record's budget to a few tens of milliseconds.
+      return {
+        connection,
+        engine:
+          budgetOverride === undefined
+            ? engine
+            : { ...engine, catalog: { ...engine.catalog, connectBudgetMs: budgetOverride } },
+      };
     }),
     SeedConnectionError,
   };
@@ -102,22 +114,18 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  // Test Connection opens a provider package's engine through it, and every case here tests a legacy engine.
-  openEngineOnce: () => {
-    throw new Error("no case here opens a provider package's engine");
-  },
-}));
-
-/**
- * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
- * that needs the test's deadline to pass sets it to a few tens of milliseconds for itself.
- */
-const realConnectBudget = await import("@/lib/db/connect-budget");
-const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
-let budgetOverride: number | undefined;
-mock.module("@/lib/db/connect-budget", () => ({
-  openDeadlineSentence: realConnectBudget.openDeadlineSentence,
-  connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
+  // Test Connection opens every engine through it; every case here tests a legacy engine, whose open answers the
+  // provider built and not connected.
+  openEngineOnce: async (
+    connection: unknown,
+    _engine: unknown,
+    execution: unknown,
+    _within: unknown,
+    options: unknown,
+  ) => ({
+    form: "provider",
+    provider: await mockCreateDatabaseProvider(connection, options, execution),
+  }),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────

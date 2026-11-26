@@ -29,6 +29,7 @@ import {
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { MASKING_EXEMPT_COLUMNS } from "@/lib/db/compatibility";
 import { executionUiFor } from "@/lib/db/execution-ui";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { runTarget } from "@/lib/sql/run-target";
@@ -306,7 +307,15 @@ describe("connection/test", () => {
       latency: 12,
     });
     assert.equal(TEST_ROUTE, "vscode/connection/test");
-    assert.deepEqual(calls, [["testConnection", REVIVED, { allowExternalFileAccess: true }, "vscode/connection/test"]]);
+    assert.deepEqual(calls, [
+      [
+        "testConnection",
+        REVIVED,
+        servedEngineRecord(WIRE.type),
+        { allowExternalFileAccess: true },
+        "vscode/connection/test",
+      ],
+    ]);
     assert.equal(registry.get("c1"), undefined);
   });
 
@@ -354,7 +363,7 @@ describe("connection/test", () => {
   });
 
   describe("its deadline", () => {
-    it("hands the core the connection, posture and route only, so the core's deadline bounds the test", async () => {
+    it("hands the core the connection, its record, the posture and the route only, so the core's deadline bounds the test", async () => {
       const handed: unknown[][] = [];
       const { handlers } = backend(fakeProvider(), {
         testConnection: async (...args) => {
@@ -363,7 +372,9 @@ describe("connection/test", () => {
         },
       });
       await handlers.testConnection({ connection: WIRE, posture: POSTURE });
-      assert.deepEqual(handed, [[REVIVED, { allowExternalFileAccess: true }, TEST_ROUTE]]);
+      assert.deepEqual(handed, [
+        [REVIVED, servedEngineRecord(WIRE.type), { allowExternalFileAccess: true }, TEST_ROUTE],
+      ]);
     });
 
     it("answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code", async () => {

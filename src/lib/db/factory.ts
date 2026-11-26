@@ -398,15 +398,16 @@ async function releaseTunnelOfUnopenedProvider(
  * Run `run` against a connection reachable through its SSH tunnel, then close the
  * tunnel unconditionally.
  *
- * This is the transport for callers that build a provider with
- * `createDatabaseProvider` directly - outside both provider caches - and connect it:
- * `POST /api/db/test-connection` and `POST /api/db/schema-snapshot`. Before #457 they
- * connected to the raw database host, so a tunnelled connection could never be tested
- * and therefore never be saved at all (the dialog gates its only save button on a
- * passing test), and the agent's grounding capture could not read a tunnelled schema.
+ * This is the transport for a caller that opens a provider outside both provider caches
+ * and connects it: Test Connection (`testConnection` in src/lib/api/test-connection.ts,
+ * which `POST /api/db/test-connection` and the VS Code extension's `connection/test` share),
+ * through the one-shot open (`openEngineOnce`) where the engine's record offers a tunnel.
+ * Before #457 it connected to the raw database host, so a tunnelled connection could never
+ * be tested and therefore never be saved at all (the dialog gates its only save button on a
+ * passing test).
  *
- * The tunnel is deliberately NOT pooled, unlike `getOrCreateProvider`'s. Those callers
- * cache nothing, so nothing would ever evict a pooled tunnel: `removeProvider` and the
+ * The tunnel is deliberately NOT pooled, unlike `getOrCreateProvider`'s. That caller
+ * caches nothing, so nothing would ever evict a pooled tunnel: `removeProvider` and the
  * idle sweep close the tunnel of a CACHED provider, and the connection dialog mints a
  * fresh id for every unsaved build - so each test click would strand an SSH client and
  * a listening local server for the life of the process. Ownership sits with this scope

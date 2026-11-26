@@ -241,10 +241,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/provider-host/open-engine.ts":
       "the one open function, gated above, calls it for a record no package serves, after the open check",
   },
-  createDatabaseProvider: {
-    "src/lib/api/test-connection.ts":
-      "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveServedConnection first",
-  },
   getOrCreateProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/cancel/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
@@ -275,7 +271,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
-      "testPackageConnection opens the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveServedConnection first",
+      "testConnection opens the connection its caller hands it, and its one caller in src, POST /api/db/test-connection, resolved it through resolveServedConnection first",
   },
   withOneShotTunnel: {
     "src/lib/api/test-connection.ts":

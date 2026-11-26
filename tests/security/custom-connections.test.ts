@@ -103,7 +103,7 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
     "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
   "api/test-connection.ts":
-    "testConnection builds for the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveServedConnection first",
+    "testConnection opens the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveServedConnection first",
 };
 
 const PROVIDER_BUILDERS = [
@@ -112,13 +112,14 @@ const PROVIDER_BUILDERS = [
   "getOrCreateMetadataProvider",
   "acquireExecutionProfileProvider",
   "withOneShotTunnel",
+  "openEngineOnce",
 ];
 
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So does
  * `editorProvider`, which every editor route opens its provider through (#1530), and `metadataProvider`, which the
  * monitoring, health and maintenance routes open the connection's metadata session through, and so does
- * `testConnection`, the Test Connection core, which builds a provider for the connection it is handed.
+ * `testConnection`, the Test Connection core, which opens the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
   `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider", "metadataProvider", "testConnection"].join("|")})\\s*\\(`,

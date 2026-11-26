@@ -326,7 +326,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/db/connection-field-rules.test.ts": [
         "its run-time graph reaches no React, component, provider or Node built-in module",
-        "fieldRuleRefusal answers what connectionFieldRefusal answers on the engine's form entry, and refuses a type outside the union by name",
         "a field holding null holds no value: its required rule refuses it and no other check reads it",
       ],
       "tests/unit/db/connection-field-rules/provider-acceptance.test.ts": [
@@ -2072,7 +2071,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles",
       ],
       "vscode-extension/test/unit/backend-handlers.test.ts": [
-        "hands the core the connection, posture and route only, so the core's deadline bounds the test",
+        "hands the core the connection, its record, the posture and the route only, so the core's deadline bounds the test",
         "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code",
       ],
     },
@@ -2756,6 +2755,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/test-connection-package-engine.test.ts": [
         "Test Connection opens an admitted engine's session through its package, reads its health and closes it",
         "Test Connection answers PROVIDER_UNAVAILABLE naming the refusal code for a refused package's engine",
+        "Test Connection runs one test for a legacy and a package engine, told apart only by the record's offers",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
         "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build",
@@ -2833,6 +2833,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/test-connection-package-engine.test.ts": [
         "a health failure answers the degraded success with Studio's sentence naming its code, and the session is still closed",
         "an open that fails answers Studio's sentence naming its code, not-sent, and a close that fails does not change the answer",
+        "a host defect during a package engine's test is logged as Studio's, and the package's own error as the package's",
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
         "a refusal of what the package answered is the package's failure, answered with Studio's sentence",

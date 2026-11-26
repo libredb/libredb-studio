@@ -43,6 +43,13 @@ const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
 });
+/** Test Connection's one-shot open of a legacy record: the provider built with the options and the execution context. */
+const mockOpenEngineOnce = mock(
+  async (connection: unknown, _engine: unknown, execution: unknown, _within: unknown, options: unknown) => ({
+    form: "provider",
+    provider: await mockCreateDatabaseProvider(connection, options, execution),
+  }),
+);
 const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
   void args;
   return { capabilities: mockProvider.getCapabilities(), labels: mockProvider.getLabels(), supportsQueryCancel: false };
@@ -80,6 +87,7 @@ mock.module("@/lib/db/factory", () => ({
   readProviderDeclarations: mockReadProviderDeclarations,
   findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
   isSingleWriterFileOpen: mock(() => false),
+  openEngineOnce: mockOpenEngineOnce,
 }));
 
 type Handler = (request: never) => Promise<Response>;

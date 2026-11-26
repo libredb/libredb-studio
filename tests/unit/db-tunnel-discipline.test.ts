@@ -23,6 +23,9 @@ import * as path from "path";
  * need the same awareness the author was missing. This rule needs none: the violation is
  * the shape of the file.
  *
+ * The factory's one-shot open of any record (`openEngineOnce`) builds a legacy provider the
+ * same way, so a file that imports either and connects what it got is held to the same rule.
+ *
  * Its limit, stated so nobody over-trusts it: it reads text. A provider obtained through
  * a helper, or a `connect()` reached by indirection, passes. It catches the careless
  * repeat, which is the case that actually happened, not a determined one.
@@ -68,9 +71,10 @@ function analyseTunnelDiscipline(relPath: string, source: string): Violation | n
   if (EXEMPT[relPath]) return null;
 
   const importsFactory = FACTORY_SPECIFIERS.some((specifier) =>
-    new RegExp(`import\\s+\\{[^}]*\\bcreateDatabaseProvider\\b[^}]*\\}\\s+from\\s+["']${specifier}["']`, "s").test(
-      source,
-    ),
+    new RegExp(
+      `import\\s+\\{[^}]*\\b(?:createDatabaseProvider|openEngineOnce)\\b[^}]*\\}\\s+from\\s+["']${specifier}["']`,
+      "s",
+    ).test(source),
   );
   if (!importsFactory) return null;
 
@@ -84,7 +88,7 @@ function analyseTunnelDiscipline(relPath: string, source: string): Violation | n
   return {
     file: relPath,
     reason:
-      "builds a provider with createDatabaseProvider and connects it, without withOneShotTunnel - " +
+      "builds a provider with createDatabaseProvider or openEngineOnce and connects it, without withOneShotTunnel - " +
       "so a connection with an SSH tunnel would dial the raw database host (#457)",
   };
 }
@@ -124,6 +128,15 @@ describe("SSH tunnel discipline (#457)", () => {
       await p.connect();
     `;
     expect(analyseTunnelDiscipline("src/app/api/db/other/route.ts", offender)).not.toBeNull();
+  });
+
+  test("flags a file that opens a provider through the one-shot open and connects it without the scope", () => {
+    const offender = `
+      import { openEngineOnce } from "@/lib/db/factory";
+      const opened = await openEngineOnce(connection, engine, execution, within, {});
+      await opened.provider.connect();
+    `;
+    expect(analyseTunnelDiscipline("src/app/api/db/once/route.ts", offender)).not.toBeNull();
   });
 
   test("accepts a file that wraps the provider in the scope", () => {
@@ -190,7 +203,7 @@ describe("SSH tunnel discipline (#457)", () => {
     //
     // The remaining one builds through `testConnection` (`src/lib/api/test-connection.ts`), which
     // `/api/db/test-connection` and the VS Code extension's `connection/test` share, so the scan
-    // reads the core, where the build and its tunnel now are.
+    // reads the core, where the one-shot open and its tunnel now are.
     const scanned = walk(SRC).map(repoRelative);
     expect(scanned).toContain("src/lib/api/test-connection.ts");
 

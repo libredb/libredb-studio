@@ -45,11 +45,10 @@
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection and the query route
  * serve an engine whose record offers no legacy provider in this Studio: each resolves its connection with its record
  * through `resolveServedConnection` (src/lib/seed/resolve-connection.ts), which reads the type through
- * `servedEngineRecord`; Test Connection then validates the connection against the
- * engine's field rules and opens one session through the package (`testPackageConnection` in
- * src/lib/api/test-connection.ts), and the query route runs a statement on the engine's cached session
- * (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over the provider factory's opens of any
- * record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
+ * `servedEngineRecord`; Test Connection then runs one test for every record, which reads what differs from the record's
+ * offers and grants (`testConnection` in src/lib/api/test-connection.ts), and the query route runs a statement on a
+ * package engine's cached session (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over the
+ * provider factory's opens of any record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *

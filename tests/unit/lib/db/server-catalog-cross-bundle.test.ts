@@ -45,7 +45,7 @@ interface RouteBundle {
   assertLegacyProvider(value: unknown, need: "route" | "open"): void;
   serverCatalogInstalled(): boolean;
   connectionFieldRefusal(rules: object, connection: DatabaseConnection): string | undefined;
-  fieldRuleRefusal(type: string, connection: DatabaseConnection): string | undefined;
+  CONNECTION_FORM: Readonly<Record<string, object>>;
   sqlGrammarFor(type: string): { readonly grammar: object };
   ProviderUnavailableError: new (...args: never[]) => Error;
   PackageEngineUnsupportedError: new (...args: never[]) => Error;
@@ -75,7 +75,8 @@ beforeAll(async () => {
   ]);
   route = await bundled<RouteBundle>("route", [
     `export { assertLegacyProvider, serverCatalogInstalled, serverEngine } from ${source("lib", "db", "server-catalog.ts")};`,
-    `export { connectionFieldRefusal, fieldRuleRefusal } from ${source("lib", "db", "connection-field-rules.ts")};`,
+    `export { connectionFieldRefusal } from ${source("lib", "db", "connection-field-rules.ts")};`,
+    `export { CONNECTION_FORM } from ${source("lib", "db", "connection-form.ts")};`,
     `export { sqlGrammarFor } from ${source("lib", "db", "sql-grammar", "index.ts")};`,
     `export { PackageEngineUnsupportedError, ProviderUnavailableError } from ${source("lib", "db", "errors.ts")};`,
     "",
@@ -158,7 +159,7 @@ describe("one server engine catalog across two bundles", () => {
       { host: "xy12345" },
     ]) {
       expect(route.connectionFieldRefusal(rules, connection(fields))).toBe(
-        route.fieldRuleRefusal("snowflake", connection(fields)),
+        route.connectionFieldRefusal(route.CONNECTION_FORM.snowflake as object, connection(fields)),
       );
     }
     // The grammar the boot bundle's record holds reads as the route bundle's own row of it.
