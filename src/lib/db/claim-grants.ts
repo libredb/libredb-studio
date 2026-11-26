@@ -94,8 +94,9 @@
  * only where the record's grant at the choice of database, `serverLevelAtCatalogChoice`, holds.
  *
  * Each legacy engine's grants are granted once, when this module loads, from its bundled request and its legacy row,
- * and read through `legacyEngineGrants`, which every legacy record holds; the tables below are cut from them for the
- * browser modules that still read a table, until M7. The server catalog's composer grants an admitted provider
+ * and read through `legacyEngineGrants`, which every legacy record holds and the browser's confirmation gate reads by
+ * id, until M7; the tables below are cut from them for the browser modules that still read a table, until M7. The
+ * server catalog's composer grants an admitted provider
  * package's engine through the same `grantEngineClaims`. The module holds literals, generated data and the register's
  * rows only, and the register's reader compiles no code, so the browser's readers, the read-only marker, the
  * connection form and the agent rail, load it as they load the records.
@@ -902,7 +903,9 @@ const LEGACY_ENGINE_GRANTS: ReadonlyMap<string, EngineGrants> = new Map(
 /**
  * Studio's grant of each claim of legacy engine `id`: `grantEngineClaims` with its bundled request, its SQL text
  * request (`legacySqlTextRequest`) and its legacy row, which the legacy adapter's record of the engine holds
- * (src/lib/provider-host/legacy-adapter/records.ts).
+ * (src/lib/provider-host/legacy-adapter/records.ts). The browser's confirmation gate reads it by id until M7
+ * (src/lib/sql/dangerous-query.ts and src/lib/db/destructive-commands.ts), since it holds a connection type and no
+ * record.
  *
  * @throws {Error} Naming the id, for an id the legacy adapter does not serve: a host defect.
  */

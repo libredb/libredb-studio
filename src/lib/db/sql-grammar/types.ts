@@ -42,8 +42,9 @@ export interface SqlGrammarSpec {
   /**
    * Whether this engine's statement text is SQL. `false` is a claim that loosens the confirmation gate, which then
    * neither asks about a run the SQL reader cannot read nor reads each statement the text splits into, so the gate
-   * counts it only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW` in
-   * `@/lib/db/confirmation-claim-review`) and otherwise reads the text as SQL. Every other reader reads it as declared.
+   * counts it only where Studio grants it from the engine's register row for the grammar that row reviewed
+   * (`legacyEngineGrants` in `@/lib/db/claim-grants`) and otherwise reads the text as SQL. The query event log reads
+   * the grant too; every other reader reads it as declared.
    */
   readonly readsSqlText: boolean;
   readonly updateTarget: UpdateTargetGrammar;

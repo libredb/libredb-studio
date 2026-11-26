@@ -1,7 +1,8 @@
 /**
  * The closed list of the exit of milestone M3 of the provider plugins program: every grant record and grant projection
- * keyed by engine id that a module of Studio's `src/` still exports, each with the change that removes it, an item of
- * M3 or, for a projection a browser module reads, milestone M7 and those readers.
+ * keyed by engine id that a module of Studio's `src/` still exports, and every function answering a legacy engine's
+ * grants by its id, each with the change that removes it, an item of M3 or, for a projection or a function a browser
+ * module reads, milestone M7 and those readers.
  * tests/unit/db/no-core-grant-records.test.ts holds core to it, and tests/unit/db/claim-grants.test.ts holds the grant
  * reader's engine-keyed exports to its M7 entries; a module of its own so both read it without importing a test file.
  */
@@ -52,6 +53,14 @@ export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     removedBy: {
       milestone: "M7",
       readers: ["src/components/login/hero-proof.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
+    },
+  },
+  {
+    module: CLAIM_GRANTS,
+    name: "legacyEngineGrants",
+    removedBy: {
+      milestone: "M7",
+      readers: ["src/lib/db/destructive-commands.ts", "src/lib/sql/dangerous-query.ts"],
     },
   },
 ];

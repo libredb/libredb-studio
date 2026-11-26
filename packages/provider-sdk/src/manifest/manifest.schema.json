@@ -1946,7 +1946,7 @@
       "type": "object",
       "properties": {
         "readsSqlText": {
-          "description": "Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it, and every other reader reads it as declared.",
+          "description": "Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate and the query event log count only where Studio grants it, from the engine's register row for the grammar the row reviewed, and every other reader reads it as declared.",
           "type": "boolean"
         },
         "grammar": {
@@ -2076,7 +2076,7 @@
           "uniqueItems": true
         },
         "confirmExemptForms": {
-          "description": "Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it; empty where every shared keyword asks.",
+          "description": "Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio grants it, from the engine's register row for the grammar the row reviewed; empty where every shared keyword asks.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/keywordSequence"

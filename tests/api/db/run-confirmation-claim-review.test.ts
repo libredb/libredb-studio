@@ -1,19 +1,21 @@
 /**
- * The server's confirmation of a run reads a row's loosening claim only where Studio's review record lists it
- * (`CONFIRMATION_CLAIM_REVIEW`), on every route it serves: `POST /api/db/query`, `POST /api/db/multi-query` and
- * `POST /api/db/transaction` with `action: "query"`.
+ * The server's confirmation of a run reads a claim that loosens the gate only where the engine's register row grants it
+ * for the grammar that row reviewed, and asks about every statement of an engine whose grammar its row did not review,
+ * on every route it serves: `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` with
+ * `action: "query"`.
  *
- * The claims are planted, since no shipped row makes an unlisted one: a decides-alone row is the stand-in vocabulary
- * row under Trino, and the two grammar claims are planted as a declaration states them, in the generated SQL text the
- * grammar is composed from: an exempt form is Trino's real entry with `DELETE FROM` added to its `confirmExemptForms`,
- * and a text-not-SQL claim is Druid's real entry with `readsSqlText: false`. The generated module is mocked before
- * anything that reaches the grammar registry is imported, because `SQL_GRAMMAR` is composed from it when it loads, so
- * this file imports only `bun:test` statically. Only what answers before a provider is replaced:
+ * The ungranted requests are planted, since no shipped declaration makes one: a decides-alone row is the stand-in
+ * vocabulary row under Trino, and the two grammar claims are planted as a declaration states them, in the generated
+ * SQL text the grammar is composed from: an exempt form is Trino's real entry with `DELETE FROM` added to its
+ * `confirmExemptForms`, and a text-not-SQL claim is Druid's real entry with `readsSqlText: false`. SQLite's register
+ * row is planted to review no grammar, through the register's reader (tests/helpers/planted-legacy-register.ts). Both
+ * modules are mocked before anything that reaches the grammar registry or the grant reader is imported, because
+ * `SQL_GRAMMAR` and the legacy grants are composed from them when they load, so this file imports only `bun:test`
+ * statically. Only what answers before a provider is replaced:
  * the session, the connection resolution, the provider cache, the query route's open of the editor's session and the
  * query event insert.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const { BUNDLED_SQL_TEXT } = await import("@/lib/db/engine-catalog/sql-text.generated");
 mock.module("@/lib/db/engine-catalog/sql-text.generated", () => ({
@@ -26,6 +28,13 @@ mock.module("@/lib/db/engine-catalog/sql-text.generated", () => ({
     druid: { ...BUNDLED_SQL_TEXT.druid, readsSqlText: false },
   },
 }));
+const { plantedRegisterReader } = await import("../../helpers/planted-legacy-register");
+const realRegister = { ...(await import("@libredb/grant-register")) };
+mock.module("@libredb/grant-register", () => ({
+  ...realRegister,
+  readGrantRegister: plantedRegisterReader(realRegister, { sqlite: { grammarSha256: null } }),
+}));
+const { servedEngineRecord } = await import("@/lib/db/server-catalog");
 
 const { createMockProvider } = await import("../../helpers/mock-provider");
 const mockProvider = createMockProvider();
@@ -147,6 +156,12 @@ describe.each(ROUTES)("POST %s", (path, post, extra) => {
 
   test("an unreadable run under a text-not-sql plant says unreadable", async () => {
     await expectAsked(await run("druid", "SELECT '\\'; DELETE FROM t", "ask"), true);
+  });
+
+  test("a grammar no register row reviews is answered 428 when asked, a read included, before any provider", async () => {
+    await expectAsked(await run("sqlite", "SELECT 1", "ask"));
+    process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    await expectAsked(await run("sqlite", "SELECT 1"));
   });
 
   test("required mode answers 428 for each planted claim without the field", async () => {

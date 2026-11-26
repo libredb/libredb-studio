@@ -16,10 +16,10 @@ import type { DatabaseType } from "@/lib/types";
  * Milvus's and Qdrant's, in describe("the milvus row") and describe("the qdrant row") of the same unit file and
  * describe("the real milvus row") and describe("the real qdrant row") of `tests/hooks/use-query-execution.test.ts`.
  *
- * The row declares `decidesAlone: true`, and Studio's review record of the claims that loosen the confirmation gate
- * (`CONFIRMATION_CLAIM_REVIEW`) does not list it, so the gate reads the stand-in's texts as SQL under Trino's grammar
- * as well as through the row. A stand-in text is therefore one that holds no SQL write; a test that needs the row to
- * be the whole answer uses a shipped row, and the stand-in is never added to the record.
+ * The row declares `decidesAlone: true`, and Trino's register row does not grant that claim (`decidesAlone` of
+ * `legacyEngineGrants` in src/lib/db/claim-grants.ts), so the gate reads the stand-in's texts as SQL under Trino's
+ * grammar as well as through the row. A stand-in text is therefore one that holds no SQL write; a test that needs the
+ * row to be the whole answer uses a shipped row, and the stand-in's claim is never granted in the register.
  */
 export const STAND_IN_TYPE: DatabaseType = "trino";
 

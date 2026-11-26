@@ -636,7 +636,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it",
         "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment",
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id",
       ],
       "tests/unit/mcp/served-engines.test.ts": [
         "an engine agent mode does not execute on is not served, whatever its rows say",
@@ -656,6 +656,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a policy and an MCP segment at every claim's restrictive value are admitted",
         "an engine whose connection, facets, agent and SQL text claims are at their restrictive values is admitted",
         "a catalog read that claims no command, the claim's restrictive value, is admitted",
+      ],
+      "tests/unit/lib/api/run-confirmation.test.ts": [
+        "a package run is classified under the declared grammar its register row reviewed: a read runs, a write asks, a production connection asks its name",
       ],
       "tests/unit/seed/types.test.ts": [
         "refuses readOnly: true on every engine whose write reach is open, naming the type and the field",
@@ -1288,6 +1291,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/sql/confirmation-claim-review-gate.test.ts": [
         "mongodb and redis text is not read as SQL",
         "snowflake's session forms stay exempt",
+        "a grammar Studio did not review asks about every statement",
+        "a form the engine's register row grants is exempt, and a form only its row lists asks",
+      ],
+      "tests/isolated/sql-text-claim-grants.test.ts": [
+        "each SQL text gate answers Studio's grant of its claim from the register, not the record or the declaration",
       ],
       "tests/unit/lib/db/confirmation-claim-review.test.ts": [
         "lists every exempt form a shipped grammar row declares, and no other",
@@ -1297,7 +1305,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id",
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
         "a package engine no register row reviews asks about every statement, a read included, and a production connection asks its name",

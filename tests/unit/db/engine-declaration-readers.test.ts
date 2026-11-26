@@ -108,7 +108,7 @@ const QUERY_EDITOR_MEMBERS = ["editor.dialect", "editor.language"] as const;
 /**
  * The SQL text members the SQL text is projected from, M-78: authored members, M-15, its redaction, a claim, never
  * among them. `readsSqlText` and an exempt form of the grammar are the confirmation gate's claims, which the gate
- * counts only through `CONFIRMATION_CLAIM_REVIEW` (S-8), and every other reader reads as declared.
+ * counts only as Studio grants them from the engine's register row for the grammar that row reviewed (S-8).
  */
 const SQL_TEXT_MEMBERS = [
   "sqlText.readsSqlText",
@@ -794,7 +794,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -819,26 +819,37 @@ describe("engine declaration readers", () => {
       "src/lib/db/server-catalog-compose.ts",
       "src/lib/db/sql-grammar/index.ts",
     ]);
-    // The gate counts each through the review record: the modules that import it are the gate's two, each importing
-    // only isReviewedConfirmationClaim, and the SQL reading asks it about exactly these two kinds of claim.
-    const importers = sourceFiles().flatMap((file) => {
-      const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, false);
-      return source.statements.flatMap((statement) => {
-        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
-        if (statement.moduleSpecifier.text !== "@/lib/db/confirmation-claim-review") return [];
-        const bindings = statement.importClause?.namedBindings;
-        const names =
-          bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements.map((e) => e.name.text) : [];
-        return [{ path: file.path, names }];
+    // The gate counts each as its engine's grant: the browser's gate reads a legacy engine's grants by id
+    // (`legacyEngineGrants`), which only the legacy records and the gate's two modules import, and the server's gate
+    // reads a package engine's from its record. No module imports a review record of the gate's claims.
+    const vscodeFiles = readdirSync(path.join(ROOT, "vscode-extension/src"), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
+      .map((entry) => path.relative(ROOT, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+      .map((file) => ({ path: file, text: readFileSync(path.join(ROOT, file), "utf8") }));
+    const importsOf = (specifier: string) =>
+      [...sourceFiles(), ...vscodeFiles].flatMap((file) => {
+        const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, false);
+        return source.statements.flatMap((statement) => {
+          if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+          if (statement.moduleSpecifier.text !== specifier) return [];
+          const bindings = statement.importClause?.namedBindings;
+          const names =
+            bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements.map((e) => e.name.text) : [];
+          return [{ path: file.path, names }];
+        });
       });
-    });
-    expect(importers).toEqual([
-      { path: "src/lib/db/destructive-commands.ts", names: ["isReviewedConfirmationClaim"] },
-      { path: "src/lib/sql/dangerous-query.ts", names: ["isReviewedConfirmationClaim"] },
+    expect(
+      [...importsOf("@/lib/db/claim-grants"), ...importsOf("./claim-grants")]
+        .filter((entry) => entry.names.includes("legacyEngineGrants"))
+        .map((entry) => entry.path)
+        .sort(),
+    ).toEqual([
+      "src/lib/db/destructive-commands.ts",
+      "src/lib/provider-host/legacy-adapter/records.ts",
+      "src/lib/sql/dangerous-query.ts",
     ]);
-    const gate = readFileSync(path.join(ROOT, "src/lib/sql/dangerous-query.ts"), "utf8");
-    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "exempt-form", type: databaseType, form })');
-    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "text-not-sql", type: databaseType })');
+    expect(vscodeFiles.length).toBeGreaterThan(0);
+    expect(importsOf("@/lib/db/confirmation-claim-review")).toEqual([]);
   }, 60_000);
 
   test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
