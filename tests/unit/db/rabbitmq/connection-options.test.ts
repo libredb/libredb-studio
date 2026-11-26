@@ -25,6 +25,8 @@ import {
 } from "../../../helpers/node-transport-fixtures";
 import { RABBITMQ_TEST_PASSWORD, rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
 import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { type CredentialWarning } from "@/lib/db/credential-warnings";
 
 const CA = readFileSync(join(import.meta.dir, "../../../fixtures/tls/ca.crt"), "utf8");
 
@@ -281,5 +283,13 @@ describe("the server name a trailing-dot host sends", () => {
       transport.close();
     }
     expect(listener.seen[0].servername).toBe("localhost");
+  });
+});
+
+describe("the dialog's credential warning", () => {
+  const RABBITMQ = DB_UI_CONFIG.rabbitmq;
+  test("the dialog declares a credential pair warning", () => {
+    const pair = (RABBITMQ.credentialWarnings ?? []).find((warning: CredentialWarning) => warning.kind === "pair");
+    expect(pair?.message).toBeDefined();
   });
 });

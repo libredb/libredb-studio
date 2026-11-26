@@ -147,3 +147,14 @@ describe("the system clock and deadline signal", () => {
     expect((signal.reason as DOMException).name).toBe("TimeoutError");
   });
 });
+
+/** Every RABBITMQ_ export of limits.ts but the limiter keys, the clock and the deadline factory. */
+const CONSTANTS = Object.entries(limits).filter(
+  ([name, value]) => name.startsWith("RABBITMQ_") && !name.endsWith("_LIMITER_KEY") && typeof value !== "function",
+);
+
+describe("the exported constants", () => {
+  test("limits.ts exports more than thirty RABBITMQ_ constants", () => {
+    expect(CONSTANTS.length).toBeGreaterThan(30);
+  });
+});
