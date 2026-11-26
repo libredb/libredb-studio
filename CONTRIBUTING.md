@@ -87,9 +87,10 @@ Feature suggestions are welcome! Please provide:
    Use it in a memory-limited container that has no CPU limit, and when a file comes back as killed by SIGKILL from outside the runner, which on Linux is usually the OOM killer.
    A flag meant for `bun test` goes past a `--` the runner can see, which means invoking the runner directly with a selector first: `bun tests/run-tests.ts tests/unit -- --bail`.
    `bun run test -- --bail` does not work, because `bun run` removes the first `--` before the script sees it, and bun removes one that sits straight after the script path too.
-5. **Keep the provider triad in lockstep.** Anything under `src/lib/db/providers/**` has a matching
-   `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`; a change to
-   one moves the other two in the same PR.
+5. **Keep the provider triad.** Anything under `src/lib/db/providers/**` has a matching
+   `tests/integration/db/<type-id>-provider.test.ts`, and the two change together in the same PR;
+   `docs/providers/<type-id>.md` is frozen until its engine moves into its package, where it is
+   rewritten from the manifest.
 6. **Localized READMEs are guarded.** `README_es.md`, `README_hi.md`, `README_ja.md`, `README_pt.md`, `README_ru.md`, `README_ur.md`, and `README_zh.md` must list the same engines
    as `README.md` and quote install commands verbatim; `bun run readme:check` enforces it.
 7. **Follow the coding style**, write clear commit messages, and update documentation with the code.
@@ -191,9 +192,10 @@ maintainers and written down where you can read them and disagree.
   pull request is read as a review rather than a comment. Nothing to apply for and nothing to reach;
   we put you here, and the reason is written beside your name.
 - **Area owner** — you own one area: a database provider, or a subsystem such as the Helm chart or
-  the SQL editor. For a provider that means the triad the repository is built on — the code under
-  `src/lib/db/providers/`, the doc under `docs/providers/` and the tests under
-  `tests/integration/db/` move together, and a change to your area is reviewed with you. Offered by
+  the SQL editor. For a provider that means the triad the repository is built on: the code under
+  `src/lib/db/providers/` and the tests under `tests/integration/db/` move together, the doc under
+  `docs/providers/` is frozen until the engine moves into its package, and a change to your area is
+  reviewed with you. Offered by
   the maintainers, and offered to people who have already been answering questions about that area.
 - **Maintainer** — carries the project: the releases, the review, and the decisions nobody else can
   make. Not a rung you climb to from the ones above it, which is why it is listed separately rather

@@ -1,8 +1,8 @@
 /**
  * The migration DDL function modules the registry imports, read from the import statements of
- * `src/lib/db/migration-ddl/index.ts` as source rather than from a list typed here, so the seam and docs tests cover
- * every module the registry reaches and a new one the day it lands. `compose.test.ts` holds each binding to the slot
- * Studio's migration DDL function table binds it at.
+ * `src/lib/db/migration-ddl/index.ts` as source rather than from a list typed here, so the seam, isolation and
+ * written-module tests cover every module the registry reaches and a new one the day it lands. `compose.test.ts` holds
+ * each binding to the slot Studio's migration DDL function table binds it at.
  *
  * Each module's engine is read from its path: the directory of a `migration-ddl.ts`, and the prefix of an
  * `<id>-migration-ddl.ts`.

@@ -3137,7 +3137,7 @@ An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that send
 2. Add the engine's review row to `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` once its read-only statement path is reviewed; every agent and MCP statement gate reads that record, and `agent-manifest.test.ts` fails while an engine has a language the record does not list.
 3. Write `languages/<statement-language>/engines/<type-id>.ts`, its server overlay declared `satisfies AgentEngineServerOverlay<...>`, with every dialect-bound member supplied or `"unsupported"`.
 4. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.
-5. Add the `Agent language pack` subsection to `docs/providers/<type-id>.md`, which `tests/unit/lib/agent/engine-docs.test.ts` holds to the overlay row for row.
+5. Leave `docs/providers/<type-id>.md` as it is: a provider doc is frozen until its engine moves into its own package, where the doc is rewritten from the manifest.
 6. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
 7. Run `bun run engines:generate` and commit the regenerated engine declaration, whose `agent.overlay` states the server overlay (`docs/providers/CONTRACT.md`, M-67).
 

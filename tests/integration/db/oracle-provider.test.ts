@@ -20,8 +20,6 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes } from "@/lib/export/binary";
 import { buildResultExport } from "@/lib/export/result-export";
@@ -31,7 +29,6 @@ import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table"
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -6902,32 +6899,10 @@ describe("Oracle object source", () => {
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new OracleProvider(baseConfig);
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/oracle.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
-      "the engine has no transaction to leave open",
-    ]);
   });
 });
 
@@ -7419,13 +7394,8 @@ describe("MCP run_read_query on an Oracle connection", () => {
     await clearProviderCache();
   });
 
-  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/oracle.md"), "utf8");
-
+  test("MCP_STATEMENT_READ opens Oracle", () => {
     expect(MCP_STATEMENT_READ.oracle).toBe(true);
-    expect(doc).toContain("`MCP_STATEMENT_READ.oracle` is true");
-    expect(doc).not.toContain("MCP's statement read stays closed on Oracle");
-    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("oracle").statements}:`);
   });
 
   test("reads rows under the agent profile after the check, paged one row past max_rows", async () => {

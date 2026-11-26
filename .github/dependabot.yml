@@ -115,8 +115,8 @@ updates:
 
     ignore:
       # Database driver majors are deliberate work, not a merge. Each one is
-      # bound by the provider tri-sync rule (code, docs and tests move in the
-      # same pull request) and, more importantly, our unit tests mock these
+      # bound by the provider triad (code and tests move in the same pull
+      # request) and, more importantly, our unit tests mock these
       # drivers - so a major that changes wire behaviour passes CI green and
       # breaks only against a real server. ioredis 6 is the live example: it
       # defaults to RESP3, and src/lib/db/providers/keyvalue/redis.ts parses

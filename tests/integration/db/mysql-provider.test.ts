@@ -6,8 +6,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { Readable } from "node:stream";
 import { callerBoundTruncationReason, isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
@@ -8666,39 +8664,10 @@ describe("MySQL object source", () => {
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new MySQLProvider(makeMySQLConfig());
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mysql.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-
-    // The absence here is the DRIVER's: mysql2 3.24.4 publishes no transaction flag on
-    // a connection. It is NOT the pool's - this provider already addresses a session it
-    // handed back, with `KILL QUERY` in `cancelQuery()` - and it is not the server's,
-    // which was measured. The doc has to name both server-side asks, including the one
-    // that does not answer, or the next reader reads a shut door where one stands open.
-    expect(doc).not.toContain("a pool cannot be asked");
-    expect(doc).toContain("performance_schema.events_transactions_current");
-    expect(doc).toContain("information_schema.innodb_trx");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });
 

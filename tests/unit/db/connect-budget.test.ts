@@ -5,7 +5,7 @@
  *
  * The census in tests/unit/db/engine-declarations.test.ts holds `connectBudgetFor` to every declaration; this file
  * holds the budgets' own facts: the host's default and why it has that value, which engines state a budget of their
- * own, the refusal of a value that is no type id, and the provider documents that state a budget.
+ * own, and the refusal of a value that is no type id.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -17,7 +17,6 @@ import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget"
 import { DEFAULT_POOL_CONFIG } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
-import { providerTriad } from "../../helpers/provider-layout";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
@@ -26,9 +25,6 @@ function declaredBudget(type: DatabaseType): ConnectBudget {
   const file = path.join(ROOT, "src/lib/db/engine-declarations", `${type}.json`);
   return (JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration).connection.connectBudgetMs;
 }
-
-/** The heading of the subsection a provider document states its engine's connect budget under. */
-const HEADING = /^### Connect budget$/m;
 
 describe("connect budgets", () => {
   test("the host's default is the pools' 60 s acquire bound plus 10 s", () => {
@@ -64,21 +60,5 @@ describe("connect budgets", () => {
     expect(openDeadlineSentence(140_000)).toBe(
       "The connection did not open within 140 seconds, so Studio stopped waiting for it and sent nothing.",
     );
-  });
-
-  test("the document of each engine that declares a connect budget states it in seconds, and no other provider document states one", () => {
-    const misstated = SHIPPED_DATABASE_TYPES.filter((type) => {
-      const text = readFileSync(providerTriad(ROOT, type).doc, "utf8");
-      const budget = declaredBudget(type);
-      if (budget === null) return HEADING.test(text);
-      const section = text.slice(text.search(HEADING)).split(/\n#{2,3} /)[0];
-      return !(
-        HEADING.test(text) &&
-        section.includes(`${budget / 1000} seconds`) &&
-        section.includes(`src/lib/db/engine-declarations/${type}.json`)
-      );
-    });
-
-    expect(misstated).toEqual([]);
   });
 });

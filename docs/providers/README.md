@@ -1,8 +1,8 @@
 # Database Provider Reference
 
 This folder holds the **prime (canonical) reference for each database provider** in LibreDB Studio.
-There is exactly one document per provider, named by the provider's canonical **type-id** and kept
-in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CLAUDE.md)).
+There is exactly one document per provider, named by the provider's canonical **type-id** and frozen
+until its engine moves into its own package, where it is rewritten from the package's manifest (see the provider triad in [`../../CLAUDE.md`](../../CLAUDE.md)).
 
 | Provider | type-id | Family | Driver | Query language | Reference |
 |----------|---------|--------|--------|----------------|-----------|
@@ -58,14 +58,12 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
-  document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
+  document, because the provider triad is per type-id and each doc is the prime reference for its
   own product's measured behaviour.
-- **Each doc mirrors the code.** Every `file:line` citation is verified, and the per-provider triad
-  — code, this doc, and `tests/integration/db/<type-id>-provider.test.ts` — must stay in sync in the
-  same PR (the *provider tri-sync invariant*).
-  **Agent leg:** a type-id whose `AGENT_STATEMENT_LANGUAGE` row is non-null also keeps, in the same PR: Code: `src/lib/agent/languages/<statement-language>/engines/<type-id>.ts` plus its client row in `languages/<statement-language>/engines/client.ts` · Docs: the `Agent language pack` subsection of its doc here · Tests: `tests/unit/lib/agent/engine-docs.test.ts`, plus the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`.
-- Each doc carries one unnumbered `Engine facets` subsection in its monitoring section, at the heading level the doc's own scheme gives it, which links the engine's `ENGINE_FACETS` row module and states each of the seven monitoring panels as offered or not, with what an unoffered panel's method answers, in one `Maintenance operations offered:` line the maintenance operations the row offers, or `none`, and in one `Agent readings offered:` line the curated `inspect_operations` readings the row offers agent mode, or `none`, held to the row by `tests/unit/db/engine-facets/docs.test.ts`.
-  `tests/unit/db/engine-facets/docs.test.ts` holds it to the row.
+- **Each doc is frozen.** A doc here is not edited until its engine moves into its own package, where the doc is rewritten from the package's manifest.
+  Code and `tests/integration/db/<type-id>-provider.test.ts` stay 1:1 per type-id and change together in the same PR, and `tests/unit/provider-doc-freeze.test.ts` refuses any test or script outside its reviewed list that reads a doc's text.
+  **Agent leg:** a type-id whose `AGENT_STATEMENT_LANGUAGE` row is non-null also keeps, in the same PR: Code: `src/lib/agent/languages/<statement-language>/engines/<type-id>.ts` plus its client row in `languages/<statement-language>/engines/client.ts` · Tests: the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`.
+- Each doc carries one unnumbered `Engine facets` subsection in its monitoring section, at the heading level the doc's own scheme gives it, which links the engine's `ENGINE_FACETS` row module and states each of the seven monitoring panels as offered or not, with what an unoffered panel's method answers, in one `Maintenance operations offered:` line the maintenance operations the row offers, or `none`, and in one `Agent readings offered:` line the curated `inspect_operations` readings the row offers agent mode, or `none`.
 - An agent-capable engine's doc carries an `Agent language pack` subsection in its agent or capabilities section, numbered in the doc's own scheme, naming its statement-language family and every member of its overlay.
 - Each doc follows the same ~15-section shape: Overview → Architecture → Design decisions →
   Connection → Query interface → Schema → Monitoring → Maintenance → Capabilities & labels → Error

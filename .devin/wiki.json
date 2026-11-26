@@ -48,7 +48,7 @@
       "page_notes": [
         "Provider logic is intentionally split across one base class plus one file per provider; do not summarize only the base class - enumerate each concrete provider and the method it overrides.",
         "Behaviour is driven through capabilities/labels, NOT via type-checks like type === 'mongodb' outside provider classes. State this design rule explicitly.",
-        "Each provider is a 1:1 triad kept in lockstep: code at src/lib/db/providers/<family>/<type-id>.ts, docs at docs/providers/<type-id>.md, tests at tests/integration/db/<type-id>-provider.test.ts. Canonical type-ids: postgres, mysql, sqlite, oracle, mssql, mongodb, redis."
+        "Each provider is a 1:1 triad: code at src/lib/db/providers/<family>/<type-id>.ts and tests at tests/integration/db/<type-id>-provider.test.ts, kept in lockstep, and docs at docs/providers/<type-id>.md, frozen until the engine moves into its package, where it is rewritten from the manifest. Canonical type-ids: postgres, mysql, sqlite, oracle, mssql, mongodb, redis."
       ]
     },
     {
@@ -192,7 +192,7 @@
     },
     {
       "title": "Glossary",
-      "purpose": "Define the project-specific terms, abbreviations, and domain concepts a new contributor needs to read the rest of the wiki. Define at least: Provider (a Strategy-Pattern adapter for a database or LLM); type-id (a provider's canonical identifier, e.g. mssql not sqlserver); the SQLBaseProvider vs BaseDatabaseProvider split; tri-sync (the invariant that code, docs, and tests for a provider stay in lockstep in the same PR); Storage Layer (where user data such as connections and history persists - distinct from the databases the user queries); the embedding layer / @libredb/studio package (src/workspace + src/exports, built via build:lib); standalone vs embedded run modes; RBAC and the src/proxy.ts middleware; write-through cache (localStorage serves reads, mutations are pushed to the server debounced); OIDC/PKCE auth; the Query Safety and Schema Description AI features. Keep each definition to one or two sentences and link to the relevant wiki page."
+      "purpose": "Define the project-specific terms, abbreviations, and domain concepts a new contributor needs to read the rest of the wiki. Define at least: Provider (a Strategy-Pattern adapter for a database or LLM); type-id (a provider's canonical identifier, e.g. mssql not sqlserver); the SQLBaseProvider vs BaseDatabaseProvider split; tri-sync (the invariant that code and tests for a provider stay in lockstep in the same PR, while its doc is frozen until the engine moves into its package); Storage Layer (where user data such as connections and history persists - distinct from the databases the user queries); the embedding layer / @libredb/studio package (src/workspace + src/exports, built via build:lib); standalone vs embedded run modes; RBAC and the src/proxy.ts middleware; write-through cache (localStorage serves reads, mutations are pushed to the server debounced); OIDC/PKCE auth; the Query Safety and Schema Description AI features. Keep each definition to one or two sentences and link to the relevant wiki page."
     }
   ]
 }

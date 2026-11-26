@@ -1,6 +1,4 @@
 import { beforeAll, describe, test, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { CreateTableSpec } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
@@ -14,7 +12,7 @@ import { TRINO_CREATE_TABLE } from "@/lib/db/providers/sql/trino/create-table";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 /**
- * Every provider's `createTable` declaration, and every declared grammar against its own invariants and its doc (#1822).
+ * Every provider's `createTable` declaration, and every declared grammar against its own invariants (#1822).
  *
  * `createTable` is what puts the Create Table form, the object-tree "Create <kind>" item and the import into a new
  * table in front of an engine, and its value is the grammar the form writes. A provider that declares none offers
@@ -23,8 +21,6 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor, and
  * `getCapabilities()` is plain data, so the census runs against `CENSUS_CONNECTION`'s unconnected configurations.
  */
-
-const ROOT = join(import.meta.dir, "..", "..", "..");
 
 /** The eight ids that declare a grammar, each with the driver-free constant it returns. libsql embeds SQLite. */
 const DECLARED: Readonly<Partial<Record<DatabaseType, CreateTableSpec>>> = Object.freeze({
@@ -40,16 +36,6 @@ const DECLARED: Readonly<Partial<Record<DatabaseType, CreateTableSpec>>> = Objec
 
 const ALL_TYPES = Object.keys(CENSUS_CONNECTION) as DatabaseType[];
 const DECLARING_TYPES = Object.keys(DECLARED) as DatabaseType[];
-
-/** The lines of `docs/providers/<id>.md` under its "Create Table form" heading, up to the next heading as deep. */
-function createTableSection(type: DatabaseType): string | undefined {
-  const lines = readFileSync(join(ROOT, "docs", "providers", `${type}.md`), "utf8").split("\n");
-  const start = lines.findIndex((line) => /^#{1,6} Create Table form\s*$/.test(line));
-  if (start === -1) return undefined;
-  const depth = (/^#+/.exec(lines[start]) as RegExpExecArray)[0].length;
-  const end = lines.findIndex((line, index) => index > start && new RegExp(`^#{1,${depth}} `).test(line));
-  return lines.slice(start + 1, end === -1 ? undefined : end).join("\n");
-}
 
 describe("createTable census (#1822)", () => {
   describe("over every type-id", () => {
@@ -97,12 +83,5 @@ describe.each(Object.entries(DECLARED) as [DatabaseType, CreateTableSpec][])("th
 
   test("is plain data that survives the JSON trip to the browser", () => {
     expect(JSON.parse(JSON.stringify(spec))).toEqual(spec);
-  });
-
-  test("its doc has a Create Table form section naming every type and the auto-increment clause", () => {
-    const section = createTableSection(type);
-    expect(section, `docs/providers/${type}.md has no "Create Table form" heading`).toBeDefined();
-    for (const name of spec.types) expect(section, `${type}: ${name}`).toContain(name);
-    if (spec.autoIncrement !== undefined) expect(section).toContain(spec.autoIncrement.clause);
   });
 });

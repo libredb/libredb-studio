@@ -151,9 +151,6 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "    On Redis its one bounded `SCAN` walk, on a primary, deletes each expired key it meets and, on a server whose `notify-keyspace-events` holds the expired class, publishes an `expired` event for it, as a read of that key would (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-05), and `inspect_schema` stays annotated read-only there, as `run_redis_read` does.",
     );
-    expect(read("docs/providers/redis.md")).toContain(
-      "On a primary that walk deletes each expired key it meets, and on a server whose `notify-keyspace-events` holds the expired class it publishes an `expired` event for each",
-    );
   });
 
   test("says inspect_schema's timeout_ms bounds the whole call", () => {
@@ -249,15 +246,11 @@ describe("docs/MCP.md", () => {
 
   // Measured through /api/mcp: only the call that opens the connection runs the handshake; a later call reuses the
   // acquisition the factory keeps for 30 idle minutes and opens the read's session alone.
-  test.each(["docs/MCP.md", "docs/providers/mqtt.md", "docs/providers/sparkplug.md"])(
-    "%s counts two broker sessions on the call that opens the connection and one on a later call",
-    (doc) => {
-      const text = read(doc);
-      expect(text).toContain("The call that opens the connection opens two broker sessions");
-      expect(text).toContain("A later call on the same connection reuses that acquisition");
-      expect(text).not.toContain("A call opens two broker sessions");
-    },
-  );
+  test("docs/MCP.md counts two broker sessions on the call that opens the connection and one on a later call", () => {
+    expect(MCP_DOC).toContain("The call that opens the connection opens two broker sessions");
+    expect(MCP_DOC).toContain("A later call on the same connection reuses that acquisition");
+    expect(MCP_DOC).not.toContain("A call opens two broker sessions");
+  });
 
   // Measured through /api/mcp: a broker that accepts TCP and never sends CONNACK is given up when the handshake's own
   // 3-second window ends, whatever timeout_ms is, and answered as an engine error, not the timeout answer.
@@ -574,11 +567,6 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.",
     );
-    const doc = read("docs/providers/cassandra.md");
-    expect(doc).toContain(
-      "A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
-    );
-    expect(doc).toContain("a read with its own `LIMIT` past 1000 rows, and a result past 1 MiB, is refused, never cut");
   });
 
   test("says what a cancel and a timeout do to an Oracle statement, as measured on 26ai Free 23.26.3", () => {
@@ -596,26 +584,6 @@ describe("docs/MCP.md", () => {
     );
     expect(MCP_DOC).toContain("    - Oracle: a `SELECT` (a `WITH` is fine).");
   });
-
-  // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
-  // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
-  test.each([
-    "docs/providers/clickhouse.md",
-    "docs/providers/libsql.md",
-    "docs/providers/influxdb3.md",
-    "docs/providers/opensearch.md",
-    "docs/providers/couchbase.md",
-  ])(
-    "%s, one of the provider docs that describe paging, says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000",
-    (doc) => {
-      const text = read(doc);
-      expect(text).toContain(
-        "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
-      );
-      expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
-      expect(text).toContain("read with its own `LIMIT` past 1000 rows");
-    },
-  );
 
   test("says how each engine a statement tool serves enforces read-only, one line per engine and no other", () => {
     expect(boundaryLabels().sort()).toEqual(servedLabels().sort());
@@ -688,12 +656,6 @@ describe("docs/MCP.md", () => {
     const at = lines.findIndex((line) => line.startsWith("On SQL Server the login must hold no fixed server role"));
     expect(lines[at - 1].startsWith("On PostgreSQL the seed's role must not be a superuser")).toBe(true);
     expect(lines[at + 1]).toBe(SQLITE_SEED);
-  });
-
-  test("docs/providers/sqlite.md says how MCP lists and refuses a SQLite seed under the denied posture", () => {
-    expect(read("docs/providers/sqlite.md")).toContain(
-      "Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).",
-    );
   });
 
   test("says run_read_query on PostgreSQL and SQL Server needs a least-privilege seed principal", () => {

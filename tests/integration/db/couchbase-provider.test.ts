@@ -7,11 +7,9 @@
  * 8.0.2 Community node, so the fake speaks exactly what the cluster speaks.
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn, afterAll, beforeAll } from "bun:test";
-import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
@@ -38,7 +36,6 @@ import {
 } from "@/lib/db/object-kinds";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -2658,36 +2655,10 @@ describe("CouchbaseProvider object surface (#789)", () => {
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The enumeration in the same sentence has to name every implementer. `redis` joined
-    // them in this same wave, and a list that goes stale in silence is exactly the
-    // boundary the next reader trusts. Matched over collapsed whitespace, so re-wrapping
-    // the paragraph does not turn this red.
-    expect(doc.replace(/\s+/g, " ")).toContain("implemented on `postgres`, `sqlite`, `duckdb` and `redis`");
-    // Which one it is, and not merely that it is one of three. `BEGIN WORK` DOES leave a
-    // transaction open on this cluster (the doc records the `txid` and its 15s window), so
-    // "the engine has no transaction to leave open" would be the wrong absence and would
-    // tell the next reader to stop looking. What is missing is a way to name it: the HTTP
-    // transport sends no `txid` field.
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });
 
@@ -3077,78 +3048,8 @@ describe("CouchbaseProvider agent read-only profile", () => {
       acquired = [];
     });
 
-    test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
+    test("MCP_STATEMENT_READ opens Couchbase", () => {
       expect(MCP_STATEMENT_READ.couchbase).toBe(true);
-      expect(doc).toContain("`MCP_STATEMENT_READ.couchbase` is true");
-      expect(doc).not.toContain("MCP's statement read stays closed on Couchbase");
-      expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf(COUCHBASE).statements}:`);
-    });
-
-    test("the provider doc records which statements pass the MCP fence and which the provider refuses after it", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).toContain(
-        "`run_read_query`'s own fence refuses every other statement before anything is acquired, but for an `EXPLAIN`, a `VALUES` and a `TABLE` text, which pass it and which the provider's fence refuses after the open and before anything is sent.",
-      );
-    });
-
-    test("the provider doc records that ADVISOR's session forms are refused and its one-statement form answers within the role", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).not.toContain("`CURL()`, `ADVISOR()` and `NEXTVAL`");
-      expect(doc).toContain(
-        "`ADVISOR()`'s session forms (`start`, `get`, `list` and the rest), refused for `query_system_catalog`;",
-      );
-      expect(doc).toContain(
-        "`ADVISOR()` given one statement runs for the user and recommends indexes on a keyspace it holds the role on, while for any other keyspace its answer row holds the server's missing-role message and nothing more.",
-      );
-    });
-
-    test("the provider doc names data_reader among the roles the MCP open refuses, as the check does", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).toContain(
-        "naming the role that reaches past those: the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, `data_writer` held directly or through a group,",
-      );
-    });
-
-    test("the provider doc lists every system keyspace the narrow user reads rows from, each within its own scopes", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).toContain(
-        "its own bucket and the keyspaces it holds a role on in `system:buckets`, `system:scopes`, `system:all_scopes`, `system:keyspaces`, `system:all_keyspaces`, `system:keyspaces_info` and `system:all_keyspaces_info`, the namespace in `system:namespaces`, a sequence in a scope it holds the role on, its value block included, in `system:sequences` and `system:all_sequences`,",
-      );
-      expect(doc).toContain(
-        "`system:indexes` shows it no index, and `system:all_indexes` only the indexes of the system keyspaces.",
-      );
-      expect(doc).toContain("None of these answers a row of a scope it holds no role on.");
-    });
-
-    test("the provider doc says an MCP client sees no role in a refused function call", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).not.toContain("refused with 5010, whose cause names the missing role.");
-      expect(doc).toContain(
-        "refused with 5010, whose cause in the server's answer names the missing role, while Studio passes on only the message `Error evaluating projection`, so neither the agent nor an MCP client sees the role.",
-      );
-    });
-
-    test("the provider doc does not claim nextOffset pages a SELECT with its own OFFSET and no LIMIT", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).toContain(
-        "A `SELECT` with an `OFFSET` of its own and no `LIMIT` is given a `nextOffset` too, but the call at that offset fails with a syntax error.",
-      );
-    });
-
-    test("the provider doc records that the server answers an absent name differently from a refused one", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
-
-      expect(doc).toContain(
-        "The server answers a bucket, scope or collection that does not exist as not found (12003, 12021) and one that exists as a missing role (13014), so the user can learn whether a name exists, but not what it holds.",
-      );
     });
 
     test("reads rows under the agent profile, the user checked at the open and again before the statement", async () => {

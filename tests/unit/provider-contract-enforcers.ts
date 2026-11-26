@@ -611,7 +611,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/connect-budget.test.ts": [
         "the host's default is the pools' 60 s acquire bound plus 10 s",
         "only BigQuery and Snowflake declare a connect budget of their own",
-        "the document of each engine that declares a connect budget states it in seconds, and no other provider document states one",
       ],
       "tests/unit/db/bigquery/connect-budget.test.ts": [
         "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s",
@@ -1114,9 +1113,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a failure the checkout raises is thrown as its mapped class and answers not-sent",
         "a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause",
         "a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown",
-      ],
-      "tests/unit/db/statement-outcome-docs.test.ts": [
-        "each provider document has one Failed statement outcome row, checkout-not-sent exactly when its provider runs a checkout through checkoutPhase",
       ],
       "tests/integration/db/postgres-provider.test.ts": [
         "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing",

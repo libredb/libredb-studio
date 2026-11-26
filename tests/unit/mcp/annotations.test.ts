@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { MCP_EXPOSABLE, MCP_METADATA_READ_CHANGES_STATE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { unknownTypeSentence } from "@/lib/db/type-id";
@@ -40,14 +40,6 @@ describe("MCP_METADATA_READ_CHANGES_STATE", () => {
     expect(lines).toHaveLength(1);
     const labels = SHIPPED_DATABASE_TYPES.map((type) => getDBConfig(type).label);
     expect(namedLabels(lines[0] ?? "", labels).sort()).toEqual(TRUE_ROWS.map((type) => getDBConfig(type).label).sort());
-  });
-
-  test("the provider doc of each engine whose row is true states the hint, and no other provider doc does", () => {
-    const stating = [...new Bun.Glob("docs/providers/*.md").scanSync(ROOT)]
-      .filter((file) => readFileSync(join(ROOT, file), "utf8").includes("`readOnlyHint: false`"))
-      .map((file) => basename(file, ".md"))
-      .sort();
-    expect(stating).toEqual([...TRUE_ROWS].sort());
   });
 });
 

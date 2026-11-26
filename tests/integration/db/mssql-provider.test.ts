@@ -285,8 +285,6 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 // ---------------------------------------------------------------------------
@@ -5660,37 +5658,10 @@ describe("SQL Server bulk column read", () => {
 // ---------------------------------------------------------------------------
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new MSSQLProvider(baseConfig);
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mssql.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-
-    // The absence here is the DRIVER's: `mssql.Request` never hands the provider the
-    // connection its statement ran on. It is NOT the pool's, and it is not the server's:
-    // SQL Server answers this from any other connection, which was measured, so the doc
-    // must name the ask it is one unavailable session id away from being able to make.
-    expect(doc).not.toContain("a pool cannot be asked");
-    expect(doc).toContain("sys.dm_tran_session_transactions");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });
 

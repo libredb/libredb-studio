@@ -1,8 +1,8 @@
 /**
  * The engine SQL writing function modules as the registry imports them, read from the import statements of
- * `src/lib/db/sql-writing/index.ts` as source rather than from a list typed here, so the seam and docs tests cover
- * every module the registry reaches and a new one the day it lands. `compose.test.ts` holds each binding to the slot
- * Studio's SQL writing function table binds it at.
+ * `src/lib/db/sql-writing/index.ts` as source rather than from a list typed here, so the seam, isolation and census
+ * tests cover every module the registry reaches and a new one the day it lands. `compose.test.ts` holds each binding to
+ * the slot Studio's SQL writing function table binds it at.
  *
  * Each module's engine is read from its path: the directory of a `sql-writing.ts` or `typed-literals.ts`, and the
  * prefix of an `<id>-sql-writing.ts` or `<id>-typed-literals.ts`. The typed writer siblings are also found on disk,

@@ -274,5 +274,5 @@ A release goes ahead only on a table with no `FAIL`, or with every `FAIL` classi
 
 ## Changing the skill
 
-A selector, a flow or an expectation that changed in Studio changes `lane.mjs` or `providers.mjs` in the same PR that changed Studio, the same way a provider change keeps its doc and tests in lockstep.
+A selector, a flow or an expectation that changed in Studio changes `lane.mjs` or `providers.mjs` in the same PR that changed Studio, the same way a provider change keeps its code and tests in lockstep.
 A new provider is a new entry in `providers.mjs`: its compose service, the agent principal recipe from its provider doc, its queries in the engine's own syntax, its tree path and its auto-execute row from `docs/AGENT.md`.

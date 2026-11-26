@@ -60,7 +60,7 @@ import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
@@ -100,7 +100,6 @@ import {
 } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -3797,32 +3796,10 @@ describe("the bulk column read", () => {
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new CassandraProvider(makeConnection());
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/cassandra.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
-      "the engine has no transaction to leave open",
-    ]);
   });
 });
 
@@ -4338,14 +4315,8 @@ describe("the agent read-only profile", () => {
       openReplies = {};
     });
 
-    test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/cassandra.md"), "utf8");
-
+    test("MCP_STATEMENT_READ opens Cassandra", () => {
       expect(MCP_STATEMENT_READ.cassandra).toBe(true);
-      expect(doc).toContain("`MCP_STATEMENT_READ.cassandra` is true");
-      expect(doc).not.toContain("MCP's statement read stays closed on Cassandra");
-      expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("cassandra").statements}:`);
-      expect(doc.replaceAll("`", "")).toContain(readQueryFormsOf("cassandra").paging);
     });
 
     test("reads rows under the agent profile, checked on the statement's own session, one row past max_rows", async () => {

@@ -30,8 +30,6 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DruidProvider } from "@/lib/db/providers/sql/druid";
 import {
   DRUID_ACTIVE_TASK_SQL,
@@ -2957,32 +2955,10 @@ describe("the bulk column read", () => {
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/druid.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
-      "the engine has no transaction to leave open",
-    ]);
   });
 });
 

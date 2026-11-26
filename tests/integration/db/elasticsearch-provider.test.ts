@@ -58,7 +58,6 @@ import {
 } from "@/lib/db/errors";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import {
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
@@ -4123,14 +4122,7 @@ describe("Elasticsearch object paths are derived from the declaration, never fro
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new ElasticsearchProvider(
       makeConnection(),
       {},
@@ -4138,22 +4130,6 @@ describe("endOpenQueryTransaction()", () => {
     );
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/elasticsearch.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The enumeration in the same sentence has to name every implementer. `redis` joined
-    // them in this same wave, and a list that goes stale in silence is exactly the
-    // boundary the next reader trusts. Matched over collapsed whitespace, so re-wrapping
-    // the paragraph does not turn this red.
-    expect(doc.replace(/\s+/g, " ")).toContain("implemented on `postgres`, `sqlite`, `duckdb` and `redis`");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
-      "the engine has no transaction to leave open",
-    ]);
   });
 });
 
@@ -5299,15 +5275,9 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     acquired = [];
   });
 
-  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/elasticsearch.md"), "utf8");
-
+  test("MCP_STATEMENT_READ opens Elasticsearch and OpenSearch", () => {
     expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
     expect(MCP_STATEMENT_READ.opensearch).toBe(true);
-    expect(doc).toContain("`MCP_STATEMENT_READ.elasticsearch` is true");
-    expect(doc).not.toContain("MCP's statement read stays closed");
-    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("elasticsearch").statements}:`);
-    expect(doc).toContain(KEYSET.replace("Page it in SQL: ", ""));
   });
 
   test("reads rows under the agent profile after the open's version read, and names no next offset", async () => {
