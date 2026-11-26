@@ -503,7 +503,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "scrubProviderText"],
   [mcp("tools", "inspect-schema.ts"), "inspectTable", "engineMessage"],
-  [dbRoute("query"), "POST", "providerTextScrub"],
+  [dbRoute("query"), "POST", "connectionTextScrub"],
   [dbRoute("multi-query"), "POST", "providerTextScrub"],
   [dbRoute("multi-query"), "runStatement", "withScrubbedWarnings"],
   [dbRoute("multi-query"), "statementError", "withholdProviderError"],
@@ -520,7 +520,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   // A provider package's warnings reach the client only as Studio's count sentence, each logged through core's scrub
   // (`packageWarnings` in src/lib/api/package-errors.ts, which calls `scrubProviderWarnings`).
   [editorQuery, "packagePageBody", "packageWarnings"],
-  [routeEvents, "failure", "providerTextScrub"],
+  [routeEvents, "failure", "connectionTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
   [recordedRun, "runRecorded", "providerTextScrub"],
   [recordedRun, "runRecorded", "withheldProviderError"],

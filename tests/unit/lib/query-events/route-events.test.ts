@@ -5,6 +5,7 @@
  * multi-query.test.ts.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import type { QueryEventInput } from "@/lib/query-events/types";
 
 const recorded: QueryEventInput[] = [];
@@ -147,6 +148,40 @@ describe("recordExecutedUnit with a failure that holds the connection's credenti
       status: "cancelled",
       errorCode: "QUERY_CANCELLED",
       errorMessage: withheldErrorMessage("QueryCancelledError"),
+    });
+    expect(JSON.stringify(recorded)).not.toContain(password);
+  });
+});
+
+describe("recordExecutedUnit on a connection of any engine the server serves", () => {
+  test("an executed unit on a package engine's connection names its engine by its id, and a failure whose text holds that connection's credential records the withheld sentence", () => {
+    const password = crypto.randomUUID();
+    const keys: EngineConnection = {
+      id: "seed:keys",
+      name: "Keys",
+      type: "acmeevents",
+      password,
+      createdAt: new Date(0),
+    };
+    const started = queryEventStart();
+    recordExecutedUnit(request, { connection: keys, statement: "MAIN", started, ended: { rowCount: 1 } });
+    recordExecutedUnit(request, {
+      connection: keys,
+      statement: "MAIN",
+      started,
+      ended: { error: new Error(`the package failed for ${password}`) },
+    });
+
+    expect(recorded[0]).toMatchObject({
+      status: "success",
+      statement: "MAIN",
+      connection: { id: "seed:keys", name: "Keys", engine: "acmeevents", accessLevel: null },
+    });
+    expect(recorded[1]).toMatchObject({
+      status: "error",
+      errorCode: "INTERNAL_ERROR",
+      errorMessage: withheldErrorMessage("Error"),
+      connection: { engine: "acmeevents" },
     });
     expect(JSON.stringify(recorded)).not.toContain(password);
   });

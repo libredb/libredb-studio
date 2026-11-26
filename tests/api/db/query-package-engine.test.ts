@@ -5,13 +5,15 @@
  * through one open, one gate and one run; the statement is read under the grammar the package declares, with every
  * claim that loosens the gate uncounted; the session opens once per key through the package; the run answers the
  * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
- * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; and a package's own
- * words never reach the client.
+ * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; a package's own
+ * words never reach the client; and each run records one editor event naming its engine by its id, whose record decides
+ * what the event keeps of its text.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked;
  * the editor's open, the gate and the run are wrapped to record what each was handed, each calling the real function,
- * and the legacy provider's own entry points reject by name.
+ * the query events sink's recording is replaced to capture what the route hands it, and the legacy provider's own
+ * entry points reject by name.
  * Nothing awaits a timer: the cancel case waits on a promise the package's execute resolves when it starts, and on one
  * its cancel resolves.
  */
@@ -26,6 +28,8 @@ import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
+import { buildQueryEvent } from "@/lib/query-events/build";
+import type { QueryEventInput } from "@/lib/query-events/types";
 import { parseResponseJSON } from "../../helpers/mock-next";
 import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
@@ -79,6 +83,19 @@ mock.module("@/lib/api/editor-query", () => ({
   runEditorQuery: (...args: Parameters<typeof runEditorQuery>) => {
     runs.push(args[0].form);
     return runEditorQuery(...args);
+  },
+}));
+
+/*
+ * The query events the route records, captured in place of the sink's recording. Governance is off in this file, where
+ * the real recorder returns at once, so not handing the input on changes nothing a case reads.
+ */
+const recordedEvents: QueryEventInput[] = [];
+const realSink = { ...(await import("@/lib/query-events/sink")) };
+mock.module("@/lib/query-events/sink", () => ({
+  ...realSink,
+  recordQueryEvent: (input: QueryEventInput) => {
+    recordedEvents.push(input);
   },
 }));
 
@@ -507,6 +524,75 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       error.mockRestore();
       hooksFor(MAIN);
     }
+  });
+
+  test("the query route records one editor event per run, naming the engine by its id and the text submitted, and the engine's record decides what the event keeps", async () => {
+    const connection = connectionOf(MAIN);
+    const secret = connection.password as string;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    recordedEvents.length = 0;
+    try {
+      hooksFor(MAIN);
+      const legacy = await post({
+        connection: { id: `conn-${randomUUID()}`, name: "Scratch", type: "sqlite", database: ":memory:" },
+        sql: "SELECT 1 AS one",
+      });
+      const served = await post({ connection, sql: "SELECT 1" });
+      hooksFor(MAIN, { execute: () => Promise.reject(new Error(`no such key, as ${secret} said`)) });
+      const failed = await post({ connection, sql: "SELECT 1" });
+      expect([legacy.status, served.status, failed.status]).toEqual([200, 200, 500]);
+    } finally {
+      error.mockRestore();
+      hooksFor(MAIN);
+    }
+
+    expect(
+      recordedEvents.map(({ source, connection: named, statement, status }) => [
+        source,
+        named.engine,
+        statement,
+        status,
+      ]),
+    ).toEqual([
+      ["editor", "sqlite", "SELECT 1 AS one", "success"],
+      ["editor", MAIN, "SELECT 1", "success"],
+      ["editor", MAIN, "SELECT 1", "error"],
+    ]);
+    // The failure is Studio's plain Error naming the package's code in its sentence, which carries no code of its own,
+    // so the event records its sentence and no code, as for any plain Error.
+    expect(recordedEvents[2]).toMatchObject({
+      errorCode: undefined,
+      errorMessage: "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+    });
+    expect(JSON.stringify(recordedEvents)).not.toContain(secret);
+    expect(JSON.stringify(recordedEvents)).not.toContain("no such key");
+
+    // Each input built into its row by the real builder under full capture. A row needs a `seed:` id, an access level
+    // and a subject, which only governance's resolve and session hand; this file's connections are inline and its
+    // session has no subject, so the three are given here and nothing else of the input is changed.
+    const rows = recordedEvents.map((input) =>
+      buildQueryEvent(
+        {
+          ...input,
+          principal: { ...input.principal, subject: "subject-1" },
+          connection: { ...input.connection, id: "seed:keys", accessLevel: "read" },
+        },
+        { statementCapture: "full", maxStatementBytes: 4096 },
+        { studioInstance: "libredb-studio" },
+      ),
+    );
+    expect(
+      rows.map(({ engine, statement, statement_type, error_message }) => [
+        engine,
+        statement,
+        statement_type,
+        error_message,
+      ]),
+    ).toEqual([
+      ["sqlite", "SELECT 1 AS one", "SELECT", null],
+      [MAIN, null, "OTHER", null],
+      [MAIN, null, "OTHER", null],
+    ]);
   });
 
   test("a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub", async () => {

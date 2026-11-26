@@ -154,9 +154,10 @@ export interface EditorQueryRun {
   /** The label a failed cancel is logged under. */
   route: string;
   /**
-   * The core scrub of the connection the provider was built from (`providerTextScrub(connection, "any")`): a warning
-   * field that holds one of its credential forms is answered as `PROVIDER_TEXT_WITHHELD`. Required, so each caller
-   * holds it.
+   * The core scrub of the connection the provider was built from (`connectionTextScrub` of the connection of any
+   * engine on the query route, `providerTextScrub(connection, "any")` of a legacy connection in the VS Code extension's
+   * child): a warning field that holds one of its credential forms is answered as `PROVIDER_TEXT_WITHHELD`. Required,
+   * so each caller holds it.
    */
   scrub: ProviderTextScrub;
 }
