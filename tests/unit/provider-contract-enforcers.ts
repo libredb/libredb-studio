@@ -737,6 +737,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
       ],
+      "tests/unit/lib/db/record-grant-readers.test.ts": [
+        "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
+      ],
       "tests/unit/lib/db/claim-grant-refusal.test.ts": [
         "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none",
       ],

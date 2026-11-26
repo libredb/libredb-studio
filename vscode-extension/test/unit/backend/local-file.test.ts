@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import {
+  type EngineRecord,
+  forgetServerCatalog,
+  installServerCatalog,
+  serverCatalogInstalled,
+} from "@/lib/db/server-catalog";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseConnection } from "@/lib/types";
 import { checkLocalFile } from "../../../src/backend/local-file";
 
@@ -53,5 +60,35 @@ describe("checkLocalFile", () => {
     const postgres: DatabaseConnection = { id: "p", name: "p", type: "postgres", database: "app", createdAt };
     assert.equal(refusalOf(postgres), undefined);
     assert.equal(refusalOf(postgres, restricted), undefined);
+  });
+
+  it("reads the connection's record's grant: an engine whose record grants a local file is checked, and one whose record grants none is left alone", () => {
+    // The child installs no catalog, so the legacy adapter's records answer; this case installs one of its own, those
+    // records with two grants changed, and forgets it whatever happens.
+    const engines = new Map(LEGACY_ENGINES);
+    for (const [id, opensLocalFile] of [
+      ["postgres", true],
+      ["sqlite", false],
+    ] as const) {
+      const engine = LEGACY_ENGINES.get(id) as EngineRecord;
+      engines.set(id, Object.freeze({ ...engine, grants: Object.freeze({ ...engine.grants, opensLocalFile }) }));
+    }
+    const postgres: DatabaseConnection = { id: "p", name: "p", type: "postgres", database: "app.db", createdAt };
+    installServerCatalog({ engines, unavailable: new Map() });
+    try {
+      assert.equal(
+        refusalOf(postgres)?.message,
+        "Enter the PostgreSQL database file as an absolute path: a relative path resolves inside the extension's own folder, which an update replaces.",
+      );
+      assert.equal(
+        refusalOf(postgres, restricted)?.message,
+        "Restricted Mode: LibreDB opens no PostgreSQL database until you trust this workspace.",
+      );
+      assert.equal(refusalOf(sqlite("app.db")), undefined);
+      assert.equal(refusalOf(sqlite("/home/you/app.db"), restricted), undefined);
+    } finally {
+      forgetServerCatalog();
+    }
+    assert.equal(serverCatalogInstalled(), false);
   });
 });

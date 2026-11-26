@@ -875,11 +875,11 @@ export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDL
 export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
 
 /**
- * Studio's grant of `connection.opensLocalFile`, which the file admission of the legacy adapter's open
- * (`admittedFileConnection` in ./provider-files), governance and the VS Code backend read. A governance source never
- * grants such an engine (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as
- * ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host
- * Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
+ * Studio's grant of `connection.opensLocalFile`, which governance reads; the file admission of the legacy adapter's
+ * open (`admittedFileConnection` in ./provider-files) and the VS Code backend read an engine's record's
+ * `grants.opensLocalFile`. A governance source never grants such an engine
+ * (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as ENGINE_UNSUPPORTED whatever
+ * `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
  * such a connection names before the provider is built, refusing Studio's own storage files there, and hands the
  * provider the absolute path it admitted.
  */
@@ -917,11 +917,11 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<Datab
 
 /**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
- * with, or null where the engine takes one. The provider's fields and the connection dialog read it; core's tunnel
- * decision reads a legacy engine's row as its record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel`
- * (./tunnel-decision) on every entry point before any cache lookup, bastion dial or provider build, so no provider
- * refuses a tunnel itself, and the dialog offers the SSH panel, and writes `sshTunnel`, exactly where the grant is null,
- * so the dialog and core cannot disagree. No review row's sentence quotes a value of the connection.
+ * with, or null where the engine takes one. The connection dialog reads it; core's tunnel decision and the provider's
+ * fields read an engine's record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel` (./tunnel-decision) on
+ * every entry point before any cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself,
+ * and the dialog offers the SSH panel, and writes `sshTunnel`, exactly where the grant is null, so the dialog and core
+ * cannot disagree. No review row's sentence quotes a value of the connection.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 
