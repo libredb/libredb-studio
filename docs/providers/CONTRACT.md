@@ -1124,7 +1124,7 @@ A package's engine gets no SQL writing (S-16).
 
 ### C-100 (normative): A package serves no engine another serves, in Studio's catalog or in this process
 
-A package is refused as `PROVIDER_ID_COLLISION`, each case under a rule of its own, when it serves an engine id Studio's bundled catalog serves, an engine id a package registered earlier in the process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was registered earlier in the process.
+A package is refused as `PROVIDER_ID_COLLISION`, each case under a rule of its own, when it serves an engine id Studio's bundled catalog serves, an engine id a package registered earlier in the process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was registered earlier in the process or its name is `@libredb/studio`, the name Studio's bundled engines are served under.
 The engine ids and the name are checked before the import and again right before registration, so of two admitted packages the one that would register second is refused, after its import.
 
 ### C-101 (normative): The entry is an ES module

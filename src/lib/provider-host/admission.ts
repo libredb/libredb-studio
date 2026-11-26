@@ -14,11 +14,12 @@
  * 3. the SDK's validator, the schema then its code rules, the same rules Studio's generator admits its own
  *    declarations by (`PROVIDER_SCHEMA_INVALID`, the first refusal's rule and pointer and the count of the rest, never
  *    a key); the manifest admitted is deep-frozen;
- * 4. its engine ids: one the legacy adapter serves (`LEGACY_ENGINE_IDS`, the ids of Studio's bundled engines), one
- *    that is an own key of `Object.prototype` (a table keyed by plain object would answer an inherited member for it),
- *    one a package admitted earlier in this process serves, and a package name registered earlier, each
- *    `PROVIDER_ID_COLLISION`; the last two are checked again right before registration (`registerAdmission`), since
- *    another package may register while this one imports;
+ * 4. its engine ids and its name: an engine id the legacy adapter serves (`LEGACY_ENGINE_IDS`, the ids of Studio's
+ *    bundled engines), the package name the legacy adapter serves them under (`LEGACY_SOURCE_NAME`,
+ *    `legacy-package`), an engine id that is an own key of `Object.prototype` (a table keyed by plain object would
+ *    answer an inherited member for it), one a package admitted earlier in this process serves, and a package name
+ *    registered earlier, each `PROVIDER_ID_COLLISION`; the last two are checked again right before registration
+ *    (`registerAdmission`), since another package may register while this one imports;
  * 5. its entry, an ES module: `.mjs`, or `.js` whose nearest package.json inside the package, read and bound to the
  *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); the lookup stops at a
  *    directory named `node_modules`, as Node.js's package scope lookup does, so a `.js` entry below one is CommonJS
@@ -70,7 +71,7 @@ import {
   type ManifestValidator,
   type ProviderManifest,
 } from "@libredb/provider-sdk/manifest";
-import { LEGACY_ENGINE_IDS } from "./legacy-adapter/identity";
+import { LEGACY_ENGINE_IDS, LEGACY_SOURCE_NAME } from "./legacy-adapter/identity";
 import {
   type ArtifactFile,
   decodeJson,
@@ -241,6 +242,7 @@ function registeredEngineIds(): Set<string> {
 function checkServed(pkg: VerifiedPackage, manifest: ProviderManifest): void {
   const ids = manifest.engines.map((engine) => engine.id);
   if (ids.some((id) => LEGACY_ENGINE_IDS.includes(id))) throw new Refused(bundledEngineRefusal(pkg));
+  if (pkg.name === LEGACY_SOURCE_NAME) throw new Refused(admittedCollisionRefusal(pkg, "legacy-package"));
   if (ids.some((id) => Object.hasOwn(Object.prototype, id))) {
     throw new Refused(admittedCollisionRefusal(pkg, "inherited-name"));
   }
