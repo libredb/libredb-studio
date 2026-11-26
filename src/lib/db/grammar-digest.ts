@@ -34,7 +34,8 @@ export function canonicalGrammarText(grammar: unknown): string {
   }
   const record = grammar as Readonly<Record<string, unknown>>;
   const names = Object.keys(record).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${names.map((name) => `${JSON.stringify(name)}:${canonicalGrammarText(record[name])}`).join(",")}}`;
+  const members = names.map((name) => `${JSON.stringify(name)}:${canonicalGrammarText(record[name])}`);
+  return `{${members.join(",")}}`;
 }
 
 /** The SHA-256 of `grammar`'s canonical text, 64 lower-case hex characters. */
