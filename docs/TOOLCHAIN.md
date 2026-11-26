@@ -733,7 +733,7 @@ One run is exact, because the projections read only authored members, which the 
 All three run inside `bun run test`, so none needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
 
-Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` and the SDK's pack test ("The SDK tarball (`sdk:pack`)") are the only paths through a built artifact.
+Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load`, the SDK's pack test ("The SDK tarball (`sdk:pack`)") and the out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`) are the only paths through a built artifact.
 
 `tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
 The other rows are held by the tests of the script that implements them.

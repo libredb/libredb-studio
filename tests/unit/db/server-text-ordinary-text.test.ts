@@ -70,13 +70,16 @@ function corpusWords(): string[] {
 
 const unpadded = (value: string) => Buffer.from(value, "utf8").toString("base64").replace(/=+$/, "");
 
-/** Whether a run of the base64 alphabet decodes, at some alignment, to the word's bytes after its first, preceded by a byte that agrees with its first byte in the low 4 bits. */
+/**
+ * Whether a run of the base64 alphabet decodes, at some alignment, to the word's bytes after its first, preceded by a
+ * byte that agrees with its first byte in the low 4 bits. The run is decoded to its end: a final group of two or three
+ * characters holds one or two whole bytes, the way unpadded base64 and a run cut before its `=` padding end.
+ */
 function holdsWordAtOffset(run: string, word: string): boolean {
   const bytes = Buffer.from(word, "utf8");
   const tail = bytes.subarray(1);
   for (let align = 0; align < 4; align++) {
-    const usable = run.slice(align, align + Math.floor((run.length - align) / 4) * 4);
-    const decoded = Buffer.from(usable, "base64");
+    const decoded = Buffer.from(run.slice(align), "base64");
     for (let at = decoded.indexOf(tail, 1); at !== -1; at = decoded.indexOf(tail, at + 1)) {
       if ((decoded[at - 1] & 0x0f) === (bytes[0] & 0x0f)) return true;
     }
@@ -118,6 +121,14 @@ describe("the shared matching on realistic server text", () => {
     }
     expect(added.slice(0, 5)).toEqual([]);
   }, 60_000);
+
+  test("the offset check reads a word whose last bytes sit in the run's final partial group", () => {
+    // Unpadded base64 of 14 bytes ends in a two-character group that holds the word's last byte, as a captured MQTT
+    // payload ending in a client id does.
+    const run = unpadded("libredb-record");
+    expect(run.length % 4).not.toBe(0);
+    expect(holdsWordAtOffset(run, "record")).toBe(true);
+  });
 
   test("a text the offset forms add holds the word base64-encoded behind a prefix", () => {
     const joined = texts.join("\n");

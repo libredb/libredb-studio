@@ -1,0 +1,353 @@
+{
+  "contract": "0.1",
+  "runtime": {
+    "entry": "dist/index.mjs"
+  },
+  "calls": {
+    "console": {
+      "execute": {
+        "honours": []
+      },
+      "cancel": "not-offered",
+      "endScope": "not-offered",
+      "transaction": "not-offered"
+    },
+    "objects": {
+      "tree": "not-offered"
+    },
+    "maintenance": {
+      "run": "not-offered",
+      "preview": "not-offered"
+    },
+    "monitoring": {
+      "panel": "not-offered",
+      "poolStats": "not-offered"
+    }
+  },
+  "engines": [
+    {
+      "id": "memkv",
+      "displayName": "In-memory key-value fixture",
+      "location": "external",
+      "connection": {
+        "fields": [],
+        "defaults": {},
+        "seedOnly": null,
+        "refused": [],
+        "connectionString": {
+          "accepted": false,
+          "dialogOffersUri": false,
+          "scheme": null,
+          "urlTls": null,
+          "paste": null,
+          "seedCheck": null
+        },
+        "tls": {
+          "modes": [
+            "disable",
+            "require",
+            "verify-system",
+            "verify-ca",
+            "verify-full"
+          ]
+        },
+        "readsTrustMaterial": false,
+        "sshTunnel": {
+          "offered": false,
+          "refusal": "This in-memory engine has no network address, so a connection never runs through an SSH tunnel."
+        },
+        "hostPathFields": [],
+        "opensLocalFile": true,
+        "serverLevelWithoutDatabase": true,
+        "agentCredential": null,
+        "dialog": {
+          "order": null,
+          "labels": [],
+          "hints": [],
+          "placeholders": [],
+          "placement": [],
+          "options": [],
+          "shownWhen": [],
+          "absentValues": []
+        },
+        "hostUriSchemes": [],
+        "credentialWarnings": [],
+        "fieldRules": [],
+        "hostHint": null,
+        "hostIdentity": null,
+        "import": null,
+        "connectBudgetMs": null
+      },
+      "facets": {
+        "monitoring": {
+          "overview": "not-offered",
+          "performance": "not-offered",
+          "slowQueries": "not-offered",
+          "activeSessions": "not-offered",
+          "tables": "not-offered",
+          "indexes": "not-offered",
+          "storage": "not-offered"
+        },
+        "maintenance": [],
+        "maintenanceSpecs": [],
+        "agentReadings": []
+      },
+      "agent": {
+        "statementLanguage": null,
+        "overlay": null
+      },
+      "editor": {
+        "commitKeyword": "COMMIT",
+        "consentDeadline": null,
+        "fenceAliases": [],
+        "explainFormat": null,
+        "dialect": null,
+        "language": {
+          "queryLanguage": "sql",
+          "monacoId": "sql",
+          "accent": "border-hue-blue/40",
+          "console": false
+        }
+      },
+      "sqlText": {
+        "readsSqlText": true,
+        "grammar": {
+          "hash": "comment-unless-operator",
+          "bracket": "quoted-identifier",
+          "blockComment": "flat",
+          "alternateQuoting": false,
+          "doubleSlashComment": false,
+          "backslashAlwaysEscapes": false,
+          "tripleQuotedStrings": false,
+          "backtickBackslashEscapes": false,
+          "dollarTags": true,
+          "doubleQuoteBackslashEscapes": null,
+          "singleQuoteBackslashEscapes": null,
+          "rawStrings": false,
+          "hintsAreCode": false,
+          "lineCommentBackslashContinues": false,
+          "lineCommentEndsAtCarriageReturn": false,
+          "script": {
+            "blocks": "none",
+            "separatorLine": null,
+            "unit": "statement",
+            "terminatedStatements": []
+          },
+          "trailingLimitClauses": [],
+          "nonNumericRowBounds": [],
+          "confirmForms": [],
+          "confirmCodeForms": [],
+          "confirmFormsWhen": [],
+          "confirmExemptForms": [],
+          "formatterLanguage": "postgresql",
+          "completionWords": {
+            "keywords": [],
+            "functions": []
+          },
+          "confirmConfigKeys": null,
+          "explainExecutesWithAnalyze": false
+        },
+        "redaction": {
+          "kind": "none"
+        },
+        "updateTarget": {
+          "dashCommentNeedsSeparator": false,
+          "extraQueryOpeners": [],
+          "extraSetOperators": []
+        },
+        "completion": {
+          "formatSegment": null,
+          "readQuotedQualifier": null
+        }
+      },
+      "sqlWriting": {
+        "escapeLiteral": "escapeLiteral",
+        "unescapeLiteral": "unescapeLiteral",
+        "quoteIdentifier": "quoteIdentifier",
+        "placeholder": null,
+        "temporalLiteral": null,
+        "inlineEdit": {
+          "instantTypeNames": [
+            "date",
+            "date32",
+            "datetime",
+            "datetime2",
+            "datetime64",
+            "datetimeoffset",
+            "smalldatetime",
+            "timestamp",
+            "timestamptz"
+          ],
+          "exactDecimalTypeNames": [
+            "number",
+            "numeric",
+            "decimal",
+            "dec",
+            "money",
+            "smallmoney"
+          ],
+          "float64TypeNames": [
+            "double",
+            "float8",
+            "float64",
+            "binary_double"
+          ],
+          "boundEdit": null
+        },
+        "export": {
+          "ddlTypes": {
+            "text": "TEXT",
+            "integer": "BIGINT",
+            "numeric": "DOUBLE PRECISION",
+            "boolean": "BOOLEAN",
+            "timestamp": "TIMESTAMP",
+            "binary": "BLOB"
+          },
+          "standsAlone": [],
+          "bareSpelling": [],
+          "typeVocabulary": {
+            "bareTypeFamily": {
+              "text": [
+                "character varying",
+                "varchar",
+                "varchar2",
+                "nvarchar",
+                "nvarchar2",
+                "character",
+                "char",
+                "nchar",
+                "text",
+                "ntext",
+                "tinytext",
+                "mediumtext",
+                "longtext",
+                "clob",
+                "nclob",
+                "enum",
+                "set",
+                "uniqueidentifier",
+                "rowid"
+              ],
+              "integer": [
+                "year"
+              ],
+              "numeric": [
+                "numeric",
+                "decimal",
+                "number",
+                "binary_double",
+                "binary_float",
+                "money"
+              ],
+              "boolean": [],
+              "timestamp": [
+                "timestamp",
+                "timestamp without time zone",
+                "timestamp with time zone",
+                "datetime",
+                "datetime2",
+                "smalldatetime",
+                "datetimeoffset"
+              ],
+              "binary": [
+                "binary",
+                "varbinary",
+                "raw",
+                "blob",
+                "tinyblob",
+                "mediumblob",
+                "longblob",
+                "bytea",
+                "image"
+              ]
+            },
+            "floatType": {
+              "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+              "flags": "i"
+            },
+            "exactNumericType": {
+              "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+              "flags": "i"
+            },
+            "numericWrapper": {
+              "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+              "flags": ""
+            }
+          },
+          "binaryLiteral": "binaryLiteral",
+          "nonFinite": {
+            "NaN": "NULL",
+            "Infinity": "NULL",
+            "-Infinity": "NULL"
+          },
+          "insertForm": "values",
+          "rewriteDeclared": null,
+          "declareFromSample": null,
+          "typedLiteral": null,
+          "columnWriters": null,
+          "createTableKey": null
+        },
+        "insertDocuments": null
+      },
+      "migrationDdl": {
+        "tableDdl": "refused",
+        "refusal": "-- In-memory key-value fixture: Cannot generate table DDL. It holds keys and values, not tables.",
+        "transactionWrapper": null,
+        "reasons": [
+          "It holds keys and values, not tables."
+        ]
+      },
+      "sqlGenerators": null,
+      "policy": {
+        "writeReach": "open",
+        "readsFileAccessPosture": true,
+        "deniedFileAccessRefusal": "In-memory key-value fixture connections require an administrator.",
+        "singleWriterFile": false,
+        "readRootsRequired": false,
+        "agentCredentialForm": "none",
+        "maskingExemptColumns": null
+      },
+      "mcp": {
+        "exposable": false,
+        "statementRead": false,
+        "metadataReadChangesState": true,
+        "agentCredentialRequired": false
+      },
+      "safeguards": {
+        "writePaths": {
+          "editor": {
+            "reach": "open"
+          },
+          "objectEdit": {
+            "reach": "open"
+          },
+          "maintenance": {
+            "reach": "open"
+          },
+          "transaction": {
+            "reach": "open"
+          }
+        },
+        "metadataOnly": null,
+        "inlineEditRefusedColumns": null
+      }
+    }
+  ],
+  "compatibility": [
+    {
+      "engine": "memkv",
+      "product": "In-memory key-value fixture",
+      "versions": {
+        "kind": "list",
+        "list": [
+          "1.0.0"
+        ]
+      },
+      "tested": [
+        {
+          "version": "1.0.0"
+        }
+      ]
+    }
+  ]
+}

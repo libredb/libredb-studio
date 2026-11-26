@@ -1,0 +1,21 @@
+{
+  "entrySource": "src/index.ts",
+  "connection": {
+    "name": "Out-of-tree fixture"
+  },
+  "statements": [
+    {
+      "statement": "list",
+      "columns": ["name", "value"],
+      "rows": [
+        ["alpha", "first"],
+        ["beta", "second"]
+      ]
+    },
+    {
+      "statement": "get beta",
+      "columns": ["name", "value"],
+      "rows": [["beta", "second"]]
+    }
+  ]
+}

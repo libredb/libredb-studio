@@ -1258,6 +1258,51 @@ jobs:
         env:
           LIBREDB_LIVE_STANDALONE_DIR: ${{ runner.temp }}/standalone
 
+  # A provider written outside the repository, built against the packed SDK
+  # alone, is admitted by the built standalone server with no change to
+  # Studio's files: it answers a statement through the API, and one changed
+  # byte of it is refused at the next boot (scripts/out-of-tree-acceptance.ts,
+  # issue #2520). The payload is downloaded and extracted under the runner's
+  # temporary directory, outside the checkout, because the script's step 7
+  # asserts that the checkout is unchanged. After bun install nothing reaches
+  # a registry: the SDK's dependencies are packed from this checkout's install
+  # and npm installs offline. Not yet a required check.
+  out-of-tree-acceptance:
+    name: Out-of-tree Provider Acceptance
+    needs: [engine-payload]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Download payload artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-smoke-payload
+          path: ${{ runner.temp }}/dist-payload
+
+      - name: Extract payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf "$RUNNER_TEMP"/dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1
+
+      - name: Run the out-of-tree provider acceptance
+        run: bun scripts/out-of-tree-acceptance.ts --standalone "$RUNNER_TEMP/standalone"
+
   # Browser E2E of the embedded samples against the PACKAGED artifact: the
   # tarball channel (extract + node server.js) and the npx channel
   # (bin/studio.js --archive). The regular e2e job covers the same spec

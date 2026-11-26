@@ -26,7 +26,7 @@
  * from this file and the history in the backlog.
  */
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -521,6 +521,25 @@ function listedFiles(...paths: string[]): string[] {
   return [...new Set(listed.split("\0"))].filter((path) => path !== "" && existsSync(join(ROOT, path))).sort();
 }
 
+/**
+ * Every file git lists under `paths` whose text holds `text`: tracked, or untracked and not ignored, as `listedFiles`
+ * lists them. One `git grep` run reads them, rather than one file read per listed file, which outgrew bun's
+ * five-second test timeout on the macOS runner. `git grep` exits 1 when nothing matches; any other non-zero status
+ * is an error.
+ */
+function listedFilesNaming(text: string, ...paths: string[]): string[] {
+  const result = spawnSync("git", ["grep", "-l", "-z", "--untracked", "--fixed-strings", "-e", text, "--", ...paths], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status === 1) return [];
+  if (result.status !== 0) throw new Error(`git grep failed with status ${result.status}: ${result.stderr}`);
+  return result.stdout
+    .split("\0")
+    .filter((path) => path !== "")
+    .sort();
+}
+
 /** A module a scanned file imports, read so a type alias or constant from it is followed (spec 6.4). */
 const readModule = (path: string): string | undefined => {
   try {
@@ -661,9 +680,7 @@ describe("the Create Table form knows no engine (#1822)", () => {
 describe("the removed supportsCreateTable flag (#1822)", () => {
   test("is named nowhere under src, tests or docs", () => {
     const exempt = new Set([THIS_FILE]);
-    const named = listedFiles("src", "tests", "docs")
-      .filter((path) => !exempt.has(path))
-      .filter((path) => readFileSync(join(ROOT, path), "utf8").includes("supportsCreateTable"));
+    const named = listedFilesNaming("supportsCreateTable", "src", "tests", "docs").filter((path) => !exempt.has(path));
     expect(named, "declare `createTable` in the provider's capabilities").toEqual([]);
   });
 });

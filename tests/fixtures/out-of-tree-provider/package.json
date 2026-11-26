@@ -1,0 +1,8 @@
+{
+  "name": "memkv-provider",
+  "version": "1.0.0",
+  "description": "The out-of-tree acceptance's fixture: an in-memory provider written outside LibreDB Studio against @libredb/provider-sdk alone.",
+  "license": "MIT",
+  "private": true,
+  "type": "module"
+}
