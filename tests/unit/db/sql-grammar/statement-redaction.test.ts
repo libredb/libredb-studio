@@ -80,7 +80,7 @@ describe("the statement redaction composed from the engine record's grant", () =
       kind: "command",
       read: REDIS_REDACTION_READER,
     });
-    // The composition reads the grant it is handed: a granted none keeps nothing whatever the engine.
+    // The composition reads the grant it is handed: a granted none redacts to nothing whatever the engine.
     const mongodb = grantingRedaction(servedEngineRecord("mongodb"), { kind: "none" });
     expect(composeStatementRedaction(mongodb)).toEqual({ kind: "none" });
   });

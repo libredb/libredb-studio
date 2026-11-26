@@ -311,7 +311,7 @@ Each claim has a restrictive value, the answer under which the gates that read i
 - `connection.agentCredential`: null, so a seed's agent credential is refused at load;
 - `agent.statementLanguage`: null, so no statement workflow opens in agent mode and MCP serves no statement on the engine;
 - `facets.agentReadings`: empty, so every agent reading is refused before a provider is acquired;
-- `sqlText.redaction`: `none`, so the query event log keeps nothing of the statement's text;
+- `sqlText.redaction`: `none`, so the query event log's redacted capture keeps nothing of the statement's text;
 - `policy.agentCredentialForm`: `none`, so every agent acquisition is refused;
 - `policy.maskingExemptColumns`: null, so every column the masking rules match stays masked;
 - `agent.overlay.dialect.catalogRead.commandShaped`: false, so the statement fence admits no composed catalog command.
@@ -569,7 +569,7 @@ Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 
 ### S-7 (normative): Redaction
 
-An engine's redaction says what the query event log keeps of a statement:
+An engine's redaction says what the query event log's redacted capture keeps of a statement, while its full capture keeps the statement and its error text with their credentials masked under every redaction:
 
 - `sql`: the statement's literals are replaced, and only a closed name in its `nameQuote` is kept, or none where it is null;
 - `none`: nothing of the text is kept;

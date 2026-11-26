@@ -233,7 +233,7 @@
           "enum": ["scrubbed", "code-only"]
         },
         "redaction": {
-          "description": "How the query event log keeps a statement of the engine, granted only for the grammar grammarSha256 names: none keeps nothing of its text, sql keeps it with its literals replaced and the closed names in its name quote, and command has Studio's command reader of the engine answer the text kept, which only a legacy row may grant.",
+          "description": "How the query event log's redacted capture keeps a statement of the engine, granted only for the grammar grammarSha256 names: none keeps nothing of its text, sql keeps it with its literals replaced and the closed names in its name quote, and command has Studio's command reader of the engine answer the text kept, which only a legacy row may grant.",
           "enum": [
             { "kind": "none" },
             { "kind": "sql", "nameQuote": "\"" },
