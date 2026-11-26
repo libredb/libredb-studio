@@ -17,10 +17,12 @@ import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { NEO4J_FIXTURES, neo4jCapture, recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 import { errorKind } from "@/lib/db/error-record";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { NEO4J_BUILT_IN_ROUTINES } from "@/lib/db/providers/graph/neo4j/agent-builtins";
 import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
@@ -283,7 +285,7 @@ describe("queryReadOnly", () => {
 
 describe("the machine access records and the pinned routines", () => {
   test("Neo4j is run by the agent, exposed over MCP and read through run_cypher_read", () => {
-    expect(AGENT_EXECUTION_ENGINES).toContain("neo4j");
+    expect(AGENT_EXECUTION).toContain("neo4j");
     expect(exposable.neo4j).toBe(true);
     expect(statementRead.neo4j).toBe(true);
     expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");

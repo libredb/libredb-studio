@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { workflowAvailability } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
-import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
@@ -17,7 +17,10 @@ import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql"
 import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const statementLanguage = legacyRegisterTable("statementLanguage");
 
@@ -374,10 +377,10 @@ test("the engines are every type with a statement language, and the execution en
   // Read from the manifest, never restated: an engine that gains a language joins every case below.
   expect(ENGINES.length).toBeGreaterThan(0);
   // A subset only. A type may speak a language and execute nothing; the two lists are not the same claim.
-  for (const type of AGENT_EXECUTION_ENGINES) expect(ENGINES).toContain(type);
+  for (const type of AGENT_EXECUTION) expect(ENGINES).toContain(type);
 });
 
-test.each([...AGENT_EXECUTION_ENGINES])(
+test.each([...AGENT_EXECUTION])(
   "%s opens a workflow that sends a statement, so agent mode executing there is true",
   (type) => {
     const sending = openVariants(type).filter(({ workflow }) => AGENT_WORKFLOW_SENDS_STATEMENTS[workflow]);

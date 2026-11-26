@@ -16,12 +16,7 @@ import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.gener
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
 import { ENGINE_URI_SCHEMES, parseConnectionString } from "@/lib/connection-string-parser";
 import { SIGNATURE_URIS } from "@/components/login/connection-signature";
-import {
-  AGENT_EXECUTION_ENGINES,
-  EXTERNAL_DATABASE_TYPES,
-  SHIPPED_DATABASE_TYPES,
-  WIRE_COMPATIBLE_ENGINES,
-} from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES, WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
 
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed
@@ -40,6 +35,10 @@ const { default: LoginForm } = await import("@/app/login/login-form");
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { legacyRegisterEngines } from "../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 function renderLogin() {
   const user = userEvent.setup();
@@ -524,7 +523,7 @@ describe("LoginPage showcase (issue #425)", () => {
     const claims = getAllByTestId("agent-claim");
     expect(claims.length).toBeGreaterThanOrEqual(2);
 
-    const allowed = new Set(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+    const allowed = new Set(AGENT_EXECUTION.map((type) => getDBConfig(type).label));
     expect(allowed.size).toBeGreaterThan(0);
 
     for (const claim of claims) {
@@ -542,7 +541,7 @@ describe("LoginPage showcase (issue #425)", () => {
       }
       // A count, not the names: every engine that joins agent mode would otherwise add a word
       // to the hero, and the hero must fit a 1280x800 screen without scrolling.
-      expect(agentSentence).toContain(`runs read-only on ${AGENT_EXECUTION_ENGINES.length} engines`);
+      expect(agentSentence).toContain(`runs read-only on ${AGENT_EXECUTION.length} engines`);
     }
   });
 

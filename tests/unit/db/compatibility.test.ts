@@ -11,7 +11,6 @@
 import { describe, test, expect } from "bun:test";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
-  AGENT_EXECUTION_ENGINES,
   WIRE_COMPATIBLE_ENGINES,
   compatibleEnginesFor,
   CONNECTION_FORM_URI_MODE,
@@ -19,7 +18,6 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
-  SERVES_ONE_SESSION,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
@@ -31,7 +29,7 @@ import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 import { parse as parseYaml } from "yaml";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
-import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 const exposable = legacyRegisterTable("exposable");
@@ -42,6 +40,8 @@ const singleWriterFile = legacyRegisterTable("singleWriterFile");
 const opensLocalFile = legacyRegisterTable("opensLocalFile");
 const hostPathFields = legacyRegisterTable("hostPathFields");
 const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
+const servesOneSession = legacyRegisterTable("servesOneSession");
+const agentExecution = legacyRegisterEngines("agentExecution");
 const agentCredential = legacyAgentCredentialTable();
 
 /**
@@ -681,7 +681,7 @@ describe("the legacy rows' MCP statement read", () => {
 
   test("is true only for an engine agent mode executes statements on", () => {
     const open = SHIPPED_DATABASE_TYPES.filter((type) => statementRead[type]);
-    expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
+    expect(open.filter((type) => !agentExecution.includes(type))).toEqual([]);
   });
 });
 
@@ -831,25 +831,27 @@ describe("the legacy rows' single-writer file", () => {
 });
 
 /**
- * `SERVES_ONE_SESSION` (docs/providers/CONTRACT.md, clause C-66): the engines whose connections serve their object tree
- * from one session, the editor's, each with the reason Studio's census found. The host's own record, read only by
- * `sessionCapacity` in src/lib/db/session-capacity.ts, and never a claim an engine declaration requests.
+ * `servesOneSession`, as the legacy rows of the grant register review it (docs/providers/CONTRACT.md, clause C-66): the
+ * engines whose connections serve their object tree from one session, the editor's, each with the reason Studio's
+ * census found. A host fact read only through `GRANTED_ONE_SESSION_ENGINES` by `sessionCapacity` in
+ * src/lib/db/session-capacity.ts, and never a claim an engine declaration requests. Every shipped engine has a row and
+ * the rows are frozen, which the grant reader's load holds.
  */
-describe("SERVES_ONE_SESSION", () => {
-  test("is exhaustive over the shipped engines and frozen, each reason a sentence", () => {
-    expect(Object.keys(SERVES_ONE_SESSION).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(Object.isFrozen(SERVES_ONE_SESSION)).toBe(true);
+describe("the legacy rows' one-session reasons", () => {
+  test("each legacy row's one-session reason is a sentence", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const reason = SERVES_ONE_SESSION[type];
+      const reason = servesOneSession[type];
       if (reason === null) continue;
       // A sentence: a capital first, a full stop last, and nothing but one line between.
       expect([type, /^[A-Z][^\n]*\.$/.test(reason)]).toEqual([type, true]);
     }
+    // Vacuity: some rows name a reason, so the check above reads a sentence.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => servesOneSession[type] !== null).length).toBeGreaterThan(0);
   });
 
   test("names a reason for every engine whose legacy row grants a single-writer file", () => {
     const singleWriter = SHIPPED_DATABASE_TYPES.filter((type) => singleWriterFile[type]);
-    expect(singleWriter.filter((type) => SERVES_ONE_SESSION[type] === null)).toEqual([]);
+    expect(singleWriter.filter((type) => servesOneSession[type] === null)).toEqual([]);
     // Vacuity, by name: no single-writer row would pass above.
     expect(singleWriter).toEqual(["duckdb", "libredb"]);
   });

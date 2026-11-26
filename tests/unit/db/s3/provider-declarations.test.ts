@@ -13,9 +13,11 @@ import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { s3Connection } from "../../../helpers/s3-connection";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { type DatabaseConnection } from "@/lib/types";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 const exposable = legacyRegisterTable("exposable");
@@ -135,7 +137,7 @@ describe("the records, the Keys panel, the labels and the maintenance refusal", 
     expect(exposable.s3).toBe(true);
     expect(statementRead.s3).toBe(true);
     expect(agentCredentialRequired.s3).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("s3");
+    expect(AGENT_EXECUTION).toContain("s3");
   });
 
   test("the Keys panel declares no result pagination, no container levels and the bucket as its root", () => {

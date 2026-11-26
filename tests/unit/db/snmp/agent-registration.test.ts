@@ -7,13 +7,15 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { DatabaseConfigError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { SNMP_WITHHELD_SUBTREES } from "@/lib/db/providers/network/snmp/agent-statement";
 import { SNMP_LABELS } from "@/lib/db/providers/network/snmp/labels";
 import type { DatabaseConnection } from "@/lib/types";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
@@ -36,7 +38,7 @@ const connection = {
 describe("the registries", () => {
   test("snmp speaks snmpget, executes agent reads, and MCP reads it with the read-only flag untouched", () => {
     expect(statementLanguage.snmp).toBe("snmpget");
-    expect(AGENT_EXECUTION_ENGINES).toContain("snmp");
+    expect(AGENT_EXECUTION).toContain("snmp");
     expect(exposable.snmp).toBe(true);
     expect(statementRead.snmp).toBe(true);
     expect(READ_ONLY_ENFORCED.snmp).toBe(true);

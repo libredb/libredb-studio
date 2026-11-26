@@ -3,13 +3,14 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { forgetStorageLocation } from "@/lib/data-dir";
-import { SERVES_ONE_SESSION, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { admittedFileConnection, namesInMemoryDatabase } from "@/lib/db/provider-files";
 import { sessionCapacity } from "@/lib/db/session-capacity";
 import { ADMITTED_FILE, type DatabaseConnection, type DatabaseType, type WithAdmittedFile } from "@/lib/types";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
 
 const opensLocalFile = legacyRegisterTable("opensLocalFile");
+const servesOneSession = legacyRegisterTable("servesOneSession");
 
 /**
  * The host's session capacity class (docs/providers/CONTRACT.md, clause C-66): whether a connection's object tree reads
@@ -72,7 +73,7 @@ const FILE_CASES: readonly [string, DatabaseConnection][] = [
 describe("sessionCapacity", () => {
   test("every shipped engine's session capacity is one exactly where Studio's record names a reason", () => {
     const one = SHIPPED_DATABASE_TYPES.filter((type) => sessionCapacity(connection(type)) === "one");
-    expect(one).toEqual(SHIPPED_DATABASE_TYPES.filter((type) => SERVES_ONE_SESSION[type] !== null));
+    expect(one).toEqual(SHIPPED_DATABASE_TYPES.filter((type) => servesOneSession[type] !== null));
     // Vacuity, by name: a record and a class that both answered nothing, or everything, would agree above.
     expect([...one].sort()).toEqual(["duckdb", "libredb", "modbus", "mqtt", "netconf", "opcua", "snmp", "sparkplug"]);
     expect(SHIPPED_DATABASE_TYPES.length - one.length).toBe(35);
@@ -83,7 +84,7 @@ describe("sessionCapacity", () => {
       expect([label, sessionCapacity(record)]).toEqual([label, "one"]);
     }
     // SQLite is the engine whose record names no reason, so its in-memory answer is the connection's alone.
-    expect(SERVES_ONE_SESSION.sqlite).toBeNull();
+    expect(servesOneSession.sqlite).toBeNull();
     expect(sessionCapacity(connection("sqlite"))).toBe("several");
     // Every engine that opens a local file answers one for an in-memory name, whatever its record says.
     for (const type of SHIPPED_DATABASE_TYPES.filter((each) => opensLocalFile[each])) {
