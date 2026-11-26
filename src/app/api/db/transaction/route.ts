@@ -495,8 +495,8 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`), as on
-    // POST /api/db/query: a wait that ends answers 504 or 499, not-sent, and the open goes on for the next request.
+    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a wait
+    // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
     const resolved = connection;
     const provider = await openWithinCall(req.signal, resolved.type, (wait) =>
       editorProvider(guard.session, resolved, catalog, wait),

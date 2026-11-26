@@ -6,7 +6,8 @@
  *
  * The provider is the real QdrantProvider, connected over a client whose answers this file writes, from the
  * captures of the seeded server (tests/helpers/qdrant-surface-fixtures.ts) unless a test replaces one. Only the
- * session and the provider cache, with the query route's open of the editor's session, are replaced. The credential is the stand-in TEST_PASSWORD.
+ * session and the provider cache, with the query route's open of the editor's session, are replaced. The credential
+ * is the stand-in TEST_PASSWORD.
  */
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";

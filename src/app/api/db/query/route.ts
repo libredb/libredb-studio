@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
