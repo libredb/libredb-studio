@@ -14,8 +14,9 @@
  * reads `within`, its deadline and the signal that stops it, and refuses an open without one as a host defect, before
  * the package's `open` is called.
  *
- * Nothing here wraps an error: the provider factory's entry points (src/lib/db/factory.ts) run it inside `buildPhase`
- * and the package session path (src/lib/db/package-sessions.ts) inside `connectPhase`, which mark its errors not-sent.
+ * Nothing here wraps an error: the provider factory (src/lib/db/factory.ts) runs it inside `buildPhase` for a build and
+ * inside `connectPhase` for an open that connects (`getOrCreateEditorSession`, `openEngineOnce`), which mark its errors
+ * not-sent.
  */
 import { callRefusalSentence, type EnvReader } from "@libredb/provider-sdk/calls";
 import { errorCode, errorKind } from "@/lib/db/error-record";

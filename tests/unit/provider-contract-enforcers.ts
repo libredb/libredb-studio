@@ -1974,7 +1974,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers",
         "query/cancel with a token already cancelled calls nothing",
       ],
-      "tests/isolated/package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "two concurrent first opens open one session",
         "a caller whose wait ends stops waiting, and an open no caller waits for is admitted once",
         "a removal or a cache clear closes an open it overtook, once, and caches nothing",
@@ -2002,9 +2002,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed",
         "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed",
       ],
-      "tests/isolated/package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "teardown cuts a close that never settles at the deadline",
         "teardown cuts a close that never settles at the deadline, in a child with its own heap and timeout",
+      ],
+      "tests/isolated/factory-package-engines.test.ts": [
+        "removeProvider by connection, by owner and by key closes a package engine's cached session with today's teardown deadlines",
+        "clearProviderCache closes package sessions and names a close that never settles as not closed, by connection and package",
       ],
     },
   },
@@ -2754,7 +2758,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/isolated/factory-package-engines.test.ts": [
         "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build",
-        "an admitted package's engine is refused at each factory entry point, its session opening through its package",
+        "an admitted package's engine is refused at each factory entry point that answers a legacy provider, its session opening through the factory's editor session",
       ],
       "tests/unit/lib/api/error-body.test.ts": [
         "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501",
@@ -2776,7 +2780,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-109": {
     tests: {
-      "tests/isolated/package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
         "each open check refuses before the package's open is called and before any file is read",
         "a refinement the host refuses fails the open as the package's defect, and Test Connection's one open is never cached",
@@ -2804,7 +2808,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
         "the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged",
       ],
-      "tests/isolated/package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "a call the package does not offer is refused before the call",
         "a console execute on a package session answers the package's rows through the host core",
       ],
@@ -2885,6 +2889,6 @@ export const REMOVED_CLAUSES: Readonly<Record<string, string>> = {
   "C-86": "src/app/api/db/profile/route.ts",
   "C-90": "src/lib/provider-loader/index.cjs",
   "C-108": "src/lib/uncaught-exception.ts",
-  "C-110": "src/lib/db/package-sessions.ts",
+  "C-110": "src/lib/db/factory.ts",
   "C-113": "src/lib/api/package-editor-query.ts",
 };

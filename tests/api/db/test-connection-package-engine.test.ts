@@ -1,10 +1,10 @@
 /**
  * `POST /api/db/test-connection` for an engine a provider package serves (docs/providers/CONTRACT.md, clauses C-107 and
- * C-112), through the real `resolveConnection`, the real package session path and the real host core: an
- * admitted engine's connection is validated against its declaration's field rules and the open checks, each refusal a
- * not-sent configuration error, then one session opens through the package, its health is read and it is closed; a
- * package's own words never reach the client; a refused package's engine answers `PROVIDER_UNAVAILABLE` naming the
- * code. The factory is stood in for and never reached.
+ * C-112), through the real `resolveConnection`, the factory's real one-shot open (`openEngineOnce`) and the real host
+ * core: an admitted engine's connection is validated against its declaration's field rules and the open checks, each
+ * refusal a not-sent configuration error, then one session opens through the package, its health is read and it is
+ * closed; a package's own words never reach the client; a refused package's engine answers `PROVIDER_UNAVAILABLE`
+ * naming the code. The factory's legacy entry points are stood in for and never reached.
  *
  * The packages are in-memory records whose functions call the hooks a case sets. The deadline case runs on an engine
  * record whose budget is 50 ms; it settles on the route's own answer, never on a timer the test awaits.
@@ -32,7 +32,10 @@ mock.module("@/lib/auth", () => ({
   readSession: mock(async () => ({ kind: "authenticated", session: await mockGetSession() })),
 }));
 
-/** Every call into the factory, by name: none may happen for a package engine. */
+/** The factory's real one-shot open, taken before the factory is stood in for. */
+const { openEngineOnce } = await import("@/lib/db/factory");
+
+/** Every call into the factory's legacy entry points, by name: none may happen for a package engine. */
 const factoryCalls: string[] = [];
 const recorded = (name: string) => async (): Promise<never> => {
   factoryCalls.push(name);
@@ -53,6 +56,7 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: recorded("removeProvider"),
   clearProviderCache: recorded("clearProviderCache"),
   getProviderCacheStats: () => ({ size: 0, connections: [] }),
+  openEngineOnce,
 }));
 
 const { POST } = await import("@/app/api/db/test-connection/route");

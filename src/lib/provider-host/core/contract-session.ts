@@ -22,6 +22,11 @@
  *    `sessionMaintenance` of the engine's, and it is a read-only statement session exactly when the open policy says
  *    `readOnly` and `sendsStatements` (clause C-78).
  *
+ * `teardownContractSession` tears a session down under the teardown's deadlines (clause C-45): its close under a cleanup
+ * context with the package's environment, waited for at most the close deadline, with no rollback step, since a contract
+ * session holds no transaction the host reads. The provider factory (src/lib/db/factory.ts) tears its cached sessions
+ * down with it, and Test Connection its one session.
+ *
  * The session (`ContractSession`) is the object the host core's calls take: frozen, each member present exactly when its
  * calls offer it, each calling the package's own function as a method of the object that holds it, with the handle
  * first, as a served module calls `open` as a method of its implementation. `execute`, `health` and `close` are always
@@ -45,6 +50,7 @@ import {
   checkRefinement,
   cleanupContext,
   type EngineMaintenance,
+  type EnvReader,
   freezeContext,
   type LateOutcome,
   type OpenContext,
@@ -65,7 +71,14 @@ import {
 import type { MaintenanceSession } from "./maintenance";
 import type { HealthSession, MonitoringSession } from "./monitoring";
 import type { ObjectsSession } from "./objects";
-import { settleWithin } from "./teardown";
+import {
+  settleWithin,
+  TEARDOWN_CLOSE_MS,
+  TEARDOWN_ROLLBACK_MS,
+  type TeardownDeadlines,
+  type TeardownOutcome,
+  teardownWithin,
+} from "./teardown";
 
 /** A session of an admitted package as the host core's calls take it, and its close. */
 export interface ContractSession
@@ -306,4 +319,17 @@ export async function openContractSession(
     ...(serverVersion !== undefined && { serverVersion }),
     ...(engineUser !== undefined && { engineUser }),
   };
+}
+
+/**
+ * Tears `session` down under `deadlines`, the teardown's own by default: no rollback, then its close under a cleanup
+ * context with the package's environment `env`, waited for at most `deadlines.closeMs`. Answers how the close ended and
+ * never rejects; the caller logs a close that failed or was cut.
+ */
+export function teardownContractSession(
+  session: Pick<ContractSession, "close">,
+  env: EnvReader,
+  deadlines: TeardownDeadlines = { rollbackMs: TEARDOWN_ROLLBACK_MS, closeMs: TEARDOWN_CLOSE_MS },
+): Promise<TeardownOutcome> {
+  return teardownWithin({ close: () => session.close(cleanupContext(env)) }, deadlines);
 }

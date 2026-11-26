@@ -1,6 +1,6 @@
 /**
  * `POST /api/db/query` on an engine an admitted provider package serves (src/lib/api/package-editor-query.ts),
- * through the real `resolveConnection`, the real package session cache, the real confirmation gate and the
+ * through the real `resolveConnection`, the provider factory's real editor cache, the real confirmation gate and the
  * real host core: the statement is read under the grammar the package declares, with every claim that loosens the gate
  * uncounted; the session opens once per key through the package; the run answers the package's rows keyed by column
  * name; a request field the package does not honour, and one the route does not serve for such an engine, is refused

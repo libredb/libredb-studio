@@ -1168,7 +1168,7 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection and by the query route, its session opening through its package (C-109), and is refused on every other request, and at every entry point of the provider factory, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+An admitted package's engine is served by Test Connection and by the query route, its session opening through its package (C-109), and is refused on every other request as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
 Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
 
 ### C-109 (normative): A package's open receives only the context core builds

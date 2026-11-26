@@ -76,6 +76,10 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
+  // Test Connection opens a provider package's engine through it, and every case here tests a legacy engine.
+  openEngineOnce: () => {
+    throw new Error("no case here opens a provider package's engine");
+  },
 }));
 
 const { POST } = await import("@/app/api/db/test-connection/route");

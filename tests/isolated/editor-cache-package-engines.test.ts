@@ -1,16 +1,18 @@
 /**
- * The sessions of an admitted provider package's engine (src/lib/db/package-sessions.ts; docs/providers/CONTRACT.md,
- * clauses C-109 and C-111): opened through the package's own `open` with the context core builds, never through a
- * legacy provider class, once per key, torn down under the teardown's deadlines, and refused before the open by every
- * check core holds for what it cannot hand a package.
+ * The sessions of an admitted provider package's engine in the provider factory's editor cache (src/lib/db/factory.ts;
+ * docs/providers/CONTRACT.md, clauses C-109 and C-111): opened through the package's own `open` with the context core
+ * builds, never through a legacy provider class, once per key, swept, removed and closed with every other entry, torn
+ * down under the teardown's deadlines, and refused before the open by every check core holds for what it cannot hand a
+ * package.
  *
  * Fixture packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function of a package calls the hook the case sets. Every module the
  * legacy adapter's open (src/lib/provider-host/legacy-adapter/open.ts) imports a legacy provider from is replaced by a
  * module that records its import, so a case reads whether the legacy path was reached. Nothing awaits a timer: every
  * wait settles on a promise a case resolves, the deadline cases run on a record whose budget is 50 ms, and the cut of a
- * close is read under fake timers here and in a bounded child. The child prints JSON lines, read after `trimEnd()`
- * (CRLF on Windows); no file mode or link is used.
+ * close is read under fake timers here and in a bounded child. The names a close reports not closed are read from the
+ * shutdown's close of the caches (`closeProviderCaches` in src/lib/shutdown.ts), as the shutdown logs them. The child
+ * prints JSON lines, read after `trimEnd()` (CRLF on Windows); no file mode or link is used.
  */
 // oxlint-disable no-await-in-loop -- each check runs after the one before, so its hooks read one open at a time.
 import { afterAll, beforeAll, describe, expect, jest, mock, spyOn, test } from "bun:test";
@@ -46,7 +48,9 @@ for (const specifier of LEGACY_MODULES) {
 }
 
 const factory = await import("@/lib/db/factory");
-const sessions = await import("@/lib/db/package-sessions");
+const { IDLE_TIMEOUT_MS } = await import("@/lib/db/idle-sweep");
+const { openedSession } = await import("@/lib/provider-host/open-engine");
+const { closeProviderCaches, resetShutdownHooks } = await import("@/lib/shutdown");
 const { assertOpenable } = await import("@/lib/db/open-check");
 const {
   DatabaseConfigError,
@@ -71,7 +75,7 @@ const MAIN = "acmepsmain";
 const BARE = "acmepsbare";
 const ROWS = "acmepsrows";
 const SCOPE = "acmepsscope";
-const providers = scratchDirectory("studio-package-sessions-");
+const providers = scratchDirectory("studio-editor-cache-package-engines-");
 let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
@@ -175,6 +179,24 @@ function argsOf(recorder: Recorder, name: string): unknown[] {
 /** The names of the calls `recorder` saw. */
 const names = (recorder: Recorder) => recorder.calls.map(({ name }) => name);
 
+/**
+ * Starts the close of the factory's caches the shutdown runs, and answers the names it reported not closed, read from
+ * the shutdown's log line; the shutdown's runs are forgotten first, so each case runs it afresh.
+ */
+function closeAtShutdown(): Promise<string[]> {
+  resetShutdownHooks();
+  const error = spyOn(logger, "error").mockImplementation(() => undefined);
+  return closeProviderCaches()
+    .then(() => {
+      const failure = error.mock.calls.find(([line]) => line === "Provider cache close failed")?.[1];
+      return failure instanceof Error ? failure.message.replace("Providers not closed: ", "").split(", ") : [];
+    })
+    .finally(() => {
+      resetShutdownHooks();
+      error.mockRestore();
+    });
+}
+
 /** What `work` rejected with. */
 async function rejection(work: Promise<unknown>): Promise<unknown> {
   return work.then(
@@ -212,7 +234,7 @@ describe("the sessions of a provider package's engine", () => {
 
     const hooks = record(MAIN);
     const start = Date.now();
-    const cached = await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+    const cached = await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
     const end = Date.now();
     expect(names(hooks)).toEqual(["open"]);
     const ctx = hooks.calls[0]?.args[0] as OpenContext;
@@ -234,17 +256,17 @@ describe("the sessions of a provider package's engine", () => {
   test("two concurrent first opens open one session", async () => {
     const hooks = record(MAIN, { hold: true });
     const connection = connectionOf(MAIN);
-    const before = sessions.packageSessionStats().size;
-    const first = sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
-    const second = sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+    const before = factory.getProviderCacheStats().size;
+    const first = factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
+    const second = factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
     // Both reach the open table before the open answers: the key is computed asynchronously.
     await hooks.opened;
     hooks.answer({ handle: { session: randomUUID() } });
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
     expect(names(hooks)).toEqual(["open"]);
-    expect(sessions.packageSessionStats().size).toBe(before + 1);
-    expect(await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN)).toBe(a);
+    expect(factory.getProviderCacheStats().size).toBe(before + 1);
+    expect(await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN)).toBe(a);
     expect(names(hooks)).toEqual(["open"]);
   });
 
@@ -285,7 +307,7 @@ describe("the sessions of a provider package's engine", () => {
     ] as const) {
       const hooks = record(id);
       let running = -1;
-      const cached = await sessions.getOrCreatePackageSession(connectionOf(id), engineOf(id), ADMIN);
+      const cached = await factory.getOrCreateEditorSession(connectionOf(id), engineOf(id), ADMIN);
       setHooks(id, {
         ...((globalThis as Record<symbol, unknown>)[hooksKey(id)] as SessionHooks),
         execute: (...args) => {
@@ -320,7 +342,7 @@ describe("the sessions of a provider package's engine", () => {
 
   test("a session that offers endScope is sent the run's scope and its rollback is answered, and columns that cannot key a row are the package's defect", async () => {
     const hooks = record(SCOPE);
-    const cached = await sessions.getOrCreatePackageSession(connectionOf(SCOPE), engineOf(SCOPE), ADMIN);
+    const cached = await factory.getOrCreateEditorSession(connectionOf(SCOPE), engineOf(SCOPE), ADMIN);
     let columns: unknown[] = [{ name: "key" }];
     const emptySource = () => ({
       columns,
@@ -369,11 +391,11 @@ describe("the sessions of a provider package's engine", () => {
   test("teardown cuts a close that never settles at the deadline", async () => {
     const hooks = record(MAIN, { close: () => new Promise<void>(() => undefined) });
     const connection = connectionOf(MAIN);
-    await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+    await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
     const warn = spyOn(logger, "warn");
     jest.useFakeTimers();
     try {
-      const closing = sessions.closePackageSessions();
+      const closing = closeAtShutdown();
       expect(names(hooks)).toContain("close");
       jest.advanceTimersByTime(CLEANUP_DEADLINE_MS);
       const unclosed = await closing;
@@ -382,21 +404,23 @@ describe("the sessions of a provider package's engine", () => {
       jest.useRealTimers();
       warn.mockRestore();
     }
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
     const closeCtx = hooks.calls.find(({ name }) => name === "close")?.args[1] as CallContext;
     expect(() => closeCtx.env.get("PATH")).toThrow();
 
     // The factory's cache clear reaches the package sessions too.
     record(MAIN);
-    await sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
-    expect(sessions.packageSessionStats().size).toBe(1);
+    await factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
+    expect(factory.getProviderCacheStats().size).toBe(1);
     await factory.clearProviderCache();
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
   });
 
   test("a call the package does not offer is refused before the call", async () => {
     const hooks = record(BARE);
-    const { session } = await sessions.getOrCreatePackageSession(connectionOf(BARE), engineOf(BARE), ADMIN);
+    const { session } = openedSession(
+      (await factory.getOrCreateEditorSession(connectionOf(BARE), engineOf(BARE), ADMIN)).opened,
+    );
     const core = createHostCore();
     const ports = { late: () => undefined, cancelFailed: () => undefined };
     const ctx = () => ({ deadline: Date.now() + 60_000, signal: new AbortController().signal, env: hooksEnv() });
@@ -430,7 +454,7 @@ describe("the sessions of a provider package's engine", () => {
     const hooks = record(MAIN, { hold: true });
     const connection = connectionOf(MAIN);
     const caller = new AbortController();
-    const waiting = sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN, { signal: caller.signal });
+    const waiting = factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN, { signal: caller.signal });
     await hooks.opened;
     const reason = new Error(randomUUID());
     caller.abort(reason);
@@ -438,8 +462,8 @@ describe("the sessions of a provider package's engine", () => {
     const handle = { session: randomUUID() };
     hooks.answer({ handle });
     // A later call joins the open in flight or reads the cache, so it waits for the admission without opening again.
-    await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
-    expect(sessions.packageSessionStats().connections.filter((id) => id === connection.id)).toHaveLength(1);
+    await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
+    expect(factory.getProviderCacheStats().connections.filter((id) => id === connection.id)).toHaveLength(1);
     expect(names(hooks)).toEqual(["open"]);
 
     // An open that fails with no caller left is logged by kind and code, never its text.
@@ -451,7 +475,7 @@ describe("the sessions of a provider package's engine", () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => logged());
     try {
       const left = new AbortController();
-      const gone = sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN, {
+      const gone = factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN, {
         signal: left.signal,
       });
       await failing.opened;
@@ -474,7 +498,7 @@ describe("the sessions of a provider package's engine", () => {
     ]) {
       const hooks = record(MAIN, { hold: true });
       const connection = connectionOf(MAIN);
-      const opening = sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+      const opening = factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
       await hooks.opened;
       const removal = overtake(connection);
       const handle = { session: randomUUID() };
@@ -485,12 +509,12 @@ describe("the sessions of a provider package's engine", () => {
       expect(errorOutcome(error)).toBe("not-sent");
       expect((error as Error).message).toStartWith("The connection was closed while it was opening");
       expect(hooks.calls.filter(({ name, args }) => name === "close" && args[0] === handle)).toHaveLength(1);
-      expect(sessions.packageSessionStats().connections).not.toContain(connection.id);
+      expect(factory.getProviderCacheStats().connections).not.toContain(connection.id);
     }
   });
 
   test("an open that answers while the caches close is overtaken, a failed close is logged by kind and code, and the sweep runs on its interval", async () => {
-    await sessions.closePackageSessions();
+    await factory.clearProviderCache();
     let release!: () => void;
     const held = record(MAIN, {
       close: () =>
@@ -498,10 +522,10 @@ describe("the sessions of a provider package's engine", () => {
           release = resolve;
         }),
     });
-    await sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
-    const closing = sessions.closePackageSessions();
+    await factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
+    const closing = closeAtShutdown();
     const during = record(MAIN);
-    const error = await rejection(sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
+    const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
     expect(error).toBeInstanceOf(ConnectionError);
     expect(names(during)).toEqual(["open", "close"]);
     release();
@@ -511,10 +535,10 @@ describe("the sessions of a provider package's engine", () => {
     const secret = randomUUID();
     record(MAIN, { close: () => Promise.reject(new Error(secret)) });
     const connection = connectionOf(MAIN);
-    await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+    await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
     const warn = spyOn(logger, "warn");
     try {
-      expect(await sessions.closePackageSessions()).toEqual([`${connection.id} (acme-ps-main 1.0.0)`]);
+      expect(await closeAtShutdown()).toEqual([`${connection.id} (acme-ps-main 1.0.0)`]);
       expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
       expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ kind: "internal", code: "INTERNAL_ERROR" });
     } finally {
@@ -524,36 +548,38 @@ describe("the sessions of a provider package's engine", () => {
     jest.useFakeTimers();
     try {
       record(MAIN);
-      const swept = await sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
+      const swept = await factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
       swept.lastUsed = 0;
       jest.advanceTimersByTime(5 * 60 * 1000);
     } finally {
       jest.useRealTimers();
     }
-    await sessions.closePackageSessions();
+    await factory.clearProviderCache();
   });
 
-  test("an idle package session is torn down by its own sweep, and removeProvider by owner or key removes package sessions", async () => {
+  test("an idle package session is torn down by the factory's sweep unless a call runs on it, and removeProvider by owner or key removes package sessions", async () => {
+    await factory.clearProviderCache();
     const hooks = record(MAIN);
-    const idle = await sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
+    const idle = await factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN);
+    idle.lastUsed = Date.now() - IDLE_TIMEOUT_MS;
     idle.running = 1;
-    expect(await sessions.evictIdlePackageSessions(0, Date.now() + 1)).toBe(0);
+    expect(await factory.evictIdleProviders()).toBe(0);
     idle.running = 0;
-    expect(await sessions.evictIdlePackageSessions(0, Date.now() + 1)).toBe(1);
+    expect(await factory.evictIdleProviders()).toBe(1);
     expect(names(hooks)).toEqual(["open", "close"]);
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
 
     const connection = connectionOf(MAIN);
     const owned = (owner: string) =>
-      sessions.getOrCreatePackageSession(connection, engineOf(MAIN), { ...ADMIN, owner, ownerPoolMax: 2 });
+      factory.getOrCreateEditorSession(connection, engineOf(MAIN), { ...ADMIN, owner, ownerPoolMax: 2 });
     const [alice, bob] = [await owned("alice"), await owned("bob")];
     expect(alice).not.toBe(bob);
     const lastOpen = hooks.calls.at(-1) as { args: unknown[] };
     expect((lastOpen.args[0] as OpenContext).pool).toMatchObject({ min: 0, max: 2 });
     await factory.removeProvider(connection.id, { owner: "alice" });
-    expect(sessions.packageSessionStats().connections).toEqual([connection.id]);
+    expect(factory.getProviderCacheStats().connections).toEqual([connection.id]);
     await factory.removeProvider(connection.id, { key: bob.frame });
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
   });
 
   test("the open's own deadline is the engine's connect budget: an open that never settles answers StudioTimeoutRefusal naming it, not-sent, and is closed once it settles", async () => {
@@ -570,7 +596,7 @@ describe("the sessions of a provider package's engine", () => {
     });
     const main = engineOf(MAIN);
     const brief = { ...main, catalog: { ...main.catalog, connectBudgetMs: 50 } } as EngineRecord;
-    const error = await rejection(sessions.getOrCreatePackageSession(connectionOf(MAIN), brief, ADMIN));
+    const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), brief, ADMIN));
     expect(error).toBeInstanceOf(StudioTimeoutRefusal);
     expect((error as Error).message).toBe(openDeadlineSentence(50));
     expect(errorOutcome(error)).toBe("not-sent");
@@ -578,7 +604,7 @@ describe("the sessions of a provider package's engine", () => {
     hooks.answer({ handle });
     await closing;
     expect(hooks.calls.filter(({ name }) => name === "close").map(({ args }) => args[0])).toEqual([handle]);
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
   });
 
   test("each open check refuses before the package's open is called and before any file is read", async () => {
@@ -659,7 +685,7 @@ describe("the sessions of a provider package's engine", () => {
       ],
     ];
     for (const [connection, engine, execution, sentence] of cases) {
-      const error = await rejection(sessions.getOrCreatePackageSession(connection, engine, execution));
+      const error = await rejection(factory.getOrCreateEditorSession(connection, engine, execution));
       expect(error).toBeInstanceOf(DatabaseConfigError);
       expect((error as Error).message).toBe(sentence);
       expect(errorOutcome(error)).toBe("not-sent");
@@ -670,7 +696,7 @@ describe("the sessions of a provider package's engine", () => {
 
     process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
     try {
-      const error = await rejection(sessions.getOrCreatePackageSession(connectionOf(MAIN), main, ADMIN));
+      const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), main, ADMIN));
       expect((error as Error).message).toBe(
         `The ${MAIN} provider is not available in this distribution of LibreDB Studio.`,
       );
@@ -686,20 +712,19 @@ describe("the sessions of a provider package's engine", () => {
       ...currentHooks(MAIN),
       open: () => Promise.resolve({ handle: 1, refine: { calls: { console: { endScope: "offered" } } } }),
     });
-    const error = await rejection(sessions.getOrCreatePackageSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
+    const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
     expect((error as Error).message).toStartWith("The provider package's open was refused:");
     expect(errorKind(error)).toBe("internal");
 
     record(MAIN);
-    const once = await sessions.openPackageSessionOnce(
-      connectionOf(MAIN),
-      engineOf(MAIN),
-      ADMIN,
-      Date.now() + 1_000,
-      new AbortController().signal,
+    const once = openedSession(
+      await factory.openEngineOnce(connectionOf(MAIN), engineOf(MAIN), ADMIN, {
+        deadline: Date.now() + 1_000,
+        signal: new AbortController().signal,
+      }),
     );
     expect(typeof once.session.health).toBe("function");
-    expect(sessions.packageSessionStats().size).toBe(0);
+    expect(factory.getProviderCacheStats().size).toBe(0);
   });
 
   test("a package engine's cached session and Test Connection's session open through the one open function with the engine's record", async () => {
@@ -708,25 +733,22 @@ describe("the sessions of a provider package's engine", () => {
     const connection = connectionOf(MAIN);
     try {
       record(MAIN);
-      await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+      await factory.getOrCreateEditorSession(connection, engineOf(MAIN), ADMIN);
       expect(open).toHaveBeenCalledTimes(1);
       expect(open.mock.calls[0]?.[0]).toBe(engineOf(MAIN));
       expect(open.mock.calls[0]?.[1].connection).toBe(connection);
 
       const once = connectionOf(MAIN);
-      await sessions.openPackageSessionOnce(
-        once,
-        engineOf(MAIN),
-        ADMIN,
-        Date.now() + 1_000,
-        new AbortController().signal,
-      );
+      await factory.openEngineOnce(once, engineOf(MAIN), ADMIN, {
+        deadline: Date.now() + 1_000,
+        signal: new AbortController().signal,
+      });
       expect(open).toHaveBeenCalledTimes(2);
       expect(open.mock.calls[1]?.[0]).toBe(engineOf(MAIN));
       expect(open.mock.calls[1]?.[1].connection).toBe(once);
     } finally {
       open.mockRestore();
-      await sessions.removePackageSessions(connection.id);
+      await factory.removeProvider(connection.id);
     }
   });
 
@@ -734,11 +756,11 @@ describe("the sessions of a provider package's engine", () => {
     const hooks = record(MAIN);
     const connection = connectionOf(MAIN);
     try {
-      await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), {});
+      await factory.getOrCreateEditorSession(connection, engineOf(MAIN), {});
       expect(names(hooks)).toEqual(["open"]);
       expect((argsOf(hooks, "open")[0] as OpenContext).policy.allowExternalFileAccess).toBe(false);
     } finally {
-      await sessions.removePackageSessions(connection.id);
+      await factory.removeProvider(connection.id);
     }
   });
 });
@@ -762,27 +784,19 @@ function hooksEnv() {
 
 const SOURCE = path.join(REPOSITORY_ROOT, "src");
 
-/**
- * The one open function the child bundles in place of the real one: the real one reaches the legacy adapter's open,
- * whose provider modules reach native addons the child's bundle cannot load, and the child tears a session down and
- * opens none.
- */
-const OPEN_ENGINE_STUB = `
-const notHere = () => {
-  throw new Error("No engine opens in this child: it tears a package's session down.");
-};
-export const openEngine = notHere;
-export const openedSession = notHere;
-`;
-
+/** The child bundles the host core's teardown of a contract session alone, which imports only the SDK and core. */
 const child = boundedChild({
   label: "package-session-teardown",
-  imports: [{ from: path.join(SOURCE, "lib", "db", "package-sessions.ts"), names: ["teardownPackageSession"] }],
-  stubs: [{ specifier: "@/lib/provider-host/open-engine", source: OPEN_ENGINE_STUB }],
-  runCase: async (deps: { teardownPackageSession: (...args: unknown[]) => Promise<unknown> }) => {
+  imports: [
+    {
+      from: path.join(SOURCE, "lib", "provider-host", "core", "contract-session.ts"),
+      names: ["teardownContractSession"],
+    },
+  ],
+  runCase: async (deps: { teardownContractSession: (...args: unknown[]) => Promise<unknown> }) => {
     const env = { get: () => undefined };
     const session = { close: () => new Promise<void>(() => {}) };
-    return deps.teardownPackageSession(session, env, { rollbackMs: 50, closeMs: 100 });
+    return deps.teardownContractSession(session, env, { rollbackMs: 50, closeMs: 100 });
   },
   heapLimitMiB: 128,
   timeoutMs: 3_000,

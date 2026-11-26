@@ -6,11 +6,11 @@
  * the deadline the child waits until the spawn timeout kills it, and the case fails within seconds; the child holds a
  * referenced interval, so Node cannot exit early on the unsettled wait (tests/helpers/bounded-node-child.ts).
  *
- * The provider factory reaches ssh2's native addon, and the one open function the package session path imports reaches
- * the legacy adapter's provider modules, which the child's bundle cannot load either, so the child takes a stub of
- * each. The factory's stub is a provider whose connect never settles, or, for the health case, whose connect resolves
- * and whose health never settles, no open single-writer handle, and a tunnel scope that runs its function on the
- * connection as it is.
+ * The provider factory reaches ssh2's native addon, and the one open function Test Connection imports `openedSession`
+ * from reaches the legacy adapter's provider modules, which the child's bundle cannot load either, so the child takes a
+ * stub of each. The factory's stub is a provider whose connect never settles, or, for the health case, whose connect
+ * resolves and whose health never settles, no open single-writer handle, a tunnel scope that runs its function on the
+ * connection as it is, and a one-shot open of a provider package's engine that no case reaches.
  * The case reaches the stub through one global the case sets before the test starts, `__testConnectionBoundsCase`,
  * since the stub is bundled in place of the factory and the case imports nothing from it. The child installs a host
  * core, as the extension's child and the server's instrumentation do.
@@ -51,19 +51,21 @@ export const createDatabaseProvider = async () => provider;
 export const findOpenSingleWriterProvider = () => null;
 export const isSingleWriterFileOpen = () => false;
 export const withOneShotTunnel = async (connection, run) => run(connection);
+export const openEngineOnce = () => {
+  throw new Error("No provider package's engine opens in this child: it tests a legacy engine.");
+};
 `;
 
 /**
- * The one open function the child bundles in place of the real one: the package session path imports it, and the real
- * one reaches the legacy adapter's open, whose provider modules reach native addons the child's bundle cannot load.
- * Every case here opens a legacy engine through the stubbed factory, so nothing calls it.
+ * The one open function's module the child bundles in place of the real one: Test Connection reads a package's opened
+ * session through it, and the real one reaches the legacy adapter's open, whose provider modules reach native addons
+ * the child's bundle cannot load. Every case here opens a legacy engine through the stubbed factory, so nothing calls
+ * it.
  */
 const OPEN_ENGINE_STUB = `
-const notHere = () => {
-  throw new Error("No engine opens through the one open function in this child: it tests a legacy engine.");
+export const openedSession = () => {
+  throw new Error("No provider package's session opens in this child: it tests a legacy engine.");
 };
-export const openEngine = notHere;
-export const openedSession = notHere;
 `;
 
 const child = boundedChild({

@@ -4,8 +4,8 @@
  * a table keyed by type or from who serves the engine. Every engine opens through the one open function (`openEngine`
  * in src/lib/provider-host/open-engine.ts), which runs `assertOpenable` before the record's open, a legacy engine's
  * provider and a package engine's session alike, so one connection is refused by one sentence whichever source serves
- * its engine. The package session path also runs it before its cache key (`getOrCreatePackageSession` in
- * ./package-sessions) and Test Connection before its budget starts (`testPackageConnection` in
+ * its engine. The editor's session of a package's record also runs it before its cache key
+ * (`getOrCreateEditorSession` in ./factory) and Test Connection before its budget starts (`testPackageConnection` in
  * src/lib/api/test-connection.ts), each on the context it then opens with.
  *
  * IN THIS ORDER, the first refusal thrown, each a `DatabaseConfigError` naming the engine by `legacyProviderType`

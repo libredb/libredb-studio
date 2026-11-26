@@ -227,7 +227,8 @@ export function composeServerCatalog(
             directory: pkg.directory,
             manifest: pkg.manifest as ProviderManifest,
             record: pkg.record,
-            // What the host core checks each call of the engine's sessions against (src/lib/db/package-sessions.ts).
+            // What the host core checks each call of the engine's sessions against
+            // (src/lib/provider-host/core/contract-session.ts).
             session: Object.freeze({
               calls: pkg.manifest.calls,
               maintenance: Object.freeze({
