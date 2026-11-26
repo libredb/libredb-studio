@@ -49,7 +49,7 @@ import {
 import type { EngineId, EngineOffers, EngineRecord, ServerCatalog, ServingPackage } from "./server-catalog";
 
 /** What every engine an admitted package serves offers: nothing beyond the provider contract's own calls. */
-export const PACKAGE_OFFERS: EngineOffers = Object.freeze({
+const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   legacyProvider: false,
   explain: false,
   database: false,
