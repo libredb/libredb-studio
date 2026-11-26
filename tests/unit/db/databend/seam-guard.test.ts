@@ -19,11 +19,10 @@
  * also import values from    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  * `typed-literals.ts`, the engine's typed SQL writing function, from    `@/lib/db/sql-writing/*`, and
  * `paste.ts`, the engine's connection string paste reader, from    `@/lib/db/connection-string/shared`. 8. Every value
- * export has an importer other than its own file, so nothing is exported only for a test [12 #15].    An importer is a
- * module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
- * `docs/providers/databend.md` quotes (design section 10); no other test file counts. The doc test reaches only    the
- * names it imports, so a namespace import of it reaches none. A type is part of the contract of the values    that use
- * it, so only values are held.
+ * export has an importer other than its own file, so nothing new is exported only for a test [12 #15]. An importer is
+ * a module under `src/`; no test file counts. A value no `src/` module imports passes only when `TEST_READ_EXPORTS`
+ * lists it, and that list only shrinks: an entry its file no longer exports, or that a `src/` module imports, is
+ * refused as stale. A type is part of the contract of the values that use it, so only values are held.
  *
  * Rules 1 and 2 count a type-only import too: they keep modules apart, not values. Module names are resolved as
  * TypeScript resolves them, so an alias counts; a planted module that does not exist yet resolves by its spelling.
@@ -292,8 +291,49 @@ function declarationsOf(file: string, text: string, exportedOnly: boolean): Expo
   return found;
 }
 
-/** The one test file whose imports count for rule 8: it reads back what the provider doc quotes. */
-const DOC_TEST = "tests/unit/db/databend/provider-doc.test.ts";
+/**
+ * The value exports a test reads and no module under `src/` imports (rule 8), by file of this directory. A name
+ * here passes rule 8; an entry its file no longer exports, or that a `src/` module imports, is refused as stale, so
+ * the list only shrinks.
+ */
+const TEST_READ_EXPORTS: Readonly<Record<string, readonly string[]>> = {
+  "introspect.ts": [
+    "DATABEND_UNKNOWN_TEXT",
+    "DATABEND_UNAVAILABLE_TEXT",
+    "DATABEND_DEFAULT_SESSION_LIMIT",
+    "DATABEND_DEFAULT_SLOW_QUERY_LIMIT",
+    "DATABEND_MAX_MONITORING_LIMIT",
+    "DATABEND_DEGRADE_CODES",
+    "databendSessionsSql",
+    "databendSlowQueriesSql",
+  ],
+  "routes.ts": ["NEXT_URI_REFUSED"],
+  "answer.ts": ["RESULT_MODE_FLOOR"],
+  "auth-latch.ts": ["AUTH_LATCH_TTL_MS", "AUTH_LATCH_MAX_ENTRIES"],
+  "sql-text.ts": [
+    "DATABEND_MULTIPLE_STATEMENTS",
+    "DATABEND_NO_STATEMENT",
+    "DATABEND_UNTERMINATED_SPAN",
+    "DATABEND_FORM_FEED",
+    "DATABEND_TAGGED_DOLLAR",
+    "DATABEND_IDENTIFIER_DOLLAR",
+    "DATABEND_STAGE_RUN_ON",
+    "DATABEND_HINT_SEMICOLON",
+    "DATABEND_HINT_TOKEN",
+  ],
+  "connection-options.ts": [
+    "DATABEND_MAX_SOCKETS",
+    "DATABEND_RESPONSE_CAP_BYTES",
+    "DATABEND_STATEMENT_BYTES",
+    "DATABEND_CELL_BUDGET",
+    "DATABEND_SURFACE_TIMEOUT_MS",
+    "DATABEND_CLOSE_TIMEOUT_MS",
+    "DATABEND_REQUEST_HEADER_NAMES",
+    "DATABEND_CONNECTION_SENTENCES",
+  ],
+  "labels.ts": ["DATABEND_LABEL_SENTENCES"],
+  "http-transport.ts": ["DATABEND_PAGE_UNANSWERED"],
+};
 
 interface Importer {
   readonly file: string;
@@ -302,7 +342,7 @@ interface Importer {
 
 /**
  * The importers rule 8 counts: every `.ts` and `.tsx` file of this directory, every other one under `src/` whose text
- * names `databend` (the only ones that can import from here), and the provider doc test.
+ * names `databend` (the only ones that can import from here).
  */
 function importers(): Importer[] {
   const walk = (dir: string): string[] =>
@@ -311,32 +351,85 @@ function importers(): Importer[] {
       if (entry.isDirectory()) return walk(path);
       return /\.tsx?$/.test(entry.name) ? [path] : [];
     });
-  return [...walk("src"), DOC_TEST]
+  return walk("src")
     .map((file) => ({ file, text: readFileSync(join(ROOT, file), "utf8") }))
     .filter(({ file, text }) => inDirectory(file) || text.includes("databend"));
 }
 
-/** Every value export of this directory that no reader under `src/`, and not the doc test, imports (rule 8). */
-function unimportedExports(sources: readonly Importer[], readers: readonly Importer[] = importers()): string[] {
+/** The names each file of this directory has reached by a reader under `src/`; `"*"` for a namespace import. */
+function reachedNames(readers: readonly Importer[]): Map<string, Set<string>> {
   const reached = new Map<string, Set<string>>();
   for (const { file, text } of readers) {
-    if (!file.startsWith("src/") && file !== DOC_TEST) continue;
+    if (!file.startsWith("src/")) continue;
     for (const reference of references(file, text)) {
       if (reference.specifier === undefined) continue;
       const target = resolved(reference.specifier, file);
       if (!inDirectory(target) || target === file) continue;
       const names = reached.get(target) ?? new Set<string>();
-      // The doc test is held to the names it reads: a namespace import of it would admit every export unread.
-      for (const name of reference.reaches) if (file !== DOC_TEST || name !== "*") names.add(name);
+      for (const name of reference.reaches) names.add(name);
       reached.set(target, names);
     }
   }
+  return reached;
+}
+
+/** Every value export of this directory that no reader under `src/` imports and `listed` does not name (rule 8). */
+function unimportedExports(
+  sources: readonly Importer[],
+  readers: readonly Importer[] = importers(),
+  listed: Readonly<Record<string, readonly string[]>> = TEST_READ_EXPORTS,
+): string[] {
+  const reached = reachedNames(readers);
   return sources.flatMap(({ file, text }) => {
     const names = reached.get(file) ?? new Set<string>();
     if (names.has("*")) return [];
+    const test = listed[posix.basename(file)] ?? [];
     return exportsOf(file, text)
-      .filter((entry) => !entry.type && !names.has(entry.name))
-      .map((entry) => `rule 8: ${file} exports ${entry.name}, which nothing under src/ or the doc test imports`);
+      .filter((entry) => !entry.type && !names.has(entry.name) && !test.includes(entry.name))
+      .map(
+        (entry) =>
+          `rule 8: ${file} exports ${entry.name}, which nothing under src/ imports and TEST_READ_EXPORTS does not list`,
+      );
+  });
+}
+
+/**
+ * Every entry of `listed` that its file does not export as a value, or that a reader under `src/` imports (rule 8),
+ * in the list's order.
+ */
+function staleTestReadExports(
+  sources: readonly Importer[],
+  readers: readonly Importer[] = importers(),
+  listed: Readonly<Record<string, readonly string[]>> = TEST_READ_EXPORTS,
+): string[] {
+  const exported = new Map(
+    sources.map(({ file, text }) => [
+      file,
+      exportsOf(file, text)
+        .filter((entry) => !entry.type)
+        .map((entry) => entry.name),
+    ]),
+  );
+  const importerOf = (target: string, name: string): string | undefined =>
+    readers.find(
+      ({ file, text }) =>
+        file.startsWith("src/") &&
+        file !== target &&
+        references(file, text).some(
+          (reference) =>
+            reference.specifier !== undefined &&
+            resolved(reference.specifier, file) === target &&
+            (reference.reaches.includes(name) || reference.reaches.includes("*")),
+        ),
+    )?.file;
+  return Object.entries(listed).flatMap(([base, names]) => {
+    const file = `${DIR}/${base}`;
+    return names.flatMap((name) => {
+      const prefix = `rule 8: TEST_READ_EXPORTS lists ${name} of ${file}, which`;
+      if (!(exported.get(file) ?? []).includes(name)) return [`${prefix} it does not export`];
+      const importer = importerOf(file, name);
+      return importer === undefined ? [] : [`${prefix} ${importer} imports`];
+    });
   });
 }
 
@@ -359,9 +452,18 @@ describe("the Databend directory holds its seams", () => {
 
   // Reads every file under src/: 0.5s alone with coverage and 4.5s under a 15% CPU quota.
   test(
-    "every value export has an importer under src/ or the doc test (rule 8)",
+    "every value export has an importer under src/ or is listed in TEST_READ_EXPORTS (rule 8)",
     () => {
       expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  // Reads every file under src/: the same cost as the case above.
+  test(
+    "no entry of TEST_READ_EXPORTS is stale (rule 8)",
+    () => {
+      expect(staleTestReadExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
     },
     platformTimeoutMs(40_000),
   );
@@ -387,7 +489,7 @@ describe("the Databend directory holds its seams", () => {
       type: false,
     });
     const readers = importers().map((importer) => importer.file);
-    expect(readers).toContain(DOC_TEST);
+    expect(readers.every((file) => file.startsWith("src/"))).toBe(true);
     // A file of this directory counts though its text never spells the name in lower case.
     expect(read(`${DIR}/auth-latch.ts`)).not.toContain("databend");
     expect(readers).toContain(`${DIR}/auth-latch.ts`);
@@ -582,7 +684,7 @@ describe("planted violations fail by name", () => {
 describe("rule 8 fails by name", () => {
   const sources = (file: string, extra: string) => [{ file: `${DIR}/${file}`, text: read(`${DIR}/${file}`) + extra }];
   const finding = (file: string, name: string) =>
-    `rule 8: ${DIR}/${file} exports ${name}, which nothing under src/ or the doc test imports`;
+    `rule 8: ${DIR}/${file} exports ${name}, which nothing under src/ imports and TEST_READ_EXPORTS does not list`;
   const ONLY_FOR_A_TEST = "\nexport function onlyForATest(): number {\n  return 1;\n}\n";
   const readerOf = (file: string) => ({
     file,
@@ -616,16 +718,34 @@ describe("rule 8 fails by name", () => {
     expect(unimportedExports(sources("decode.ts", extra))).toEqual([]);
   });
 
-  // Reads every file under src/ twice: 0.8s alone with coverage and 2.8s under a 15% CPU quota.
+  // Reads every file under src/ twice, like the cases above.
   test(
-    "a bound only the doc test reads passes, and fails once the doc test is no reader",
+    "a listed bound passes, and fails once the list no longer names it",
     () => {
       const real = sources("auth-latch.ts", "");
       expect(unimportedExports(real)).toEqual([]);
-      const srcOnly = importers().filter((importer) => importer.file !== DOC_TEST);
-      expect(unimportedExports(real, srcOnly)).toEqual([
+      const unlisted = { ...TEST_READ_EXPORTS, "auth-latch.ts": [] };
+      expect(unimportedExports(real, importers(), unlisted)).toEqual([
         finding("auth-latch.ts", "AUTH_LATCH_TTL_MS"),
         finding("auth-latch.ts", "AUTH_LATCH_MAX_ENTRIES"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  // Reads every file under src/ once, like the cases above.
+  test(
+    "an entry its file no longer exports, or that a src module imports, is refused as stale",
+    () => {
+      const real = [...sources("auth-latch.ts", ""), ...sources("decode.ts", "")];
+      const planted = { "auth-latch.ts": ["AUTH_LATCH_TTL_MS"], "decode.ts": ["notExported"] };
+      const srcReader = {
+        file: "src/lib/planted-reader.ts",
+        text: 'import { AUTH_LATCH_TTL_MS } from "@/lib/db/providers/sql/databend/auth-latch";\n',
+      };
+      expect(staleTestReadExports(real, [...importers(), srcReader], planted)).toEqual([
+        `rule 8: TEST_READ_EXPORTS lists AUTH_LATCH_TTL_MS of ${DIR}/auth-latch.ts, which src/lib/planted-reader.ts imports`,
+        `rule 8: TEST_READ_EXPORTS lists notExported of ${DIR}/decode.ts, which it does not export`,
       ]);
     },
     platformTimeoutMs(40_000),
@@ -637,21 +757,11 @@ describe("rule 8 fails by name", () => {
     ]);
   });
 
-  test("a namespace import of the doc test reaches no name", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    const namespace = {
-      file: DOC_TEST,
-      text: 'import * as decode from "@/lib/db/providers/sql/databend/decode";\n',
-    };
-    expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
-  });
-
-  // Reads every file under src/ twice: 0.7s alone with coverage and 2.6s under a 15% CPU quota.
+  // Reads every file under src/ once, like the cases above.
   test(
-    "the doc test counts as an importer, and no other test file does",
+    "no test file counts as an importer",
     () => {
       const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
       expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/databend/decode.test.ts")])).toEqual([
         finding("decode.ts", "onlyForATest"),
       ]);
