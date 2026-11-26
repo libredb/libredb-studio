@@ -8,9 +8,10 @@
  * answer holds a key name, the metadata marker or the endpoint's port.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
+import path from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../../../..");
 const SETS = ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"] as const;
@@ -147,6 +148,50 @@ describe("what the captures show of each server's grants", () => {
       const capture = load(set);
       const head = capture.reads.find((read) => read.statement === "aws s3api head-bucket --bucket scope-public");
       expect(head?.isError).toBe(capture.server !== "rustfs");
+    }
+  });
+});
+
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+
+describe("the scope and MCP captures of the three servers", () => {
+  test("each of the three servers has a scope capture and its run script", () => {
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/scope.json`))).toBe(true);
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/run.sh`))).toBe(true);
+    }
+  });
+
+  test("each server has an MCP capture, and the MCP seed file holds only placeholders for its keys", () => {
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"])
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/mcp.json`))).toBe(true);
+    expect(readFileSync(path.join(ROOT, "tests/fixtures/s3/agent-scope/mcp-seed.json"), "utf8")).not.toMatch(
+      /"(?:user|password|agentUser|agentPassword)": "(?!\$\{)/,
+    );
+  });
+
+  test("every scope capture answers a bucket or key the key may not read as it answers a missing one", () => {
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      const capture = JSON.parse(read(`tests/fixtures/s3/agent-scope/${set}/scope.json`)) as {
+        readonly agent: readonly { readonly statement: string; readonly as: string; readonly refused?: string }[];
+        readonly oracle: {
+          readonly ungrantedBucketLikeMissing: Readonly<Record<string, boolean>>;
+          readonly ungrantedPresentKeyLikeAbsent: boolean;
+          readonly objectsOnlyPresentKeyLikeAbsent: boolean;
+        };
+        readonly leaks: readonly string[];
+      };
+      expect(Object.values(capture.oracle.ungrantedBucketLikeMissing)).toEqual([true, true, true, true, true, true]);
+      expect(capture.oracle.ungrantedPresentKeyLikeAbsent).toBe(true);
+      // GetObject alone lets the key learn whether an object exists, so head-object may tell it too.
+      expect(capture.oracle.objectsOnlyPresentKeyLikeAbsent).toBe(false);
+      const unreadable = capture.agent.filter(
+        (record) => record.as === "scoped" && /(--bucket |s3:\/\/)scope-(other|missing)(\s|$)/.test(record.statement),
+      );
+      expect(unreadable, set).toHaveLength(12);
+      for (const record of unreadable)
+        expect(record.refused, record.statement).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
+      expect(capture.leaks).toEqual([]);
     }
   });
 });

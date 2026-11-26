@@ -27,6 +27,17 @@ import {
 } from "../../../helpers/synthetic-credential-warnings";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
+import path from "node:path";
+import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
+import { assertNotLinkLocalLiteral, LINK_LOCAL_NETWORKS } from "@/lib/db/http/egress-policy";
+import {
+  S3_ACCESS_KEY_ID_MAX_CHARS,
+  S3_ACCESS_KEY_ID_MIN_CHARS,
+  S3_DEFAULT_PORT,
+  S3_DEFAULT_REGION,
+} from "@/lib/db/providers/objectstore/s3/constants";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { readFileSync } from "node:fs";
 
 const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS };
 const fixtures = loadTlsFixtures();
@@ -292,4 +303,89 @@ test("the patterns are the constants module's own objects", () => {
   expect(S3_ACCESS_KEY_ID_PATTERN).toBe(constants.S3_ACCESS_KEY_ID_PATTERN);
   expect(S3_BUCKET_PATTERN).toBe(constants.S3_BUCKET_PATTERN);
   expect(S3_REGION_PATTERN).toBe(constants.S3_REGION_PATTERN);
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+/** An unsigned connection to a loopback endpoint: every builder check passes, so an override isolates one rule. */
+const CONNECTION = {
+  id: "s3-doc",
+  name: "S3 test",
+  type: "s3",
+  host: "localhost",
+  port: 9000,
+  user: "",
+  password: "",
+} as DatabaseConnection;
+/** The sentence `buildS3ConnectionOptions` refuses a connection with `overrides` with. */
+function builderRefusal(overrides: Record<string, unknown>): string {
+  try {
+    buildS3ConnectionOptions({ ...CONNECTION, ...overrides } as DatabaseConnection & WithTunnelFarEnd, {
+      executionReadOnly: false,
+      queryTimeout: DEFAULT_QUERY_TIMEOUT,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error(`expected the builder to refuse ${JSON.stringify(overrides)}`);
+}
+
+describe("the dialog, the access key ID bound, the region, the paste and the refused networks", () => {
+  test("the dialog's label, field labels and default port", () => {
+    const config = DB_UI_CONFIG.s3;
+    expect(config.label).toBe("S3-compatible object storage");
+    expect(config.fieldLabels).toEqual({
+      host: "Endpoint host",
+      user: "Access key ID",
+      password: "Secret access key",
+      database: "Bucket",
+      region: "Region",
+      allowInsecureAuth: "Connect without TLS",
+    });
+    expect(config.defaultPort).toBe(String(S3_DEFAULT_PORT));
+  });
+
+  test("every dialog field has a hint", () => {
+    for (const field of ["host", "user", "password", "database", "region", "allowInsecureAuth"] as const) {
+      const hint = connectionFieldHint(DB_UI_CONFIG.s3, field);
+      expect(hint, field).toBeDefined();
+    }
+  });
+
+  test("an access key ID too short and one too long get the same refusal", () => {
+    const short = builderRefusal({ user: "a".repeat(S3_ACCESS_KEY_ID_MIN_CHARS - 1), password: crypto.randomUUID() });
+    const long = builderRefusal({ user: "a".repeat(S3_ACCESS_KEY_ID_MAX_CHARS + 1), password: crypto.randomUUID() });
+    expect(short).toBe(long);
+  });
+
+  test("the default region is us-east-1", () => {
+    expect(S3_DEFAULT_REGION).toBe("us-east-1");
+  });
+
+  test("the dialog offers an SSH tunnel and an http or https address paste", () => {
+    expect(offersSshTunnel("s3")).toBe(true);
+    expect(hostUriSchemes("s3")).toEqual(["http", "https"]);
+  });
+
+  test("the shared SSL panel declares its modes", () => {
+    const literal = read("src/components/ConnectionModal.tsx").match(/\[([^\]]*)\]\s*as SSLMode\[\]/);
+    if (!literal) throw new Error("the SSL panel's `as SSLMode[]` literal was not found in ConnectionModal.tsx");
+    const modes = [...(literal[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(modes.length).toBeGreaterThan(0);
+  });
+
+  test("a link-local metadata address is refused before any connection", () => {
+    let linkLocal = "";
+    try {
+      assertNotLinkLocalLiteral("169.254.169.254");
+    } catch (error) {
+      linkLocal = (error as Error).message;
+    }
+    expect(linkLocal).not.toBe("");
+  });
+
+  test("the byte transport refuses four link-local networks", () => {
+    expect(LINK_LOCAL_NETWORKS).toHaveLength(4);
+  });
 });

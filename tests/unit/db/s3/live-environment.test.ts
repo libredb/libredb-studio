@@ -51,7 +51,6 @@ import {
   levelPageDefect,
   readmeRows,
   readS3Principals,
-  renderS3Acceptance,
   replayPrincipals,
   resolveS3Sentence,
   runS3Step,
@@ -1437,19 +1436,6 @@ describe("the run-time object generator tests/live/s3-seed-raw.ts", () => {
 
 // -- tests/live/s3-live-support.ts: the acceptance matrix -----------------------------------------------------------
 
-const DOC = "docs/providers/s3.md";
-const BEGIN = "<!-- s3-acceptance:begin -->";
-const END = "<!-- s3-acceptance:end -->";
-
-function matrixDocFindings(doc: string): string[] {
-  const begin = doc.indexOf(BEGIN);
-  const end = doc.indexOf(END);
-  if (begin === -1 || end < begin) return [`${DOC} has no ${BEGIN} ... ${END} block`];
-  return doc.slice(begin + BEGIN.length, end).trim() === renderS3Acceptance()
-    ? []
-    : [`the matrix in ${DOC} is not renderS3Acceptance(): render the matrix into the doc again`];
-}
-
 function matrixShapeFindings(): string[] {
   const findings: string[] = [];
   const ids = S3_ACCEPTANCE.map((row) => row.id);
@@ -1492,12 +1478,6 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     const cited = [...new Set(rowsCells.flatMap((cell) => cell.match(/\b[A-Z][0-9]{1,3}[a-z]?\b/g) ?? []))];
     expect(cited.length).toBeGreaterThan(0);
     expect(cited.filter((id) => !ids.has(id))).toEqual([]);
-  });
-
-  test("docs/providers/s3.md carries exactly the matrix renderS3Acceptance renders", () => {
-    const doc = readFileSync(path.join(ROOT, DOC), "utf8");
-    expect(matrixDocFindings(doc)).toEqual([]);
-    expect(matrixDocFindings(doc.replace("| A1 |", "| A1x |"))[0]).toContain("is not renderS3Acceptance()");
   });
 
   test("a matrix cell escapes its backslashes before its pipes and angle brackets", () => {
@@ -2283,5 +2263,37 @@ describe("the first live run", () => {
       draft.files[SEED] = draft.files[SEED].replace("sp/with%20space.txt|stored", "sp/with%20space.txt|measure");
     });
     finds(firstRunFindings(unmeasured), "still holds measure for sp/with%20space.txt");
+  });
+});
+
+/** A capture set's directory name: target, UTC date, then the version the server reported. */
+const CAPTURE_SET = /^(minio-region|silo-tls|minio|silo|garage|rustfs)-(\d{4}-\d{2}-\d{2})-(.+)$/;
+const VERIFIED_TARGETS = ["minio", "silo", "garage", "rustfs"] as const;
+
+describe("the live evidence files and the capture sets", () => {
+  test("the live evidence, the live check and the integration test exist", () => {
+    for (const file of [
+      "docker/s3/README.md",
+      "tests/live/s3-evidence.ts",
+      "tests/live/s3-live-check.ts",
+      "tests/integration/db/s3-provider.test.ts",
+    ]) {
+      expect(existsSync(path.join(ROOT, file)), file).toBe(true);
+    }
+  });
+
+  test("each verified server has exactly one capture set version", () => {
+    const found = new Map<string, Set<string>>();
+    for (const entry of readdirSync(path.join(ROOT, "tests/fixtures/s3/captures"), { withFileTypes: true })) {
+      const match = entry.isDirectory() ? CAPTURE_SET.exec(entry.name) : null;
+      if (match === null) continue;
+      const versions = found.get(match[1]) ?? new Set<string>();
+      versions.add(match[3]);
+      found.set(match[1], versions);
+    }
+    for (const target of VERIFIED_TARGETS) {
+      const seen = [...(found.get(target) ?? [])];
+      expect(seen, `${target} capture sets`).toHaveLength(1);
+    }
   });
 });

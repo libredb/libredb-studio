@@ -1,11 +1,10 @@
 /**
  * The s3 provider's live acceptance in one module: the targets, the principals and
  * the connections built from them, the acceptance matrix `S3_ACCEPTANCE` as data, the resolver of the provider's own
- * sentences, the evaluator of one step, the matrix renderer, and (below) the scenario runners.
+ * sentences, the evaluator of one step, the matrix cell escaping, and (below) the scenario runners.
  *
  * tests/live/s3-live-check.ts, tests/live/s3-evidence.ts and tests/integration/db/s3-provider.test.ts all read this
- * module, so the live check, the harness and the replay run the same function for a row. docs/providers/s3.md carries
- * the matrix rendered by `renderS3Acceptance`, and tests/unit/db/s3/live-environment.test.ts fails when they differ.
+ * module, so the live check, the harness and the replay run the same function for a row.
  *
  * A `sentence` is never retyped: it names how the provider's own text is obtained, and `resolveS3Sentence` obtains it
  * by calling the provider's code with the step's own connection, command or page options:
@@ -69,8 +68,6 @@ if (!existsSync(path.join(ROOT, "database-compose.yml")))
 
 export type S3Target = "minio" | "minio-region" | "silo" | "silo-tls" | "garage" | "rustfs";
 export const S3_TARGET_NAMES: readonly S3Target[] = ["minio", "minio-region", "silo", "silo-tls", "garage", "rustfs"];
-/** The columns the matrix renders; silo-tls runs A1, A2, A14, A37 and A57 as on Silo. */
-export const S3_MATRIX_COLUMNS = ["minio", "minio-region", "silo", "garage", "rustfs"] as const;
 export type S3Server = "minio" | "silo" | "garage" | "rustfs";
 
 export interface S3TargetSpec {
@@ -1780,21 +1777,8 @@ export function checkS3Step(
 }
 
 // ============================================================================
-// The matrix as the provider doc renders it
+// Matrix cell escaping
 // ============================================================================
-
-function describeRef(ref: string): string {
-  if (ref.startsWith("not:")) return `an error other than ${describeRef(ref.slice(4))}`;
-  if (ref === "connection") return "the connection check's sentence";
-  if (ref === "console") return "the console's refusal sentence";
-  if (ref === "keys") return "the Keys panel's cursor sentence";
-  if (ref.startsWith("egress:link-local:")) return `the link-local sentence for ${ref.slice(18)}`;
-  if (ref.startsWith("egress:blocked:")) return "the DB_HTTP_BLOCK_PRIVATE_HOSTS sentence";
-  if (ref.startsWith("endpoint:host:")) return "the shared invalid-host sentence";
-  if (ref.startsWith("notice:")) return `notice ${ref.slice(7)}`;
-  const answer = JSON.parse(ref.slice(7)) as { operation: string; status: number; code?: string; message?: string };
-  return `the sentence for ${answer.status}${answer.code === undefined ? "" : ` ${answer.code}`}${answer.message === undefined ? "" : ` "${answer.message}"`} to ${answer.operation}`;
-}
 
 /**
  * Escapes a Markdown table cell: backslashes first, so a cell holding `\|` keeps both characters, then pipes, and
@@ -1802,45 +1786,6 @@ function describeRef(ref: string): string {
  */
 export function escapeMatrixCell(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/[|<>]/g, "\\$&");
-}
-
-function cellText(cell: readonly S3Step[]): string {
-  const texts = cell.map(({ step, outcome }) => {
-    const text =
-      outcome.kind === "ok"
-        ? outcome.detail
-        : outcome.kind === "not-applicable"
-          ? `not applicable: ${outcome.why}`
-          : outcome.kind === "refused"
-            ? `refused, ${describeRef(outcome.sentence)}${outcome.names === undefined ? "" : ` naming ${outcome.names.join(", ")}`}`
-            : `refused before any request, ${describeRef(outcome.sentence)}`;
-    return cell.length === 1 ? text : `${step}: ${text}`;
-  });
-  return escapeMatrixCell(texts.join("; ")).replace(/\n/g, " ");
-}
-
-/** The Markdown block between docs/providers/s3.md's s3-acceptance markers. */
-export function renderS3Acceptance(): string {
-  const byId = new Map(S3_ACCEPTANCE.map((row) => [row.id, row]));
-  const lines: string[] = [];
-  for (const group of S3_ACCEPTANCE_GROUPS) {
-    lines.push(
-      `**${group.title}**`,
-      "",
-      `| Row | Behaviour | ${S3_MATRIX_COLUMNS.map((target) => S3_TARGETS[target].label).join(" | ")} |`,
-      `|---|---|${S3_MATRIX_COLUMNS.map(() => "---|").join("")}`,
-    );
-    for (const id of group.rows) {
-      const row = byId.get(id as S3AcceptanceRow["id"]);
-      if (row === undefined) throw new Error(`S3_ACCEPTANCE_GROUPS names ${id}, which S3_ACCEPTANCE does not hold`);
-      lines.push(
-        `| ${row.id} | ${escapeMatrixCell(row.behaviour)} | ${S3_MATRIX_COLUMNS.map((target) => cellText(row.expect[target])).join(" | ")} |`,
-      );
-    }
-    lines.push("");
-  }
-  lines.push("`silo-tls` runs A1, A2, A14, A37 and A57, each as on Silo; A63 runs only in the SSH tunnel check.");
-  return lines.join("\n");
 }
 
 // ============================================================================

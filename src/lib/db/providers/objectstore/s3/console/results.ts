@@ -59,7 +59,7 @@ export type S3Outcome =
   | { readonly kind: "versioning"; readonly state: VersioningState }
   | { readonly kind: "preview"; readonly preview: S3Preview };
 
-/** The notices whose text is fixed, read back by the provider-doc test. */
+/** The notices whose text is fixed. */
 export const S3_CONSOLE_NOTICES = Object.freeze({
   bucketsNotAllListed:
     "The server holds more buckets than it listed in one answer, and Studio does not ask for the rest in this version: put a bucket's name in the Bucket field of the connection to read it.",
