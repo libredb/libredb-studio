@@ -259,7 +259,7 @@ Studio.tsx
   → components use labels for text, capabilities for feature flags
 
 QueryEditor                      /api/db/query
-  → user writes query              → getOrCreateProvider(conn)
+  → user writes query              → editorTarget(conn, record)
   → Ctrl+Enter                     → provider.prepareQuery(sql, opts)
                                    → provider.query(prepared.query)
                                    → returns rows + pagination

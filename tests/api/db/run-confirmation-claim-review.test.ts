@@ -9,7 +9,8 @@
  * and a text-not-SQL claim is Druid's real entry with `readsSqlText: false`. The generated module is mocked before
  * anything that reaches the grammar registry is imported, because `SQL_GRAMMAR` is composed from it when it loads, so
  * this file imports only `bun:test` statically. Only what answers before a provider is replaced:
- * the session, the connection resolution, the provider cache and the query event insert.
+ * the session, the connection resolution, the provider cache, the query route's open of the editor's session and the
+ * query event insert.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -29,6 +30,10 @@ mock.module("@/lib/db/engine-catalog/sql-text.generated", () => ({
 const { createMockProvider } = await import("../../helpers/mock-provider");
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
+/** The query route's open of the editor's session of any record; a request the gate answers reaches no open. */
+const mockGetOrCreateEditorSession = mock(async () => {
+  throw new Error("A request the gate answers opens nothing.");
+});
 const mockReadProviderDeclarations = mock(async () => ({
   capabilities: mockProvider.getCapabilities(),
   labels: mockProvider.getLabels(),
@@ -60,6 +65,9 @@ mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
 }));
+
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({ ...realFactory, getOrCreateEditorSession: mockGetOrCreateEditorSession }));
 
 const realPostgresSink = await import("@/lib/query-events/postgres-sink");
 mock.module("@/lib/query-events/postgres-sink", () => ({
@@ -95,6 +103,7 @@ beforeEach(() => {
   clearRateLimitState();
   forgetUsedRunConfirmations();
   mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateEditorSession.mockClear();
   mockReadProviderDeclarations.mockClear();
 });
 
@@ -119,6 +128,7 @@ describe.each(ROUTES)("POST %s", (path, post, extra) => {
       confirmation: { unreadable, typedConfirmation: null, classificationFailed: false },
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
   }
 

@@ -24,6 +24,7 @@ import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest } from "../../helpers/mock-next";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -33,6 +34,11 @@ const mockProvider = createMockProvider({ type: "duckdb" });
 const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
+});
+/** The query route's one open of any record (`getOrCreateEditorSession`): its entry holds the stand-in provider. */
+const mockGetOrCreateEditorSession = mock(async (...args: unknown[]) => {
+  void args;
+  return editorEntryOf(mockProvider);
 });
 /** The tree routes' resolution, on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66). */
 const mockGetOrCreateMetadataProvider = mock(async (...args: unknown[]) => {
@@ -82,6 +88,7 @@ mock.module("@/lib/db", () => ({
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateEditorSession: mockGetOrCreateEditorSession,
   getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
@@ -163,6 +170,9 @@ function onTheMetadataSession(route: string): boolean {
   return READS_THE_TREE.has(route) || MONITORS_ON_THE_METADATA_SESSION.has(route);
 }
 
+/** The routes that open the editor's session of the connection's record rather than its editor provider. */
+const OPENS_THE_EDITOR_SESSION = new Set(["query"]);
+
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);
 
@@ -216,9 +226,11 @@ async function postureFrom(route: string, target: Record<string, unknown>): Prom
   }
   const opener = BUILDS_ITS_OWN.has(route)
     ? mockCreateDatabaseProvider
-    : onTheMetadataSession(route)
-      ? mockGetOrCreateMetadataProvider
-      : mockGetOrCreateProvider;
+    : OPENS_THE_EDITOR_SESSION.has(route)
+      ? mockGetOrCreateEditorSession
+      : onTheMetadataSession(route)
+        ? mockGetOrCreateMetadataProvider
+        : mockGetOrCreateProvider;
   expect(opener.mock.calls.length).toBeGreaterThan(0);
   // A tree, monitoring or health route takes no editor provider, and no other route a metadata session.
   const other = onTheMetadataSession(route) ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
@@ -233,6 +245,7 @@ beforeEach(() => {
   clearRateLimitState();
   resetSeedCache();
   mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateEditorSession.mockClear();
   mockGetOrCreateMetadataProvider.mockClear();
   mockCreateDatabaseProvider.mockClear();
   mockReadProviderDeclarations.mockClear();
@@ -336,6 +349,7 @@ describe("no route takes the posture from the request body (non-admin DuckDB fil
       );
       expect(response.status).toBe(400);
       expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
       expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
       expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
     },

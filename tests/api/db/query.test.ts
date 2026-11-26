@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
@@ -32,6 +33,7 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
+import type { CachedSession } from "@/lib/db/factory";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 import * as admission from "@/lib/query-events/admission";
@@ -56,7 +58,14 @@ afterAll(forgetHostCore);
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
-const mockGetOrCreateProvider = mock(async () => mockProvider);
+/** The editor's one open of any record (`getOrCreateEditorSession`), answering the entry of `mockProvider`. */
+const mockGetOrCreateEditorSession = mock<(...args: unknown[]) => Promise<CachedSession>>(async () =>
+  editorEntryOf(mockProvider),
+);
+/** The legacy entry points the route's imports name and it never calls. */
+const notReached = mock(async () => {
+  throw new Error("The query route opens through getOrCreateEditorSession, not this entry point.");
+});
 /**
  * The declarations a route reads without connecting, `provider-meta`'s way (#457, FND-2 slice 5): read off the mock
  * provider, so a test that injects one `getCapabilities` answer shapes this read.
@@ -66,7 +75,8 @@ const mockReadProviderDeclarations = mock(async (_connection: unknown) => ({
   labels: mockProvider.getLabels(),
   supportsQueryCancel: false,
 }));
-const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
+const realFactory = { ...(await import("@/lib/db/factory")) };
+const { readProviderDeclarations: realReadProviderDeclarations } = realFactory;
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -132,8 +142,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
-  getOrCreateProvider: mockGetOrCreateProvider,
-  getOrCreateMetadataProvider: mockGetOrCreateProvider,
+  getOrCreateProvider: notReached,
+  getOrCreateMetadataProvider: notReached,
   readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
@@ -170,6 +180,9 @@ mock.module("@/lib/query-events/postgres-sink", () => ({
   }),
 }));
 
+// ─── The editor's one open, replaced; the rest of the factory stays real ────
+mock.module("@/lib/db/factory", () => ({ ...realFactory, getOrCreateEditorSession: mockGetOrCreateEditorSession }));
+
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/query/route");
 // The real check the factory runs first (#1089), over the engine's record as the factory reads it. This file replaces
@@ -192,7 +205,7 @@ const validConnection = {
 describe("POST /api/db/query", () => {
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
     mockGetSession.mockClear();
@@ -297,7 +310,7 @@ describe("POST /api/db/query", () => {
       ...createMockProvider(),
       cancelQuery: mock(async () => true),
     };
-    mockGetOrCreateProvider.mockResolvedValueOnce(providerWithCancel as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(providerWithCancel));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -370,7 +383,7 @@ describe("POST /api/db/query", () => {
       ...createMockProvider(),
       cancelQuery: mock(async () => true),
     };
-    mockGetOrCreateProvider.mockResolvedValueOnce(providerWithCancel as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(providerWithCancel));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -481,7 +494,7 @@ describe("POST /api/db/query", () => {
     ["false", false],
   ] as const) {
     test(`answers 400 when sql is ${label}, before any provider resolves`, async () => {
-      mockGetOrCreateProvider.mockClear();
+      mockGetOrCreateEditorSession.mockClear();
       const req = createMockRequest("/api/db/query", {
         method: "POST",
         body: { connection: validConnection, sql },
@@ -492,7 +505,7 @@ describe("POST /api/db/query", () => {
 
       expect(res.status).toBe(400);
       expect(data.error).toBe("sql must be a string");
-      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     });
   }
 
@@ -543,8 +556,8 @@ describe("POST /api/db/query", () => {
   // made the host's deadline NaN and every query on the connection answered 500.
   test("an inline connection whose statement timeout is not a whole number of milliseconds answers 400 by name and builds nothing", async () => {
     // The provider the factory builds reads its statement timeout from the connection, as the real one does.
-    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) =>
-      Object.assign(createMockProvider(), { config: args[0] as DatabaseConnection }),
+    mockGetOrCreateEditorSession.mockImplementation(async (...args: unknown[]) =>
+      editorEntryOf(Object.assign(createMockProvider(), { config: args[0] as DatabaseConnection })),
     );
     try {
       const req = createMockRequest("/api/db/query", {
@@ -558,18 +571,18 @@ describe("POST /api/db/query", () => {
       expect(data.error).toBe(
         "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
       );
-      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     } finally {
-      mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+      mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(mockProvider));
     }
   });
 
   test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
     mockReadProviderDeclarations.mockClear();
-    mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+    mockGetOrCreateEditorSession.mockImplementationOnce(async (...args: unknown[]) => {
       const connection = args[0] as DatabaseConnection;
       assertReadOnlyHonoured(legacyProviderEngine(connection.type, "open"), connection);
-      return mockProvider;
+      return editorEntryOf(mockProvider);
     });
 
     const req = createMockRequest("/api/db/query", {
@@ -584,7 +597,7 @@ describe("POST /api/db/query", () => {
     expect(data.error).toBe(
       "readOnly: true is refused for postgres: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.",
     );
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateEditorSession).toHaveBeenCalledTimes(1);
     expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
     expect(mockProvider.query).not.toHaveBeenCalled();
   });
@@ -744,7 +757,7 @@ describe("POST /api/db/query", () => {
     const failed = await connectPhase(() =>
       Promise.reject(new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres")),
     ).catch((error: unknown) => error);
-    mockGetOrCreateProvider.mockImplementationOnce(() => Promise.reject(failed));
+    mockGetOrCreateEditorSession.mockImplementationOnce(() => Promise.reject(failed));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -959,7 +972,7 @@ describe("POST /api/db/query", () => {
     const declinedProvider = createMockProvider({
       prepareQueryResult: { query: "SELECT * FROM users LIMIT 50", wasLimited: false, limit: 50, offset: 0 },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(declinedProvider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(declinedProvider));
     (declinedProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: Array.from({ length: 50 }, (_, i) => ({ id: i + 1 })),
       fields: ["id"],
@@ -1022,7 +1035,7 @@ describe("POST /api/db/query", () => {
     const selfBounded = createMockProvider({
       prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(selfBounded as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(selfBounded));
     (selfBounded.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
       fields: ["value"],
@@ -1049,7 +1062,7 @@ describe("POST /api/db/query", () => {
     const unbounded = createMockProvider({
       prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(unbounded as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(unbounded));
     (unbounded.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
       fields: ["value"],
@@ -1129,7 +1142,7 @@ describe("POST /api/db/query", () => {
     const untouched = createMockProvider({
       prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(untouched as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(untouched));
     (untouched.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
       fields: ["value"],
@@ -1183,7 +1196,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -1198,7 +1211,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
     const writeProvider = createMockProvider({
       prepareQueryResult: { query: writeStatement, wasLimited: false, limit: 0, offset: 0 },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(writeProvider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(writeProvider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1211,7 +1224,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
     // Reached the driver verbatim: not refused, not rewritten, not downgraded.
     expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, undefined);
     // The shared, fully-privileged provider cache - never an execution profile.
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateEditorSession).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -1279,7 +1292,7 @@ describe("POST /api/db/query with an explain request", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(
@@ -1289,7 +1302,7 @@ describe("POST /api/db/query with an explain request", () => {
 
   test("runs the statement the connected provider's strategy builds and names the format", async () => {
     const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1317,7 +1330,7 @@ describe("POST /api/db/query with an explain request", () => {
 
   test("an analyze request builds the executing form the Explain button asks for", async () => {
     const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1369,7 +1382,7 @@ describe("POST /api/db/query with an explain request", () => {
       expect(data.error).toBe("Only a single statement can be explained");
     }
     expect(mockProvider.query).not.toHaveBeenCalled();
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
   });
 
   // A comment is not a statement: the splitter keeps a note after the last `;` as a
@@ -1380,7 +1393,7 @@ describe("POST /api/db/query with an explain request", () => {
     ["a trailing block comment", "SELECT 1; /* c */"],
   ])("a statement with %s is still one statement", async (_label, sql) => {
     const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1395,7 +1408,7 @@ describe("POST /api/db/query with an explain request", () => {
 
   test("returns 400 and runs nothing when the provider declares no EXPLAIN support", async () => {
     const provider = createMockProvider({ capabilities: { supportsExplain: false, explainFormat: "postgres-json" } });
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1454,7 +1467,7 @@ describe("POST /api/db/query with an explain request", () => {
     const provider = createMockProvider({
       capabilities: { supportsExplain: true, explainFormat: "oracle-hierarchy" as never },
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
     const req = createMockRequest("/api/db/query", {
       method: "POST",
       body: { connection: validConnection, sql: "SELECT 1", explain: { mode: "analyze" } },
@@ -1470,7 +1483,7 @@ describe("POST /api/db/query with an explain request", () => {
 
   test("returns 400 and runs nothing for a statement the strategy declines", async () => {
     const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1496,7 +1509,7 @@ describe("POST /api/db/query with an explain request", () => {
     // without it, every generated statement that sends its values separately would
     // lose its plan.
     const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1559,10 +1572,10 @@ describe("POST /api/db/query with an explain request", () => {
 describe("POST /api/db/query and the transaction its own statement left open", () => {
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     // One test below installs a persistent provider double, so the default is put back
     // here rather than at the end of that test, where a failing assertion would skip it.
-    mockGetOrCreateProvider.mockResolvedValue(mockProvider as never);
+    mockGetOrCreateEditorSession.mockResolvedValue(editorEntryOf(mockProvider));
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
   });
 
@@ -1628,7 +1641,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 
   test("ends the transaction its own statement left open and says so", async () => {
     const { provider } = sharedProviderKeyedByScope();
-    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValue(editorEntryOf(provider));
 
     const res = await POST(
       createMockRequest("/api/db/query", {
@@ -1646,7 +1659,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 
   test("says nothing about a transaction when its statement opened none", async () => {
     const { provider } = sharedProviderKeyedByScope();
-    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValue(editorEntryOf(provider));
 
     const res = await POST(
       createMockRequest("/api/db/query", {
@@ -1663,7 +1676,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 
   test("does not discard a transaction another caller of the shared provider opened", async () => {
     const { provider, slowQueryRunning, releaseSlowQuery } = sharedProviderKeyedByScope();
-    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValue(editorEntryOf(provider));
 
     // A: an ordinary slow read through this route. It opens nothing.
     const slow = POST(
@@ -1706,7 +1719,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
         "postgres",
       );
     });
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const res = await POST(
       createMockRequest("/api/db/query", {
@@ -1728,7 +1741,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
     // provider without it is not guessed at.
     const provider = createMockProvider();
     expect("endOpenQueryTransaction" in provider).toBe(false);
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    mockGetOrCreateEditorSession.mockResolvedValueOnce(editorEntryOf(provider));
 
     const res = await POST(
       createMockRequest("/api/db/query", {
@@ -1756,7 +1769,7 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 describe("POST /api/db/query — the database a run reads", () => {
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     mockReadProviderDeclarations.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
@@ -1765,7 +1778,9 @@ describe("POST /api/db/query — the database a run reads", () => {
 
   /** The connections the route asked to open, in order, with the typing the calls carry. */
   function openedConnections(): Array<Record<string, unknown>> {
-    return (mockGetOrCreateProvider.mock.calls as unknown as Array<[Record<string, unknown>]>).map((call) => call[0]);
+    return (mockGetOrCreateEditorSession.mock.calls as unknown as Array<[Record<string, unknown>]>).map(
+      (call) => call[0],
+    );
   }
 
   test("applies a run's database to the connection a managed id resolved to", async () => {
@@ -1929,7 +1944,7 @@ describe("POST /api/db/query: a declared console text bound", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     remove = installStandInVocabulary({ maxTextBytes: LIMIT });
@@ -1953,7 +1968,7 @@ describe("POST /api/db/query: a declared console text bound", () => {
       "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
     );
     expect(JSON.stringify(data)).not.toContain("SECRET");
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
   });
 
@@ -1972,7 +1987,7 @@ describe("POST /api/db/query: a declared console text bound", () => {
     const sql = "x".repeat(LIMIT);
     const { res } = await post({ connection: standIn, sql });
     expect(res.status).toBe(200);
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateEditorSession).toHaveBeenCalledTimes(1);
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(sql);
   });
 
@@ -1980,7 +1995,7 @@ describe("POST /api/db/query: a declared console text bound", () => {
     const { res, data } = await post({ connection: standIn, sql: ["x"] });
     expect(res.status).toBe(400);
     expect(data.error).toBe("sql must be a string");
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
   });
 
   test("an engine that declares no bound runs a 9 MiB statement as before", async () => {
@@ -1996,7 +2011,7 @@ describe("POST /api/db/query: an oxia buffer", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
   });
 
@@ -2007,7 +2022,7 @@ describe("POST /api/db/query: an oxia buffer", () => {
       createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql } }) as never,
     );
     expect(res.status).toBe(200);
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateEditorSession).toHaveBeenCalledTimes(1);
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(sql);
   });
 
@@ -2021,7 +2036,7 @@ describe("POST /api/db/query: an oxia buffer", () => {
     expect((await parseResponseJSON<{ error?: string }>(refused)).error).toBe(
       `The statement is ${OXIA_MAX_TEXT_BYTES + 1} bytes in UTF-8, over the ${OXIA_MAX_TEXT_BYTES}-byte limit for this connection type. Shorten it to run it.`,
     );
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
 
     const atBound = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 5)}`;
     expect(atBound).toHaveLength(OXIA_MAX_TEXT_BYTES);
@@ -2039,7 +2054,7 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
   });
 
@@ -2150,7 +2165,7 @@ describe("POST /api/db/query: the request's abort", () => {
       });
       throw new QueryCancelledError("The query was cancelled.");
     });
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
     const controller = new AbortController();
     const answer = POST(
       abortableRequest(
@@ -2167,7 +2182,7 @@ describe("POST /api/db/query: the request's abort", () => {
 
   test("a request already aborted calls provider.query zero times", async () => {
     const provider = Object.assign(createMockProvider(), { cancelQuery: mock(async () => true) });
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
     const controller = new AbortController();
     controller.abort();
     await POST(
@@ -2182,9 +2197,9 @@ describe("POST /api/db/query: the request's abort", () => {
   test("the provider opens under the request's own open wait", async () => {
     const provider = createMockProvider();
     const waits: { signal: AbortSignal }[] = [];
-    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+    mockGetOrCreateEditorSession.mockImplementation((async (...args: unknown[]) => {
       waits.push(args[3] as { signal: AbortSignal });
-      return provider;
+      return editorEntryOf(provider);
     }) as never);
     const controller = new AbortController();
     const request = abortableRequest(
@@ -2208,7 +2223,7 @@ describe("POST /api/db/query: the request's abort", () => {
     const opening = new Promise<void>((resolve) => {
       reached = resolve;
     });
-    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+    mockGetOrCreateEditorSession.mockImplementation((async (...args: unknown[]) => {
       const wait = args[3] as { signal: AbortSignal };
       reached();
       // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
@@ -2237,7 +2252,7 @@ describe("POST /api/db/query: the request's abort", () => {
 
   test("a provider without cancelQuery sees no cancel", async () => {
     const provider = createMockProvider();
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
     const controller = new AbortController();
     const answer = POST(
       abortableRequest(
@@ -2268,7 +2283,7 @@ describe("POST /api/db/query: the page's byte budget", () => {
       rowCount: rows.length,
       executionTime: 1,
     }));
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
   }
 
   test("a page over the byte budget answers the rows that fit, with Load More after them", async () => {
@@ -2383,8 +2398,8 @@ describe("POST /api/db/query: query events under governance", () => {
     settings();
     resolveConnectionOverride = async () => governedConnection;
     mockGetSession.mockImplementation(async () => governedSession);
-    mockGetOrCreateProvider.mockClear();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateEditorSession.mockClear();
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(mockProvider));
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
       rows: [{ id: 1 }, { id: 2 }],
@@ -2460,7 +2475,7 @@ describe("POST /api/db/query: query events under governance", () => {
         throw failing;
       }),
     });
-    mockGetOrCreateProvider.mockImplementation(async () => provider);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
 
     const res = await run({ connectionId: "seed:orders", sql: "BEGIN" });
     const data = await parseResponseJSON<{ code: string }>(res);
@@ -2487,7 +2502,7 @@ describe("POST /api/db/query: query events under governance", () => {
   test("governance: the event keeps the text the user submitted, not the EXPLAIN or the bound built from it", async () => {
     settings({ key: "queryLog.statementCapture", value: "full" });
     const provider = createMockProvider({ capabilities: { explainFormat: "postgres-json" } });
-    mockGetOrCreateProvider.mockImplementation(async () => provider);
+    mockGetOrCreateEditorSession.mockImplementation(async () => editorEntryOf(provider));
 
     const res = await run({ connectionId: "seed:orders", sql: "SELECT * FROM orders", explain: { mode: "estimate" } });
 
@@ -2518,7 +2533,7 @@ describe("POST /api/db/query: query events under governance", () => {
 
       expect(res.status).toBe(503);
       expect(data.code).toBe("AUDIT_UNAVAILABLE");
-      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
       expect(mockProvider.query).not.toHaveBeenCalled();
 
       insertFailure = null;
@@ -2571,7 +2586,7 @@ describe("POST /api/db/query: query events under governance", () => {
     const res = await run({ connectionId: "seed:payroll", sql: "SELECT * FROM salaries" });
 
     expect(res.status).toBe(404);
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     const events = await recordedEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -2613,7 +2628,7 @@ describe("POST /api/db/query: query events under governance", () => {
     const res = await run({ connectionId: "seed:orders", sql: "DELETE FROM orders" });
 
     expect(res.status).toBe(428);
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     expect(await recordedEvents()).toEqual([]);
   });
 
@@ -2638,7 +2653,7 @@ describe("POST /api/db/query: a body that is not a JSON object", () => {
     ["a string", '"x"'],
     ["text that is not JSON", "{not json"],
   ])("a body that is %s answers 400 and opens no provider", async (_label, raw) => {
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     const res = await POST(
       new Request("http://localhost:3000/api/db/query", {
         method: "POST",
@@ -2649,7 +2664,7 @@ describe("POST /api/db/query: a body that is not a JSON object", () => {
 
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
   });
 });
 
@@ -2672,7 +2687,7 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
   }
 
   function nothingRan(): void {
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
     expect(mockProvider.query).not.toHaveBeenCalled();
     expect(admit).not.toHaveBeenCalled();
@@ -2682,7 +2697,7 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
     delete process.env.LIBREDB_RUN_CONFIRMATION;
     clearRateLimitState();
     forgetUsedRunConfirmations();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateEditorSession.mockClear();
     mockReadProviderDeclarations.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     mockGetSession.mockImplementation(async () => session);
@@ -2775,7 +2790,7 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       process.env.LIBREDB_RUN_CONFIRMATION = "required";
       const res = await run({ connection: validConnection, sql: "DELETE FROM t", explain: { mode: "estimate" } });
       // Past the gate: the provider was built, and its explain strategy, not a confirmation, answers the DELETE.
-      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+      expect(mockGetOrCreateEditorSession).toHaveBeenCalledTimes(1);
       expect(res.status).toBe(400);
       expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
       expect(mockProvider.query).not.toHaveBeenCalled();

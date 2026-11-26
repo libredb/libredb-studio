@@ -218,7 +218,7 @@ describe("checkEditorQuery", () => {
 describe("runEditorQuery", () => {
   test("a limited run probes one row past the page and cuts it back", async () => {
     const provider = fake(resultOf(rowsOf(3)));
-    const answer = await runEditorQuery(provider, runOf());
+    const answer = await runEditorQuery({ form: "provider", provider }, runOf());
     expect(callsOf(provider.prepareQuery)).toEqual([
       ["SELECT n FROM t", { limit: 2 }],
       ["SELECT n FROM t", { limit: 3, unlimited: false }],
@@ -237,7 +237,7 @@ describe("runEditorQuery", () => {
   });
 
   test("a full last page offers no next page", async () => {
-    const answer = await runEditorQuery(fake(resultOf(rowsOf(2))), runOf());
+    const answer = await runEditorQuery({ form: "provider", provider: fake(resultOf(rowsOf(2))) }, runOf());
     expect(answer.body.rowCount).toBe(2);
     expect(answer.body.pagination).toEqual({
       limit: 2,
@@ -250,7 +250,7 @@ describe("runEditorQuery", () => {
 
   test("a page read runs at its offset", async () => {
     const provider = fake(resultOf(rowsOf(1)));
-    const answer = await runEditorQuery(provider, runOf({ options: { limit: 2, offset: 2 } }));
+    const answer = await runEditorQuery({ form: "provider", provider }, runOf({ options: { limit: 2, offset: 2 } }));
     expect(callsOf(provider.query)[0][0]).toBe("SELECT n FROM t LIMIT 3 OFFSET 2");
     expect(answer.body.pagination.offset).toBe(2);
     expect(answer.body.pagination.hasMore).toBe(false);
@@ -258,7 +258,10 @@ describe("runEditorQuery", () => {
 
   test("a text carrying its own bound runs unprobed and offers no page", async () => {
     const provider = fake(resultOf(rowsOf(5)));
-    const answer = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5" }));
+    const answer = await runEditorQuery(
+      { form: "provider", provider },
+      runOf({ statement: "SELECT n FROM t LIMIT 5" }),
+    );
     expect(callsOf(provider.prepareQuery)).toHaveLength(1);
     expect(callsOf(provider.query)[0][0]).toBe("SELECT n FROM t LIMIT 5");
     expect(answer.body.rowCount).toBe(5);
@@ -275,7 +278,10 @@ describe("runEditorQuery", () => {
     const provider = fake(
       resultOf(rowsOf(1), { pagination: { limit: 1, offset: 0, hasMore: false, totalReturned: 1, wasLimited: true } }),
     );
-    const answer = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5" }));
+    const answer = await runEditorQuery(
+      { form: "provider", provider },
+      runOf({ statement: "SELECT n FROM t LIMIT 5" }),
+    );
     expect(answer.body.pagination.wasLimited).toBe(true);
     expect(answer.body.pagination.hasMore).toBe(false);
   });
@@ -294,8 +300,8 @@ describe("runEditorQuery", () => {
       }),
     });
 
-    const answer = await runEditorQuery(provider, runOf({ params: ["a"] }));
-    await runEditorQuery(provider, runOf());
+    const answer = await runEditorQuery({ form: "provider", provider }, runOf({ params: ["a"] }));
+    await runEditorQuery({ form: "provider", provider }, runOf());
 
     const [first, second] = callsOf(provider.query);
     expect(first[1]).toEqual(["a"]);
@@ -309,7 +315,7 @@ describe("runEditorQuery", () => {
 
   test("a transaction the run left open and the provider rolled back is answered (D74)", async () => {
     const provider = fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "rolled-back") });
-    const answer = await runEditorQuery(provider, runOf());
+    const answer = await runEditorQuery({ form: "provider", provider }, runOf());
     expect(answer.body.openTransaction).toBe("rolled-back");
   });
 
@@ -325,7 +331,7 @@ describe("runEditorQuery", () => {
           return real.endScopeCall(...args);
         },
       },
-      () => runEditorQuery(provider, runOf()),
+      () => runEditorQuery({ form: "provider", provider }, runOf()),
     );
     expect(callsOf(provider.query)[0]?.[3]).toBeUndefined();
     expect(ends).toEqual([]);
@@ -336,7 +342,7 @@ describe("runEditorQuery", () => {
     const boom = new Error("boom");
     const endOpenQueryTransaction = mock(async () => "rolled-back");
     const provider = fake(boom, { endOpenQueryTransaction });
-    const caught = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf()).catch((error: unknown) => error);
     expect(caught).toBe(boom);
     expect(callsOf(endOpenQueryTransaction)).toEqual([[callsOf(provider.query)[0]?.[3]]]);
   });
@@ -364,13 +370,15 @@ describe("runEditorQuery", () => {
     });
 
     const afterPage = await withCore(counting, () =>
-      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: ender }), runOf()).catch(
-        (error: unknown) => error,
-      ),
+      runEditorQuery(
+        { form: "provider", provider: fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: ender }) },
+        runOf(),
+      ).catch((error: unknown) => error),
     );
-    const afterThrow = await runEditorQuery(fake(new Error("boom"), { endOpenQueryTransaction: ender }), runOf()).catch(
-      (error: unknown) => error,
-    );
+    const afterThrow = await runEditorQuery(
+      { form: "provider", provider: fake(new Error("boom"), { endOpenQueryTransaction: ender }) },
+      runOf(),
+    ).catch((error: unknown) => error);
 
     expect(afterPage).toBe(failing);
     expect(releases).toBe(1);
@@ -401,7 +409,7 @@ describe("runEditorQuery", () => {
     });
 
     const answer = await withCore(ordering, () =>
-      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }), runOf()),
+      runEditorQuery({ form: "provider", provider: fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }) }, runOf()),
     );
 
     expect(order).toEqual(["end", "release"]);
@@ -412,9 +420,10 @@ describe("runEditorQuery", () => {
     const endOpenQueryTransaction = mock(async () => "rolled-back");
     const provider = fake(resultOf([{ n: "x".repeat(33 * 1_048_576) }]), { endOpenQueryTransaction });
 
-    const caught = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5" })).catch(
-      (error: unknown) => error,
-    );
+    const caught = await runEditorQuery(
+      { form: "provider", provider },
+      runOf({ statement: "SELECT n FROM t LIMIT 5" }),
+    ).catch((error: unknown) => error);
 
     expect(caught).toBeInstanceOf(StudioByteBudgetRefusal);
     expect(callsOf(endOpenQueryTransaction)).toEqual([[callsOf(provider.query)[0]?.[3]]]);
@@ -428,9 +437,11 @@ describe("runEditorQuery", () => {
     const gone = new AbortController();
     gone.abort(new DOMException("The request went away.", "AbortError"));
 
-    const pastDeadline = await runEditorQuery(late, runOf()).catch((error: unknown) => error);
+    const pastDeadline = await runEditorQuery({ form: "provider", provider: late }, runOf()).catch(
+      (error: unknown) => error,
+    );
     const callerGone = await runEditorQuery(
-      fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }),
+      { form: "provider", provider: fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }) },
       runOf({ signal: gone.signal }),
     ).catch((error: unknown) => error);
 
@@ -455,7 +466,7 @@ describe("runEditorQuery", () => {
     const provider = fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") });
 
     const before = Date.now();
-    await withCore(spying, () => runEditorQuery(provider, runOf({ signal: caller.signal })));
+    await withCore(spying, () => runEditorQuery({ form: "provider", provider }, runOf({ signal: caller.signal })));
     const after = Date.now();
     caller.abort(new DOMException("The request went away.", "AbortError"));
 
@@ -492,9 +503,13 @@ describe("runEditorQuery", () => {
     };
 
     const caught = await withCore(stopping, () =>
-      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }), runOf()).catch(
-        (error: unknown) => error,
-      ),
+      runEditorQuery(
+        {
+          form: "provider",
+          provider: fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }),
+        },
+        runOf(),
+      ).catch((error: unknown) => error),
     );
 
     expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
@@ -522,9 +537,13 @@ describe("runEditorQuery", () => {
     };
 
     const caught = await withCore(refusing, () =>
-      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }), runOf()).catch(
-        (error: unknown) => error,
-      ),
+      runEditorQuery(
+        {
+          form: "provider",
+          provider: fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }),
+        },
+        runOf(),
+      ).catch((error: unknown) => error),
     );
 
     expect(caught).toBeInstanceOf(Error);
@@ -549,7 +568,7 @@ describe("runEditorQuery", () => {
     });
     const caller = new AbortController();
 
-    const running = runEditorQuery(provider, runOf({ signal: caller.signal }));
+    const running = runEditorQuery({ form: "provider", provider }, runOf({ signal: caller.signal }));
     await started.promise;
     caller.abort(new DOMException("The request went away.", "AbortError"));
     const caught = await running.catch((error: unknown) => error);
@@ -575,7 +594,10 @@ describe("runEditorQuery", () => {
       const line = Promise.withResolvers<void>();
       onLog = () => line.resolve();
       const caller = new AbortController();
-      const running = runEditorQuery(provider, runOf({ signal: caller.signal, route: "end-route" }));
+      const running = runEditorQuery(
+        { form: "provider", provider },
+        runOf({ signal: caller.signal, route: "end-route" }),
+      );
       await new Promise((resolve) => setImmediate(resolve));
       caller.abort(new DOMException("The request went away.", "AbortError"));
       expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
@@ -638,7 +660,10 @@ describe("runEditorQuery", () => {
       return held;
     });
     const provider = fake(resultOf(rowsOf(1)), { cancelQuery, query });
-    const running = runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }));
+    const running = runEditorQuery(
+      { form: "provider", provider },
+      runOf({ queryId: "q-1", signal: controller.signal }),
+    );
     await started.promise;
     controller.abort();
     const caught = await running.catch((error: unknown) => error);
@@ -653,7 +678,7 @@ describe("runEditorQuery", () => {
     const controller = new AbortController();
     const cancelQuery = mock(async () => true);
     const provider = fake(resultOf(rowsOf(1)), { cancelQuery });
-    await runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }));
+    await runEditorQuery({ form: "provider", provider }, runOf({ queryId: "q-1", signal: controller.signal }));
     controller.abort();
     expect(callsOf(provider.query)[0][2]).toBe("q-1");
     expect(callsOf(cancelQuery)).toEqual([]);
@@ -664,7 +689,9 @@ describe("runEditorQuery", () => {
     const boom = new Error("boom");
     const cancelQuery = mock(async () => true);
     const provider = fake(boom, { cancelQuery });
-    await expect(runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }))).rejects.toBe(boom);
+    await expect(
+      runEditorQuery({ form: "provider", provider }, runOf({ queryId: "q-1", signal: controller.signal })),
+    ).rejects.toBe(boom);
     controller.abort();
     expect(callsOf(provider.query)[0][2]).toBe("q-1");
     expect(callsOf(cancelQuery)).toEqual([]);
@@ -674,7 +701,9 @@ describe("runEditorQuery", () => {
     const controller = new AbortController();
     controller.abort();
     const provider = fake(resultOf(rowsOf(1)));
-    const caught = await runEditorQuery(provider, runOf({ signal: controller.signal })).catch((error) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf({ signal: controller.signal })).catch(
+      (error) => error,
+    );
     expect(caught).toBeInstanceOf(QueryCancelledError);
     expect((caught as Error).message).toBe("The query was cancelled.");
     expect(errorOutcome(caught)).toBe("not-sent");
@@ -683,13 +712,13 @@ describe("runEditorQuery", () => {
 
   test("a provider without cancel support gets no cancel id", async () => {
     const provider = fake(resultOf(rowsOf(1)));
-    await runEditorQuery(provider, runOf({ queryId: "q-1" }));
+    await runEditorQuery({ form: "provider", provider }, runOf({ queryId: "q-1" }));
     expect(callsOf(provider.query)[0][2]).toBeUndefined();
   });
 
   test("an error naming the appended bound says the bound was Studio's", async () => {
     const error = new Error('syntax error at or near "LIMIT"');
-    const caught = await runEditorQuery(fake(error), runOf()).catch((thrown) => thrown);
+    const caught = await runEditorQuery({ form: "provider", provider: fake(error) }, runOf()).catch((thrown) => thrown);
     expect(caught).toBe(error);
     expect(error.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 3 OFFSET 0")}`);
   });
@@ -706,7 +735,10 @@ describe("runEditorQuery", () => {
         ],
       }),
     );
-    const answer = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5", scrub }));
+    const answer = await runEditorQuery(
+      { form: "provider", provider },
+      runOf({ statement: "SELECT n FROM t LIMIT 5", scrub }),
+    );
     expect(answer.body.warnings).toEqual([
       { message: PROVIDER_TEXT_WITHHELD, code: 42, severity: PROVIDER_TEXT_WITHHELD },
       { message: "a clean notice", code: PROVIDER_TEXT_WITHHELD, severity: "WARNING" },
@@ -714,7 +746,7 @@ describe("runEditorQuery", () => {
     ]);
     expect(JSON.stringify(answer.body)).not.toContain(password);
     const none = await runEditorQuery(
-      fake(resultOf(rowsOf(1))),
+      { form: "provider", provider: fake(resultOf(rowsOf(1))) },
       runOf({ statement: "SELECT n FROM t LIMIT 5", scrub }),
     );
     expect(Object.hasOwn(none.body, "warnings")).toBe(false);
@@ -722,7 +754,10 @@ describe("runEditorQuery", () => {
 
   test("NaN and the infinities are answered as words", async () => {
     const provider = fake(resultOf([{ v: Number.NaN }, { v: Infinity }, { v: -Infinity }]));
-    const answer = await runEditorQuery(provider, runOf({ statement: "SELECT v FROM t LIMIT 5" }));
+    const answer = await runEditorQuery(
+      { form: "provider", provider },
+      runOf({ statement: "SELECT v FROM t LIMIT 5" }),
+    );
     expect(answer.body.rows).toEqual([{ v: "NaN" }, { v: "Infinity" }, { v: "-Infinity" }]);
   });
 
@@ -735,7 +770,7 @@ describe("runEditorQuery", () => {
         ],
       } as Partial<QueryResult>),
     );
-    const answer = await runEditorQuery(provider, runOf());
+    const answer = await runEditorQuery({ form: "provider", provider }, runOf());
     expect(answer.resultSetCount).toBe(2);
     expect("resultSets" in answer.body).toBe(false);
   });
@@ -766,7 +801,7 @@ describe("runEditorQuery on the host core", () => {
       config: connectionWith({ queryTimeout: -EXECUTE_SLACK_MS - 60_000 }),
     });
 
-    const caught = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf()).catch((error: unknown) => error);
 
     expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
     expect(errorOutcome(caught)).toBe("not-sent");
@@ -781,7 +816,10 @@ describe("runEditorQuery on the host core", () => {
   });
 
   test("a page cut by bytes continues after its last row when Studio wrote the bound", async () => {
-    const answer = await runEditorQuery(fake(resultOf(bigRows(40))), runOf({ options: { limit: 100 } }));
+    const answer = await runEditorQuery(
+      { form: "provider", provider: fake(resultOf(bigRows(40))) },
+      runOf({ options: { limit: 100 } }),
+    );
 
     expect(answer.body.rows).toHaveLength(PAGE_HOLDS);
     expect(answer.body.rowCount).toBe(PAGE_HOLDS);
@@ -796,7 +834,7 @@ describe("runEditorQuery on the host core", () => {
 
   test("a page cut by bytes of a statement Studio did not bound offers no next page and says Studio bounded it", async () => {
     const answer = await runEditorQuery(
-      fake(resultOf(bigRows(40))),
+      { form: "provider", provider: fake(resultOf(bigRows(40))) },
       runOf({ statement: "SELECT n FROM t LIMIT 40", options: { limit: 100 } }),
     );
 
@@ -813,7 +851,7 @@ describe("runEditorQuery on the host core", () => {
 
   test("a result Studio did not bound answers every row, as before", async () => {
     const answer = await runEditorQuery(
-      fake(resultOf(rowsOf(700))),
+      { form: "provider", provider: fake(resultOf(rowsOf(700))) },
       runOf({ statement: "SELECT n FROM t LIMIT 1000", options: { limit: 2 } }),
     );
 
@@ -836,8 +874,14 @@ describe("runEditorQuery on the host core", () => {
     // A deadline a second ahead: a page that waited for a slot never released would answer the deadline's stop.
     const queryTimeout = 1_000 - EXECUTE_SLACK_MS;
 
-    const first = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
-    const second = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
+    const first = await runEditorQuery(
+      { form: "provider", provider: largeFake(3, queryTimeout) },
+      runOf({ options: { limit: 100 } }),
+    );
+    const second = await runEditorQuery(
+      { form: "provider", provider: largeFake(3, queryTimeout) },
+      runOf({ options: { limit: 100 } }),
+    );
 
     expect(first.body.rows).toEqual(bigRows(3));
     expect(second.body.rows).toEqual(bigRows(3));
@@ -847,11 +891,14 @@ describe("runEditorQuery on the host core", () => {
   test("two concurrent large pages each answer their whole page", async () => {
     // A deadline two seconds ahead, so a page left waiting fails the case well inside its timeout.
     const queryTimeout = 2_000 - EXECUTE_SLACK_MS;
-    const alone = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
+    const alone = await runEditorQuery(
+      { form: "provider", provider: largeFake(3, queryTimeout) },
+      runOf({ options: { limit: 100 } }),
+    );
 
     const [one, two] = await Promise.all([
-      runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })),
-      runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })),
+      runEditorQuery({ form: "provider", provider: largeFake(3, queryTimeout) }, runOf({ options: { limit: 100 } })),
+      runEditorQuery({ form: "provider", provider: largeFake(3, queryTimeout) }, runOf({ options: { limit: 100 } })),
     ]);
 
     expect(alone.body.rows).toHaveLength(3);
@@ -901,9 +948,10 @@ describe("runEditorQuery on the host core", () => {
     // A deadline about 300 ms ahead, which the page spends waiting for the slot.
     const queryTimeout = 300 - EXECUTE_SLACK_MS;
 
-    const caught = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })).catch(
-      (error: unknown) => error,
-    );
+    const caught = await runEditorQuery(
+      { form: "provider", provider: largeFake(3, queryTimeout) },
+      runOf({ options: { limit: 100 } }),
+    ).catch((error: unknown) => error);
     secondBatch.resolve();
     const held = await holder;
 
@@ -958,8 +1006,10 @@ describe("runEditorQuery on the host core", () => {
     let left: unknown;
     try {
       const provider = Object.assign(fake(resultOf(rowsOf(1))), { config: connectionWith({ queryTimeout }) });
-      timedOut = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
-      left = await runEditorQuery(provider, runOf({ signal: caller.signal })).catch((error: unknown) => error);
+      timedOut = await runEditorQuery({ form: "provider", provider }, runOf()).catch((error: unknown) => error);
+      left = await runEditorQuery({ form: "provider", provider }, runOf({ signal: caller.signal })).catch(
+        (error: unknown) => error,
+      );
     } finally {
       forgetHostCore();
       installHostCore(real, "test");
@@ -1010,7 +1060,7 @@ describe("runEditorQuery on the host core", () => {
     let timedOut: unknown;
     try {
       const provider = Object.assign(fake(resultOf(rowsOf(1))), { config: connectionWith({ queryTimeout }) });
-      timedOut = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+      timedOut = await runEditorQuery({ form: "provider", provider }, runOf()).catch((error: unknown) => error);
     } finally {
       forgetHostCore();
       installHostCore(real, "test");
@@ -1025,7 +1075,7 @@ describe("runEditorQuery on the host core", () => {
 
   test("a row no page can hold is refused in Studio's words", async () => {
     const caught = await runEditorQuery(
-      fake(resultOf([{ n: "x".repeat(33 * MIB) }])),
+      { form: "provider", provider: fake(resultOf([{ n: "x".repeat(33 * MIB) }])) },
       runOf({ statement: "SELECT n FROM t LIMIT 5" }),
     ).catch((error: unknown) => error);
 
@@ -1056,7 +1106,10 @@ describe("runEditorQuery on the host core", () => {
     });
     try {
       const controller = new AbortController();
-      const running = runEditorQuery(provider, runOf({ signal: controller.signal, route: "late-route" }));
+      const running = runEditorQuery(
+        { form: "provider", provider },
+        runOf({ signal: controller.signal, route: "late-route" }),
+      );
       await started.promise;
       controller.abort();
       expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
@@ -1099,7 +1152,10 @@ describe("runEditorQuery on the host core", () => {
       warned.push(args);
     });
     const controller = new AbortController();
-    const running = runEditorQuery(provider, runOf({ signal: controller.signal, route: "left-route", queryId: "q-5" }));
+    const running = runEditorQuery(
+      { form: "provider", provider },
+      runOf({ signal: controller.signal, route: "left-route", queryId: "q-5" }),
+    );
     await started.promise;
     controller.abort();
     const answered = await running.catch((error: unknown) => error);
@@ -1164,7 +1220,7 @@ describe("runEditorQuery on the host core", () => {
     try {
       const controller = new AbortController();
       const running = runEditorQuery(
-        provider,
+        { form: "provider", provider },
         runOf({ signal: controller.signal, route: "cancel-route", queryId: "q-9" }),
       );
       await started.promise;

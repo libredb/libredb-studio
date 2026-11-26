@@ -1096,13 +1096,16 @@ describe("bridgedConsole", () => {
     expect(bridged.run.result?.rows[0]).toBe(row);
     expect(bridged.run.result?.rows[1]).toBe(clean);
 
-    const { body } = await runEditorQuery(fake(resultOf([row, clean], { fields: ["a", "b", "c", "d"] })), {
-      statement: "SELECT * FROM t LIMIT 5",
-      options: {},
-      signal: new AbortController().signal,
-      route: "test",
-      scrub: providerTextScrub({ id: "c", name: "c", type: "postgres", createdAt: new Date(0) }, "any"),
-    });
+    const { body } = await runEditorQuery(
+      { form: "provider", provider: fake(resultOf([row, clean], { fields: ["a", "b", "c", "d"] })) },
+      {
+        statement: "SELECT * FROM t LIMIT 5",
+        options: {},
+        signal: new AbortController().signal,
+        route: "test",
+        scrub: providerTextScrub({ id: "c", name: "c", type: "postgres", createdAt: new Date(0) }, "any"),
+      },
+    );
     expect(JSON.stringify(body.rows)).toBe(JSON.stringify([row, clean]));
   });
 

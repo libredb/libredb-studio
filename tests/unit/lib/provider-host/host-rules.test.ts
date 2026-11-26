@@ -100,7 +100,9 @@ describe("E21-K10: cancellation and abandonment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const caught = await runEditorQuery(provider, runOf(controller.signal, "q-1")).catch((error: unknown) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf(controller.signal, "q-1")).catch(
+      (error: unknown) => error,
+    );
 
     expect(caught).toBeInstanceOf(QueryCancelledError);
     expect(errorOutcome(caught)).toBe("not-sent");
@@ -134,7 +136,7 @@ describe("E21-K10: cancellation and abandonment", () => {
     const late = heldProvider({ cancelQuery });
     const controller = new AbortController();
 
-    const running = runEditorQuery(late.provider, runOf(controller.signal, "q-2"));
+    const running = runEditorQuery({ form: "provider", provider: late.provider }, runOf(controller.signal, "q-2"));
     await late.started;
     controller.abort();
     const caught = await running.catch((error: unknown) => error);
@@ -210,7 +212,7 @@ describe("E21-K16: abandoned promises", () => {
         }),
       });
       const controller = new AbortController();
-      const running = runEditorQuery(held.provider, runOf(controller.signal, "q-3"));
+      const running = runEditorQuery({ form: "provider", provider: held.provider }, runOf(controller.signal, "q-3"));
       await held.started;
       controller.abort();
       expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
@@ -283,7 +285,9 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       }),
     });
 
-    const caught = await runEditorQuery(provider, runOf(new AbortController().signal)).catch((error: unknown) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf(new AbortController().signal)).catch(
+      (error: unknown) => error,
+    );
 
     expect(caught).toBe(lost);
     expect(databaseErrorBody(caught)?.body).toMatchObject({
@@ -319,7 +323,9 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       ),
     });
 
-    const caught = await runEditorQuery(provider, runOf(new AbortController().signal)).catch((error: unknown) => error);
+    const caught = await runEditorQuery({ form: "provider", provider }, runOf(new AbortController().signal)).catch(
+      (error: unknown) => error,
+    );
 
     expect(caught).toBe(refused);
     expect(databaseErrorBody(caught)?.body).toMatchObject({

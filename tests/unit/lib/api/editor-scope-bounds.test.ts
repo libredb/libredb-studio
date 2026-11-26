@@ -54,13 +54,16 @@ const child = boundedChild({
       endOpenQueryTransaction: () => new Promise<never>(() => {}),
     } as never;
     try {
-      await deps.runEditorQuery(provider, {
-        statement: "SELECT n FROM t",
-        options: { limit: 1 },
-        signal: new AbortController().signal,
-        route: "bounds",
-        scrub: deps.providerTextScrub(config as never, "any"),
-      });
+      await deps.runEditorQuery(
+        { form: "provider", provider },
+        {
+          statement: "SELECT n FROM t",
+          options: { limit: 1 },
+          signal: new AbortController().signal,
+          route: "bounds",
+          scrub: deps.providerTextScrub(config as never, "any"),
+        },
+      );
       return "answered";
     } catch (error) {
       const waited = Math.round((Date.now() - answeredAt) / 1_000);

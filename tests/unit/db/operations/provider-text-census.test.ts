@@ -517,6 +517,9 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [testConnectionCore, "healthFailureSentence", "withheldProviderError"],
   [testConnectionCore, "testConnectionCautions", "withholdProviderError"],
   [editorQuery, "editorPageBody", "withScrubbedWarnings"],
+  // A provider package's warnings reach the client only as Studio's count sentence, each logged through core's scrub
+  // (`packageWarnings` in src/lib/api/package-errors.ts, which calls `scrubProviderWarnings`).
+  [editorQuery, "packagePageBody", "packageWarnings"],
   [routeEvents, "failure", "providerTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
   [recordedRun, "runRecorded", "providerTextScrub"],

@@ -13,7 +13,7 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, tes
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as actualDb from "@/lib/db";
+import type { CachedSession } from "@/lib/db/factory";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
@@ -21,6 +21,7 @@ import { resetVaultCache } from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { closeAll, httpListener, jsonAnswer, type Listener } from "../../helpers/node-transport-fixtures";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -33,8 +34,8 @@ afterAll(forgetHostCore);
 const VAULT_REFERENCE = "${vault:secret/data/a#b}";
 
 const mockProvider = createMockProvider();
-const mockGetOrCreateProvider = mock<(connection: DatabaseConnection) => Promise<typeof mockProvider>>(
-  async () => mockProvider,
+const mockGetOrCreateEditorSession = mock<(connection: DatabaseConnection) => Promise<CachedSession>>(async () =>
+  editorEntryOf(mockProvider),
 );
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -50,7 +51,8 @@ mock.module("@/lib/auth", () => ({
     return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
   }),
 }));
-mock.module("@/lib/db", () => ({ ...actualDb, getOrCreateProvider: mockGetOrCreateProvider }));
+const actualFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({ ...actualFactory, getOrCreateEditorSession: mockGetOrCreateEditorSession }));
 
 const { POST } = await import("@/app/api/db/query/route");
 
@@ -66,7 +68,7 @@ async function query(connectionId: string): Promise<{ status: number; data: Reco
 }
 
 function passwordGivenToProvider(): string | undefined {
-  return mockGetOrCreateProvider.mock.calls[0]?.[0]?.password;
+  return mockGetOrCreateEditorSession.mock.calls[0]?.[0]?.password;
 }
 
 beforeEach(async () => {
@@ -74,7 +76,7 @@ beforeEach(async () => {
   resetCache();
   resetDiscoveryCache();
   resetVaultCache();
-  mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateEditorSession.mockClear();
   mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
 
   vault = await httpListener(jsonAnswer(200, JSON.stringify({ data: { data: { b: "from-vault" } } })));
@@ -146,7 +148,7 @@ describe("POST /api/db/query on a discovered connection", () => {
     expect(unknown.status).toBe(404);
     expect(discovered.data).toEqual({ error: 'Seed connection "caprover-x" not found', statusCode: 404 });
     expect(unknown.data).toEqual({ error: 'Seed connection "caprover-none" not found', statusCode: 404 });
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
     expect(vault.seen).toEqual([]);
   });
 });

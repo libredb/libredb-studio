@@ -111,7 +111,7 @@ describe("one host core per process", () => {
     installHostCore(createHostCore(), "test");
     forgetHostCore();
     const [ran, cancelled] = await Promise.all([
-      runEditorQuery(provider, run).catch((error: unknown) => error),
+      runEditorQuery({ form: "provider", provider }, run).catch((error: unknown) => error),
       cancelEditorRun(provider, randomUUID(), new AbortController().signal, "test").catch((error: unknown) => error),
     ]);
 

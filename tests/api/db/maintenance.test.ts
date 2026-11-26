@@ -160,6 +160,10 @@ mock.module("@/lib/db/factory", () => ({
   },
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
   findCachedProvider: mock(() => null),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
+  getOrCreateEditorSession: mock(async () => {
+    throw new Error("getOrCreateEditorSession is not read by this route");
+  }),
 }));
 
 // ─── Mock the query event sink and the admission gate (docs/GOVERNANCE.md#query-events) ───
