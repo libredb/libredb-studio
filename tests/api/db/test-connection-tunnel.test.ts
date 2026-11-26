@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));
 
@@ -31,6 +32,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+      connection: body.connection,
+      engine: servedEngineRecord(body.connection.type),
+    })),
     SeedConnectionError,
   };
 });

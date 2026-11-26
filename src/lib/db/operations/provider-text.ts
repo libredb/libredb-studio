@@ -61,9 +61,12 @@ import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 export const PROVIDER_TEXT_WITHHELD =
   "(Studio withheld this text because it contained a credential of this connection)";
 
-/** The forms of one connection's secret-class values, computed once per call site, and the connection's type. */
+/**
+ * The forms of one connection's secret-class values, computed once per call site, and the connection's type when its
+ * engine's record offers a legacy provider, which the withheld error names its provider by.
+ */
 export interface ProviderTextScrub {
-  readonly type: DatabaseType;
+  readonly type: DatabaseType | undefined;
   readonly forms: readonly string[];
 }
 
@@ -87,13 +90,29 @@ function providerReceives(connection: SecretFieldRecord, path: string, reach: Sc
 }
 
 /** The scrub of one connection's providers: the secret-class values they receive and their forms. */
-export function providerTextScrub(connection: SecretFieldRecord, reach: ScrubbedProviders): ProviderTextScrub {
+export function providerTextScrub(
+  connection: SecretFieldRecord & { readonly type: DatabaseType },
+  reach: ScrubbedProviders,
+): ProviderTextScrub {
+  return connectionTextScrub(connection, connection.type, reach);
+}
+
+/**
+ * The scrub of a connection of any engine the server serves, `providerTextScrub`'s reading of its fields: `type` is the
+ * engine's id as the published `DatabaseType` when its record offers a legacy provider (`legacyProviderType` in
+ * ../server-catalog), and undefined for a provider package's engine, whose withheld error then names no provider.
+ */
+export function connectionTextScrub(
+  connection: SecretFieldRecord,
+  type: DatabaseType | undefined,
+  reach: ScrubbedProviders,
+): ProviderTextScrub {
   const values: string[] = [];
   for (const [path, value] of Object.entries(secretFieldValues(connection))) {
     if (!providerReceives(connection, path, reach)) continue;
     values.push(value);
   }
-  return { type: connection.type, forms: secretForms(values) };
+  return { type, forms: secretForms(values) };
 }
 
 /** The text itself, or `PROVIDER_TEXT_WITHHELD` when it holds any form of the connection's credential. */

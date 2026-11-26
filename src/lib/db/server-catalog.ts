@@ -43,12 +43,12 @@
  * `legacyProviderRefusal`'s message. A refused package's engine is refused there as `ProviderUnavailableError`, an
  * engine whose record offers no legacy provider as `PackageEngineUnsupportedError` until the request serves package
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection and the query route
- * serve an engine whose record offers no legacy provider in this Studio: each resolves its connection through
- * `resolveConnection` with `engines` `bundled-and-package`; Test Connection then validates the connection against the
- * engine's field rules and opens one session through the package (`testPackageConnection` in
- * src/lib/api/test-connection.ts), and the query route runs a statement on the engine's cached session
- * (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over the provider factory's opens of any
- * record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
+ * serve an engine whose record offers no legacy provider in this Studio: each resolves its connection with its record
+ * through `resolveServedConnection` (src/lib/seed/resolve-connection.ts), which reads the type through
+ * `servedEngineRecord`; Test Connection then runs one test for every record, which reads what differs from the record's
+ * offers and grants (`testConnection` in src/lib/api/test-connection.ts), and the query route runs a statement on a
+ * package engine's cached session (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over the
+ * provider factory's opens of any record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
@@ -242,25 +242,71 @@ type LegacyProviderReading =
       readonly refusal: ProviderUnavailableError | PackageEngineUnsupportedError | UnknownProviderError;
     };
 
+/**
+ * The refusal of a type the catalog serves no record of: a refused package's engine as `ProviderUnavailableError`
+ * naming its codes, every other value as `UnknownProviderError`, exactly as `assertDatabaseType` refuses it.
+ */
+function notServedRefusal(
+  engine: Exclude<ServerEngine, { readonly kind: "served" }>,
+): ProviderUnavailableError | UnknownProviderError {
+  if (engine.kind === "unavailable") {
+    return new ProviderUnavailableError(
+      `The connection type ${quoteTypeId(engine.id)} is served by a provider package this LibreDB Studio refused when it started (${engine.codes.join(", ")}), so no provider can open it; the server's log names the package and why.`,
+      engine.id,
+      engine.codes,
+    );
+  }
+  return new UnknownProviderError(engine.refusal);
+}
+
 /** `legacyProviderRefusal`'s and `legacyProviderEngine`'s one reading of `value` for `need`. */
 function legacyProviderReading(value: unknown, need: EngineNeed): LegacyProviderReading {
   const engine = serverEngine(value);
-  if (engine.kind === "served") {
-    return engine.engine.offers.legacyProvider
-      ? { engine: engine.engine, refusal: null }
-      : { engine: null, refusal: new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], engine.engine.id) };
+  if (engine.kind !== "served") return { engine: null, refusal: notServedRefusal(engine) };
+  return engine.engine.offers.legacyProvider
+    ? { engine: engine.engine, refusal: null }
+    : { engine: null, refusal: new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], engine.engine.id) };
+}
+
+/**
+ * The record of the engine a connection's type names, legacy or package alike, for a path that serves every engine the
+ * catalog serves (`resolveServedConnection` in src/lib/seed/resolve-connection.ts). Every other value is refused as
+ * `legacyProviderRefusal` refuses it.
+ *
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
+ * @throws {UnknownProviderError} When the type is absent, not text, or names no engine the server knows.
+ */
+export function servedEngineRecord(value: unknown): EngineRecord {
+  const engine = serverEngine(value);
+  if (engine.kind !== "served") throw notServedRefusal(engine);
+  return engine.engine;
+}
+
+/**
+ * Whether `engine`'s record offers a legacy provider, so `connection`, of its engine, is a connection the legacy entry
+ * points take: a record offers one exactly when the legacy adapter serves its id (`installServerCatalog`), whose type is
+ * a `DatabaseType`.
+ */
+export function offersLegacyProvider(
+  engine: EngineRecord,
+  connection: EngineConnection,
+): connection is DatabaseConnection {
+  return engine.offers.legacyProvider;
+}
+
+/**
+ * `connection`, of `engine`, as the connection the legacy entry points take, for a caller that read the record's
+ * `legacyProvider` offer first.
+ *
+ * @throws {Error} A host defect: when `engine`'s record offers no legacy provider.
+ */
+export function legacyConnection(engine: EngineRecord, connection: EngineConnection): DatabaseConnection {
+  if (!offersLegacyProvider(engine, connection)) {
+    throw new Error(
+      `The engine ${quoteTypeId(engine.id)} offers no legacy provider, and this caller reads its connection as a legacy provider's: a host defect.`,
+    );
   }
-  if (engine.kind === "unavailable") {
-    return {
-      engine: null,
-      refusal: new ProviderUnavailableError(
-        `The connection type ${quoteTypeId(engine.id)} is served by a provider package this LibreDB Studio refused when it started (${engine.codes.join(", ")}), so no provider can open it; the server's log names the package and why.`,
-        engine.id,
-        engine.codes,
-      ),
-    };
-  }
-  return { engine: null, refusal: new UnknownProviderError(engine.refusal) };
+  return connection;
 }
 
 /**

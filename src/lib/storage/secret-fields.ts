@@ -17,8 +17,13 @@ import type { DatabaseConnection, SSHTunnelConfig, SSLConfig } from "@/lib/types
 /**
  * A connection whose `createdAt` may be the ISO string a stored settings entry holds rather than a
  * `Date`: every function here is generic over this, so a caller passes either shape under `strict`.
+ * Its `type` is read as text, since no walk here reads it: a connection of any engine the server
+ * serves, a provider package's included, is one.
  */
-export type SecretFieldRecord = Omit<DatabaseConnection, "createdAt"> & { createdAt: Date | string };
+export type SecretFieldRecord = Omit<DatabaseConnection, "createdAt" | "type"> & {
+  createdAt: Date | string;
+  type: string;
+};
 
 /**
  * The single answer to "which stored fields are credentials".

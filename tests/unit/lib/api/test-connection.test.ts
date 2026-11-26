@@ -1,18 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CallContext } from "@libredb/provider-sdk/calls";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
-import {
-  ConnectionError,
-  DatabaseConfigError,
-  ProviderTextWithheldError,
-  TimeoutError,
-  UnknownProviderError,
-} from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, ProviderTextWithheldError, TimeoutError } from "@/lib/db/errors";
 import { snowflakeAccountRefusal } from "@/lib/db/providers/sql/snowflake/account-host";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import type { DatabaseConnection, DatabaseType, QueryWarning } from "@/lib/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
@@ -21,15 +16,15 @@ import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } fro
 
 /** Every step the core takes, in the order it took them, across the tunnel, the factory and the provider. */
 let steps: string[] = [];
-/** The arguments `createDatabaseProvider` was called with, one entry per call. */
+/** The connection, options and execution context of each one-shot open (`openEngineOnce`), one entry per call. */
 let created: unknown[][] = [];
-/** The provider `createDatabaseProvider` hands back. */
+/** The provider each one-shot open answers, built and not connected, as a legacy record's open answers it. */
 let built: DatabaseProvider;
 /** The open single-writer handle `findOpenSingleWriterProvider` answers, or null. */
 let borrowed: DatabaseProvider | null = null;
 /** Whether a handle of any posture holds the file. */
 let fileOpen = false;
-/** What `createDatabaseProvider` waits for before it answers; settled unless a case holds the build. */
+/** What the one-shot open waits for before it answers; settled unless a case holds the build. */
 let building: Promise<void> = Promise.resolve();
 
 const findOpenSingleWriterProvider = mock((connection: unknown, allowExternalFileAccess: boolean) => {
@@ -51,22 +46,31 @@ mock.module("@/lib/db/factory", () => ({
       steps.push("tunnel close");
     }
   },
-  createDatabaseProvider: async (...args: unknown[]) => {
-    created.push(args);
-    steps.push("create");
-    await building;
-    return built;
-  },
   findOpenSingleWriterProvider,
   isSingleWriterFileOpen: () => fileOpen,
   getOrCreateProvider,
-  // Test Connection opens a provider package's engine through it, and every case here tests a legacy engine.
-  openEngineOnce: () => {
-    throw new Error("no case here opens a provider package's engine");
+  // Test Connection opens every engine through it; every case here tests a legacy engine, whose open answers the
+  // provider built and not connected.
+  openEngineOnce: async (
+    connection: unknown,
+    _engine: unknown,
+    execution: unknown,
+    _within: unknown,
+    options: unknown,
+  ): Promise<{ form: "provider"; provider: DatabaseProvider }> => {
+    created.push([connection, options, execution]);
+    steps.push("create");
+    await building;
+    return { form: "provider", provider: built };
   },
 }));
 
-const { testConnection } = await import("@/lib/api/test-connection");
+const core = await import("@/lib/api/test-connection");
+
+/** The core's test of `tested`, handed the server catalog's record of its type as both callers hand it. */
+function testConnection(tested: DatabaseConnection, context: EditorExecutionContext, label: string, now?: number) {
+  return core.testConnection(tested, servedEngineRecord(tested.type), context, label, now);
+}
 
 // The health read goes through the process's host core (src/lib/provider-host/instance.ts), so this file composes its
 // own.
@@ -112,6 +116,8 @@ const connection: DatabaseConnection = {
 const execution = { allowExternalFileAccess: true } as EditorExecutionContext;
 const route = "test-route";
 const tunnelled = { ...connection, host: "127.0.0.1", port: 40001 };
+/** A connection of an engine whose record grants a single-writer file (`grants.singleWriterFile`). */
+const singleWriter = { ...connection, type: "duckdb", database: "/data/held.duckdb" } as DatabaseConnection;
 const callsOf = (fn: unknown) => (fn as ReturnType<typeof mock>).mock.calls;
 
 beforeEach(() => {
@@ -478,7 +484,7 @@ describe("testConnection", () => {
 
         steps = [];
         borrowed = recording();
-        const borrowedAnswer = await testConnection(connection, execution, route, now);
+        const borrowedAnswer = await testConnection(singleWriter, execution, route, now);
         expect(borrowedAnswer.success).toBe(true);
         expect(callsOf(borrowed.getHealth)).toEqual([[]]);
         expect(steps).toEqual(["tunnel open", "getHealth", "tunnel close"]);
@@ -489,7 +495,9 @@ describe("testConnection", () => {
 
       expect(calls).toHaveLength(2);
       for (const { ctx } of calls) {
+        // DuckDB and PostgreSQL share the host's default budget.
         expect(ctx.deadline).toBe(now + connectBudgetFor("postgres"));
+        expect(connectBudgetFor("duckdb")).toBe(connectBudgetFor("postgres"));
         expect(ctx.signal).toBeInstanceOf(AbortSignal);
         expect(ctx.signal.aborted).toBe(false);
       }
@@ -560,8 +568,11 @@ describe("testConnection", () => {
     built = recording();
     steps = [];
     borrowed = recording({ testConnectionWarnings: async () => [{ message: "never" }] });
-    const answer = await testConnection(connection, execution, route);
-    expect(callsOf(findOpenSingleWriterProvider)).toEqual([[tunnelled, true]]);
+    // DuckDB's record grants a single-writer file, so only such an engine's test looks for a handle to borrow.
+    const answer = await testConnection(singleWriter, execution, route);
+    expect(callsOf(findOpenSingleWriterProvider)).toEqual([
+      [{ ...singleWriter, host: "127.0.0.1", port: 40001 }, true],
+    ]);
     expect(steps).toEqual(["tunnel open", "getHealth", "tunnel close"]);
     expect(answer).toEqual({ success: true, message: "Connection successful", latency: expect.any(Number) });
   });
@@ -569,8 +580,17 @@ describe("testConnection", () => {
   test("beside a writer of the other posture the test handle opens read-only", async () => {
     built = recording();
     fileOpen = true;
-    await testConnection(connection, execution, route);
+    await testConnection(singleWriter, execution, route);
     expect(created[0][2]).toEqual({ readOnly: true });
+  });
+
+  test("an engine whose record grants no single-writer file never looks for a handle to borrow", async () => {
+    built = recording();
+    borrowed = recording();
+    fileOpen = true;
+    await testConnection(connection, execution, route);
+    expect(callsOf(findOpenSingleWriterProvider)).toEqual([]);
+    expect(created[0][2]).toBe(execution);
   });
 
   test("a connection its engine's field rules refuse is refused with the rule's sentence before the tunnel opens or anything is built, and its statement was not sent", async () => {
@@ -603,17 +623,6 @@ describe("testConnection", () => {
     expect((thrown as DatabaseConfigError).outcome).toBe("not-sent");
     expect(steps).toEqual([]);
     expect(created).toEqual([]);
-  });
-
-  test("a type outside the union is still refused by name, before the tunnel opens", async () => {
-    let thrown: unknown;
-    try {
-      await testConnection({ ...connection, type: "acmefoo" as DatabaseType }, execution, route);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(UnknownProviderError);
-    expect(steps).toEqual([]);
   });
 });
 

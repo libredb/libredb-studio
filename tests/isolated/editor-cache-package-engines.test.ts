@@ -718,10 +718,16 @@ describe("the sessions of a provider package's engine", () => {
 
     record(MAIN);
     const once = openedSession(
-      await factory.openEngineOnce(connectionOf(MAIN), engineOf(MAIN), ADMIN, {
-        deadline: Date.now() + 1_000,
-        signal: new AbortController().signal,
-      }),
+      await factory.openEngineOnce(
+        connectionOf(MAIN),
+        engineOf(MAIN),
+        ADMIN,
+        {
+          deadline: Date.now() + 1_000,
+          signal: new AbortController().signal,
+        },
+        {},
+      ),
     );
     expect(typeof once.session.health).toBe("function");
     expect(factory.getProviderCacheStats().size).toBe(0);
@@ -739,10 +745,13 @@ describe("the sessions of a provider package's engine", () => {
       expect(open.mock.calls[0]?.[1].connection).toBe(connection);
 
       const once = connectionOf(MAIN);
-      await factory.openEngineOnce(once, engineOf(MAIN), ADMIN, {
-        deadline: Date.now() + 1_000,
-        signal: new AbortController().signal,
-      });
+      await factory.openEngineOnce(
+        once,
+        engineOf(MAIN),
+        ADMIN,
+        { deadline: Date.now() + 1_000, signal: new AbortController().signal },
+        {},
+      );
       expect(open).toHaveBeenCalledTimes(2);
       expect(open.mock.calls[1]?.[0]).toBe(engineOf(MAIN));
       expect(open.mock.calls[1]?.[1].connection).toBe(once);

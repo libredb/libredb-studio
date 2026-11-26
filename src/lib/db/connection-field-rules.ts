@@ -1,9 +1,10 @@
 /**
  * The one core module that evaluates each engine's connection field rules (`fieldRules` and `fieldShownWhen` of its
  * form entry in ./connection-form): the connection dialog reads it before Test Connection and Save send anything, the
- * test-connection path both post to reads it again before it opens a tunnel or builds a provider (`fieldRuleRefusal`,
- * read by `testConnection` in src/lib/api/test-connection.ts), and the open check reads it before any session of any
- * engine opens to connect, for the required secrets (`requiredSecretOf`, read by `assertOpenable` in ./open-check).
+ * test-connection path both post to reads it again, over the engine record's field rules, before it opens a tunnel or
+ * anything else (`connectionFieldRefusal`, read by `testConnection` in src/lib/api/test-connection.ts), and the open
+ * check reads it before any session of any engine opens to connect, for the required secrets (`requiredSecretOf`, read
+ * by `assertOpenable` in ./open-check).
  * The rules themselves are data, the projection of each engine's declaration; this module only reads them, so every
  * reader answers the same refusal with the same sentence (docs/providers/CONTRACT.md, clause M-33).
  *
@@ -11,13 +12,11 @@
  * dialog's bundle and the server load the same functions. tests/unit/lib/db/connection-field-rules.test.ts holds its
  * run-time graph.
  */
-import { CONNECTION_FORM, type ConnectionFieldRule, type FieldRuleSpec } from "@/lib/db/connection-form";
+import type { ConnectionFieldRule, FieldRuleSpec } from "@/lib/db/connection-form";
 import type { ConnectionField } from "@/lib/db/connection-fields";
-import { typeIdRow } from "@/lib/db/type-id";
 // The storage classification, aliased because ./connection-form's own `CONNECTION_FIELDS` is the field lists: whether
 // a field is a credential is answered there once, for storage, the VS Code prompts and a required secret's blank rule.
 import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
-import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /**
  * Whether the dialog draws a field the engine takes, by the engine's `fieldShownWhen`: true when the field has no
@@ -55,15 +54,18 @@ function blankForRequired(field: ConnectionField, value: unknown): boolean {
 }
 
 /**
- * The first refusal of the engine's `fieldRules` for a connection, or `undefined` when every declared check passes.
+ * The first refusal of the engine's `fieldRules` for `values`, a connection's fields, or `undefined` when every declared
+ * check passes.
  * `config` is a bundled engine's form entry, or the field rules of a provider package's engine (`packageFieldRules`
  * in ./connection-form). The fields are checked in `connectionFields` order, so the dialog names the first box to fix. A `required` field is
  * refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field that holds no value,
  * absent, null or empty. A field `connectionFieldShown` hides is not checked, since the dialog neither draws nor
  * writes it.
  */
-export function connectionFieldRefusal(config: FieldRuleSpec, connection: DatabaseConnection): string | undefined {
-  const values = connection as Partial<Record<ConnectionField, unknown>>;
+export function connectionFieldRefusal(
+  config: FieldRuleSpec,
+  values: Readonly<Partial<Record<ConnectionField, unknown>>>,
+): string | undefined {
   for (const field of config.connectionFields) {
     const rule = config.fieldRules?.[field];
     if (rule === undefined || !connectionFieldShown(config, field, values)) continue;
@@ -87,18 +89,6 @@ function ruleRefusal(rule: ConnectionFieldRule, field: ConnectionField, value: u
     return rule.charRange.sentence;
   }
   return rule.check?.(text);
-}
-
-/**
- * The first refusal of the field rules of `type`'s form entry for `connection`, or `undefined` when every declared
- * check passes: `connectionFieldRefusal` on that entry, the dialog's own answer, read on the server path Test
- * Connection and Save post to. The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType`
- * union is refused by name.
- *
- * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
- */
-export function fieldRuleRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
-  return connectionFieldRefusal(typeIdRow(CONNECTION_FORM, type), connection);
 }
 
 /**

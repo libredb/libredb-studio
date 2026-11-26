@@ -3,8 +3,9 @@
  * (src/lib/db/server-catalog.ts): an engine whose provider package was refused at boot is answered
  * `PROVIDER_UNAVAILABLE` naming the refusal code, for an inline record and a seed alike, after the access decision and
  * before any Vault reference is read, whichever engines the route serves; an admitted package's engine is refused by
- * name on a route that serves bundled engines alone, and resolved, by the same resolve with the same guards, on a route
- * that serves package engines too, which only Test Connection and the query route are in this Studio.
+ * name by `resolveConnection`, which takes no source parameter, and resolved with its record by
+ * `resolveServedConnection`, the same resolve with the same guards, which only Test Connection and the query route call
+ * in this Studio.
  */
 // oxlint-disable no-await-in-loop -- each case resolves after the one before, so a failure names its case.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -15,7 +16,7 @@ import { PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/d
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { resetCache } from "@/lib/seed";
-import { type ConnectionBody, resolveConnection } from "@/lib/seed/resolve-connection";
+import { type ConnectionBody, resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
 import * as vaultClient from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
@@ -75,7 +76,7 @@ describe("a package engine on a connection route", () => {
   test("an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code", async () => {
     const routes = [
       (body: ConnectionBody) => resolveConnection(body, ADMIN),
-      (body: ConnectionBody) => resolveConnection(body, ADMIN, undefined, "bundled-and-package"),
+      (body: ConnectionBody) => resolveServedConnection(body, ADMIN),
     ];
     for (const resolve of routes) {
       for (const body of [{ connection: inline("acmegone") }, { connectionId: "seed:gone" }]) {
@@ -97,33 +98,21 @@ describe("a package engine on a connection route", () => {
       );
     }
 
-    const resolved = await resolveConnection(
-      { connection: inline("acmeserved") },
-      ADMIN,
-      undefined,
-      "bundled-and-package",
-    );
-    expect(resolved).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
-    const engine = serverEngine(resolved.type);
-    if (engine.kind !== "served") throw new Error(`resolved ${engine.kind}`);
-    expect(engine.engine.source.name).toBe("acme-served");
+    const resolved = await resolveServedConnection({ connection: inline("acmeserved") }, ADMIN);
+    expect(resolved.connection).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
+    expect(resolved.engine.source.name).toBe("acme-served");
 
     // The seed schema is keyed by Studio's bundled engines, so a seed of a package's engine keeps only the fields every
     // seed has; it resolves as the package's engine all the same.
-    const seed = await resolveConnection({ connectionId: "seed:served" }, ADMIN, undefined, "bundled-and-package");
-    const seedEngine = serverEngine(seed.type);
-    if (seedEngine.kind !== "served") throw new Error(`resolved ${seedEngine.kind}`);
-    expect([seed.id, seed.type, seedEngine.engine.source.name]).toEqual(["seed:served", "acmeserved", "acme-served"]);
+    const seed = await resolveServedConnection({ connectionId: "seed:served" }, ADMIN);
+    expect([seed.connection.id, seed.connection.type, seed.engine.source.name]).toEqual([
+      "seed:served",
+      "acmeserved",
+      "acme-served",
+    ]);
 
-    const bundled = await resolveConnection(
-      { connection: inline("postgres") },
-      ADMIN,
-      undefined,
-      "bundled-and-package",
-    );
-    const bundledEngine = serverEngine(bundled.type);
-    if (bundledEngine.kind !== "served") throw new Error(`resolved ${bundledEngine.kind}`);
-    expect([bundled.type, bundledEngine.engine.source.name]).toEqual(["postgres", "@libredb/studio"]);
+    const bundled = await resolveServedConnection({ connection: inline("postgres") }, ADMIN);
+    expect([bundled.connection.type, bundled.engine.source.name]).toEqual(["postgres", "@libredb/studio"]);
   });
 
   test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", async () => {
@@ -145,5 +134,31 @@ describe("a package engine on a connection route", () => {
     );
     const resolved = await resolveConnection({ connection: inline("postgres") }, ADMIN);
     expect(resolved).toMatchObject({ type: "postgres", host: "db.example", managed: false });
+  });
+  test("resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter", async () => {
+    const served = serverEngine("acmeserved");
+    if (served.kind !== "served") throw new Error(`acmeserved is ${served.kind}`);
+    const inlineAnswer = await resolveServedConnection({ connection: inline("acmeserved") }, ADMIN);
+    expect(inlineAnswer.connection).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
+    expect(inlineAnswer.engine).toBe(served.engine);
+    const seedAnswer = await resolveServedConnection({ connectionId: "seed:served" }, ADMIN);
+    expect([seedAnswer.connection.id, seedAnswer.connection.type]).toEqual(["seed:served", "acmeserved"]);
+    expect(seedAnswer.engine).toBe(served.engine);
+
+    const legacy = serverEngine("postgres");
+    if (legacy.kind !== "served") throw new Error(`postgres is ${legacy.kind}`);
+    const bundled = await resolveServedConnection({ connection: inline("postgres") }, ADMIN);
+    expect(bundled.engine).toBe(legacy.engine);
+    expect(bundled.engine.offers.legacyProvider).toBe(true);
+
+    const refusal = await resolveConnection(
+      { connection: inline("acmeserved") },
+      ADMIN,
+      undefined,
+      // @ts-expect-error resolveConnection takes no source parameter
+      "bundled-and-package",
+    ).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
+    expect((refusal as PackageEngineUnsupportedError).code).toBe("PACKAGE_ENGINE_UNSUPPORTED");
   });
 });

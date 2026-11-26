@@ -96,8 +96,9 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
 export const PROVIDER_ROUTES = ALL_ROUTES.filter(([key]) => !(key in ROUTES_WITHOUT_A_PROVIDER));
 
 /**
- * The provider routes that pass the request body to `resolveConnection`, directly or through `handleObjectRequest` in
- * src/lib/api/object-route.ts, each with a minimal well-formed body: the fields the route reads beside the
+ * The provider routes that pass the request body to `resolveConnection`, directly, through `resolveServedConnection`
+ * (its body with the engine's record, which Test Connection and the query route call) or through `handleObjectRequest`
+ * in src/lib/api/object-route.ts, each with a minimal well-formed body: the fields the route reads beside the
  * connection. A test adds a `connectionId` or an inline `connection` to it, so every route that turns a request into
  * a connection is sent both, and the inventory test in tests/security/governance-grants.test.ts fails until a new
  * provider route is classified here or in `PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY`.

@@ -511,10 +511,10 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [dbRoute("transaction"), "runScriptInTransaction", "withholdProviderError"],
   [dbRoute("transaction"), "eventError", "withheldProviderError"],
   [dbRoute("transaction"), "rollBackOnProvider", "withholdProviderError"],
-  [dbRoute("test-connection"), "POST", "providerTextScrub"],
-  [testConnectionCore, "testConnection", "providerTextScrub"],
-  [testConnectionCore, "testConnection", "scrubProviderWarnings"],
-  [testConnectionCore, "testConnection", "withheldProviderError"],
+  [dbRoute("test-connection"), "POST", "connectionTextScrub"],
+  [testConnectionCore, "testConnection", "connectionTextScrub"],
+  [testConnectionCore, "test", "scrubProviderWarnings"],
+  [testConnectionCore, "healthFailureSentence", "withheldProviderError"],
   [testConnectionCore, "testConnectionCautions", "withholdProviderError"],
   [editorQuery, "editorPageBody", "withScrubbedWarnings"],
   [routeEvents, "failure", "providerTextScrub"],
@@ -853,7 +853,7 @@ describe("the one scrub of provider text", () => {
       ({ file, census }) =>
         file.startsWith(join("src", "app", "api") + sep) &&
         basename(file) === "route.ts" &&
-        census.identifiers.has("resolveConnection"),
+        (census.identifiers.has("resolveConnection") || census.identifiers.has("resolveServedConnection")),
     ).map(({ file }) => file);
     expect(routes.length).toBeGreaterThan(0);
     expect(routes.filter((file) => !covered.has(file))).toEqual([]);

@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { testConnection, testPackageConnection } from "@/lib/api/test-connection";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { type EngineConnection, serverEngine } from "@/lib/db/server-catalog";
-import type { DatabaseConnection } from "@/lib/types";
+import { testConnection } from "@/lib/api/test-connection";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { legacyProviderType } from "@/lib/db/server-catalog";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -25,42 +24,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
-    // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. An engine of
-    // an admitted provider package is resolved with every guard of every route, then tested through its package: its
-    // field rules and the open checks, then one session opened, its health read and closed (`testPackageConnection` in
-    // src/lib/api/test-connection.ts).
-    const resolved = await resolveConnection(
+    // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. The
+    // connection resolves with every guard of every route and with the server catalog's record of its engine, an
+    // admitted provider package's engine included; the resolve refuses a type that names no engine.
+    const { connection, engine } = await resolveServedConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
-      undefined,
-      "bundled-and-package",
     );
-    const served = serverEngine(resolved.type);
-    if (served.kind === "served" && !served.engine.offers.legacyProvider) {
-      const packaged = resolved as EngineConnection;
-      return NextResponse.json(
-        await testPackageConnection(
-          packaged,
-          served.engine,
-          editorExecutionContext(guard.session, packaged),
-          "api/db/test-connection",
-        ),
-      );
-    }
-    // Every other engine's connection is the bundled record `resolveConnection` answers.
-    const connection = resolved as DatabaseConnection;
-    scrub = providerTextScrub(connection, "any");
+    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
 
-    if (!connection.type) {
-      return NextResponse.json({ success: false, error: "Connection configuration is required" }, { status: 400 });
-    }
-
-    // The steps of the test itself, which the VS Code extension's `connection/test` shares
-    // (`src/lib/api/test-connection.ts`).
+    // The one test of a connection for every engine, which the VS Code extension's `connection/test` shares
+    // (`src/lib/api/test-connection.ts`): what differs between engines it reads from the record.
     // The DuckDB editor file-access posture is server-derived from the session role and the resolved
     // connection (non-admin DuckDB file access), so the core opens its handle with the right posture.
     return NextResponse.json(
-      await testConnection(connection, editorExecutionContext(guard.session, connection), "api/db/test-connection"),
+      await testConnection(
+        connection,
+        engine,
+        editorExecutionContext(guard.session, connection),
+        "api/db/test-connection",
+      ),
     );
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/test-connection", scrub });

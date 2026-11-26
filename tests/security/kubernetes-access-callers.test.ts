@@ -43,7 +43,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/seed/kubernetes-discovery-export.ts": ["parseKubernetesDiscoveryExport"],
   "src/lib/seed/kubernetes-discovery-contract.ts": ["mapKubernetesDatabase"],
   "src/lib/governance/visible.ts": ["visibleConnections", "visibleConnectionById"],
-  "src/lib/seed/resolve-connection.ts": ["resolveConnection"],
+  "src/lib/seed/resolve-connection.ts": ["resolveConnection", "resolveServedConnection"],
   "src/lib/kubernetes-access/gate.ts": [
     "connectionsUnderAccessReview",
     "connectionUnderAccessReview",
@@ -77,6 +77,14 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
 /** A route that opens the request's connection through the dispatcher before anything else. */
 const RESOLVED_BY_THE_ROUTE =
   "resolves the request's connection through resolveConnection, which opens a seed id only through visibleConnectionById and so through the review, and answers every miss with the uniform 404 (tests/security/kubernetes-access-review.test.ts)";
+
+/** A route that serves every engine: it opens the request's connection through the dispatcher before anything else. */
+const RESOLVED_BY_THE_SERVED_ROUTE =
+  "resolves the request's connection through resolveServedConnection, resolveConnection's body with the record of its engine, which opens a seed id only through visibleConnectionById and so through the review, and answers every miss with the uniform 404 (tests/security/kubernetes-access-review.test.ts)";
+
+/** A route that serves every engine and builds only for the connection it resolved through the dispatcher. */
+const BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED =
+  "builds only for the connection this route resolved through resolveServedConnection before, so a reviewed connection reaches it only after the review allowed it";
 
 /** An agent route: resolved through the dispatcher, and held while the review is on. */
 const RESOLVED_BY_THE_AGENT_ROUTE =
@@ -140,9 +148,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/pool-stats/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/query/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
@@ -150,6 +156,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the request's connection here before it builds",
+  },
+  resolveServedConnection: {
+    "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
   },
   connectionsUnderAccessReview: {
     "src/lib/governance/visible.ts":
@@ -219,7 +229,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/maintenance/preview/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
   },
@@ -231,15 +241,11 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/provider-host/open-engine.ts":
       "the one open function, gated above, calls it for a record no package serves, after the open check",
   },
-  createDatabaseProvider: {
-    "src/lib/api/test-connection.ts":
-      "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
-  },
   getOrCreateProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/cancel/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/api/editor-provider.ts":
       "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection first",
@@ -261,15 +267,15 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
   },
   getOrCreateEditorSession: {
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
-      "testPackageConnection opens the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
+      "testConnection opens the connection its caller hands it, and its one caller in src, POST /api/db/test-connection, resolved it through resolveServedConnection first",
   },
   withOneShotTunnel: {
     "src/lib/api/test-connection.ts":
-      "testConnection opens the tunnel of the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
+      "testConnection opens the tunnel of the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveServedConnection first",
   },
   findCachedProvider: {
     "src/lib/api/editor-provider.ts":
@@ -282,7 +288,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/pool-stats/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
   },
   metadataProvider: {
@@ -308,7 +314,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   testConnection: {
     "src/app/api/db/test-connection/route.ts":
-      "the Test Connection route resolves its body through resolveConnection before it hands the connection to testConnection",
+      "the Test Connection route resolves its body through resolveServedConnection before it hands the connection to testConnection",
   },
 };
 

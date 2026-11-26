@@ -60,7 +60,13 @@ import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
-import { type EngineConnection, type EngineRecord, legacyProviderEngine, servedPackage } from "./server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyProviderEngine,
+  offersLegacyProvider,
+  servedPackage,
+} from "./server-catalog";
 import {
   assertClaimsGranted,
   assertOpenable,
@@ -392,15 +398,16 @@ async function releaseTunnelOfUnopenedProvider(
  * Run `run` against a connection reachable through its SSH tunnel, then close the
  * tunnel unconditionally.
  *
- * This is the transport for callers that build a provider with
- * `createDatabaseProvider` directly - outside both provider caches - and connect it:
- * `POST /api/db/test-connection` and `POST /api/db/schema-snapshot`. Before #457 they
- * connected to the raw database host, so a tunnelled connection could never be tested
- * and therefore never be saved at all (the dialog gates its only save button on a
- * passing test), and the agent's grounding capture could not read a tunnelled schema.
+ * This is the transport for a caller that opens a provider outside both provider caches
+ * and connects it: Test Connection (`testConnection` in src/lib/api/test-connection.ts,
+ * which `POST /api/db/test-connection` and the VS Code extension's `connection/test` share),
+ * through the one-shot open (`openEngineOnce`) where the engine's record offers a tunnel.
+ * Before #457 it connected to the raw database host, so a tunnelled connection could never
+ * be tested and therefore never be saved at all (the dialog gates its only save button on a
+ * passing test).
  *
- * The tunnel is deliberately NOT pooled, unlike `getOrCreateProvider`'s. Those callers
- * cache nothing, so nothing would ever evict a pooled tunnel: `removeProvider` and the
+ * The tunnel is deliberately NOT pooled, unlike `getOrCreateProvider`'s. That caller
+ * caches nothing, so nothing would ever evict a pooled tunnel: `removeProvider` and the
  * idle sweep close the tunnel of a CACHED provider, and the connection dialog mints a
  * fresh id for every unsaved build - so each test click would strand an SSH client and
  * a listening local server for the life of the process. Ownership sits with this scope
@@ -781,7 +788,7 @@ function entryName(entry: CachedSession): string {
  */
 const ANONYMOUS_IN_MEMORY_DATABASE = ":memory:";
 
-function fileIdentity(connection: DatabaseConnection): string | null {
+function fileIdentity(connection: EngineConnection): string | null {
   if (!connection.database) return null;
   if (connection.database === ANONYMOUS_IN_MEMORY_DATABASE) return null;
   return `${connection.type}::${path.resolve(connection.database)}`;
@@ -825,7 +832,7 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  * its read-only file adapter, beside the writer and before it.
  */
 export function findOpenSingleWriterProvider(
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   allowExternalFileAccess?: boolean,
 ): DatabaseProvider | null {
   const identity = fileIdentity(connection);
@@ -863,7 +870,7 @@ export function findOpenSingleWriterProvider(
  * and macOS and is refused outright on Windows. Test Connection opens a read-only handle instead,
  * which leaves the writer's file and write-ahead log alone (`src/lib/api/test-connection.ts`).
  */
-export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean {
+export function isSingleWriterFileOpen(connection: EngineConnection): boolean {
   const identity = fileIdentity(connection);
   if (identity === null) return false;
   return Array.from(providerCache.values()).some(
@@ -1607,15 +1614,6 @@ export function findCachedProvider(key: string): DatabaseProvider | null {
 // ============================================================================
 
 /**
- * Whether `engine`'s record offers a legacy provider, so `connection`, of its engine, is a connection the legacy entry
- * points take: a record offers one exactly when the legacy adapter serves its id (`installServerCatalog` in
- * ./server-catalog), whose type is a `DatabaseType`.
- */
-function offersLegacyProvider(engine: EngineRecord, connection: EngineConnection): connection is DatabaseConnection {
-  return engine.offers.legacyProvider;
-}
-
-/**
  * The editor's session of `engine` for `connection`, the cache's entry, for any record the server serves: the cached one
  * when the editor cache holds it, else the open in flight under its key or a new one (docs/providers/CONTRACT.md,
  * clause C-44). With `wait`, the caller stops waiting when `wait.signal` aborts, with its reason, and the open goes on
@@ -1731,12 +1729,12 @@ async function openCachedSession(
 }
 
 /**
- * Opens `engine` for `connection` once, never cached, for Test Connection: the one open function with the open's
- * deadline and the signal that stops it, `within`, the test's own. A legacy record answers its provider built and not
- * connected, which the caller connects under its own deadline; a provider package's record answers its connected
- * session, and a session the package answers after the stop is closed by the host core. Every failure is marked
- * not-sent (`connectPhase`). The caller runs the open check (`assertOpenable` in ./open-check) first, before its budget
- * starts, and `openEngine` runs it again.
+ * Opens `engine` for `connection` once, never cached, for Test Connection: the one open function, which runs the one
+ * ordered open check first, with the open's deadline and the signal that stops it, `within`, the test's own. A legacy
+ * record answers its provider built with `options` and `execution` and not connected, which the caller connects under
+ * its own deadline; a provider package's record answers its connected session, and a session the package answers after
+ * the stop is closed by the host core. Every failure is marked not-sent (`buildPhase`), as `createDatabaseProvider`
+ * marks a build's: nothing was sent.
  *
  * @throws {DatabaseConfigError} Not-sent, when the open check refuses the connection.
  * @throws A provider constructor's or the package's error by reference, marked not-sent; a stop answers the signal's
@@ -1745,14 +1743,11 @@ async function openCachedSession(
 export async function openEngineOnce(
   connection: EngineConnection,
   engine: EngineRecord,
-  execution: EditorExecutionContext,
+  execution: ProviderExecutionContext,
   within: { readonly deadline: number; readonly signal: AbortSignal },
+  options: ProviderOptions,
 ): Promise<OpenedEngine> {
-  let opened: OpenedEngine | undefined;
-  await connectPhase(async () => {
-    opened = await openEngine(engine, { connection, execution, purpose: "connect", options: {}, within });
-  });
-  return opened as OpenedEngine;
+  return await buildPhase(() => openEngine(engine, { connection, execution, purpose: "connect", options, within }));
 }
 
 // ============================================================================

@@ -687,7 +687,8 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
       `export * from ${source("src/lib/auth.ts")};\nexport async function getSession() { return { role: "admin", username: "admin" }; }\nexport async function readSession() { return { kind: "authenticated", session: { role: "admin", username: "admin" } }; }\n`,
     );
     // One provider slot behind both lookups the routes use: `@/lib/db` (query, object source) and `@/lib/db/factory`
-    // (Test Connection). A module's own export wins over a name `export *` brings.
+    // (Test Connection's one-shot open, which answers a legacy record's provider built and not connected). A module's own
+    // export wins over a name `export *` brings.
     writeFileSync(
       at("provider-slot.ts"),
       [
@@ -695,17 +696,15 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         "export function useProvider(provider: unknown) { current = provider; }",
         "export async function getOrCreateProvider() { return current; }",
         "export async function createDatabaseProvider() { return current; }",
+        'export async function openEngineOnce() { return { form: "provider", provider: current }; }',
         "",
       ].join("\n"),
     );
-    for (const [file, real] of [
-      ["db-seam.ts", "src/lib/db/index.ts"],
-      ["factory-seam.ts", "src/lib/db/factory.ts"],
+    for (const [file, real, names] of [
+      ["db-seam.ts", "src/lib/db/index.ts", "createDatabaseProvider, getOrCreateProvider"],
+      ["factory-seam.ts", "src/lib/db/factory.ts", "createDatabaseProvider, getOrCreateProvider, openEngineOnce"],
     ] as const) {
-      writeFileSync(
-        at(file),
-        `export * from ${source(real)};\nexport { createDatabaseProvider, getOrCreateProvider } from "./provider-slot.ts";\n`,
-      );
+      writeFileSync(at(file), `export * from ${source(real)};\nexport { ${names} } from "./provider-slot.ts";\n`);
     }
     writeFileSync(
       at("child.ts"),

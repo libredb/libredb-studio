@@ -48,6 +48,7 @@ import {
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -98,28 +99,33 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    // A managed id resolves from the OPERATOR's config and everything the caller attached to the
+    // request is discarded, which the real `resolveConnection` does for the same reason (a `seed:`
+    // id is the operator's namespace, GHSA-3wh2-8x78). This is exactly the path the top-level
+    // `database` field has to survive: nothing the caller sent on a connection reaches this object.
+    if (typeof body.connectionId === "string" && body.connectionId.startsWith("seed:")) {
+      return {
+        id: body.connectionId,
+        name: "Seed Redis",
+        type: "redis",
+        host: "seed-host",
+        port: 6379,
+        database: "0",
+      };
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      // A managed id resolves from the OPERATOR's config and everything the caller attached to the
-      // request is discarded — which the real `resolveConnection` does for the same reason (a `seed:`
-      // id is the operator's namespace, GHSA-3wh2-8x78). This is exactly the path the top-level
-      // `database` field has to survive: nothing the caller sent on a connection reaches this object.
-      if (typeof body.connectionId === "string" && body.connectionId.startsWith("seed:")) {
-        return {
-          id: body.connectionId,
-          name: "Seed Redis",
-          type: "redis",
-          host: "seed-host",
-          port: 6379,
-          database: "0",
-        };
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });

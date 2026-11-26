@@ -7,11 +7,12 @@
  * statement was not sent, and neither the tunnel nor the build is reached; where the dialog passes, the route reaches
  * the tunnel and the build once with that connection.
  *
- * The session and seed resolution are stood in for (a pass-through), and so is the factory: its tunnel scope and its
- * build count their calls and answer a mock provider, so nothing is dialled. The rules, the form table and the route
- * are real.
+ * The session and seed resolution are stood in for (a pass-through answering the server catalog's record of the type),
+ * and so is the factory: its tunnel scope and its one-shot open count their calls and answer a mock provider, so
+ * nothing is dialled. The rules, the form table, the engine records and the route are real.
  *
- * The route passes core's scrub of the connection (`providerTextScrub(connection, "any")`), which withholds any text
+ * The route passes core's scrub of the connection (`connectionTextScrub`, which for a legacy record is
+ * `providerTextScrub(connection, "any")`), which withholds any text
  * holding a form of the connection's own secret, a refusal sentence included; the dialog never sends such a payload,
  * and the expected answer here is the dialog's sentence passed through the same scrub.
  */
@@ -26,6 +27,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { fieldRuleBase, fieldRuleCorpus } from "../../helpers/field-rule-corpus";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));
 
@@ -48,6 +50,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+      connection: body.connection,
+      engine: servedEngineRecord(body.connection.type),
+    })),
     SeedConnectionError,
   };
 });
@@ -66,19 +72,16 @@ mock.module("@/lib/db/factory", () => ({
     tunnelled.push(connection);
     return await run(connection);
   },
-  createDatabaseProvider: async (connection: DatabaseConnection) => {
-    built.push(connection);
-    return provider;
-  },
   findOpenSingleWriterProvider: () => null,
   isSingleWriterFileOpen: () => false,
   getOrCreateProvider: mock(async () => provider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  // Test Connection opens a provider package's engine through it, and every case here tests a legacy engine.
-  openEngineOnce: () => {
-    throw new Error("no case here opens a provider package's engine");
+  // Test Connection opens every engine through it; a legacy record's open answers its provider built.
+  openEngineOnce: async (connection: DatabaseConnection) => {
+    built.push(connection);
+    return { form: "provider", provider };
   },
 }));
 

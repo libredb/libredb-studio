@@ -81,8 +81,26 @@ export function packageErrorSentence(call: string, error: unknown): string {
 }
 
 /** Logs a provider package's error of `call` once, its words through core's scrub of the connection, under `route`. */
-export function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
+function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
   logger.error(`A provider package's ${call} failed`, withholdProviderError(scrub, error), { route });
+}
+
+/**
+ * Whether `error`, a failure of a provider package's call, is Studio's own: Studio's `DatabaseError`, which a package
+ * cannot construct, or a host defect of Studio's own (`isStudioDefect`). A caller answers it as itself, never as the
+ * package's.
+ */
+export function isStudioFailure(error: unknown): boolean {
+  return error instanceof DatabaseError || isStudioDefect(error);
+}
+
+/**
+ * Logs `error`, a failure of a provider package's `call` that is not Studio's own (`isStudioFailure`), once as the
+ * package's (`logPackageError`): a host defect with a refusal of what the package answered as `packageDefect`, so the
+ * log names the package as its author.
+ */
+export function logPackageFailure(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
+  logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
 }
 
 /**
@@ -105,9 +123,9 @@ export function packageWarnings(
 }
 
 /**
- * The error a request answers for `error`, a failure of a provider package's `call` on its query route: Studio's own
- * `DatabaseError`, and a host defect of Studio's own (`isStudioDefect`), as itself, and any other value logged once
- * (`logPackageError`), a host defect with a refusal of what the package answered as `packageDefect`, and answered with Studio's sentence naming its code: a `ConnectionError` marked not-sent for the
+ * The error a request answers for `error`, a failure of a provider package's `call` on its query route or Test
+ * Connection: Studio's own failure (`isStudioFailure`) as itself, and any other value logged once as the package's
+ * (`logPackageFailure`) and answered with Studio's sentence naming its code: a `ConnectionError` marked not-sent for the
  * open, since nothing was sent, and a plain `Error`, kind internal and outcome unknown, for the execute, since the
  * statement may have run.
  */
@@ -117,8 +135,8 @@ export function packageCallError(
   scrub: ProviderTextScrub,
   route: string,
 ): unknown {
-  if (error instanceof DatabaseError || isStudioDefect(error)) return error;
-  logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
+  if (isStudioFailure(error)) return error;
+  logPackageFailure(call, error, scrub, route);
   if (call === "execute") return new Error(packageErrorSentence(call, error));
   const failed = new ConnectionError(packageErrorSentence(call, error));
   markNotSent(failed);

@@ -22,13 +22,17 @@ import {
 } from "@/lib/db/errors";
 import {
   assertLegacyProvider,
+  type EngineConnection,
   type EngineRecord,
   forgetServerCatalog,
   installServerCatalog,
+  legacyConnection,
   legacyProviderEngine,
   legacyProviderRefusal,
   legacyProviderType,
+  offersLegacyProvider,
   serverCatalogInstalled,
+  servedEngineRecord,
   servedPackage,
   serverEngine,
 } from "@/lib/db/server-catalog";
@@ -409,6 +413,37 @@ describe("one engine record for every engine", () => {
         expect(answered.message).toBe(expected.message);
       }
     }
+  });
+
+  test("servedEngineRecord answers the record of every engine the catalog serves, and refuses every other value as assertLegacyProvider does", () => {
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-ser", admittedManifest("acmeser"))],
+        [{ name: "acme-sergone", version: "1.0.0", engines: ["acmesergone"], code: "PROVIDER_LOAD_FAILED" }],
+      ),
+    );
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    expect(servedEngineRecord(legacyId)).toBe(servedRecord(legacyId));
+    expect(servedEngineRecord("acmeser")).toBe(servedRecord("acmeser"));
+    for (const value of [undefined, null, "", 5, "constructor", "acmenosuch", "acmesergone"]) {
+      const expected = thrown(() => assertLegacyProvider(value, "route")) as Error;
+      const answered = thrown(() => servedEngineRecord(value)) as Error;
+      expect(answered.constructor).toBe(expected.constructor);
+      expect(answered.message).toBe(expected.message);
+    }
+  });
+
+  test("legacyConnection answers a legacy record's connection as itself, and a package record's is a host defect", () => {
+    installServerCatalog(composeServerCatalog([admittedFor("acme-lc", admittedManifest("acmelc"))], []));
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    const legacy: EngineConnection = { id: "c", name: "C", type: legacyId, createdAt: new Date() };
+    expect(offersLegacyProvider(servedRecord(legacyId), legacy)).toBe(true);
+    expect(legacyConnection(servedRecord(legacyId), legacy)).toBe(legacy as never);
+    const packaged: EngineConnection = { id: "c", name: "C", type: "acmelc", createdAt: new Date() };
+    expect(offersLegacyProvider(servedRecord("acmelc"), packaged)).toBe(false);
+    expect(() => legacyConnection(servedRecord("acmelc"), packaged)).toThrow(
+      'The engine "acmelc" offers no legacy provider, and this caller reads its connection as a legacy provider\'s: a host defect.',
+    );
   });
 
   test("legacyProviderType answers a legacy record's id and nothing for a package record's", () => {

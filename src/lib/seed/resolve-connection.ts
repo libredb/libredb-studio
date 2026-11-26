@@ -4,7 +4,13 @@ import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
-import { assertLegacyProvider, type EngineConnection, serverEngine } from "@/lib/db/server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderEngine,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
 import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
@@ -86,61 +92,73 @@ function auditUniformMiss(seedId: string, username: string, target: string): voi
 /** A request's body as the resolve reads it. */
 export type ConnectionBody = { connection?: DatabaseConnection; connectionId?: string };
 
-/**
- * Which engines a route serves: Studio's bundled engines alone, every route's default, or those and the engines of
- * admitted provider packages, which only Test Connection and the query route serve in this Studio
- * (docs/providers/CONTRACT.md, clause C-107).
- */
-export type ServedEngines = "bundled" | "bundled-and-package";
-
-/** The check of a type on a route that serves package engines too: every engine the server's catalog serves passes. */
-function admitPackageEngine(type: unknown): void {
-  if (serverEngine(type).kind !== "served") assertLegacyProvider(type, "route");
+/** A connection a request names, resolved, and the server catalog's record of its engine. */
+export interface ResolvedConnection {
+  readonly connection: EngineConnection;
+  readonly engine: EngineRecord;
 }
 
 /**
  * The connection a request names, resolved under `session`: an inline record of the caller's own, or the operator's
  * `seed:` entry, after the access decision and with its Vault references read. What it returns carries a type id,
  * since both branches refuse a type that is not one (FND-1), so a caller reads per-engine tables by it without a check
- * of its own. Both branches check the type through the server's engine catalog (`assertLegacyProvider`,
- * src/lib/db/server-catalog.ts), so an engine only a provider package serves is refused by name too: as
- * `PROVIDER_UNAVAILABLE` naming its refusal codes when its package was refused at boot, and as
- * `PACKAGE_ENGINE_UNSUPPORTED` when `engines` is `bundled` and the engine's record offers no legacy provider.
- *
- * With `engines` `bundled-and-package`, every engine the catalog serves passes the check instead, and a connection of
- * an engine whose record offers no legacy provider is answered as an `EngineConnection`, which the caller tells apart
- * by the record `serverEngine` answers; every other guard runs exactly as for `bundled`. Only Test Connection and the
- * query route pass it in this Studio.
+ * of its own. Both branches read the type's record through the server's engine catalog (`legacyProviderEngine`,
+ * src/lib/db/server-catalog.ts) and refuse an engine whose record offers no legacy provider: as `PROVIDER_UNAVAILABLE`
+ * naming its refusal codes when its package was refused at boot, and as `PACKAGE_ENGINE_UNSUPPORTED` when the engine
+ * is a provider package's. A route that serves every engine the catalog serves resolves through
+ * `resolveServedConnection` instead.
  *
  * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
  * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's
  * fails the whole seed file before this resolves.
  * @throws {ProviderUnavailableError} When the type is an engine only refused provider packages name.
- * @throws {PackageEngineUnsupportedError} When the type is an engine whose record offers no legacy provider and
- * `engines` is `bundled`.
+ * @throws {PackageEngineUnsupportedError} When the type is an engine whose record offers no legacy provider.
  * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
  * record that is not one.
  */
 export async function resolveConnection(
   body: ConnectionBody,
   session: Principal,
+  /** Which credential a governed connection carries (src/lib/governance/visible.ts); nothing without governance. */
   options?: VisibilityOptions,
-): Promise<DatabaseConnection>;
-export async function resolveConnection(
+): Promise<DatabaseConnection> {
+  const { connection, engine } = await resolveWith(body, session, options, (type) =>
+    legacyProviderEngine(type, "route"),
+  );
+  return legacyConnection(engine, connection);
+}
+
+/**
+ * The connection a request names, resolved under `session` with every guard `resolveConnection` runs, in its order,
+ * and the server catalog's record of its engine, for a route that serves every engine the catalog serves: Test
+ * Connection and the query route (docs/providers/CONTRACT.md, clause C-107). The type is read by `servedEngineRecord`
+ * (src/lib/db/server-catalog.ts) at the place `resolveConnection` reads it, so an engine whose record offers no legacy
+ * provider resolves too; the caller reads what the record offers, never who serves it.
+ *
+ * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
+ * entry's type names no provider.
+ * @throws {ProviderUnavailableError} When the type is an engine only refused provider packages name.
+ * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
+ * record that is not one.
+ */
+export async function resolveServedConnection(
+  body: ConnectionBody,
+  session: Principal,
+  options?: VisibilityOptions,
+): Promise<ResolvedConnection> {
+  return await resolveWith(body, session, options, servedEngineRecord);
+}
+
+/**
+ * The one body of `resolveConnection` and `resolveServedConnection`: every guard, with `recordOf` reading the type
+ * where each branch checks it, its answer the record the connection is answered with.
+ */
+async function resolveWith(
   body: ConnectionBody,
   session: Principal,
   options: VisibilityOptions | undefined,
-  engines: "bundled-and-package",
-): Promise<DatabaseConnection | EngineConnection>;
-export async function resolveConnection(
-  body: ConnectionBody,
-  session: Principal,
-  /** Which credential a governed connection carries (src/lib/governance/visible.ts); nothing without governance. */
-  options?: VisibilityOptions,
-  engines: ServedEngines = "bundled",
-): Promise<DatabaseConnection | EngineConnection> {
-  const checkType =
-    engines === "bundled" ? (type: unknown): void => assertLegacyProvider(type, "route") : admitPackageEngine;
+  recordOf: (type: unknown) => EngineRecord,
+): Promise<ResolvedConnection> {
   const { connection, connectionId } = body;
 
   /*
@@ -236,13 +254,13 @@ export async function resolveConnection(
     if (typeof connection !== "object" || Array.isArray(connection)) {
       throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
     }
-    checkType(connection.type);
+    const engine = recordOf(connection.type);
     const name: unknown = connection.name;
     if (name !== undefined && typeof name !== "string") {
       throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
     }
     // `managed` is the operator's grant (BigQuery and Firestore read it to use server credentials).
-    return { ...connection, managed: false };
+    return { connection: { ...connection, managed: false }, engine };
   }
 
   if (effectiveId) {
@@ -291,7 +309,7 @@ export async function resolveConnection(
     // never learns its type; before the literal check and Vault, so nothing of an entry whose type names no provider
     // this Studio has (FND-1) is resolved or handed on. The seed file lists such an entry, and it is refused here by
     // the sentence that names its type, on every route that opens a connection.
-    checkType(seedConn.type);
+    const engine = recordOf(seedConn.type);
 
     logger.debug("Resolved seed connection", {
       route: "seed/resolve-connection",
@@ -306,12 +324,12 @@ export async function resolveConnection(
     // after the role filter, by the discovery source or by SEED_LITERAL_VALUES, and never read from a file, so with
     // the mode off a seed-file connection, even one whose id starts with caprover-, is resolved below as before. Every
     // governed connection carries it too: its values are the text a control plane set, with credentials Studio opened.
-    if (seedConn.literal) return seedConn;
+    if (seedConn.literal) return { connection: seedConn, engine };
 
     // After the access decision, never before it: a `${vault:...}` reference is read here,
     // for this one connection. The list path handed it back unresolved, so listing
     // connections never reads a secret.
-    return resolveVaultCredentials(seedConn);
+    return { connection: await resolveVaultCredentials(seedConn), engine };
   }
 
   throw new SeedConnectionError("Either connection or connectionId is required", 400);

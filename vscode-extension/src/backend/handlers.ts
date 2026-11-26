@@ -25,6 +25,7 @@ import {
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type {
   clearProviderCache,
   enabledProviderTypes,
@@ -353,11 +354,14 @@ export function createHandlers(
 
     // The core bounds the whole test by its own deadline, the engine's connect budget (docs/providers/CONTRACT.md,
     // clause C-56): at it the core answers a ConnectionError naming the budget, closes a one-shot tunnel at once and
-    // the provider it built once the driver's connect settles.
+    // the provider it built once the driver's connect settles. The engine's record is the server catalog's, which in
+    // this child, where no boot installs a catalog, is the legacy adapter's record of the type.
     async testConnection(params) {
       const { connection, posture } = readConnectionParams(params);
       checkEnabledLocalFile(connection, posture);
-      return await answeringFor(connection, () => factory.testConnection(connection, posture, TEST_ROUTE));
+      return await answeringFor(connection, () =>
+        factory.testConnection(connection, servedEngineRecord(connection.type), posture, TEST_ROUTE),
+      );
     },
 
     async openConnection(params) {
