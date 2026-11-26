@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "@/lib/agent/languages/client";
 import { engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
@@ -11,6 +10,10 @@ import { AGENT_WORKFLOW_PRESENTS_ANSWER } from "@/lib/agent/types";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
  * The run resolver (#1821): the server facet one run reads, from its persisted statement language and its connection
@@ -18,7 +21,7 @@ import type { DatabaseType } from "@/lib/types";
  * before, on every engine and every language a record may persist, an absent one included.
  */
 
-const ALL_TYPES = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
+const ALL_TYPES = SHIPPED_DATABASE_TYPES;
 const LANGUAGES = [undefined, "sql", "mongo", "kubectl"] as const;
 
 describe("statementFamilyOf", () => {
@@ -44,7 +47,7 @@ describe("CURATED_CALL_LANGUAGE", () => {
 
 describe("engineFamily", () => {
   test("an engine's family is the language the manifest maps it onto", () => {
-    for (const type of ALL_TYPES) expect(engineFamily(type)).toBe(AGENT_STATEMENT_LANGUAGE[type]);
+    for (const type of ALL_TYPES) expect(engineFamily(type)).toBe(statementLanguage[type]);
   });
 
   test("a name that is no own key has no family", () => {

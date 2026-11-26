@@ -1,6 +1,6 @@
 /**
- * The behaviour-neutral oracle of the agent safety strip's posture: what `agentPosture` answers for every engine
- * `AGENT_STATEMENT_LANGUAGE` lists, in every arm, and for no resolved connection.
+ * The behaviour-neutral oracle of the agent safety strip's posture: what `agentPosture` answers for every engine Studio
+ * ships, in every arm, and for no resolved connection.
  *
  * The arms are the ones `posture.ts` orders: plan mode, with and without the hand-over ticked; agent mode without the
  * hand-over (reads), with it (widened), and on a connection whose last run was refused for the connection itself;
@@ -16,7 +16,7 @@
  *
  * Nothing here builds a provider or reaches a database: `agentPosture` is a pure function of its input.
  */
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -33,8 +33,8 @@ export type PostureArm = (typeof POSTURE_ARMS)[number];
 export const UNRESOLVED_ARMS = ["plan", "agent"] as const;
 export type UnresolvedArm = (typeof UNRESOLVED_ARMS)[number];
 
-/** Every engine the walk covers: each key of the record the strip reads, in its order. */
-export const POSTURE_ENGINES = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
+/** Every engine the walk covers: every engine Studio ships, in catalog order. */
+export const POSTURE_ENGINES: DatabaseType[] = [...SHIPPED_DATABASE_TYPES];
 
 /** What the strip renders for one engine in one arm. */
 export function postureOf(engine: DatabaseType, arm: PostureArm) {

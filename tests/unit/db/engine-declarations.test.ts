@@ -113,7 +113,6 @@ import { detectConnectionStringType, parseConnectionString, pasteText } from "@/
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   READS_TRUST_MATERIAL,
@@ -258,6 +257,7 @@ const hostPathFields = legacyRegisterTable("hostPathFields");
 const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
 const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -461,10 +461,10 @@ function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
   return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
 }
 
-/** The shipped engines that speak a statement language, each with the family its `AGENT_STATEMENT_LANGUAGE` row names. */
+/** The shipped engines that speak a statement language, each with the family its legacy register row names. */
 const LANGUAGE_ENGINES: readonly (readonly [DatabaseType, AgentStatementLanguageId])[] = SHIPPED_DATABASE_TYPES.flatMap(
   (type) => {
-    const family = AGENT_STATEMENT_LANGUAGE[type];
+    const family = statementLanguage[type];
     return family === null ? [] : [[type, family] as const];
   },
 );
@@ -1751,7 +1751,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "agent.statementLanguage": {
     request: (d) => d.agent.statementLanguage,
-    record: (type) => AGENT_STATEMENT_LANGUAGE[type],
+    record: (type) => statementLanguage[type],
   },
   "facets.agentReadings": {
     request: (d) => d.facets.agentReadings,
@@ -2043,8 +2043,8 @@ describe("the census", () => {
     expect(() => declaredMaintenanceSpecs("postgres", extra)).toThrow(extraRefusal);
   });
 
-  test("agent.statementLanguage is the engine's AGENT_STATEMENT_LANGUAGE row", () => {
-    expect(differing((type, d) => d.agent.statementLanguage === AGENT_STATEMENT_LANGUAGE[type])).toEqual([]);
+  test("agent.statementLanguage is its member of the engine's legacy row in the grant register", () => {
+    expect(differing((type, d) => d.agent.statementLanguage === statementLanguage[type])).toEqual([]);
   });
 
   test("every name an agent overlay declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own overlay module exports there", () => {
@@ -2106,7 +2106,7 @@ describe("the census", () => {
     expect(
       differing((type, d) => {
         const { overlay } = d.agent;
-        if (AGENT_STATEMENT_LANGUAGE[type] === null) return overlay === null;
+        if (statementLanguage[type] === null) return overlay === null;
         if (overlay === null) return false;
         const held = engineServerOverlay(type).dialect;
         if (overlay.dialect === null) return held === undefined;

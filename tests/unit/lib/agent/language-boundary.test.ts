@@ -10,8 +10,8 @@
  *
  * - R1a: a string literal, no-substitution template or literal type whose whole text is a pack id.
  * - R1b: a property named by a pack id: an assignment, a shorthand, a signature, a `.x` access or an `["x"]` access.
- * - R1c: any other identifier that contains a pack id, in any case, except an engine's own name (`mongodb`, a key of
- *   the `DatabaseType` map `AGENT_STATEMENT_LANGUAGE`): engine names are the `DatabaseType` rule's, which is PR 3's.
+ * - R1c: any other identifier that contains a pack id, in any case, except an engine's own name (`mongodb`, an id of
+ *   `SHIPPED_DATABASE_TYPES`): engine names are the `DatabaseType` rule's, which is PR 3's.
  * - R1d: a string or template part that names a MongoDB plan stage (`COLLSCAN`, `IXSCAN`).
  * - R1e: a string literal or literal type that starts with a pack id and a separator, or ends in `-<id>.<n>`: an
  *   operation id, a verifier id or a fingerprint prefix.
@@ -33,9 +33,9 @@
  *   `sql` branch.
  * - R5e: a string literal or literal type that starts with `sql` and a `.`, `:` or `-`: an operation, requirement or
  *   verifier id.
- * - R8a: a string literal or literal type whose whole text is an engine id, a key of `AGENT_STATEMENT_LANGUAGE`.
- * - R8b: a property named by an engine id, with no exception: `AGENT_STATEMENT_LANGUAGE`, the total map keyed by every
- *   engine id, is Studio's record in src/lib/db/compatibility.ts, outside the boundary.
+ * - R8a: a string literal or literal type whose whole text is an engine id, an id of `SHIPPED_DATABASE_TYPES`.
+ * - R8b: a property named by an engine id, with no exception: a total map keyed by every engine id belongs outside the
+ *   boundary.
  * - R8c: any other identifier with a whole segment, or a run of adjacent segments, (split at `_` and at case changes,
  *   then lowercased) that is an engine id: `postgresThing` and `duckDbPlan` are, `redistribute` is not. An import or export specifier is no reference, as for
  *   R5c, so an imported name is read where the file uses it.
@@ -82,7 +82,7 @@ import * as languageClients from "@/lib/agent/languages/client";
 import * as languageMcpFacets from "@/lib/agent/languages/mcp";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import * as languageServers from "@/lib/agent/languages/server";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const AGENT = "src/lib/agent";
@@ -94,8 +94,8 @@ const PACK_IDS = Object.keys(AGENT_LANGUAGE_COPY).filter((id) => id !== "sql");
 const IDS = PACK_IDS.join("|");
 const WHOLE_ID = new RegExp(`^(${IDS})$`);
 const ANY_ID = new RegExp(IDS, "i");
-/** The engine names, the keys of the one total `DatabaseType` map. */
-const ENGINE_IDS = new Set(Object.keys(AGENT_STATEMENT_LANGUAGE));
+/** The engine names: every engine Studio ships. */
+const ENGINE_IDS = new Set<string>(SHIPPED_DATABASE_TYPES);
 const PLAN_STAGE = /COLLSCAN|IXSCAN/;
 /** A literal that starts with an engine id and a `-`: a format, mode or variant id that names its engine (R8d). */
 const ENGINE_PREFIXED = new RegExp(`^(${[...ENGINE_IDS].join("|")})-`);
@@ -159,7 +159,7 @@ const SHARED_ENTRIES = new Set(
 
 /**
  * The findings the core keeps on purpose, each an exact count. None is a pack id read as a branch or an engine branch:
- * - the spec's own map: the id union `AGENT_STATEMENT_LANGUAGE` maps onto, and that total map itself;
+ * - the spec's own id union, `AgentStatementLanguageId`, the statement languages an engine's grant may name;
  * - `sql` as the name of the model's argument, and as a `ProviderCapabilities.queryLanguage` value;
  * - the reference variant record and the ledger's "the default language is not written" rule (R5c
  *   `DEFAULT_STATEMENT_LANGUAGE`), and a curated call, which is no statement in any language (R5c
@@ -1242,13 +1242,11 @@ describe("planted violations yield exactly their findings", () => {
       `${posture}#T: R8b sqlite`,
     ]);
     // A total map keyed by every engine id has no exemption either: the manifest declaring one fails once per key.
-    const map = `const ENGINE_MAP = { ${Object.keys(AGENT_STATEMENT_LANGUAGE)
-      .map((type) => `${type}: null`)
-      .join(", ")} };`;
+    const map = `const ENGINE_MAP = { ${SHIPPED_DATABASE_TYPES.map((type) => `${type}: null`).join(", ")} };`;
     const planted = coreFileFindings(MANIFEST, `${read(MANIFEST)}\n${map}`).filter((finding) =>
       finding.includes(": R8b "),
     );
-    expect(planted).toEqual(Object.keys(AGENT_STATEMENT_LANGUAGE).map((type) => `${MANIFEST}#ENGINE_MAP: R8b ${type}`));
+    expect(planted).toEqual(SHIPPED_DATABASE_TYPES.map((type) => `${MANIFEST}#ENGINE_MAP: R8b ${type}`));
   });
 
   test("an identifier with an engine id as a whole segment fails R8c, and one that only contains it does not", () => {

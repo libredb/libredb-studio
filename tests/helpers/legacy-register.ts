@@ -1,9 +1,10 @@
 /**
- * Studio's review of a policy, MCP or connection claim for each engine it ships, as tests read it: one member of every
- * legacy row of the grant register, `@libredb/grant-register`, as a table keyed by engine. The rows are read through
- * the grant reader's own `legacyGrantRows`, over the same served set, so a test reads exactly the review rows the grant
- * reader composes its records from, and never a granted table. The agent credential member is read narrowed, through
- * the grant reader's own `legacyAgentCredentials`, as the grant reader hands it to `grantClaims`.
+ * Studio's review of a claim the grant register holds, a policy, MCP, connection or statement language claim, for each
+ * engine it ships, as tests read it: one member of every legacy row of the grant register, `@libredb/grant-register`,
+ * as a table keyed by engine. The rows are read through the grant reader's own `legacyGrantRows`, over the same served
+ * set, so a test reads exactly the review rows the grant reader composes its records from, and never a granted table.
+ * The agent credential member is read narrowed, through the grant reader's own `legacyAgentCredentials`, as the grant
+ * reader hands it to `grantClaims`.
  */
 import { type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import { legacyAgentCredentials, legacyGrantRows } from "@/lib/db/claim-grants";

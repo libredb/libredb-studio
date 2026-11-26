@@ -31,7 +31,7 @@ import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { DatabaseType } from "@/lib/types";
@@ -201,7 +201,7 @@ describe("the panel's documentation describes the rail in the words it renders",
     // connection was refused for the connection itself. The engine is labelled the way the guide names one, so the arm
     // that names it renders the guide's own placeholder.
     const label = "`<engine>`";
-    const engines = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
+    const engines = SHIPPED_DATABASE_TYPES;
     const postures = [
       agentPosture({ mode: "planning", engine: null, engineLabel: label, handover: false }),
       ...engines.map((engine) => agentPosture({ mode: "planning", engine, engineLabel: label, handover: false })),

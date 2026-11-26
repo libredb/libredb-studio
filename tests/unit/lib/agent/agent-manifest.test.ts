@@ -20,21 +20,24 @@ import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/co
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
  * The manifest against what each provider declares, as `engine-support.test.ts` holds `AGENT_EXECUTION_ENGINES` to
  * the drivers: the record is the list, so it must answer exactly where a provider has a read-only statement path.
  */
-describe("AGENT_STATEMENT_LANGUAGE", () => {
+describe("the statement language review rows", () => {
   test("answers for every shipped type-id and nothing else", () => {
-    expect(Object.keys(AGENT_STATEMENT_LANGUAGE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+    expect(Object.keys(statementLanguage).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])(
@@ -42,7 +45,7 @@ describe("AGENT_STATEMENT_LANGUAGE", () => {
     async (type) => {
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
       const hasPath = typeof (provider as { queryReadOnly?: unknown }).queryReadOnly === "function";
-      expect(AGENT_STATEMENT_LANGUAGE[type] !== null).toBe(hasPath);
+      expect(statementLanguage[type] !== null).toBe(hasPath);
     },
   );
 
@@ -50,18 +53,18 @@ describe("AGENT_STATEMENT_LANGUAGE", () => {
     "%s: an sql language is a provider that declares queryLanguage sql",
     async (type) => {
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-      if (AGENT_STATEMENT_LANGUAGE[type] === "sql") expect(provider.getCapabilities().queryLanguage).toBe("sql");
+      if (statementLanguage[type] === "sql") expect(provider.getCapabilities().queryLanguage).toBe("sql");
     },
   );
 
   test("is frozen", () => {
-    expect(Object.isFrozen(AGENT_STATEMENT_LANGUAGE)).toBe(true);
+    expect(Object.isFrozen(statementLanguage)).toBe(true);
   });
 
   // The start route reads the language and then the review record, so the two agree on every shipped engine and the
   // record's own refusal there is reached only by an engine a later build drops from it.
   test("an engine has a language exactly when the review record lists it", () => {
-    const withLanguage = SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] !== null);
+    const withLanguage = SHIPPED_DATABASE_TYPES.filter((type) => statementLanguage[type] !== null);
     expect([...withLanguage].sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
   });
 });
@@ -507,7 +510,7 @@ describe("workflowAvailability", () => {
   );
 
   test("kubernetes speaks kubectl: every workflow opens in both modes", () => {
-    expect(AGENT_STATEMENT_LANGUAGE.kubernetes).toBe("kubectl");
+    expect(statementLanguage.kubernetes).toBe("kubectl");
     expect(workflowAvailability("agent", "operations", "kubernetes").open).toBe(true);
     for (const workflow of statementWorkflows) {
       expect(workflowAvailability("planning", workflow, "kubernetes").open).toBe(true);
@@ -623,7 +626,7 @@ describe("workflowAvailability", () => {
   */
   const sqlInvestigation = requiredVariant("sql", "investigation");
   const partialLanguage = {
-    languages: { ...AGENT_STATEMENT_LANGUAGE, kubernetes: "kubectl" },
+    languages: { ...statementLanguage, kubernetes: "kubectl" },
     variants: {
       ...AGENT_WORKFLOW_VARIANTS,
       kubectl: {
@@ -672,7 +675,7 @@ describe("workflowAvailability", () => {
 
   test("the operations arm refuses an engine the tables leave out of the agent-readings requirement", () => {
     const tables = {
-      languages: AGENT_STATEMENT_LANGUAGE,
+      languages: statementLanguage,
       variants: AGENT_WORKFLOW_VARIANTS,
       requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "agent-readings": [] },
       reviewed: AGENT_EXECUTION_ENGINES,
@@ -757,7 +760,7 @@ describe("workflowAvailability", () => {
     `sql-catalog` and out of `sql-composers`, so the case holds whichever shipped engines are in it.
   */
   const catalogOnly = {
-    languages: AGENT_STATEMENT_LANGUAGE,
+    languages: statementLanguage,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
     reviewed: AGENT_EXECUTION_ENGINES,
@@ -809,7 +812,7 @@ describe("workflowAvailability", () => {
     the shipped tables with PostgreSQL left off the record, since no shipped engine has a language and no review row.
   */
   const unreviewedPostgres = {
-    languages: AGENT_STATEMENT_LANGUAGE,
+    languages: statementLanguage,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: AGENT_REQUIREMENT_ENGINES,
     reviewed: AGENT_EXECUTION_ENGINES.filter((type) => type !== "postgres"),

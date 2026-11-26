@@ -17,7 +17,9 @@ import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 interface GenerateTextCall {
   readonly model: unknown;
@@ -212,7 +214,7 @@ describe("classifying an objective into a workflow", () => {
     replies("data-analysis");
 
     const classification = await classifyAgentWorkflow("which keys hold a user's role", {
-      statementLanguage: AGENT_STATEMENT_LANGUAGE.libredb ?? undefined,
+      statementLanguage: statementLanguage.libredb ?? undefined,
     });
 
     expect(classification).toEqual({ workflowType: "data-analysis", outcome: "classified" });
@@ -252,7 +254,7 @@ describe("classifying an objective into a workflow", () => {
       replies("operations");
 
       const classification = await classifyAgentWorkflow("why is the broker slow right now", {
-        statementLanguage: AGENT_STATEMENT_LANGUAGE[type] ?? undefined,
+        statementLanguage: statementLanguage[type] ?? undefined,
         workflows: openWorkflows("agent", type),
       });
 
@@ -268,7 +270,7 @@ describe("classifying an objective into a workflow", () => {
       replies("operations");
 
       const classification = await classifyAgentWorkflow("why is the broker slow right now", {
-        statementLanguage: AGENT_STATEMENT_LANGUAGE[type] ?? undefined,
+        statementLanguage: statementLanguage[type] ?? undefined,
         workflows: openWorkflows("planning", type),
       });
 
@@ -281,7 +283,7 @@ describe("classifying an objective into a workflow", () => {
     replies("query-optimization");
 
     const classification = await classifyAgentWorkflow("this select takes 40 seconds", {
-      statementLanguage: AGENT_STATEMENT_LANGUAGE.oracle ?? undefined,
+      statementLanguage: statementLanguage.oracle ?? undefined,
       workflows: openWorkflows("agent", "oracle"),
     });
 

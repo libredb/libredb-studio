@@ -15,7 +15,7 @@ import {
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
@@ -47,6 +47,7 @@ import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
 
 const statementRead = legacyRegisterTable("statementRead");
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
@@ -114,7 +115,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(idle).not.toEqual([]);
     for (const [language] of idle) {
       expect(MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS]).toBeNull();
-      for (const type of SHIPPED_DATABASE_TYPES.filter((shipped) => AGENT_STATEMENT_LANGUAGE[shipped] === language))
+      for (const type of SHIPPED_DATABASE_TYPES.filter((shipped) => statementLanguage[shipped] === language))
         expect(mcpStatementToolFor(type)).toBeNull();
     }
   });
@@ -220,7 +221,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm.argument).toBe(AGENT_LANGUAGE_COPY[arm.language].argument);
       expect(arm.inputSchema.shape).toHaveProperty(arm.argument);
       expect(arm.types).toEqual(mcpStatementEngines(arm.language));
-      for (const type of arm.types) expect(AGENT_STATEMENT_LANGUAGE[type]).toBe(arm.language);
+      for (const type of arm.types) expect(statementLanguage[type]).toBe(arm.language);
     },
   );
 
@@ -1400,7 +1401,7 @@ describe("the Milvus arm", () => {
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const language = AGENT_STATEMENT_LANGUAGE[type];
+      const language = statementLanguage[type];
       const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
       expect(mcpStatementToolFor(type)).toBe(arm !== null && arm.types.includes(type) ? arm.tool : null);
     }
@@ -1408,7 +1409,7 @@ describe("the tool each engine is read with", () => {
 
   test("an engine of a served language whose own records keep it closed has no read tool", () => {
     const closed = SHIPPED_DATABASE_TYPES.filter((type) => {
-      const language = AGENT_STATEMENT_LANGUAGE[type];
+      const language = statementLanguage[type];
       return language !== null && MCP_STATEMENT_ARMS[language] !== null && !statementRead[type];
     });
     expect(closed).not.toEqual([]);
@@ -1836,7 +1837,7 @@ describe("the arms whose engines hold no table", () => {
 
   test("names the statement tool of an engine whose arm holds no table, and null everywhere else", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const language = AGENT_STATEMENT_LANGUAGE[type];
+      const language = statementLanguage[type];
       const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
       const served = arm !== null && arm.types.includes(type);
       expect(mcpTablelessReadTool(type)).toBe(served && arm.holdsNoTables ? arm.tool : null);
