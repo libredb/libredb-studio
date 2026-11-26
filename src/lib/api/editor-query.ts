@@ -23,8 +23,9 @@ import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget"
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import type { CachedSession } from "@/lib/db/factory";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { QueryCancelledError, waitedSeconds } from "@/lib/db/errors";
-import { type ProviderTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, scrubProviderWarnings, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
 import {
   DEFAULT_QUERY_TIMEOUT,
   type DatabaseProvider,
@@ -619,8 +620,9 @@ function columnDefect(columns: readonly Column[]): string | null {
 
 /**
  * The answer body of the page `record` holds, under `columns`, the first result's columns the package answered, and
- * `page`, its warnings as `packageWarnings` answers them under `route`; the record is released once, in a `finally`,
- * whether or not the body was built.
+ * `page`; its warnings by how the engine's record grants its own words, `ownWords`: through core's `scrub` where they
+ * are `"scrubbed"` (`scrubProviderWarnings`), and as `packageWarnings` answers them under `route` where they are
+ * `"code-only"`. The record is released once, in a `finally`, whether or not the body was built.
  *
  * @throws {Error} Naming the package's defect, for columns whose names cannot key a row.
  */
@@ -628,6 +630,7 @@ function packagePageBody(
   record: PageRecord,
   columns: readonly Column[],
   page: PackagePage,
+  ownWords: EngineRecord["grants"]["ownWords"],
   scrub: ProviderTextScrub,
   route: string,
 ): EditorQueryAnswer {
@@ -647,7 +650,10 @@ function packagePageBody(
       .slice(0, page.limit)
       .map((row) => Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])));
     const typed = columns.filter((column) => typeof column.type === "string");
-    const warnings = packageWarnings("execute", record.warnings, scrub, route);
+    const warnings =
+      ownWords === "scrubbed"
+        ? scrubProviderWarnings(scrub, record.warnings)
+        : packageWarnings("execute", record.warnings, scrub, route);
     return {
       body: {
         rows,
@@ -681,7 +687,8 @@ function packagePageBody(
  * are kept from the answer the pump reads, since a page record carries none. The answer is the page's rows as records
  * keyed by their column names, each cell in the value codec's wire form, its fields, the declared types of the columns
  * that state one, and its pagination; a next page is offered only where the session honours `offset`. The package's
- * warnings reach the client only as Studio's sentence naming their count (`packageWarnings` in ./package-errors). The
+ * warnings reach the client through core's scrub where the session's engine record grants its own words, and otherwise
+ * only as Studio's sentence naming their count (`packageWarnings` in ./package-errors). The
  * entry counts the run while its call runs, so the idle sweep keeps it: until the record answers, or until the call a
  * stop answered has settled.
  */
@@ -702,7 +709,8 @@ function sessionRun(target: Extract<EditorRunTarget, { form: "session" }>, run: 
     cancelSent: () => false,
     body: (record) => {
       const honoursOffset = session.calls.console.execute.honours.includes("offset");
-      return packagePageBody(record, columns, { limit, offset, honoursOffset }, run.scrub, run.route);
+      const { ownWords } = entry.engine.grants;
+      return packagePageBody(record, columns, { limit, offset, honoursOffset }, ownWords, run.scrub, run.route);
     },
     started: () => {
       entry.running += 1;

@@ -11,11 +11,14 @@
  * test file runs in its own process. Paths are the real paths of the scratch directory (`scratchDirectory`), so the
  * same step is reached on every platform; no file mode, link or line ending is relied on.
  */
+import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
 import { type EngineRecord, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
-import { type EditableEngine, rawManifest } from "./package-catalog";
+import { type EditableEngine, packageRow, rawManifest } from "./package-catalog";
 import { FIXTURE_ENTRY, lockEntryOf, writeArtifact, writeLock } from "./provider-artifacts";
 
 /** The calls a package can offer, by their contract names. */
@@ -109,13 +112,16 @@ function entryOf(pkg: SessionPackage, manifest: Record<string, unknown>): string
 
 /**
  * Writes `packages` into the providers directory `providers`, locks them, admits them through boot admission and
- * installs the server catalog they compose; answers each package's engine as the catalog holds it.
+ * installs the server catalog they compose; answers each package's engine as the catalog holds it. `rows` grants an
+ * engine a register row (`packageRow`), keyed by its written lock entry's name, version and digest; the catalog is
+ * composed against a register of those rows alone, or against Studio's own register where `rows` names no engine.
  *
  * @throws {Error} When the lock is refused or a package is not admitted, naming it.
  */
 export async function admitSessionPackages(
   providers: string,
   packages: readonly SessionPackage[],
+  rows: Readonly<Record<string, Partial<RegisterGrants>>> = {},
 ): Promise<Map<string, EngineRecord>> {
   const entries = packages.map((pkg) => {
     const manifest = manifestOf(pkg);
@@ -137,7 +143,13 @@ export async function admitSessionPackages(
   if (answer.refused.length > 0) {
     throw new Error(`fixture packages refused: ${answer.refused.map((pkg) => `${pkg.name} ${pkg.code}`).join(", ")}`);
   }
-  installServerCatalog(composeServerCatalog(answer.admitted, answer.refused));
+  const granted = entries.flatMap((entry) =>
+    entry.engines
+      .filter((engine) => Object.hasOwn(rows, engine))
+      .map((engine) => packageRow(entry, engine, rows[engine])),
+  );
+  const register = granted.length === 0 ? STUDIO_GRANT_REGISTER : parseGrantRegister(granted, LEGACY_ENGINE_IDS);
+  installServerCatalog(composeServerCatalog(answer.admitted, answer.refused, register));
   const engines = new Map<string, EngineRecord>();
   for (const pkg of packages) {
     const engine = serverEngine(pkg.engine);

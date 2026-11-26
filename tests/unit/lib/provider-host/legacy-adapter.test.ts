@@ -186,7 +186,7 @@ describe("the legacy adapter's records", () => {
       const engine = legacyRecord(id);
       expect(unfrozen(engine)).toEqual([]);
       expect(engine.offers).toBe(LEGACY_OFFERS);
-      expect(engine.source).toEqual({ name: "@libredb/studio", version, package: null });
+      expect(engine.source).toEqual({ name: "@libredb/studio", version, digest: null, package: null });
     }
   });
 

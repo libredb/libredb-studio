@@ -4,7 +4,9 @@
  *
  * A row is keyed by the engine and exactly one of:
  * - `package`: a package's name, version and digest, in the forms of Studio's providers lock, so a new version or
- *   digest of a package has no row until LibreDB reviews it;
+ *   digest of a package has no row until LibreDB reviews it. The digest is the one the lock entry pins (clause C-93),
+ *   over the package's files as the host walks them, so a package whose digest differs by platform, such as one holding
+ *   an executable file, which Windows reports without its execute bit, needs one row per digest;
  * - `legacy`: the legacy key, `LEGACY_KEY`, `@libredb/studio`, the source name of Studio's legacy adapter, for an engine
  *   Studio still serves through that adapter. A legacy row describes Studio's own code, not a package, and is deleted as
  *   its engine moves into a package of its own.

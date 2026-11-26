@@ -12,7 +12,7 @@
  *   only where the entry states it, so a named check is the function Studio's own source holds for the engine;
  * - `grants`: Studio's grant of its claims against its legacy row of the grant register (`legacyEngineGrants`);
  * - `statementGrammar`: its row of Studio's grammar table (`sqlGrammarFor`);
- * - `source`: the legacy identity (./identity), with no package;
+ * - `source`: the legacy identity (./identity), with no digest and no package;
  * - `offers`: `LEGACY_OFFERS`, every offer a legacy provider makes today.
  * The records are kept in one `Map`, typed read-only and keyed in the engine catalog's order, each record and every
  * plain object and array it holds frozen; a compiled pattern and a bound check are Studio's shared objects, held by
@@ -59,7 +59,12 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
 const CREDENTIAL_WARNINGS: Readonly<Record<string, readonly CredentialWarning[]>> = BUNDLED_CREDENTIAL_WARNINGS;
 
 /** The legacy identity every legacy engine is served under. */
-const LEGACY_SOURCE = Object.freeze({ name: LEGACY_SOURCE_NAME, version: LEGACY_SOURCE_VERSION, package: null });
+const LEGACY_SOURCE = Object.freeze({
+  name: LEGACY_SOURCE_NAME,
+  version: LEGACY_SOURCE_VERSION,
+  digest: null,
+  package: null,
+});
 
 /** The members of engine `id`'s form entry the field rule readers read, each only where the entry states it. */
 function fieldRulesOf(id: DatabaseType): FieldRuleSpec {

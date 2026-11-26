@@ -1,15 +1,16 @@
 /**
  * A provider package's own errors and warnings as Studio answers them (docs/providers/CONTRACT.md, clause C-112).
  *
- * The client never receives a package's own words in this Studio: a package's error is answered with Studio's sentence
- * naming its code, and the error itself is logged once under the route, its words through core's scrub of the
- * connection. A package's error is any value one of its calls rejects with that is not Studio's own `DatabaseError`: the
+ * Where no register row grants an engine its own words (docs/providers/CONTRACT.md, clause M-84), the client never
+ * receives them: a package's error is answered with Studio's sentence naming its code, and the error itself is logged
+ * once under the route, its words through core's scrub of the connection. An engine whose row grants them, its record's
+ * `grants.ownWords` `"scrubbed"`, is answered by its reader through core's scrub instead, as a legacy engine is. A package's error is any value one of its calls rejects with that is not Studio's own `DatabaseError`: the
  * SDK gives a package no error class to raise, and Studio's classes are outside a package's closure, so a package cannot
  * construct one. A value the host core builds about a package's answer it cannot read is answered the same way, since
  * it is the package's defect too, and its log line names the package as the author (`PACKAGE_DEFECT_PREFIX`), where
  * the accessor's message names Studio; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
- * defect, and is answered as Studio's own internal error. A package's warnings reach the client only as Studio's
- * sentence naming their count, each logged once through the same scrub.
+ * defect, and is answered as Studio's own internal error. A package's warnings, where no row grants its own words,
+ * reach the client only as Studio's sentence naming their count, each logged once through the same scrub.
  */
 import { type CallRefusalRule, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";

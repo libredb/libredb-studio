@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/db/errors";
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { resetCache } from "@/lib/seed";
 import { type ConnectionBody, resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
@@ -49,6 +50,7 @@ beforeEach(() => {
     composeServerCatalog(
       [admittedFor("acme-served", admittedManifest("acmeserved"))],
       [{ name: "acme-gone", version: "1.0.0", engines: ["acmegone"], code: "PROVIDER_DIGEST_MISMATCH" }],
+      STUDIO_GRANT_REGISTER,
     ),
   );
 });
@@ -120,7 +122,9 @@ describe("a package engine on a connection route", () => {
     // catalog whose offer disagrees with the id, so a route that serves bundled engines alone follows a valid record's
     // offer.
     forgetServerCatalog();
-    installServerCatalog(composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], [], STUDIO_GRANT_REGISTER),
+    );
     const refusal = await resolveConnection({ connection: inline("acmeserved") }, ADMIN).catch(
       (error: unknown) => error,
     );

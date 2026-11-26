@@ -42,6 +42,7 @@ import {
   installServerCatalog,
   serverEngine,
 } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -92,6 +93,7 @@ beforeAll(() => {
         { ...cached, record: { ...cached.record, impl: hookImpl() } },
       ],
       [{ name: "acme-factory-gone", version: "1.0.0", engines: ["acmefactorygone"], code: "PROVIDER_LOAD_FAILED" }],
+      STUDIO_GRANT_REGISTER,
     ),
   );
 });

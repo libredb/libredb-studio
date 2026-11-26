@@ -51,6 +51,7 @@ import {
   legacyGrantRows,
   READ_ONLY_ENFORCED,
   STATEMENT_LANGUAGE_NAMES,
+  STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
   UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
@@ -66,7 +67,7 @@ import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
 import { ENGINE_TABLE_INVENTORY, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
 
 /** An id no shipped engine uses, for a request no register row covers. */
@@ -931,48 +932,12 @@ describe("the register's legacy rows the grant reader reads", () => {
 
 describe("the claims of an admitted provider package's engine", () => {
   test("an admitted package with no grant record reads every claim at its restrictive value", () => {
-    const postgres = JSON.parse(
-      readFileSync(path.join(import.meta.dir, "../../../src/lib/db/engine-declarations/postgres.json"), "utf8"),
-    ) as { agent: unknown; facets: Record<string, unknown> };
-    // The loosest request of every claim the SDK's validator admits for this engine: each opposite its restrictive value.
-    const manifest = admittedManifest("acmeloose", (engine) => {
-      engine.policy = {
-        writeReach: "none",
-        readsFileAccessPosture: false,
-        deniedFileAccessRefusal: null,
-        singleWriterFile: true,
-        readRootsRequired: false,
-        agentCredentialForm: "pair",
-        maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
-      };
-      // Write reach is the summary of the write paths, so a request of none states every path absent.
-      const absent = { reach: "absent", proof: { module: "src/read-only.ts", symbol: "readOnly" } };
-      engine.safeguards = {
-        ...engine.safeguards,
-        writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
-      };
-      engine.mcp = {
-        exposable: true,
-        statementRead: true,
-        metadataReadChangesState: false,
-        agentCredentialRequired: false,
-      };
-      engine.connection.sshTunnel = { offered: true };
-      engine.connection.opensLocalFile = false;
-      engine.connection.serverLevelWithoutDatabase = true;
-      engine.connection.agentCredential = { form: "pair", supersededBy: [] };
-      engine.facets = {
-        ...engine.facets,
-        monitoring: postgres.facets.monitoring,
-        agentReadings: ["sessions", "health"],
-      };
-      (engine as Record<string, unknown>).agent = postgres.agent;
-    });
-    installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], []));
+    const manifest = admittedManifest("acmeloose", withLoosestClaims);
+    installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], [], STUDIO_GRANT_REGISTER));
     const answer = serverEngine("acmeloose");
     if (answer.kind !== "served") throw new Error(`answered ${answer.kind}`);
 
-    // Studio's record holds no row for an engine it does not ship, so each claim is granted at its restrictive value.
+    // Studio's register holds no row for the package, so each claim is granted at its restrictive value.
     expect(answer.engine.grants).toEqual({
       writeReach: "open",
       readsFileAccessPosture: true,

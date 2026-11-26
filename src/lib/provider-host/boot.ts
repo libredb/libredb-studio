@@ -12,6 +12,9 @@
  *    does not exist among them, prints the boot banner the other boot checks print, naming the lock and the rule, exits
  *    with 1 and answers false, installing no catalog;
  * 4. installs the catalog `composeServerCatalog` composes from the packages admitted and refused, and answers true.
+ * Each composition is handed Studio's grant register, `STUDIO_GRANT_REGISTER` (src/lib/db/claim-grants.ts), in which
+ * the composer looks up each admitted package engine's row by the package's name, version and the digest its lock
+ * entry pins, which the lock's read verified.
  *
  * `bootAdmission(directory, deadlineMs)` reads the lock (`readProvidersLock`), logs each package the lock refused, and,
  * when at least one package passed it, records the directory of each such package for the uncaught-exception line
@@ -31,6 +34,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ManifestValidator } from "@libredb/provider-sdk/manifest";
 import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { installServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
 import {
   type AdmittedForCatalog,
@@ -136,6 +140,7 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
     Object.freeze({
       name: answer.name,
       version: answer.version,
+      digest: pkg.digest,
       directory: pkg.directory,
       manifest: answer.manifest,
       record: answer.record,
@@ -187,11 +192,11 @@ export async function admitProvidersAtBoot(): Promise<boolean> {
   if (serverCatalogInstalled()) return true;
   const directory = providersDirectory();
   if (directory === null) {
-    installServerCatalog(composeServerCatalog([], []));
+    installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER));
     return true;
   }
   const answer = await bootAdmission(directory, PROVIDER_IMPORT_DEADLINE_MS);
   if (!answer.read) return refuseBoot(answer.refusal);
-  installServerCatalog(composeServerCatalog(answer.admitted, answer.refused));
+  installServerCatalog(composeServerCatalog(answer.admitted, answer.refused, STUDIO_GRANT_REGISTER));
   return true;
 }

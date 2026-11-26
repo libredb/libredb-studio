@@ -6,7 +6,7 @@
  * claim that loosens the gate uncounted; the session opens once per key through the package; the run answers the
  * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
  * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; a package's own
- * words never reach the client; and each run records one editor event naming its engine by its id, whose record decides
+ * words reach the client only where its register row grants them, and then through core's scrub; and each run records one editor event naming its engine by its id, whose record decides
  * what the event keeps of its text.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
@@ -24,6 +24,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -105,25 +106,31 @@ const { clearProviderCache } = await import("@/lib/db/factory");
 const MAIN = "acmeqmain";
 const BARE = "acmeqbare";
 const LOOSE = "acmeqloose";
+const WORDS = "acmeqwords";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
-  engines = await admitSessionPackages(providers, [
-    { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
-    { name: "acme-q-bare", engine: BARE },
-    {
-      name: "acme-q-loose",
-      engine: LOOSE,
-      // Two claims that would loosen the gate, which Studio's review record lists for no engine it does not ship.
-      edit: (engine) => {
-        const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
-        sqlText.readsSqlText = false;
-        sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+  engines = await admitSessionPackages(
+    providers,
+    [
+      { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
+      { name: "acme-q-bare", engine: BARE },
+      {
+        name: "acme-q-loose",
+        engine: LOOSE,
+        // Two claims that would loosen the gate, which Studio's review record lists for no engine it does not ship.
+        edit: (engine) => {
+          const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
+          sqlText.readsSqlText = false;
+          sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+        },
       },
-    },
-  ]);
+      { name: "acme-q-words", engine: WORDS },
+    ],
+    { [WORDS]: { ownWords: "scrubbed" } },
+  );
 });
 afterAll(async () => {
   await clearProviderCache();
@@ -526,6 +533,73 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const words = `no such key ${randomUUID()}`;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      expect([engines.get(WORDS)?.grants.ownWords, engines.get(MAIN)?.grants.ownWords]).toEqual([
+        "scrubbed",
+        "code-only",
+      ]);
+      // Granted: the error's own words reach the client, through core's scrub of the connection.
+      hooksFor(WORDS, { execute: () => Promise.reject(new Error(words)) });
+      const own = await post({ connection, sql: "SELECT 1" });
+      expect([own.status, own.body.code, own.body.error]).toEqual([500, "INTERNAL_ERROR", words]);
+      // Words holding the connection's password are withheld whole.
+      hooksFor(WORDS, { execute: () => Promise.reject(new Error(`${words}, as ${secret} said`)) });
+      const withheld = await post({ connection, sql: "SELECT 1" });
+      expect([withheld.status, withheld.body.code]).toEqual([500, "INTERNAL_ERROR"]);
+      expect(JSON.stringify(withheld.body)).not.toContain(secret);
+      expect(JSON.stringify(withheld.body)).not.toContain(words);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+
+      // No row: Studio's sentence naming the code, the words in the log only.
+      hooksFor(MAIN, { execute: () => Promise.reject(new Error(words)) });
+      const coded = await post({ connection: connectionOf(MAIN), sql: "SELECT 1" });
+      expect([coded.status, coded.body.code, coded.body.error]).toEqual([
+        500,
+        "INTERNAL_ERROR",
+        "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+      ]);
+    } finally {
+      error.mockRestore();
+      hooksFor(WORDS);
+      hooksFor(MAIN);
+    }
+  });
+
+  test("a package engine whose register row grants its own words answers its warnings through core's scrub", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const words = `words the package wrote ${randomUUID()}`;
+    hooksFor(WORDS, {
+      execute: () =>
+        Promise.resolve({
+          results: [source([["alpha", 1]])],
+          warnings: [
+            { message: `deprecated, as ${secret} said`, code: "W01", severity: "WARNING" },
+            { message: words },
+          ],
+          executionTimeMs: 1,
+          pageApplied: false,
+        }),
+    });
+    try {
+      const answered = await post({ connection, sql: "SELECT 1" });
+      expect(answered.status).toBe(200);
+      const warnings = answered.body.warnings as { message: string; code?: string; severity?: string }[];
+      expect(warnings).toHaveLength(2);
+      // The words as the package wrote them; the warning holding the password withheld by core's scrub.
+      expect(warnings[1]).toEqual({ message: words });
+      expect(warnings[0]?.code).toBe("W01");
+      expect(JSON.stringify(answered.body)).not.toContain(secret);
+    } finally {
+      hooksFor(WORDS);
+    }
+  });
+
   test("the query route records one editor event per run, naming the engine by its id and the text submitted, and the engine's record decides what the event keeps", async () => {
     const connection = connectionOf(MAIN);
     const secret = connection.password as string;
@@ -646,7 +720,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
   test("a refused package's engine and an unknown type answer as the server catalog answers them", async () => {
     forgetServerCatalog();
     installServerCatalog({
-      engines: new Map([...composeServerCatalog([], []).engines, ...engines]),
+      engines: new Map([...composeServerCatalog([], [], STUDIO_GRANT_REGISTER).engines, ...engines]),
       unavailable: new Map([["acmeqgone", Object.freeze(["PROVIDER_LOAD_FAILED"])]]),
     });
     const gone = await post({ connection: connectionOf("acmeqgone"), sql: "SELECT 1" });

@@ -25,6 +25,7 @@ import {
   assertReadOnlyHonoured,
 } from "@/lib/db/open-check";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import * as typeId from "@/lib/db/type-id";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
@@ -49,6 +50,7 @@ const OTHER_LEGACY_ID = [...LEGACY_ENGINES.keys()].find((id) => id !== LEGACY.id
 const PACKAGE = composeServerCatalog(
   [admittedFor("acme-open-check", admittedManifest("acmeopencheck"))],
   [],
+  STUDIO_GRANT_REGISTER,
 ).engines.get("acmeopencheck") as EngineRecord;
 
 /** The two records every row runs against. */

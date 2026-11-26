@@ -19,6 +19,7 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { relationKindIds } from "@/lib/db/object-kinds";
@@ -1510,6 +1511,7 @@ describe("list_connections on a connection of an engine a provider package serve
       composeServerCatalog(
         [admittedFor("acme-list-served", admittedManifest("acmelistserved"))],
         [{ name: "acme-list-gone", version: "1.0.0", engines: ["acmelistgone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
     let handler: ((args: unknown, ctx: unknown) => Promise<{ structuredContent?: unknown }>) | undefined;

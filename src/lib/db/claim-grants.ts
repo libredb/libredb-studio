@@ -194,9 +194,11 @@ export function legacyGrantRows(
 
 /**
  * The grant register Studio reads, once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's
- * served set: its `LEGACY_ENGINE_IDS` is defined as it.
+ * served set: its `LEGACY_ENGINE_IDS` is defined as it. The boot hands it to the server catalog's composer
+ * (src/lib/provider-host/boot.ts), which looks up each admitted package engine's row in it, so no other module of
+ * Studio's source loads the register.
  */
-const STUDIO_GRANT_REGISTER: GrantRegister = readGrantRegister(SHIPPED_DATABASE_TYPES);
+export const STUDIO_GRANT_REGISTER: GrantRegister = readGrantRegister(SHIPPED_DATABASE_TYPES);
 
 /** The grant register's legacy rows of every engine Studio ships. */
 const LEGACY_GRANT_ROWS = legacyGrantRows(STUDIO_GRANT_REGISTER, SHIPPED_DATABASE_TYPES);

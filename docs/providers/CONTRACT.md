@@ -436,11 +436,11 @@ A mode outside the vocabulary, a repeated mode and a mode out of order are each 
 An engine lists in `facets.agentReadings` a reading served by a monitoring panel only where its `facets.monitoring` offers that panel, since the host refuses a panel the engine does not offer (C-71); `health`, served by the mandatory health call, is admitted whatever the panels.
 Any other such reading is refused as `agent-reading-panel-not-offered` at the reading's own pointer, in a sentence naming the pointer and no value.
 
-### M-84 (informative): The register
+### M-84 (normative): The register
 
 A grant to an admitted package's engine is a row of Studio's register, keyed by the package's name, version and digest (C-93) and by the engine, so a new version or digest of a package has no row until LibreDB reviews it.
 A row grants claims as M-54 reads them, and may also grant the engine its own words through core's scrub (C-112), never by default.
-A row is LibreDB's review, kept in Studio's repository until the providers move to repositories of their own, and no manifest member, lock entry or admission step writes one; no admitted package has a row yet, so nothing checks this clause.
+A row is LibreDB's review, kept in Studio's repository until the providers move to repositories of their own, and no manifest member, lock entry or admission step writes one.
 
 ## Values
 

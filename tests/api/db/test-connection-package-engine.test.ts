@@ -3,27 +3,36 @@
  * C-112), through the real `resolveServedConnection`, the factory's real one-shot open (`openEngineOnce`) and tunnel
  * scope, each wrapped to record its calls, and the real host core: an admitted engine's connection is validated
  * against its declaration's field rules and the open checks, each refusal a not-sent configuration error, then one
- * session opens through the package, its health is read and it is closed; a package's own words never reach the client,
- * and a failure is logged by its author, the package's as the package's and Studio's as Studio's; a refused package's
+ * session opens through the package, its health is read and it is closed; a package's own words reach the client only
+ * where its register row grants them, and then through core's scrub, and a failure is logged by its author, the package's as the package's and Studio's as Studio's; a refused package's
  * engine answers `PROVIDER_UNAVAILABLE` naming the code. A legacy engine's connection runs the same test, told apart
  * only by its record's offers. The factory's other entry points are stood in for and never reached.
  *
- * The packages are in-memory records whose functions call the hooks a case sets. The deadline case runs on an engine
+ * The packages are in-memory records whose functions call the hooks a case sets, composed against a register of their
+ * own (tests/helpers/package-catalog.ts `packageRow`) that grants two of them a row. The deadline case runs on an engine
  * record whose budget is 50 ms; it settles on the route's own answer, never on a timer the test awaits.
  */
 // oxlint-disable no-await-in-loop -- each post runs after the one before, on one rate limiter cleared per post.
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { parseGrantRegister } from "@libredb/grant-register";
 import type { CallRefusal, ProviderImpl } from "@libredb/provider-sdk/calls";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
-import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
 import { HostDefectError, refusalError } from "@/lib/provider-host/access";
 import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
-import { admittedFor, admittedManifest, withFieldRules } from "../../helpers/package-catalog";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
+import {
+  admittedFor,
+  admittedManifest,
+  type EditableEngine,
+  packageRow,
+  withFieldRules,
+} from "../../helpers/package-catalog";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));
@@ -101,6 +110,21 @@ function hookImpl(): ProviderImpl<unknown> {
 
 const HEALTH = { databaseSize: "1 MB", cacheHitRatio: "99%", slowQueries: [], activeSessions: [] };
 
+/** `pkg` with its record's implementation replaced by one that calls the case's hooks. */
+function withHookImpl(pkg: AdmittedForCatalog): AdmittedForCatalog {
+  return { ...pkg, record: { ...pkg.record, impl: hookImpl() } };
+}
+
+/** A request of write reach none, which states every write path absent. */
+function readOnlyClaims(engine: EditableEngine): void {
+  engine.policy = { ...engine.policy, writeReach: "none" };
+  const absent = { reach: "absent", proof: { module: "src/read-only.ts", symbol: "readOnly" } };
+  engine.safeguards = {
+    ...engine.safeguards,
+    writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
+  };
+}
+
 /** Hooks of a package that opens, answers its health and closes. */
 function healthyHooks(): typeof hooks {
   return {
@@ -114,12 +138,20 @@ beforeAll(() => {
   installHostCore(createHostCore(), "test");
   const tested = admittedFor("acme-tested", admittedManifest("acmetested", withFieldRules));
   const brief = admittedFor("acme-brief", admittedManifest("acmetestbrief"));
-  const composed = composeServerCatalog(
+  const words = admittedFor("acme-words", admittedManifest("acmetestwords"));
+  const reach = admittedFor("acme-reach", admittedManifest("acmetestreach", readOnlyClaims));
+  const unreached = admittedFor("acme-unreached", admittedManifest("acmetestunreached", readOnlyClaims));
+  const register = parseGrantRegister(
     [
-      { ...tested, record: { ...tested.record, impl: hookImpl() } },
-      { ...brief, record: { ...brief.record, impl: hookImpl() } },
+      packageRow(words, "acmetestwords", { ownWords: "scrubbed" }),
+      packageRow(reach, "acmetestreach", { writeReach: "none" }),
     ],
+    LEGACY_ENGINE_IDS,
+  );
+  const composed = composeServerCatalog(
+    [tested, brief, words, reach, unreached].map(withHookImpl),
     [{ name: "acme-gone", version: "1.0.0", engines: ["acmetestgone"], code: "PROVIDER_LOAD_FAILED" }],
+    register,
   );
   const briefEngine = composed.engines.get("acmetestbrief") as EngineRecord;
   installServerCatalog({
@@ -269,6 +301,62 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       error.mockRestore();
       warn.mockRestore();
     }
+  });
+
+  test("a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code", async () => {
+    const secret = randomUUID();
+    const words = `the server refused this client ${randomUUID()}`;
+    const granted = { type: "acmetestwords", host: "db.local", password: secret };
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // The open's own words, through core's scrub.
+      hooks.open = () => Promise.reject(new Error(words));
+      const open = await routeAnswer(granted);
+      expect([open.status, open.body.code, open.body.error]).toEqual([500, "INTERNAL_ERROR", words]);
+      // The health failure's own words, in the degraded success's sentence.
+      hooks = { ...healthyHooks(), health: () => Promise.reject(new Error(words)) };
+      const health = await routeAnswer(granted);
+      expect([health.status, health.body.degraded, health.body.message]).toEqual([
+        200,
+        true,
+        `Connected, but this server answered no health data: ${words}`,
+      ]);
+      // Words holding the connection's password are withheld whole, in each answer.
+      hooks.open = () => Promise.reject(new Error(`${words} for ${secret}`));
+      const withheldOpen = await routeAnswer(granted);
+      hooks = { ...healthyHooks(), health: () => Promise.reject(new Error(`${words} for ${secret}`)) };
+      const withheldHealth = await routeAnswer(granted);
+      expect([withheldOpen.status, withheldHealth.status]).toEqual([500, 200]);
+      for (const answer of [withheldOpen.body, withheldHealth.body]) {
+        expect(JSON.stringify(answer)).not.toContain(secret);
+        expect(JSON.stringify(answer)).not.toContain(words);
+      }
+
+      // No row: Studio's sentence naming the code.
+      hooks = { ...healthyHooks(), open: () => Promise.reject(new Error(words)) };
+      const coded = await routeAnswer(VALID);
+      expect([coded.status, coded.body.code, coded.body.outcome, coded.body.error]).toEqual([
+        503,
+        "CONNECTION_ERROR",
+        "not-sent",
+        "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words.",
+      ]);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a package engine whose register row grants its write reach opens a read-only connection, and one without a row is refused before the open", async () => {
+    const granted = await routeAnswer({ type: "acmetestreach", host: "db.local", readOnly: true });
+    expect([granted.status, granted.body.success, granted.body.message]).toEqual([200, true, "Connection successful"]);
+    expect(seen).toEqual(["open", "health", "close"]);
+
+    seen.length = 0;
+    const refused = await routeAnswer({ type: "acmetestunreached", host: "db.local", readOnly: true });
+    expect([refused.status, refused.body.code, refused.body.outcome]).toEqual([400, "CONFIG_ERROR", "not-sent"]);
+    expect(refused.body.error).toStartWith("readOnly: true is refused for acmetestunreached");
+    expect(seen).toEqual([]);
   });
 
   test("the open checks refuse before the budget starts", async () => {

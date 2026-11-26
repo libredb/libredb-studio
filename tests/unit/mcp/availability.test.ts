@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT, mcpConnectionUnavailable } from "@/lib/mcp/availability";
@@ -81,6 +82,7 @@ describe("mcpConnectionUnavailable", () => {
       composeServerCatalog(
         [admittedFor("acme-avail-served", admittedManifest("acmeavailserved"))],
         [{ name: "acme-avail-gone", version: "1.0.0", engines: ["acmeavailgone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
     const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
@@ -96,7 +98,11 @@ describe("mcpConnectionUnavailable", () => {
     // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
     // catalog whose offer disagrees with the id, so the answer follows the offer of a valid record.
     installServerCatalog(
-      composeServerCatalog([admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))], []),
+      composeServerCatalog(
+        [admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
     );
     const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
     expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailoffer"))).toBe(

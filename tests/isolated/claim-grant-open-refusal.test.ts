@@ -11,7 +11,7 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { UNGRANTED_SINGLE_WRITER_FILE_SENTENCE as REFUSAL } from "@/lib/db/claim-grants";
+import { UNGRANTED_SINGLE_WRITER_FILE_SENTENCE as REFUSAL, STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { SSHTunnelConfig } from "@/lib/types";
@@ -20,7 +20,7 @@ import { withEngineRecord } from "../helpers/package-catalog";
 
 beforeAll(() => {
   installServerCatalog(
-    withEngineRecord(composeServerCatalog([], []), "postgres", (engine) => ({
+    withEngineRecord(composeServerCatalog([], [], STUDIO_GRANT_REGISTER), "postgres", (engine) => ({
       ...engine,
       grants: Object.freeze({ ...engine.grants, ungrantedRefusals: REFUSAL }),
     })),

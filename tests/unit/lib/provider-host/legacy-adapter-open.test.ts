@@ -118,6 +118,7 @@ const { LEGACY_ENGINE_IDS } = await import("@/lib/provider-host/legacy-adapter/i
 const { egressDecision } = await import("@/lib/db/egress-decision");
 const { trustMaterial } = await import("@/lib/db/trust-material");
 const { opcuaPkiRoot } = await import("@/lib/db/provider-files");
+const { STUDIO_GRANT_REGISTER } = await import("@/lib/db/claim-grants");
 const { composeServerCatalog } = await import("@/lib/db/server-catalog-compose");
 const { quoteTypeId } = await import("@/lib/db/type-id");
 type EngineRecord = import("@/lib/db/server-catalog").EngineRecord;
@@ -229,6 +230,7 @@ describe("the legacy adapter's open", () => {
       const pkg = composeServerCatalog(
         [admittedFor("acme-legacy-open", admittedManifest("acmelegacyopen"))],
         [],
+        STUDIO_GRANT_REGISTER,
       ).engines.get("acmelegacyopen") as EngineRecord;
       const packageConnection = { id: "p", name: "p", type: "acmelegacyopen" } as never;
       const noProvider = await openLegacyEngine(pkg, packageConnection, {}, {}).catch((error: unknown) => error);

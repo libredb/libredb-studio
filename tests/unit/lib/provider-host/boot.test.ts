@@ -67,10 +67,11 @@ interface Spec {
   readonly engine?: (engine: Record<string, Record<string, unknown>>) => void;
 }
 
-/** A package of the case's own name and engine id. */
+/** A package of the case's own name and engine id, and the digest its lock entry pins. */
 interface Written {
   readonly name: string;
   readonly id: string;
+  readonly digest: string;
 }
 
 /** A new empty providers directory. */
@@ -113,11 +114,9 @@ function writePackages(providers: string, specs: readonly Spec[]): Written[] {
     writeArtifact(providers, pkg);
     return { name, id, pkg };
   });
-  writeLock(
-    providers,
-    written.map(({ pkg }) => lockEntryOf(providers, pkg)),
-  );
-  return written.map(({ name, id }) => ({ name, id }));
+  const entries = written.map(({ pkg }) => lockEntryOf(providers, pkg));
+  writeLock(providers, entries);
+  return written.map(({ name, id }, index) => ({ name, id, digest: entries[index].digest }));
 }
 
 /** The log calls of every level, each as its message and its second argument. */
@@ -415,6 +414,26 @@ describe("boot admission", () => {
     // A sibling directory whose name starts with the package's is not the package's.
     expect(packagesInStack(() => frame(`${directoryOf(kept)}0${path.sep}x.mjs`))).toEqual([]);
     forgetPackageDirectories();
+  });
+
+  test("an admitted package's engine record carries its lock entry's verified digest", async () => {
+    const providers = freshProviders();
+    const [only] = writePackages(providers, [{}]) as [Written];
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    const logs = spyLogs();
+    try {
+      expect(await admitProvidersAtBoot()).toBe(true);
+    } finally {
+      logs.restore();
+    }
+    const answer = serverEngine(only.id);
+    if (answer.kind !== "served") throw new Error(`${only.id} answered ${answer.kind}`);
+    expect(only.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect([answer.engine.source.digest, answer.engine.source.package?.digest]).toEqual([only.digest, only.digest]);
+    // A legacy engine's record carries no digest: its source is Studio's own code, not a package.
+    const legacy = serverEngine("postgres");
+    if (legacy.kind !== "served") throw new Error(`postgres answered ${legacy.kind}`);
+    expect(legacy.engine.source.digest).toBeNull();
   });
 
   test("admission runs once per process: a second call reads nothing and keeps the installed catalog", async () => {

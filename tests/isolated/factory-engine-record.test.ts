@@ -55,6 +55,7 @@ const {
   withOneShotTunnel,
 } = await import("@/lib/db/factory");
 const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
+const { STUDIO_GRANT_REGISTER } = await import("@/lib/db/claim-grants");
 const { composeServerCatalog } = await import("@/lib/db/server-catalog-compose");
 const { forgetTrustMaterial } = await import("@/lib/db/trust-material");
 const { DatabaseConfigError, StudioProfileRefusal } = await import("@/lib/db/errors");
@@ -72,7 +73,7 @@ function installCrafted(
   change: { grants?: Record<string, unknown>; connection?: Record<string, unknown> },
 ): void {
   installServerCatalog(
-    withEngineRecord(composeServerCatalog([], []), id, (engine: EngineRecord) => ({
+    withEngineRecord(composeServerCatalog([], [], STUDIO_GRANT_REGISTER), id, (engine: EngineRecord) => ({
       ...engine,
       grants: Object.freeze({ ...engine.grants, ...change.grants }),
       connection: Object.freeze({ ...engine.connection, ...change.connection }),

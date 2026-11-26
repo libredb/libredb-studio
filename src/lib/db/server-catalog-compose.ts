@@ -15,18 +15,21 @@
  *   does not state refuses every admitted claimant of it unless they all state it alike.
  * A conflict carries the package's name, version and rule, never an alias, dialect, language or id.
  *
- * `composeServerCatalog(admitted, refused)` starts from the legacy adapter's records
+ * `composeServerCatalog(admitted, refused, register)` starts from the legacy adapter's records
  * (src/lib/provider-host/legacy-adapter/records.ts), every one by identity, and adds one record per admitted engine
  * (`EngineRecord` in ./server-catalog): it projects the admitted declarations with the same projections Studio's
  * generator projects its own declarations with (./engine-catalog/projection), composes each engine's field rules
- * (`packageFieldRules` in ./connection-form), grants each engine's claims through Studio's grant reader with no
- * register row (`grantEngineClaims` in ./claim-grants), so each claim is granted at its restrictive value, and gives
- * each the package's source, with the session its declaration states, and the offers of an engine served through the
- * provider contract (`PACKAGE_OFFERS`). It maps each engine a refused
+ * (`packageFieldRules` in ./connection-form), grants each engine's claims through Studio's grant reader
+ * (`grantEngineClaims` in ./claim-grants) with its row of `register`, the row keyed by its package's name, version and
+ * digest, or with none where the register holds none, so each claim is granted at its restrictive value, and gives
+ * each the package's source, its digest and the session its declaration states, and the offers of an engine served
+ * through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test
+ * may hand it a register of its own. It maps each engine a refused
  * package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is
  * transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is
  * read by a client's value.
  */
+import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
@@ -187,15 +190,18 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
 }
 
 /**
- * The server's engine catalog of the admitted packages `admitted` and the refused packages `refused`.
+ * The server's engine catalog of the admitted packages `admitted` and the refused packages `refused`, each admitted
+ * engine granted its row of `register`.
  *
  * @throws {Error} A host defect: when `admitted` still holds a conflict `catalogConflicts` answers, since boot refuses
  * every claimant before it composes, or when an engine an admitted package serves is also named by a refused
- * package's lock entry, which the lock's own collision rules refuse.
+ * package's lock entry, which the lock's own collision rules refuse. Naming the engine and the field, for a row of
+ * `register` whose superseding field is not a text field a connection form draws, a defect of Studio's register.
  */
 export function composeServerCatalog(
   admitted: readonly AdmittedForCatalog[],
   refused: readonly RefusedForCatalog[],
+  register: GrantRegister,
 ): ServerCatalog {
   const conflicts = catalogConflicts(admitted);
   if (conflicts.length > 0) {
@@ -221,9 +227,11 @@ export function composeServerCatalog(
         source: Object.freeze({
           name: pkg.name,
           version: pkg.version,
+          digest: pkg.digest,
           package: Object.freeze({
             name: pkg.name,
             version: pkg.version,
+            digest: pkg.digest,
             directory: pkg.directory,
             manifest: pkg.manifest as ProviderManifest,
             record: pkg.record,
@@ -252,7 +260,12 @@ export function composeServerCatalog(
           dialogOffersUri: tables.dialogOffersUri[id],
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
-        grants: grantEngineClaims(id, requests[id], null, tables.seedOnly),
+        grants: grantEngineClaims(
+          id,
+          requests[id],
+          register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: id }),
+          tables.seedOnly,
+        ),
         // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
         // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),
