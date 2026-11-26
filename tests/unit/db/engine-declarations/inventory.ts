@@ -25,16 +25,22 @@ const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
 const CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
 const CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.generated.ts";
 
+/** What a claim table is, in every claim table's destination: tests/unit/db/no-core-grant-records.test.ts finds them by it. */
+export const REVIEW_RECORD_PHRASE = "Studio's review record of the claim";
+
 /** The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. */
 function claim(member: string): string {
-  return `engine declaration: ${member}, the engine's request, which this table grants as Studio's review record of the claim`;
+  return `engine declaration: ${member}, the engine's request, which this table grants as ${REVIEW_RECORD_PHRASE}`;
 }
 /** The destination of a generated connection table: the member it projects, authored in each declaration. */
 function projected(member: string): string {
   return `engine declaration: ${member}, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them`;
 }
-/** The destination of a granted table: Studio's grant, computed from the declared request and Studio's record. */
-const GRANTED =
+/**
+ * The destination of a granted table: Studio's grant, computed from the declared request and Studio's record.
+ * tests/unit/db/no-core-grant-records.test.ts finds the granted tables by it.
+ */
+export const GRANTED_DESTINATION =
   "core-owned: Studio's grant of a claim, computed from the engine's request and Studio's grant for the engine (docs/providers/CONTRACT.md, clause M-54)";
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
@@ -56,27 +62,31 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "DB_UI_CONFIG",
     destination: "planned segment: presentation, the icon as an SVG asset and the colour",
   },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_CREDENTIAL_FORM", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_READINGS", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_STATEMENT_LANGUAGE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_DENIED_FILE_ACCESS_REFUSAL", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_HOST_PATH_FIELDS", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MASKING_EXEMPT_COLUMNS", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_EXPOSABLE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_METADATA_READ_CHANGES_STATE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_STATEMENT_READ", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_OPENS_LOCAL_FILE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READ_ROOTS_REQUIRED", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READS_FILE_ACCESS_POSTURE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SEED_AGENT_CREDENTIAL", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SINGLE_WRITER_FILE", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SSH_TUNNEL_REFUSAL", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_WRITE_REACH", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "READ_ONLY_ENFORCED", destination: GRANTED },
-  { module: CLAIM_GRANTS_MODULE, name: "UNGRANTED_CLAIM_REFUSALS", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_CREDENTIAL_FORM", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_READINGS", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_STATEMENT_LANGUAGE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_DENIED_FILE_ACCESS_REFUSAL", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_HOST_PATH_FIELDS", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MASKING_EXEMPT_COLUMNS", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_EXPOSABLE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_METADATA_READ_CHANGES_STATE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_STATEMENT_READ", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_OPENS_LOCAL_FILE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION", destination: GRANTED_DESTINATION },
+  {
+    module: CLAIM_GRANTS_MODULE,
+    name: "GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE",
+    destination: GRANTED_DESTINATION,
+  },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READ_ROOTS_REQUIRED", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READS_FILE_ACCESS_POSTURE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SEED_AGENT_CREDENTIAL", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SINGLE_WRITER_FILE", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SSH_TUNNEL_REFUSAL", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_WRITE_REACH", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "READ_ONLY_ENFORCED", destination: GRANTED_DESTINATION },
+  { module: CLAIM_GRANTS_MODULE, name: "UNGRANTED_CLAIM_REFUSALS", destination: GRANTED_DESTINATION },
   { module: COMPATIBILITY, name: "WRITE_REACH", destination: claim("policy.writeReach") },
   { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: claim("policy.readsFileAccessPosture") },
   {
@@ -257,8 +267,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/db/engine-facets/index.ts",
     name: "ENGINE_FACETS",
-    destination:
-      "engine declaration: facets, with facets.agentReadings the engine's request, which this table grants as Studio's review record of the claim",
+    destination: `engine declaration: facets, with facets.agentReadings the engine's request, which this table grants as ${REVIEW_RECORD_PHRASE}`,
   },
   {
     module: "src/lib/db/execution-ui/index.ts",
