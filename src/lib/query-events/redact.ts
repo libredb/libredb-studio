@@ -35,7 +35,7 @@
 
 import { createHash } from "node:crypto";
 import { CREDENTIAL_REDACTION, redactUriCredentials } from "@/lib/audit";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { NO_CONNECTION_SQL_GRAMMAR } from "@/lib/db/sql-grammar/no-connection";
 import { REDACTED_VALUE } from "@/lib/db/sql-grammar/shared";
 import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
@@ -280,49 +280,54 @@ function keepNothing(): string {
   return REDACTED_VALUE;
 }
 
-/** How a statement of one engine is read: under which grammar, whether as SQL, and under which redaction. */
+/** How a statement of one engine is read: under which grammar, and whether as SQL. */
 interface StatementReading {
   readonly grammar: SqlGrammar;
   readonly readsSqlText: boolean;
-  readonly redaction: SqlRedaction;
 }
 
-/**
- * What a call that names no engine reads: the no-connection grammar (`sqlGrammarFor(undefined)`), read as SQL, and a
- * statement that keeps nothing when redacted.
- */
+/** What a call that names no engine reads: the no-connection grammar (`sqlGrammarFor(undefined)`), read as SQL. */
 const NO_CONNECTION_READING: StatementReading = Object.freeze({
   grammar: NO_CONNECTION_SQL_GRAMMAR.grammar,
   readsSqlText: NO_CONNECTION_SQL_GRAMMAR.readsSqlText,
-  redaction: Object.freeze({ kind: "none" }),
 });
 
+/** What a call that names no engine keeps of a statement when redacted: nothing. */
+const NO_CONNECTION_REDACTION: SqlRedaction = Object.freeze({ kind: "none" });
+
 /**
- * How a statement `engine` runs is read: `NO_CONNECTION_READING` for `undefined`, and otherwise its record in the
- * server's catalog, the record's grammar, its granted `readsSqlText` and the redaction its grant composes to.
+ * The record of `engine` in the server's catalog, and `undefined` for `undefined`, a call that names no engine.
  *
  * @throws {UnknownProviderError} When `engine` names no engine the server serves, refused by name.
  * @throws {ProviderUnavailableError} When every package naming `engine` was refused at boot.
+ */
+function recordOf(engine: string | undefined): EngineRecord | undefined {
+  return engine === undefined ? undefined : servedEngineRecord(engine);
+}
+
+/**
+ * How a statement of `record`'s engine is read: `NO_CONNECTION_READING` for `undefined`, and otherwise the record's
+ * grammar and its granted `readsSqlText`.
+ *
  * @throws {Error} A host defect: when no register row reviewed the engine's grammar, whose text no query event keeps.
  */
-function readingOf(engine: string | undefined): StatementReading {
-  if (engine === undefined) return NO_CONNECTION_READING;
-  const record = servedEngineRecord(engine);
+function readingOf(record: EngineRecord | undefined): StatementReading {
+  if (record === undefined) return NO_CONNECTION_READING;
   if (!record.grants.reviewedGrammar) {
     throw new Error(
       `The engine ${quoteTypeId(record.id)} holds no register row's review of its grammar, so the query event log keeps none of its text, and a caller handed its text to the redactor: a host defect.`,
     );
   }
-  return {
-    grammar: record.statementGrammar,
-    readsSqlText: record.grants.readsSqlText,
-    redaction: composeStatementRedaction(record),
-  };
+  return { grammar: record.statementGrammar, readsSqlText: record.grants.readsSqlText };
 }
 
-/** The reader that redacts this engine's statements: its own command reader, its SQL grammar, or none. */
-function readerOf(engine: string | undefined): (text: string) => string {
-  const { grammar, redaction } = readingOf(engine);
+/**
+ * The reader that redacts the statements of `record`'s engine, read as `readingOf()` reads them: its own command
+ * reader, its SQL grammar, or none, by the redaction its grant composes to.
+ */
+function readerOf(record: EngineRecord | undefined): (text: string) => string {
+  const { grammar } = readingOf(record);
+  const redaction = record === undefined ? NO_CONNECTION_REDACTION : composeStatementRedaction(record);
   switch (redaction.kind) {
     case "command":
       return redaction.read;
@@ -352,7 +357,16 @@ void everyRedactionRead;
  * only in values and white space share it.
  */
 export function redactStatement(text: string, engine: string | undefined): RedactedStatement {
-  const statement = readerOf(engine)(text)
+  return redactRecordStatement(text, recordOf(engine));
+}
+
+/**
+ * `redactStatement()` for a caller that holds the engine's record in the server's catalog already, such as the query
+ * event builder: the same answer, read from `record`, or from no engine for `undefined`, without reading the catalog
+ * again.
+ */
+export function redactRecordStatement(text: string, record: EngineRecord | undefined): RedactedStatement {
+  const statement = readerOf(record)(text)
     .split(" ")
     .map((word) => redactUriCredentials(word))
     .join(" ");
@@ -382,7 +396,16 @@ function maskUriRuns(text: string): string {
  * in it.
  */
 export function maskCredentials(text: string, engine: string | undefined): string {
-  const { grammar, readsSqlText: sql } = readingOf(engine);
+  return maskRecordCredentials(text, recordOf(engine));
+}
+
+/**
+ * `maskCredentials()` for a caller that holds the engine's record in the server's catalog already, such as the query
+ * event builder: the same answer, read from `record`, or from no engine for `undefined`, without reading the catalog
+ * again.
+ */
+export function maskRecordCredentials(text: string, record: EngineRecord | undefined): string {
+  const { grammar, readsSqlText: sql } = readingOf(record);
   const tokens = readTokens(text, sql ? grammar : DEFAULT_SQL_GRAMMAR);
   const passwords = sql ? passwordTokens(tokens, text) : new Set<number>();
   const pieces: string[] = [];

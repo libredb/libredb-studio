@@ -7,10 +7,10 @@
  * statement only what `queryLog.statementCapture` allows (docs/GOVERNANCE.md, "Query events"):
  *
  * - `none`, the default: no statement, no fingerprint and no error text.
- * - `redacted`: `redactStatement()`, the statement with every literal, number and comment replaced by `?`, and its
- *   fingerprint, the SHA-256 of the whole redacted text.
- * - `full`: the statement and the error text through `maskCredentials()`, which masks the value after `PASSWORD` or
- *   `IDENTIFIED BY` and the userinfo of every URI, with the error text cut to 1000 characters.
+ * - `redacted`: `redactRecordStatement()`, the statement with every literal, number and comment replaced by `?`, and
+ *   its fingerprint, the SHA-256 of the whole redacted text.
+ * - `full`: the statement and the error text through `maskRecordCredentials()`, which masks the value after `PASSWORD`
+ *   or `IDENTIFIED BY` and the userinfo of every URI, with the error text cut to 1000 characters.
  *
  * A stored statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, with
  * `statement_truncated` set. A refused request whose connection did not resolve keeps no statement and no error text
@@ -33,7 +33,7 @@ import { analyzeQuery, analyzeUnderGrammar } from "@/lib/db/utils/query-limiter"
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
-import { maskCredentials, redactStatement } from "./redact";
+import { maskRecordCredentials, redactRecordStatement } from "./redact";
 import type {
   QueryEventContext,
   QueryEventInput,
@@ -221,11 +221,11 @@ function captureStatement(
     return NOTHING_CAPTURED;
   }
   if (policy.statementCapture === "redacted") {
-    const redacted = redactStatement(text, engine.id);
+    const redacted = redactRecordStatement(text, engine);
     const cut = cutToBytes(redacted.statement, policy.maxStatementBytes);
     return { statement: cut.text, truncated: cut.truncated, fingerprint: redacted.statement_fingerprint };
   }
-  const cut = cutToBytes(maskCredentials(text, engine.id), policy.maxStatementBytes);
+  const cut = cutToBytes(maskRecordCredentials(text, engine), policy.maxStatementBytes);
   return { statement: cut.text, truncated: cut.truncated, fingerprint: null };
 }
 
@@ -238,7 +238,7 @@ function captureErrorMessage(
   if (policy.statementCapture !== "full" || message === undefined || engine === null || engine === undefined) {
     return null;
   }
-  return clampCharacters(maskCredentials(storable(message), engine.id), LIMITS.error_message);
+  return clampCharacters(maskRecordCredentials(storable(message), engine), LIMITS.error_message);
 }
 
 /**
