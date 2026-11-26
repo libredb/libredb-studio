@@ -24,6 +24,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import type { DatabaseConnection } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
 const CONNECTION = {
   id: "k1",
@@ -362,5 +363,26 @@ describe("a client library the installation cannot load", () => {
     expect(await rejectionOf(() => provider.connect())).toBe(failure);
     expect(calls).toEqual(["metadata", "close"]);
     expect(provider.isConnected()).toBe(false);
+  });
+});
+
+const KAFKA: DatabaseConnection = CENSUS_CONNECTION.kafka;
+
+describe("the client library that cannot load", () => {
+  test("connect() refuses a client library the installation cannot resolve, naming the module", async () => {
+    // A resolution failure this repository's own install never meets.
+    const unresolved = Object.assign(new Error("Cannot find module 'ajv/dist/core'"), { code: "MODULE_NOT_FOUND" });
+    const provider = new KafkaProvider({ ...KAFKA, user: undefined, password: undefined }, {}, {}, async () => {
+      throw unresolved;
+    });
+    let message = "";
+    try {
+      await provider.connect();
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toStartWith('The Kafka client library could not be loaded: the module "ajv/dist/core"');
+
+    expect(message).toEndWith("See docs/providers/kafka.md section 2.5");
   });
 });
