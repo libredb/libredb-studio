@@ -84,7 +84,12 @@ import {
   SHIPPED_DATABASE_TYPES,
   SSH_TUNNEL_REFUSAL,
 } from "./compatibility";
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
+import {
+  type ConnectionField,
+  SEED_AGENT_CREDENTIAL,
+  SEED_ONLY_FIELDS,
+  type SeedAgentCredential,
+} from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
@@ -187,6 +192,40 @@ const LEGACY_GRANT_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYP
 function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterGrants[M]> {
   return Object.freeze(
     Object.fromEntries(Object.entries(LEGACY_GRANT_ROWS).map(([engine, grants]) => [engine, grants[member]])),
+  );
+}
+
+/**
+ * The agent credential of each engine of `rows`, in `rows`' order, its superseding fields narrowed to the engine's own
+ * connection fields of `fields`: a null grant stays null, and every other is a fresh frozen form and list. The register
+ * holds a superseding field as plain text, so each is found by name in the engine's row of `fields` and taken from
+ * there, never cast; an engine `fields` holds no row for has no field to find.
+ *
+ * @throws {Error} Naming the engine and the field, for a superseding field that is not one of the engine's connection
+ * fields: a misspelt field would otherwise never equal a request, closing the engine to an agent credential silently.
+ */
+export function legacyAgentCredentials(
+  rows: Readonly<Record<string, RegisterGrants>>,
+  fields: Rows<readonly ConnectionField[]>,
+): Rows<SeedAgentCredential | null> {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(rows).map(([engine, grants]) => {
+        const credential = grants.agentCredential;
+        if (credential === null) return [engine, null];
+        const own = rowOf<readonly ConnectionField[], readonly ConnectionField[]>(fields, engine, []);
+        const supersededBy = credential.supersededBy.map((name) => {
+          const field = own.find((candidate) => candidate === name);
+          if (field === undefined) {
+            throw new Error(
+              `the grant register's legacy row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a connection field of the engine`,
+            );
+          }
+          return field;
+        });
+        return [engine, Object.freeze({ form: credential.form, supersededBy: Object.freeze(supersededBy) })];
+      }),
+    ),
   );
 }
 

@@ -24,6 +24,7 @@ import {
   type ClaimRecords,
   grantClaims,
   HOST_PATH_FIELD_NAMES,
+  legacyAgentCredentials,
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_CLAIM_RECORDS,
 } from "@/lib/db/claim-grants";
@@ -36,7 +37,7 @@ import {
   SERVES_ONE_SESSION,
   SSH_TUNNEL_REFUSAL,
 } from "@/lib/db/compatibility";
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
@@ -237,9 +238,10 @@ describe("the legacy rows", () => {
       hostPathFields: record("hostPathFields"),
       serverLevelWithoutDatabase: record("serverLevelWithoutDatabase"),
       sshTunnel: record("sshTunnel"),
-      // The one narrowing: the register holds `supersededBy` as text, since the package imports nothing of Studio's,
-      // and Studio's record as connection field names; the first test holds every value equal to Studio's.
-      agentCredential: record("agentCredential") as ClaimRecords["agentCredential"],
+      agentCredential: legacyAgentCredentials(
+        Object.fromEntries(rows.map((row) => [row.engine, row.grants])),
+        CONNECTION_FIELDS,
+      ),
       statementLanguage: record("statementLanguage"),
       agentReadings: ENGINE_FACETS,
     };
