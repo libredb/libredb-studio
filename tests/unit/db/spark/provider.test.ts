@@ -36,6 +36,10 @@ import { logger } from "@/lib/logger";
 import { type DatabaseConnection, TUNNEL_FAR_END, type TunnelFarEnd, type WithTunnelFarEnd } from "@/lib/types";
 import { type SparkFakeAnswer, type SparkFakeServer, startSparkFake } from "../../../helpers/spark-connect-server";
 import { columnsStream, int64Batch } from "../../../helpers/spark-ipc";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 const CURRENT = columnsStream([
   { name: "catalog", kind: "utf8", values: ["spark_catalog"] },
@@ -3442,4 +3446,27 @@ describe("SparkProvider: a read whose connection closes under it", () => {
       expect(provider.isConnected()).toBe(false);
     },
   );
+});
+
+const capabilities = new SparkProvider(CENSUS_CONNECTION.spark).getCapabilities();
+
+describe("the capabilities, the import refusal and the grammar", () => {
+  test("the import dialog refuses Spark with its no-target refusal, and no object kind takes row writes", () => {
+    expect(importRefusal(capabilities)).toBe(IMPORT_NO_TARGET);
+    expect(SPARK_OBJECT_KINDS.some((kind) => kind.acceptsRowWrites === true)).toBe(false);
+  });
+
+  test("Explain is spark-text, MCP is exposed and no foreign keys are declared", () => {
+    expect(capabilities.explainFormat).toBe("spark-text");
+    expect(MCP_EXPOSABLE.spark).toBe(true);
+    expect(capabilities.declaresForeignKeys).toBe(false);
+  });
+
+  test("the grammar reads raw strings, `/*+` hints as code and `--` comments continued by a backslash", () => {
+    const grammar = resolveSqlGrammar("spark");
+    expect(grammar.rawStrings).toBe(true);
+    expect(grammar.hintsAreCode).toBe(true);
+    expect(grammar.lineCommentBackslashContinues).toBe(true);
+    expect(grammar.lineCommentEndsAtCarriageReturn).toBe(true);
+  });
 });
