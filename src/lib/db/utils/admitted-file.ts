@@ -7,8 +7,8 @@
  * reads neither `STORAGE_SQLITE_PATH` nor the working directory itself, so neither the working directory at connect
  * nor a provider of its own can move what it opens.
  *
- * The same holds for the files on Studio's host a connection's `GRANTED_HOST_PATH_FIELDS` name, OPC UA's client
- * certificate and private key: the factory admits them (`admittedHostPathConnection`), and the provider reads the
+ * The same holds for the files on Studio's host the fields of its engine record's `hostPathFields` grant name, OPC
+ * UA's client certificate and private key: the factory admits them (`admittedHostPathConnection`), and the provider reads the
  * outcome through `requireAdmittedHostPath`.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";

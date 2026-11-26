@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GRANTED_MASKING_EXEMPT_COLUMNS } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { clientCapabilities } from "@/lib/db/client-capabilities";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { unknownTypeSentence } from "@/lib/db/type-id";
@@ -25,7 +25,7 @@ function declaring(exemption: ProviderCapabilities["maskingExemptColumns"]): Pro
 
 describe("clientCapabilities", () => {
   test("answers no masking exemption where Studio's grant holds none, whatever the provider declares", () => {
-    expect(GRANTED_MASKING_EXEMPT_COLUMNS.postgres).toBeNull();
+    expect(legacyEngineGrants("postgres").maskingExemptColumns).toBeNull();
 
     const answered = clientCapabilities("postgres", declaring({ column: ".*", reason: WIDE_REASON }));
 
@@ -34,13 +34,15 @@ describe("clientCapabilities", () => {
   });
 
   test("answers Studio's grant of the masking exemption where the provider declares none or another", () => {
-    expect(GRANTED_MASKING_EXEMPT_COLUMNS.modbus).not.toBeNull();
+    expect(legacyEngineGrants("modbus").maskingExemptColumns).not.toBeNull();
     // The grant is Studio's record's exemption for every shipped engine, so the answer is the one Studio gave before.
-    expect(GRANTED_MASKING_EXEMPT_COLUMNS.modbus).toEqual(maskingExemptColumns.modbus);
+    expect(legacyEngineGrants("modbus").maskingExemptColumns).toEqual(maskingExemptColumns.modbus);
 
-    expect(clientCapabilities("modbus", DECLARED).maskingExemptColumns).toBe(GRANTED_MASKING_EXEMPT_COLUMNS.modbus!);
+    expect(clientCapabilities("modbus", DECLARED).maskingExemptColumns).toBe(
+      legacyEngineGrants("modbus").maskingExemptColumns!,
+    );
     expect(clientCapabilities("modbus", declaring({ column: ".*", reason: WIDE_REASON })).maskingExemptColumns).toBe(
-      GRANTED_MASKING_EXEMPT_COLUMNS.modbus!,
+      legacyEngineGrants("modbus").maskingExemptColumns!,
     );
   });
 
@@ -51,7 +53,7 @@ describe("clientCapabilities", () => {
     const answered = clientCapabilities("modbus", provider);
 
     expect(answered).not.toBe(provider);
-    expect(answered).toEqual({ ...DECLARED, maskingExemptColumns: GRANTED_MASKING_EXEMPT_COLUMNS.modbus! });
+    expect(answered).toEqual({ ...DECLARED, maskingExemptColumns: legacyEngineGrants("modbus").maskingExemptColumns! });
     expect(provider).toEqual(before);
     expect(Object.isFrozen(provider)).toBe(true);
   });

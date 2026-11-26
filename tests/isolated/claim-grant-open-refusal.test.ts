@@ -1,6 +1,6 @@
 /**
  * Each of the provider factory's four entry points refuses an engine whose claims leave a refusal no grant covers
- * (its record's `grants.ungrantedRefusals`, for a legacy engine its row of `UNGRANTED_CLAIM_REFUSALS` in
+ * (its record's `grants.ungrantedRefusals`, for a legacy engine `legacyEngineGrants(id).ungrantedRefusals` in
  * src/lib/db/claim-grants.ts, docs/providers/CONTRACT.md clause M-54) before any cache lookup, tunnel or build:
  * `assertClaimsGranted` runs right after `assertReadOnlyHonoured` in each (src/lib/db/open-check.ts).
  *

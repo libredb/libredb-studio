@@ -627,7 +627,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
         "each claim the census reads back is a member of the schema's engine declaration",
         "agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it",
-        "READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open",
+        "each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open",
         "each declaration's policy and MCP segments hold exactly the claims the grant register's legacy rows review",
         "MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it",
       ],
@@ -645,7 +645,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the grant reader imports no claim record whose rows moved to the grant register",
       ],
       "tests/unit/db/write-reach-capability.test.ts": [
-        "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries",
+        "each legacy engine's readOnlyEnforced grant answers what the read-only map answered before it was derived from the record, bar the flipped entries",
       ],
     },
     schema: ["/$defs/policyClaims", "/$defs/mcpClaims"],
@@ -725,7 +725,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an agent credential form request equal to the record, pair for its null row, is read as the record's, and any other, or one with no record, as none",
         "a masking exemption request equal to the record's row is granted, and any other, or one with no record, is read as null",
         "a claim value outside its vocabulary is refused by name, naming the claim and the engine",
-        "READ_ONLY_ENFORCED is true exactly where the granted write reach is not open",
+        "each engine's readOnlyEnforced grant is true exactly where the granted write reach is not open",
         "the granted tables are frozen, each row too, keyed exactly by the shipped engines",
         "the host path fields granted are the union of the request and the record, and every host path field among the seed-only fields where no record exists",
         "a server level request is read per gate: true at governance admission where either is or no record exists, true at the choice of database only where both are: request %p, record %p",
@@ -736,6 +736,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
+      ],
+      "tests/unit/lib/db/record-grant-readers.test.ts": [
+        "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
       ],
       "tests/unit/lib/db/claim-grant-refusal.test.ts": [
         "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none",

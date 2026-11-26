@@ -27,7 +27,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import { recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 import path from "node:path";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import { readFileSync } from "node:fs";
 import { parse as parseYAML } from "yaml";
@@ -400,7 +400,7 @@ describe("the tested series, the dialog, the write reach and the repository's Ne
   });
 
   test("the read-only label keeps the promise: the provider has no write path, so the dialog draws no box", () => {
-    expect(READ_ONLY_ENFORCED.neo4j).toBe(true);
+    expect(legacyEngineGrants("neo4j").readOnlyEnforced).toBe(true);
     expect(writeReach.neo4j).toBe("none");
   });
 

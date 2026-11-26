@@ -23,25 +23,19 @@ import {
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_READING_NAMES,
-  GRANTED_AGENT_CREDENTIAL_FORM,
+  type EngineGrants,
   GRANTED_AGENT_EXECUTION_ENGINES,
   GRANTED_AGENT_READINGS,
   GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_DENIED_FILE_ACCESS_REFUSAL,
-  GRANTED_HOST_PATH_FIELDS,
-  GRANTED_MASKING_EXEMPT_COLUMNS,
   GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
   GRANTED_MCP_EXPOSABLE,
   GRANTED_MCP_METADATA_READ_CHANGES_STATE,
   GRANTED_MCP_STATEMENT_READ,
-  GRANTED_ONE_SESSION_ENGINES,
   GRANTED_OPENS_LOCAL_FILE,
   GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
-  GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
   GRANTED_READ_ROOTS_REQUIRED,
-  GRANTED_READS_FILE_ACCESS_POSTURE,
   GRANTED_SEED_AGENT_CREDENTIAL,
-  GRANTED_SINGLE_WRITER_FILE,
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantEngineClaims,
@@ -49,11 +43,9 @@ import {
   legacyAgentCredentials,
   legacyEngineGrants,
   legacyGrantRows,
-  READ_ONLY_ENFORCED,
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
-  UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
   UNGRANTED_SSH_TUNNEL_SENTENCE,
@@ -119,6 +111,11 @@ function rowWith(engine: string, changes: Partial<RegisterGrants> = {}): Registe
   return { legacy: LEGACY_KEY, engine, grants: { ...base.grants, ...changes } };
 }
 
+/** Member `member` of each shipped engine's grants, keyed by engine, as every legacy record holds them. */
+function legacyGrantTable<M extends keyof EngineGrants>(member: M): Readonly<Record<string, EngineGrants[M]>> {
+  return Object.fromEntries(SHIPPED_DATABASE_TYPES.map((type) => [type, legacyEngineGrants(type)[member]]));
+}
+
 /**
  * The grants of one engine `engine` requesting `requested` against the register row `row`, its legacy row by default
  * and none for an id with none, with `seedOnly` as its seed-only rows.
@@ -138,12 +135,12 @@ describe("Studio's grant of each policy and MCP claim", () => {
       SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
     const tables = [
       [GRANTED_WRITE_REACH, legacyRegisterTable("writeReach")],
-      [GRANTED_READS_FILE_ACCESS_POSTURE, legacyRegisterTable("readsFileAccessPosture")],
+      [legacyGrantTable("readsFileAccessPosture"), legacyRegisterTable("readsFileAccessPosture")],
       [GRANTED_DENIED_FILE_ACCESS_REFUSAL, legacyRegisterTable("deniedFileAccessRefusal")],
-      [GRANTED_SINGLE_WRITER_FILE, legacyRegisterTable("singleWriterFile")],
+      [legacyGrantTable("singleWriterFile"), legacyRegisterTable("singleWriterFile")],
       [GRANTED_READ_ROOTS_REQUIRED, legacyRegisterTable("readRootsRequired")],
-      [GRANTED_AGENT_CREDENTIAL_FORM, legacyRegisterTable("agentCredentialForm")],
-      [GRANTED_MASKING_EXEMPT_COLUMNS, legacyRegisterTable("maskingExemptColumns")],
+      [legacyGrantTable("agentCredentialForm"), legacyRegisterTable("agentCredentialForm")],
+      [legacyGrantTable("maskingExemptColumns"), legacyRegisterTable("maskingExemptColumns")],
       [GRANTED_MCP_EXPOSABLE, legacyRegisterTable("exposable")],
       [GRANTED_MCP_STATEMENT_READ, legacyRegisterTable("statementRead")],
       [GRANTED_MCP_METADATA_READ_CHANGES_STATE, legacyRegisterTable("metadataReadChangesState")],
@@ -151,12 +148,16 @@ describe("Studio's grant of each policy and MCP claim", () => {
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => UNGRANTED_CLAIM_REFUSALS[type] !== null)).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).ungrantedRefusals !== null)).toEqual([]);
     // Vacuity: the shipped records hold rows that differ from each claim's restrictive value.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_WRITE_REACH[type] !== "open").length).toBeGreaterThan(0);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_MCP_EXPOSABLE[type]).length).toBeGreaterThan(0);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SINGLE_WRITER_FILE[type]).length).toBeGreaterThan(0);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_MASKING_EXEMPT_COLUMNS[type] !== null)).toEqual(["modbus"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).singleWriterFile).length).toBeGreaterThan(
+      0,
+    );
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).maskingExemptColumns !== null)).toEqual([
+      "modbus",
+    ]);
   });
 
   test("a write reach request is capped at the grant, and read open where no record exists", () => {
@@ -353,9 +354,11 @@ describe("Studio's grant of each policy and MCP claim", () => {
     refused(request({}, { agentCredentialRequired: wrong(null) }), "mcp.agentCredentialRequired", "null");
   });
 
-  test("READ_ONLY_ENFORCED is true exactly where the granted write reach is not open", () => {
+  test("each engine's readOnlyEnforced grant is true exactly where the granted write reach is not open", () => {
     expect(
-      SHIPPED_DATABASE_TYPES.filter((type) => READ_ONLY_ENFORCED[type] !== (GRANTED_WRITE_REACH[type] !== "open")),
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) => legacyEngineGrants(type).readOnlyEnforced !== (GRANTED_WRITE_REACH[type] !== "open"),
+      ),
     ).toEqual([]);
     expect(grantOf("etcd", request({ writeReach: "guarded" })).readOnlyEnforced).toBe(true);
     expect(grantOf("modbus", request({ writeReach: "none" })).readOnlyEnforced).toBe(true);
@@ -368,22 +371,14 @@ describe("Studio's grant of each policy and MCP claim", () => {
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
     const tables = [
       GRANTED_WRITE_REACH,
-      GRANTED_READS_FILE_ACCESS_POSTURE,
       GRANTED_DENIED_FILE_ACCESS_REFUSAL,
-      GRANTED_SINGLE_WRITER_FILE,
       GRANTED_READ_ROOTS_REQUIRED,
-      GRANTED_AGENT_CREDENTIAL_FORM,
-      GRANTED_MASKING_EXEMPT_COLUMNS,
       GRANTED_MCP_EXPOSABLE,
       GRANTED_MCP_STATEMENT_READ,
       GRANTED_MCP_METADATA_READ_CHANGES_STATE,
       GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-      READ_ONLY_ENFORCED,
-      UNGRANTED_CLAIM_REFUSALS,
       GRANTED_OPENS_LOCAL_FILE,
-      GRANTED_HOST_PATH_FIELDS,
       GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
-      GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
       GRANTED_SSH_TUNNEL_REFUSAL,
       GRANTED_SEED_AGENT_CREDENTIAL,
       GRANTED_AGENT_STATEMENT_LANGUAGE,
@@ -430,17 +425,15 @@ describe("Studio's grant of each connection claim", () => {
       SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
     const tables = [
       [GRANTED_OPENS_LOCAL_FILE, legacyRegisterTable("opensLocalFile")],
-      [GRANTED_HOST_PATH_FIELDS, legacyRegisterTable("hostPathFields")],
+      [legacyGrantTable("hostPathFields"), legacyRegisterTable("hostPathFields")],
       [GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION, legacyRegisterTable("serverLevelWithoutDatabase")],
-      [GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE, legacyRegisterTable("serverLevelWithoutDatabase")],
+      [legacyGrantTable("serverLevelAtCatalogChoice"), legacyRegisterTable("serverLevelWithoutDatabase")],
       [GRANTED_SSH_TUNNEL_REFUSAL, legacyRegisterTable("sshTunnel")],
       [GRANTED_SEED_AGENT_CREDENTIAL, legacyAgentCredentialTable()],
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    // The granted tables are cut from each legacy engine's grants: the host path fields and the seed agent credential
-    // are its objects.
-    expect(GRANTED_HOST_PATH_FIELDS.opcua).toBe(legacyEngineGrants("opcua").hostPathFields);
+    // The granted tables are cut from each legacy engine's grants: the seed agent credential is its object.
     expect(GRANTED_SEED_AGENT_CREDENTIAL.elasticsearch).toBe(legacyEngineGrants("elasticsearch").agentCredential);
     // Vacuity: each record holds rows that differ from its claim's restrictive value.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_LOCAL_FILE[type])).toEqual([
@@ -448,8 +441,10 @@ describe("Studio's grant of each connection claim", () => {
       "libredb",
       "sqlite",
     ]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_HOST_PATH_FIELDS[type].length > 0)).toEqual(["opcua"]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE[type])).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).hostPathFields.length > 0)).toEqual([
+      "opcua",
+    ]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).serverLevelAtCatalogChoice)).toEqual([
       "postgres",
     ]);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SSH_TUNNEL_REFUSAL[type] === null).length).toBe(32);
@@ -910,20 +905,21 @@ describe("the register's legacy rows the grant reader reads", () => {
     );
   });
 
-  test("GRANTED_AGENT_EXECUTION_ENGINES and GRANTED_ONE_SESSION_ENGINES are the engines whose legacy rows grant agent execution and name a one-session reason, in catalog order, frozen", () => {
+  test("GRANTED_AGENT_EXECUTION_ENGINES is the engines whose legacy rows grant agent execution, in catalog order, frozen, and each legacy engine's grants carry its row's one-session reason", () => {
     const rows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
     const grantsOf = (engine: string) => (rows[engine] as RegisterRow).grants;
 
     expect(GRANTED_AGENT_EXECUTION_ENGINES).toEqual(
       SHIPPED_DATABASE_TYPES.filter((engine) => grantsOf(engine).agentExecution),
     );
-    expect(GRANTED_ONE_SESSION_ENGINES).toEqual(
-      SHIPPED_DATABASE_TYPES.filter((engine) => grantsOf(engine).servesOneSession !== null),
+    expect(Object.isFrozen(GRANTED_AGENT_EXECUTION_ENGINES)).toBe(true);
+    expect(() => (GRANTED_AGENT_EXECUTION_ENGINES as DatabaseType[]).push("postgres")).toThrow(TypeError);
+    const oneSession = SHIPPED_DATABASE_TYPES.filter((engine) => legacyEngineGrants(engine).servesOneSession !== null);
+    expect(SHIPPED_DATABASE_TYPES.map((engine) => legacyEngineGrants(engine).servesOneSession)).toEqual(
+      SHIPPED_DATABASE_TYPES.map((engine) => grantsOf(engine).servesOneSession),
     );
-    for (const list of [GRANTED_AGENT_EXECUTION_ENGINES, GRANTED_ONE_SESSION_ENGINES]) {
-      expect(Object.isFrozen(list)).toBe(true);
-      expect(() => (list as DatabaseType[]).push("postgres")).toThrow(TypeError);
-      // Vacuity: each list holds some shipped engines and leaves others out.
+    // Vacuity: each holds some shipped engines and leaves others out.
+    for (const list of [GRANTED_AGENT_EXECUTION_ENGINES, oneSession]) {
       expect(list.length).toBeGreaterThan(0);
       expect(list.length).toBeLessThan(SHIPPED_DATABASE_TYPES.length);
     }

@@ -9,7 +9,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  * The unit, integration and live layers drive the provider directly, so they say the code is
  * right and nothing about whether a user can reach it. What a new type-id needs in order to be
  * SELECTABLE lives outside the provider - the picker, the dialog's fields, the labels and the
- * read-only declaration are all `DatabaseUIConfig` and `READ_ONLY_ENFORCED` - which is why this
+ * read-only declaration are all `DatabaseUIConfig` and the engine record's `grants.readOnlyEnforced` - which is why this
  * runs in a browser.
  *
  * ONE of these tests reaches the fixture of `docker/sparkplug/compose-service.yml` on

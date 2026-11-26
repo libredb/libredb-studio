@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readOnlySentence as etcdReadOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import { readOnlySentence, refuseReadOnly } from "@/lib/db/providers/vector/milvus/write-policy";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 
 describe("readOnlySentence", () => {
   test.each(["seed", "connection", "execution-profile"] as const)("words %s exactly as etcd does", (source) => {
@@ -33,6 +33,6 @@ describe("refuseReadOnly", () => {
 
 describe("the read-only record", () => {
   test("Milvus is enforced read-only", () => {
-    expect(READ_ONLY_ENFORCED.milvus).toBe(true);
+    expect(legacyEngineGrants("milvus").readOnlyEnforced).toBe(true);
   });
 });

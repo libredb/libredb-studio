@@ -80,13 +80,15 @@ export async function openLegacyEngine(
   // that is on and was not opened was refused by the check, except for readProviderDeclarations, which never hands its
   // provider out.
   let connection: DatabaseConnection = providerConnection(given);
-  // A SQLite, DuckDB or LibreDB connection (`GRANTED_OPENS_LOCAL_FILE`) is handed the file core admitted, resolved
-  // against the working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL
-  // byte, a connection string that names no file after `file:` or a name that is not text is refused here, by name,
-  // before any provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
+  // A connection whose engine record grants `opensLocalFile` (SQLite, DuckDB, LibreDB) is handed the file core
+  // admitted, resolved against the working directory now; one of Studio's own storage files, a path the reserved check
+  // cannot read, a NUL byte, a connection string that names no file after `file:` or a name that is not text is refused
+  // here, by name, before any provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes
+  // unchanged.
   connection = admittedFileConnection(connection);
-  // The files on Studio's host a connection's `GRANTED_HOST_PATH_FIELDS` name (OPC UA's client certificate and key)
-  // are admitted the same way, each refused by name with its field, and handed to the provider as absolute paths.
+  // The files on Studio's host the fields its engine record's `hostPathFields` grant names (OPC UA's client
+  // certificate and key) are admitted the same way, each refused by name with its field, and handed to the provider as
+  // absolute paths.
   connection = admittedHostPathConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as the
   // open check checked it, the process's egress decision, which a guarded provider hands its guard, and, for an engine

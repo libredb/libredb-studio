@@ -5,7 +5,9 @@ import * as path from "node:path";
 import { forgetStorageLocation } from "@/lib/data-dir";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { admittedFileConnection, namesInMemoryDatabase } from "@/lib/db/provider-files";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { sessionCapacity } from "@/lib/db/session-capacity";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { ADMITTED_FILE, type DatabaseConnection, type DatabaseType, type WithAdmittedFile } from "@/lib/types";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
 
@@ -115,8 +117,16 @@ describe("sessionCapacity", () => {
   test("the class reads Studio's records and the connection, never a provider or a manifest", () => {
     const source = readFileSync(path.join(originalDirectory, "src/lib/db/session-capacity.ts"), "utf8");
     const imports = [...source.matchAll(/^import[^;]*?from\s+"([^"]+)";/gm)].map((match) => match[1]).sort();
-    expect(imports).toEqual(["./claim-grants", "./provider-files", "./type-id", "@/lib/types"]);
-    // A connection whose type names no provider is refused by name before any record is read.
-    expect(() => sessionCapacity(connection("postgres", { type: "nonesuch" as DatabaseType }))).toThrow("nonesuch");
+    expect(imports).toEqual(["./provider-files", "./server-catalog", "@/lib/types"]);
+    // A connection whose type names no engine is refused by name by the record's lookup, before the connection is read.
+    const refused = (() => {
+      try {
+        sessionCapacity(connection("postgres", { type: "nonesuch" as DatabaseType }));
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(refused).toBeInstanceOf(UnknownProviderError);
+    expect((refused as Error).message).toBe(unknownTypeSentence("nonesuch"));
   });
 });

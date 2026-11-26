@@ -451,11 +451,11 @@ export interface WithAdmittedFile {
   readonly [ADMITTED_FILE]?: string;
 }
 
-/** A connection field that names a file on Studio's own host which the provider reads (`GRANTED_HOST_PATH_FIELDS`). */
+/** A connection field that names a file on Studio's own host which the provider reads (a `hostPathFields` grant). */
 export type HostPathField = "clientCertificatePath" | "clientPrivateKeyPath";
 
 /**
- * The files on Studio's own host a connection's `GRANTED_HOST_PATH_FIELDS` name, as Studio's provider factory admitted
+ * The files on Studio's own host a connection's `hostPathFields` grant names, as Studio's provider factory admitted
  * them: an absolute path per field the connection sets, resolved against the working directory when the provider was
  * built and checked against Studio's own storage files there, so the provider reads them and resolves nothing itself.
  * A field the connection leaves absent, `null` or empty has no entry.
@@ -707,8 +707,8 @@ export interface DatabaseConnection {
    * command, an object edit and a maintenance operation with a refusal that names the read-only mode
    * and where it was set, and sends nothing.
    *
-   * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
-   * `src/lib/db/claim-grants.ts` answers and a census holds equal to the summary of
+   * Accepted only on an engine whose provider enforces it, which the engine record's `grants.readOnlyEnforced`
+   * (`src/lib/db/claim-grants.ts`) answers and a census holds equal to the summary of
    * `ProviderCapabilities.writeReach`. On any other engine `true` is refused, by the seed schema
    * at load and by `assertReadOnlyHonoured` in `src/lib/db/open-check.ts` before anything is built or
    * dialled, because a mode the provider ignores would list the connection as read-only and send its

@@ -1,8 +1,8 @@
 /**
  * `assertClaimsGranted` (src/lib/db/open-check.ts): an engine whose claims leave a refusal no grant covers, a
  * single-writer file request that is not Studio's grant (docs/providers/CONTRACT.md, clause M-54), is refused at every
- * open by name, read from its record's `grants.ungrantedRefusals`, which for a legacy engine is its row of
- * `UNGRANTED_CLAIM_REFUSALS` in src/lib/db/claim-grants.ts. The record is crafted here; the four entry points that raise
+ * open by name, read from its record's `grants.ungrantedRefusals`, which for a legacy engine is the grant reader's
+ * answer, `legacyEngineGrants(id).ungrantedRefusals` in src/lib/db/claim-grants.ts. The record is crafted here; the four entry points that raise
  * it are held by tests/isolated/claim-grant-open-refusal.test.ts.
  */
 import { describe, expect, test } from "bun:test";

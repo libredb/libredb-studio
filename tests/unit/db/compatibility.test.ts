@@ -9,7 +9,7 @@
  * enforcement mechanism for that rule, moved out of a policy sentence and into CI.
  */
 import { describe, test, expect } from "bun:test";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import {
   WIRE_COMPATIBLE_ENGINES,
   compatibleEnginesFor,
@@ -410,7 +410,7 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("db2")).toEqual([]);
     // The provider enforces no read-only mode, so `readOnly: true` is refused, and MCP is offered,
     // both as on Oracle.
-    expect(READ_ONLY_ENFORCED.db2).toBe(false);
+    expect(legacyEngineGrants("db2").readOnlyEnforced).toBe(false);
     expect(exposable.db2).toBe(true);
   });
 
@@ -420,7 +420,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("qdrant");
     expect(isExternalDatabaseType("qdrant")).toBe(true);
     expect(compatibleEnginesFor("qdrant")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
+    expect(legacyEngineGrants("qdrant").readOnlyEnforced).toBe(true);
     expect(exposable.qdrant).toBe(true);
   });
 
@@ -430,7 +430,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("milvus");
     expect(isExternalDatabaseType("milvus")).toBe(true);
     expect(compatibleEnginesFor("milvus")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.milvus).toBe(true);
+    expect(legacyEngineGrants("milvus").readOnlyEnforced).toBe(true);
     expect(exposable.milvus).toBe(true);
   });
 
@@ -441,7 +441,7 @@ describe("wire-compatibility registry", () => {
       expect(SHIPPED_DATABASE_TYPES).toContain(type);
       expect(isExternalDatabaseType(type)).toBe(true);
       expect(compatibleEnginesFor(type)).toEqual([]);
-      expect(READ_ONLY_ENFORCED[type]).toBe(true);
+      expect(legacyEngineGrants(type).readOnlyEnforced).toBe(true);
       expect(exposable[type]).toBe(true);
     }
   });
@@ -451,7 +451,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("oxia");
     expect(isExternalDatabaseType("oxia")).toBe(true);
     expect(compatibleEnginesFor("oxia")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.oxia).toBe(true);
+    expect(legacyEngineGrants("oxia").readOnlyEnforced).toBe(true);
     expect(exposable.oxia).toBe(false);
   });
 
@@ -463,7 +463,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("databend");
     expect(isExternalDatabaseType("databend")).toBe(true);
     expect(compatibleEnginesFor("databend")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.databend).toBe(false);
+    expect(legacyEngineGrants("databend").readOnlyEnforced).toBe(false);
     expect(exposable.databend).toBe(true);
     expect(readsFileAccessPosture.databend).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.databend).toBe(false);
@@ -477,7 +477,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("bigquery");
     expect(isExternalDatabaseType("bigquery")).toBe(true);
     expect(compatibleEnginesFor("bigquery")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.bigquery).toBe(false);
+    expect(legacyEngineGrants("bigquery").readOnlyEnforced).toBe(false);
     expect(exposable.bigquery).toBe(true);
     expect(readsFileAccessPosture.bigquery).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.bigquery).toBe(false);
@@ -488,7 +488,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("snowflake");
     expect(isExternalDatabaseType("snowflake")).toBe(true);
     expect(compatibleEnginesFor("snowflake")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.snowflake).toBe(false);
+    expect(legacyEngineGrants("snowflake").readOnlyEnforced).toBe(false);
     expect(exposable.snowflake).toBe(true);
     expect(readsFileAccessPosture.snowflake).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.snowflake).toBe(false);
@@ -502,7 +502,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("s3");
     expect(isExternalDatabaseType("s3")).toBe(true);
     expect(compatibleEnginesFor("s3")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.s3).toBe(true);
+    expect(legacyEngineGrants("s3").readOnlyEnforced).toBe(true);
     expect(exposable.s3).toBe(true);
     expect(statementRead.s3).toBe(true);
     expect(agentCredentialRequired.s3).toBe(true);
@@ -518,7 +518,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("kubernetes");
     expect(isExternalDatabaseType("kubernetes")).toBe(true);
     expect(compatibleEnginesFor("kubernetes")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
+    expect(legacyEngineGrants("kubernetes").readOnlyEnforced).toBe(true);
     // Offered with every answer machine-redacted.
     expect(exposable.kubernetes).toBe(true);
     expect(readsFileAccessPosture.kubernetes).toBe(false);
@@ -539,7 +539,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("weaviate");
     expect(EXTERNAL_DATABASE_TYPES).toContain("weaviate");
     // As Qdrant's: every console request is a read and the provider keeps the mode; no file to read.
-    expect(READ_ONLY_ENFORCED.weaviate).toBe(true);
+    expect(legacyEngineGrants("weaviate").readOnlyEnforced).toBe(true);
     expect(readsFileAccessPosture.weaviate).toBe(false);
     // As Milvus's and Qdrant's: list_connections and inspect_schema; run_read_query refuses it (no queryReadOnly).
     expect(exposable.weaviate).toBe(true);
@@ -549,7 +549,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("spark");
     expect(EXTERNAL_DATABASE_TYPES).toContain("spark");
     // No engine read-only mode and no file-access posture to read (Apache Spark).
-    expect(READ_ONLY_ENFORCED.spark).toBe(false);
+    expect(legacyEngineGrants("spark").readOnlyEnforced).toBe(false);
     expect(readsFileAccessPosture.spark).toBe(false);
     // list_connections and inspect_schema; run_read_query refuses it, since the provider has no queryReadOnly.
     expect(exposable.spark).toBe(true);
@@ -564,7 +564,7 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES).toContain("firestore");
     expect(isExternalDatabaseType("firestore")).toBe(true);
     expect(compatibleEnginesFor("firestore")).toEqual([]);
-    expect(READ_ONLY_ENFORCED.firestore).toBe(true);
+    expect(legacyEngineGrants("firestore").readOnlyEnforced).toBe(true);
     expect(exposable.firestore).toBe(false);
     expect(readsFileAccessPosture.firestore).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.firestore).toBe(false);
@@ -833,7 +833,7 @@ describe("the legacy rows' single-writer file", () => {
 /**
  * `servesOneSession`, as the legacy rows of the grant register review it (docs/providers/CONTRACT.md, clause C-66): the
  * engines whose connections serve their object tree from one session, the editor's, each with the reason Studio's
- * census found. A host fact read only through `GRANTED_ONE_SESSION_ENGINES` by `sessionCapacity` in
+ * census found. A host fact read only through each engine record's `grants.servesOneSession` by `sessionCapacity` in
  * src/lib/db/session-capacity.ts, and never a claim an engine declaration requests. Every shipped engine has a row and
  * the rows are frozen, which the grant reader's load holds.
  */

@@ -125,7 +125,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
  * The types whose provider reads `connectionString` (Spec A section 7):
  * getCapabilities().supportsConnectionString, except sqlite (declares false, opens the field as the file path)
  * and mssql (declares true for the form's paste, builds from the fields only). Static for the reason
- * `READ_ONLY_ENFORCED` is: the seed schema decides at load, before any provider exists, and refuses a
+ * `GRANTED_WRITE_REACH` is: the seed schema decides at load, before any provider exists, and refuses a
  * `connectionString` where this answers false, naming the connection and the type, because a provider that
  * ignores the string would list a connection that opens somewhere else than the file says.
  *

@@ -3,7 +3,7 @@
  * `prepareQuery`, and a construction that touches no transport.
  */
 import { describe, expect, test } from "bun:test";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";
@@ -102,9 +102,9 @@ describe("declarations", () => {
   });
 });
 
-test("READ_ONLY_ENFORCED.s3 equals the summary of the declared write reach", () => {
-  expect(READ_ONLY_ENFORCED.s3).toBe(true);
-  expect(READ_ONLY_ENFORCED.s3).toBe(
+test("s3's readOnlyEnforced grant equals the summary of the declared write reach", () => {
+  expect(legacyEngineGrants("s3").readOnlyEnforced).toBe(true);
+  expect(legacyEngineGrants("s3").readOnlyEnforced).toBe(
     summarizeWriteReach(declaredOnly().provider.getCapabilities().writeReach) !== "open",
   );
 });
@@ -133,7 +133,7 @@ const provider = new S3Provider(
 
 describe("the records, the Keys panel, the labels and the maintenance refusal", () => {
   test("S3 is enforced read-only, exposed over MCP under an agent key, and run by the agent", () => {
-    expect(READ_ONLY_ENFORCED.s3).toBe(true);
+    expect(legacyEngineGrants("s3").readOnlyEnforced).toBe(true);
     expect(exposable.s3).toBe(true);
     expect(statementRead.s3).toBe(true);
     expect(agentCredentialRequired.s3).toBe(true);

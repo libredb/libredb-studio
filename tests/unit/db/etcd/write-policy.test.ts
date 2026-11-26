@@ -19,7 +19,7 @@ import {
   refuseStoredValues,
 } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import path from "node:path";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { readFileSync } from "node:fs";
 
 const LIMITS = { maxLimit: 500, txnRangeLimit: 50, maxCommandTimeoutMs: 60_000, maxWatchWindowMs: 55_000 };
@@ -282,7 +282,7 @@ describe("the read-only marker and the providers that keep the mode", () => {
   });
 
   test("etcd's provider is one that keeps the mode, and an engine whose provider does not is refused it", () => {
-    expect(READ_ONLY_ENFORCED.etcd).toBe(true);
-    expect(READ_ONLY_ENFORCED.postgres).toBe(false);
+    expect(legacyEngineGrants("etcd").readOnlyEnforced).toBe(true);
+    expect(legacyEngineGrants("postgres").readOnlyEnforced).toBe(false);
   });
 });

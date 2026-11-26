@@ -11,15 +11,13 @@
  * header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
  * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `GRANTED_WRITE_REACH` by
- * the read-only marker and the connection form hook, `GRANTED_READS_FILE_ACCESS_POSTURE` and
- * `GRANTED_SINGLE_WRITER_FILE` by the provider cache key, `GRANTED_MASKING_EXEMPT_COLUMNS` by `clientCapabilities`
- * (each Studio's grant of a claim, ./claim-grants), as are `GRANTED_OPENS_LOCAL_FILE` by the provider factory's file
- * admission, `GRANTED_HOST_PATH_FIELDS` by its host path admission, `GRANTED_SSH_TUNNEL_REFUSAL` by the provider's
- * fields and the connection dialog, and `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE` by `catalogChoice`;
- * `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by its six readers. The open check
- * (./open-check), core's tunnel decision (./tunnel-decision) and the provider factory's other reads of a grant read
- * none of these tables: they read the engine's record (`EngineRecord` in ./server-catalog), which they look up through
- * `legacyProviderEngine`, and whose `grants` the legacy adapter builds from them. Other reads are still by
+ * the read-only marker and the connection form hook and `GRANTED_SSH_TUNNEL_REFUSAL` by the connection dialog (each
+ * Studio's grant of a claim, ./claim-grants); `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by
+ * its six readers. The open check (./open-check), core's tunnel decision (./tunnel-decision), the provider factory's
+ * other reads of a grant, the provider cache key, `clientCapabilities`, `catalogChoice`, the provider's fields, the
+ * file and host path admissions and the session capacity class read none of these tables: they read the grants of the
+ * engine's record (`EngineRecord` in ./server-catalog), which they look up through `legacyProviderEngine` or
+ * `servedEngineRecord`, and which refuse a value naming no engine with this module's sentence. Other reads are still by
  * bare index, of other per-engine tables and of some of these (the seed schema's `GRANTED_WRITE_REACH` refinement, the
  * VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module unless it calls
  * it.

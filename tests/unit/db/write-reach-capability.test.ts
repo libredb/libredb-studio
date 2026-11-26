@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
@@ -41,7 +41,7 @@ const OTHER_PASSWORD = ["not", "a", "real", "password"].join("-");
 const ROOT = join(import.meta.dir, "..", "..", "..");
 
 /**
- * The map `READ_ONLY_ENFORCED` held before it was derived from the record, so deriving it changes no answer, with
+ * The read-only map Studio held before it was derived from the record, so deriving it changes no answer, with
  * two entries flipped since: Prometheus, once a test held its closed endpoint table to reads, and Kafka, once a test
  * held its client's API key set to reads.
  */
@@ -127,9 +127,12 @@ function presentPaths(type: DatabaseType, provider: DatabaseProvider): Record<Wr
 const ofReach = (reach: string) => SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === reach);
 
 describe("the legacy rows' write reach against each provider's own declaration", () => {
-  test("READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries", () => {
-    expect({ ...READ_ONLY_ENFORCED }).toEqual(READ_ONLY_ENFORCED_BEFORE);
-    expect(Object.isFrozen(READ_ONLY_ENFORCED)).toBe(true);
+  test("each legacy engine's readOnlyEnforced grant answers what the read-only map answered before it was derived from the record, bar the flipped entries", () => {
+    const enforced = Object.fromEntries(
+      SHIPPED_DATABASE_TYPES.map((type) => [type, legacyEngineGrants(type).readOnlyEnforced]),
+    );
+    expect(enforced).toEqual(READ_ONLY_ENFORCED_BEFORE);
+    expect(Object.isFrozen(legacyEngineGrants("postgres"))).toBe(true);
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])(

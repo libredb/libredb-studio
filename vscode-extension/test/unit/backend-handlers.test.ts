@@ -29,6 +29,7 @@ import {
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type TypeIdRefusal, typeIdRefusal } from "@/lib/db/type-id";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { runTarget } from "@/lib/sql/run-target";
@@ -44,6 +45,7 @@ import {
   RefusedBeforeSendError,
   StudioTimeoutRefusal,
   TimeoutError,
+  UnknownProviderError,
   connectPhase,
   markNotSent,
 } from "@/lib/db/errors";
@@ -2522,6 +2524,22 @@ describe("registerHandlers", () => {
     assert.equal((await answeredError(host, METHODS.closeConnection, { connectionId: "c1" })).code, -32002);
     await host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     assert.equal(await host.sendRequest(METHODS.closeConnection, { connectionId: "c1" }), null);
+  });
+
+  it("a connection/test or connection/open of a type no engine serves answers the unknown-type refusal on the wire, before any factory call", async () => {
+    const { host, calls } = await initialized({}, fakeFactory(fakeProvider(), { enabledProviderTypes: () => null }));
+    const unknown = new UnknownProviderError(typeIdRefusal("nope") as TypeIdRefusal);
+    const expected = toResponseError(unknown).toJson();
+    const params = { connection: { ...WIRE, type: "nope" }, posture: POSTURE };
+    for (const method of [METHODS.testConnection, METHODS.openConnection]) {
+      assert.deepEqual(await answeredError(host, method, params), expected);
+    }
+    assert.deepEqual(expected, {
+      code: 400,
+      message: 'No provider for the connection type "nope" is installed in this LibreDB Studio.',
+      data: { code: "PROVIDER_UNKNOWN", kind: "unknown-provider", outcome: "unknown" },
+    });
+    assert.deepEqual(calls, []);
   });
 
   it("refuses engines/list and connection/parse before initialize, and serves both after it", async () => {

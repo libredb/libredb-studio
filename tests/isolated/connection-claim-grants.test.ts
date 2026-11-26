@@ -1,13 +1,14 @@
 /**
- * Each connection gate answers Studio's grant of its claim, never Studio's review record of it
- * (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer, the fields a provider receives, the
- * provider factory's file and host path admissions, governance row admission, the choice of database, the seed schema
- * and the seed projection's gate.
+ * Each connection gate that still reads a granted table answers Studio's grant of its claim, never Studio's review
+ * record of it (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer, governance row
+ * admission, the seed schema and the seed projection's gate.
  *
  * Core's tunnel decision reads no grant table: it reads the engine record's `grants.sshTunnel`, so this file proves
- * only that the decision follows the record's grant, on a record whose grant is planted. That each legacy record's
- * grants are the grant reader's rows is held by the test "each legacy record's grants equal the grant reader's rows for
- * its id" in tests/unit/lib/provider-host/legacy-adapter.test.ts (#2536).
+ * only that the decision follows the record's grant, on a record whose grant is planted. The fields a provider
+ * receives, the provider factory's file and host path admissions and the choice of database read the grants of the
+ * connection's installed engine record too, which tests/unit/lib/db/record-grant-readers.test.ts holds without a mock.
+ * That each legacy record's grants are the grant reader's rows is held by the test "each legacy record's grants equal
+ * the grant reader's rows for its id" in tests/unit/lib/provider-host/legacy-adapter.test.ts (#2536).
  *
  * Under tests/isolated because it replaces `@/lib/db/claim-grants` with `mock.module()` before it imports any gate,
  * which holds only while this file is the first in its bun process to evaluate them. The grant module is the real one
@@ -16,9 +17,8 @@
  */
 import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
-// Types and two symbols, a module that loads no gate, so importing it before the grant module is replaced is safe.
-import { ADMITTED_FILE, ADMITTED_HOST_PATHS, type DatabaseConnection, type WithAdmittedHostPaths } from "@/lib/types";
+// Types only, a module that loads no gate, so importing it before the grant module is replaced is safe.
+import type { DatabaseConnection } from "@/lib/types";
 
 const realGrants = { ...(await import("@/lib/db/claim-grants")) };
 const PLANTED_TUNNEL_REFUSAL = "Postgres takes no SSH tunnel in this test. Turn the tunnel off.";
@@ -27,20 +27,10 @@ mock.module("@/lib/db/claim-grants", () => ({
   GRANTED_SSH_TUNNEL_REFUSAL: Object.freeze({
     ...realGrants.GRANTED_SSH_TUNNEL_REFUSAL,
     postgres: PLANTED_TUNNEL_REFUSAL,
-    opcua: PLANTED_TUNNEL_REFUSAL,
-  }),
-  GRANTED_OPENS_LOCAL_FILE: Object.freeze({ ...realGrants.GRANTED_OPENS_LOCAL_FILE, sqlite: false }),
-  GRANTED_HOST_PATH_FIELDS: Object.freeze({
-    ...realGrants.GRANTED_HOST_PATH_FIELDS,
-    postgres: Object.freeze(["clientCertificatePath"] as const),
   }),
   GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Object.freeze({
     ...realGrants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
     mysql: true,
-  }),
-  GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Object.freeze({
-    ...realGrants.GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
-    postgres: false,
   }),
   GRANTED_SEED_AGENT_CREDENTIAL: Object.freeze({
     ...realGrants.GRANTED_SEED_AGENT_CREDENTIAL,
@@ -53,10 +43,7 @@ const { legacyAgentCredentialTable, legacyRegisterTable } = await import("../hel
 const { decideTunnel } = await import("@/lib/db/tunnel-decision");
 const { LEGACY_ENGINES } = await import("@/lib/provider-host/legacy-adapter/records");
 const { offersSshTunnel } = await import("@/lib/db-ui-config");
-const { providerFields } = await import("@/lib/db/provider-connection");
-const { admittedFileConnection, admittedHostPathConnection } = await import("@/lib/db/provider-files");
 const { admitConnectionRows } = await import("@/lib/governance/admission");
-const { catalogChoice } = await import("@/lib/db/catalog-scope");
 const { SeedConnectionSchema } = await import("@/lib/seed/types");
 const { projectSeedConnection } = await import("@/lib/seed/connection-filter");
 
@@ -67,11 +54,7 @@ describe("the connection gates", () => {
   test("each connection gate answers Studio's grant of its claim, not the record", () => {
     // The records hold the rows the planted grants differ from.
     expect(legacyRegisterTable("sshTunnel").postgres).toBeNull();
-    expect(legacyRegisterTable("sshTunnel").opcua).toBeNull();
-    expect(legacyRegisterTable("opensLocalFile").sqlite).toBe(true);
-    expect(legacyRegisterTable("hostPathFields").postgres).toEqual([]);
     expect(legacyRegisterTable("serverLevelWithoutDatabase").mysql).toBe(false);
-    expect(legacyRegisterTable("serverLevelWithoutDatabase").postgres).toBe(true);
     expect(legacyAgentCredentialTable().postgres).not.toBeNull();
     expect(legacyAgentCredentialTable().mysql?.supersededBy).toEqual([]);
 
@@ -100,25 +83,6 @@ describe("the connection gates", () => {
     expect(offersSshTunnel("postgres")).toBe(false);
     expect(offersSshTunnel("mysql")).toBe(true);
 
-    // A refused tunnel hands OPC UA no host and port through the tunnel rule.
-    expect(providerFields("opcua")).not.toContain("port");
-    expect(providerFields("mysql")).toContain("port");
-
-    // A file the grant does not mark is not admitted as one; the granted host path field is.
-    const sqlite: DatabaseConnection = { id: "lite", name: "lite", type: "sqlite", database: "orders.db", createdAt };
-    const notAdmitted = admittedFileConnection(sqlite);
-    expect(notAdmitted).toBe(sqlite);
-    expect(ADMITTED_FILE in notAdmitted).toBe(false);
-    const postgres: DatabaseConnection = {
-      id: "pg",
-      name: "pg",
-      type: "postgres",
-      clientCertificatePath: "certs/client.pem",
-      createdAt,
-    };
-    const admitted = admittedHostPathConnection(postgres) as WithAdmittedHostPaths;
-    expect(admitted[ADMITTED_HOST_PATHS]?.clientCertificatePath).toEndWith(path.join("certs", "client.pem"));
-
     // Governance skips a mysql definition with no database, as the grant at admission reads mysql.
     const admission = admitConnectionRows(
       [
@@ -145,11 +109,6 @@ describe("the connection gates", () => {
         code: "SERVER_LEVEL_NOT_ALLOWED",
       },
     ]);
-
-    // The choice of database is not honoured on postgres, as the grant at the choice reads it.
-    expect(
-      catalogChoice({ id: "pg", name: "pg", type: "postgres", createdAt }, { catalogSessions: true } as never),
-    ).toBe("engine-not-recorded");
 
     // The seed schema refuses a postgres agent credential, and the projection's gate a mysql one beside the password.
     const agentPassword = randomUUID();

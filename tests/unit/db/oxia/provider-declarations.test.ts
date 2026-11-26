@@ -11,7 +11,7 @@ import { OXIA_OBJECT_KINDS } from "@/lib/db/providers/keyvalue/oxia/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
@@ -160,7 +160,9 @@ describe("the capabilities and the write reach", () => {
     const built = await createDatabaseProvider(oxiaConnection());
     expect(built).toBeInstanceOf(OxiaProvider);
     expect(built.getCapabilities()).toEqual(provider.getCapabilities());
-    expect(READ_ONLY_ENFORCED.oxia).toBe(summarizeWriteReach(provider.getCapabilities().writeReach) !== "open");
+    expect(legacyEngineGrants("oxia").readOnlyEnforced).toBe(
+      summarizeWriteReach(provider.getCapabilities().writeReach) !== "open",
+    );
     expect(offersSshTunnel("oxia")).toBe(true);
     expect(hostUriSchemes("oxia")).toEqual([]);
   });

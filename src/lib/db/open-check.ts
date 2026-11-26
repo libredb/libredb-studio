@@ -93,15 +93,15 @@ export function assertProviderEnabled(engine: EngineRecord): void {
  * Refuse a `readOnly` the engine cannot keep, before anything is built or dialled (#1089).
  *
  * A read-only connection is a promise its provider keeps by refusing every write before any request, so it is accepted
- * only where the record's `grants.readOnlyEnforced` is true, which for a legacy engine is its row of
- * `READ_ONLY_ENFORCED` (./claim-grants). Anywhere else the connection would open able to write under a mode that says
+ * only where the record's `grants.readOnlyEnforced` is true, which Studio derives from its grant of the engine's write
+ * reach (./claim-grants). Anywhere else the connection would open able to write under a mode that says
  * it cannot, which is refused rather than ignored. A value that is not a boolean is refused on every engine, because a
  * string read as true on one path and as absent on another is two modes. The message names the field and never echoes
  * the value.
  *
  * It reads the record rather than `getCapabilities()` because it runs before a provider exists, and
- * `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every provider's
- * `writeReach`.
+ * `tests/unit/db/read-only-enforced-capability.test.ts` holds each legacy engine's grant equal to the summary of its
+ * provider's `writeReach`.
  *
  * WHERE IT RUNS. In `assertOpenable`, and in the factory's entry points right after the type check, ahead of their
  * cache lookup and of `createSSHTunnel`: those open the tunnel before they build, so a refusal raised only inside the

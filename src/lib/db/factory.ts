@@ -291,7 +291,7 @@ export interface ProviderDeclarations {
  * (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
  *
  * Its capabilities are the provider's as `clientCapabilities` (./client-capabilities) answers them: the masking
- * exemption is `GRANTED_MASKING_EXEMPT_COLUMNS`'s row for the connection's type, never the provider's own.
+ * exemption is the `maskingExemptColumns` grant of the connection's engine record, never the provider's own.
  */
 export async function readProviderDeclarations(
   connection: DatabaseConnection,
@@ -1897,8 +1897,8 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
  * `AgentCredentialForm` in `src/lib/db/types.ts`: null takes `agentUser` and `agentPassword` together, `"token"`
  * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
  * connection's own, and `"none"` takes nothing. The form is the engine's record's `grants.agentCredentialForm`,
- * Studio's grant of the claim (for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in ./claim-grants), never
- * the built provider's own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
+ * Studio's grant of the claim (for a legacy engine `legacyEngineGrants` in ./claim-grants), never the built provider's
+ * own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
  * `resolveAgentCredential` resolved, never echoed.
  */
 function assertAgentCredentialForm(

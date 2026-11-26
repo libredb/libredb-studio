@@ -131,12 +131,12 @@ describe("SEED_CONNECTIONS.md's read-only etcd recipe and SECURITY.md's etcd con
     expect(PROGRAMME_CONTROL_IDS).toContain("3.8");
   });
 
-  test("its note states the precondition, and names the function and the map that keep the mode", () => {
+  test("its note states the precondition, and names the function and the grant that keep the mode", () => {
     const note = SECURITY.split("\n\n").find((paragraph) => paragraph.startsWith("**3.8.**"));
     expect(note).toBeDefined();
     expect(note).toContain("the mode is a boundary only on a managed seed");
     expect(note).toContain("`assertReadOnlyHonoured`");
-    expect(note).toContain("`READ_ONLY_ENFORCED`");
+    expect(note).toContain("`grants.readOnlyEnforced`");
     // The provider sentences that follow the pointer to the Write reach table name the noun they belong to.
     expect(note).toContain("Of the providers that keep it, etcd's names where the mode was set in every refusal");
     expect(read("src/lib/db/open-check.ts")).toContain("export function assertReadOnlyHonoured");

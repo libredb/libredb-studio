@@ -8,8 +8,8 @@ import { join } from "node:path";
  * Whether a machine client may read an engine is the grant of `mcp.exposable` and `mcp.statementRead`, held by the
  * agent's read-only profiles on every engine whatever Studio can write there: an engine Studio writes freely is
  * MCP-readable, and one with no write path may not be. So the two answers are independent, and an MCP gate that
- * read the write reach, Studio's grant of it, `GRANTED_WRITE_REACH`, or `READ_ONLY_ENFORCED`, derived from that grant,
- * would tie them. Studio's review of the write reach is the grant register's, which only the grant reader loads
+ * read the write reach, Studio's grant of it, `GRANTED_WRITE_REACH`, or an engine record's `readOnlyEnforced`, derived
+ * from that grant, would tie them. Studio's review of the write reach is the grant register's, which only the grant reader loads
  * (tests/unit/db/claim-record-readers.test.ts).
  */
 const REPO = join(import.meta.dir, "../../..");
@@ -27,7 +27,7 @@ const SOURCES = readdirSync(MCP, { recursive: true, encoding: "utf8" })
 const READS_WRITE_REACH = [
   /(from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*write-reach["']/,
   /\bGRANTED_WRITE_REACH\b/,
-  /\bREAD_ONLY_ENFORCED\b/,
+  /\breadOnlyEnforced\b/,
   /\bsummarizeWriteReach\b/,
 ];
 
@@ -40,7 +40,7 @@ describe("the MCP layer and the write-reach record", () => {
     ["a require", 'const reach = require("../db/write-reach");'],
     ["the summary's name", "summarizeWriteReach(engine);"],
     ["the granted write reach's name", 'import { GRANTED_WRITE_REACH } from "@/lib/db/claim-grants";'],
-    ["the read-only answer's name", "const enforced = READ_ONLY_ENFORCED[engine];"],
+    ["the read-only answer's name", "const enforced = engine.grants.readOnlyEnforced;"],
   ])("the scan catches %s", (_, text) => {
     expect(readsWriteReach(text)).toBe(true);
   });

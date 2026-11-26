@@ -8,7 +8,7 @@
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
  * M-53) where the record holds no row, one rule per claim shape:
  * - `writeReach`, ordered `open`, `guarded`, `none` from the most restrictive: the more restrictive of the two, `open`
- *   where no row exists. `READ_ONLY_ENFORCED` is true exactly where the granted write reach is not `open`.
+ *   where no row exists. An engine's `readOnlyEnforced` is true exactly where the granted write reach is not `open`.
  * - `readsFileAccessPosture`, `readRootsRequired`, `metadataReadChangesState` and `agentCredentialRequired`,
  *   restrictive when true: true where the request or the row is, or no row exists.
  * - `exposable` and `statementRead`, restrictive when false: true only where the request and the row both are. An
@@ -19,8 +19,8 @@
  *   null takes the row's refusal, and takes `UNGRANTED_DENIED_FILE_ACCESS_SENTENCE`, core's own, where no row exists.
  * - `singleWriterFile`, where neither value is restrictive, since a second read-write handle on a single-writer file
  *   and one handle shared between users both overreach: the row where the request equals it, false where no row exists;
- *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which
- *   `UNGRANTED_CLAIM_REFUSALS` holds and the open check's `assertClaimsGranted` raises before anything is touched.
+ *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which the
+ *   engine's `ungrantedRefusals` holds and the open check's `assertClaimsGranted` raises before anything is touched.
  * - `agentCredentialForm`, unordered: the row where the request equals it, the record's null row read as `pair`, and
  *   `none` otherwise or where no row exists. The granted table keeps the record's vocabulary, null for the pair.
  * - `maskingExemptColumns`, unordered: the row where the request equals it, column pattern and reason, and null
@@ -61,15 +61,22 @@
  * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
  * the server. Studio's review of the two host facts no declaration requests, whether an engine's connections serve one
  * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
- * `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and `GRANTED_AGENT_EXECUTION_ENGINES`; no
- * claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source
+ * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
+ * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source
  * loads the register, and that none but the claim projection reads a member named `agentReadings`, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
  *
+ * A built provider's own declaration of its write reach, its file-access posture, a single-writer file, its agent
+ * credential form, its masking exemption or its catalog sessions reaches no gate (clause M-57): each gate reads the
+ * grant of the connection's engine record, `EngineRecord["grants"]` in ./server-catalog, which this module's
+ * `grantEngineClaims` answers, and `catalogChoice` (./catalog-scope) honours the catalog sessions a provider declares
+ * only where the record's grant at the choice of database, `serverLevelAtCatalogChoice`, holds.
+ *
  * Each legacy engine's grants are granted once, when this module loads, from its bundled request and its legacy row,
- * and read through `legacyEngineGrants`; the tables below are cut from them. The server catalog's composer grants an
- * admitted provider package's engine through the same `grantEngineClaims`. The module holds literals,
+ * and read through `legacyEngineGrants`, which every legacy record holds; the tables below are cut from them for the
+ * readers that still read a table. The server catalog's composer grants an admitted provider package's engine through
+ * the same `grantEngineClaims`. The module holds literals,
  * generated data and the register's rows only, and the register's reader compiles no code, so the browser's readers,
  * the read-only marker, the connection form and the agent rail, load it as they load the records.
  */
@@ -775,15 +782,6 @@ const BUNDLED_GRANTS = grantTables(SHIPPED_DATABASE_TYPES, legacyEngineGrants);
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 
 /**
- * Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key reads; the factory's borrow reads a
- * legacy engine's row as its record's `grants.readsFileAccessPosture`. Static because both decide while finding or
- * opening a provider, before one exists: the key carries the deny posture as a segment, so a denied and a full-reach
- * handle of one connection never share an entry, and the borrow lends a handle only to a caller of its own posture.
- */
-export const GRANTED_READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> =
-  BUNDLED_GRANTS.readsFileAccessPosture;
-
-/**
  * Studio's grant of `policy.deniedFileAccessRefusal`, which MCP availability reads; the open check reads a legacy
  * engine's row as its record's `grants.deniedFileAccessRefusal`. A connection whose execution context denies file
  * access is refused with the sentence before Studio reads the path it names, and the provider raises it again at
@@ -793,39 +791,12 @@ export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, s
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
 /**
- * Studio's grant of `policy.singleWriterFile`, which the provider cache key reads; the factory's borrow reads a legacy
- * engine's row as its record's `grants.singleWriterFile`. Static because the key decides before a provider exists:
- * under governance every user of a connection gets a provider of their own, and the key frames the user as its owner,
- * except on an engine granted a single-writer file, where a provider per user would be a second handle on one file.
- * The built provider's own `singleWriterFile` reaches no gate (clause M-57).
- */
-export const GRANTED_SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.singleWriterFile;
-
-/**
  * Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read: the runs
  * route refuses an agent-mode Start whose workflow sends statements on a connection without read roots, the seed schema
  * refuses `mcp: true` without them, the MCP context refuses such a connection at open with `READ_ROOTS_REQUIRED`, and a
  * governed record, which carries no roots, is never opted in to MCP.
  */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
-
-/**
- * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary, null for the user-and-password pair: every
- * agent acquisition reads a legacy engine's row as its record's `grants.agentCredentialForm`, before the provider it
- * built connects. It is not the seed agent credential, which is coarser: its `secret` covers both secret-only forms,
- * and its null covers both `none` and an engine that takes the pair at open but no agent credential on a seed.
- */
-export const GRANTED_AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> =
-  BUNDLED_GRANTS.agentCredentialForm;
-
-/**
- * Studio's grant of `policy.maskingExemptColumns`, which the producers of client capabilities answer in place of the
- * provider's own (`clientCapabilities` in ./client-capabilities), so a provider that declares a wider pattern than its
- * grant exempts nothing more. The embedded workspace and the published grid take the exemption from the embedder, and
- * this grant does not reach them.
- */
-export const GRANTED_MASKING_EXEMPT_COLUMNS: Readonly<Record<DatabaseType, MaskingExemption>> =
-  BUNDLED_GRANTS.maskingExemptColumns;
 
 /**
  * Studio's grant of `mcp.exposable`, which the seed schema, governance and the MCP tools read: the seed schema refuses
@@ -861,40 +832,15 @@ export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType
   BUNDLED_GRANTS.agentCredentialRequired;
 
 /**
- * Which engines keep a read-only connection's promise: true exactly where the granted write reach is not `open`
- * (clause M-52): each legacy engine's record holds its row as `grants.readOnlyEnforced`, which `assertReadOnlyHonoured`
- * in src/lib/db/open-check.ts reads before anything is built or dialled.
- */
-export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readOnlyEnforced;
-
-/**
- * The sentence every open of an engine is refused with where its claims leave a refusal no grant covers, null for every
- * other engine: each legacy engine's record holds its row as `grants.ungrantedRefusals`, which `assertClaimsGranted` in
- * src/lib/db/open-check.ts reads.
- */
-export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
-
-/**
- * Studio's grant of `connection.opensLocalFile`, which the file admission of the legacy adapter's open
- * (`admittedFileConnection` in ./provider-files), governance and the VS Code backend read. A governance source never
- * grants such an engine (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as
- * ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host
- * Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
+ * Studio's grant of `connection.opensLocalFile`, which governance reads; the file admission of the legacy adapter's
+ * open (`admittedFileConnection` in ./provider-files) and the VS Code backend read an engine's record's
+ * `grants.opensLocalFile`. A governance source never grants such an engine
+ * (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as ENGINE_UNSUPPORTED whatever
+ * `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
  * such a connection names before the provider is built, refusing Studio's own storage files there, and hands the
  * provider the absolute path it admitted.
  */
 export const GRANTED_OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.opensLocalFile;
-
-/**
- * Studio's grant of `connection.hostPathFields`, the fields the legacy adapter's open admits before a provider reads
- * one (`admittedHostPathConnection` in ./provider-files): each resolved against the working directory, refused by name
- * when it names one of Studio's own storage files, and handed to the provider as an absolute path under
- * `ADMITTED_HOST_PATHS` (`@/lib/types`). Kept apart from the local-file claim because that claim also decides
- * governance row admission, and an engine that reads a certificate from the host is still a server a governance source
- * may grant.
- */
-export const GRANTED_HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> =
-  BUNDLED_GRANTS.hostPathFields;
 
 /**
  * Studio's grant of `connection.serverLevelWithoutDatabase` as governance admission reads it, restrictive when true:
@@ -907,21 +853,12 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Readonly<Record<DatabaseTy
   BUNDLED_GRANTS.serverLevelAtAdmission;
 
 /**
- * Studio's grant of `connection.serverLevelWithoutDatabase` as the choice of database reads it, restrictive when
- * false: `catalogChoice` honours a caller's choice of database only on an engine it holds true for (clause M-57), and
- * only where the connection names no database and no connection string, so it bounds the catalog sessions a provider
- * declares.
- */
-export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<DatabaseType, boolean>> =
-  BUNDLED_GRANTS.serverLevelAtCatalogChoice;
-
-/**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
- * with, or null where the engine takes one. The provider's fields and the connection dialog read it; core's tunnel
- * decision reads a legacy engine's row as its record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel`
- * (./tunnel-decision) on every entry point before any cache lookup, bastion dial or provider build, so no provider
- * refuses a tunnel itself, and the dialog offers the SSH panel, and writes `sshTunnel`, exactly where the grant is null,
- * so the dialog and core cannot disagree. No review row's sentence quotes a value of the connection.
+ * with, or null where the engine takes one. The connection dialog reads it; core's tunnel decision and the provider's
+ * fields read an engine's record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel` (./tunnel-decision) on
+ * every entry point before any cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself,
+ * and the dialog offers the SSH panel, and writes `sshTunnel`, exactly where the grant is null, so the dialog and core
+ * cannot disagree. No review row's sentence quotes a value of the connection.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 
@@ -991,22 +928,4 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  */
 export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((engine) => legacyEngineGrants(engine).agentExecution),
-);
-
-/**
- * Studio's grant of one session: the engines whose connections serve their object tree from one session, the
- * editor's, in catalog order (docs/providers/CONTRACT.md, clause C-66). It is each legacy row's `servesOneSession`
- * member of the grant register, the reason Studio's census found or null where a tree read may run on a metadata
- * session of the connection's own, a host fact no declaration requests and no manifest member states, since which
- * session a tree read runs on is the host's measurement of the engine and not a claim the engine makes. So no claim is
- * granted from it, and an engine with no legacy row is not on it.
- *
- * It is read only by `sessionCapacity` in src/lib/db/session-capacity.ts, which answers `one` for an engine on it, and
- * for a connection whose database is in memory, and `several` otherwise. The class decides only which session a tree,
- * monitoring or health read, or a kill, runs on, so an engine missing from the list opens one more session for those
- * reads, an engine listed wrongly keeps today's sharing, and neither authorizes anything. Frozen, so no code widens it
- * at run time.
- */
-export const GRANTED_ONE_SESSION_ENGINES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((engine) => legacyEngineGrants(engine).servesOneSession !== null),
 );

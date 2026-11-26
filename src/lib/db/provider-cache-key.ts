@@ -1,7 +1,5 @@
 import { connectionFingerprint } from "./connection-fingerprint";
-import { GRANTED_READS_FILE_ACCESS_POSTURE, GRANTED_SINGLE_WRITER_FILE } from "./claim-grants";
-import { typeIdRow } from "./type-id";
-import type { EngineConnection } from "./server-catalog";
+import { type EngineConnection, servedEngineRecord } from "./server-catalog";
 import {
   type DatabaseConnection,
   LITERAL_SEED_FILE,
@@ -49,8 +47,8 @@ import {
  *   `credentialDigest` or the fingerprint, whose rules are as whom a connection authenticates and
  *   which server it reaches, and the mode changes neither.
  * - The file-access posture (the non-admin DuckDB file-access change), for an engine that opens its
- *   editor handle under one: `GRANTED_READS_FILE_ACCESS_POSTURE` in `./claim-grants.ts` answers which, so
- *   this is not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
+ *   editor handle under one: the engine record's `readsFileAccessPosture` grant answers which, so this is
+ *   not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
  *   editor handle opens with `enable_external_access: 'false'` and a full-reach one without it, so the
  *   two must never share a cached handle: a caller of one posture would otherwise be handed the
  *   other's handle. (A seed a non-admin role can use gets one posture for every role in
@@ -89,19 +87,20 @@ import {
  * WHAT IT DOES NOT CATCH, stated as a limit rather than left to be found: the same limit
  * `connectionFingerprint` states, a different server answering on the same host and port.
  *
- * A TYPE OUTSIDE THE UNION frames nothing: the engine's rows are read through `typeIdRow` (FND-1) before either
- * digest, so such a type is refused by name with `UnknownProviderError`, never read as an engine that keeps its owner
- * or one that reads a file-access posture.
+ * A TYPE NAMING NO ENGINE frames nothing: the grants of the connection's engine record are read through
+ * `servedEngineRecord` before either digest, so such a type is refused by name with `UnknownProviderError`, never read
+ * as an engine that keeps its owner or one that reads a file-access posture.
  *
- * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no engine the server knows.
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export async function providerCacheKey(
   connection: DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile,
   allowExternalFileAccess?: boolean,
   owner?: string,
 ): Promise<string> {
-  // Read before either digest, so a type outside the union is refused by name before anything is framed.
-  const readsPosture = typeIdRow(GRANTED_READS_FILE_ACCESS_POSTURE, connection.type);
+  // Read before either digest, so a type naming no engine is refused by name before anything is framed.
+  const readsPosture = servedEngineRecord(connection.type).grants.readsFileAccessPosture;
   return frameCacheKey(connection, { readsPosture, allowExternalFileAccess, owner: providerOwner(connection, owner) });
 }
 
@@ -134,7 +133,7 @@ export async function frameCacheKey(
   // keeps every other engine's key unchanged. A denied handle must not be shared with a full-reach one
   // on the same connection, so its key carries this extra segment (the non-admin DuckDB file-access
   // change), on the profiled key too, which always passes a definite posture. The
-  // engine is read from `GRANTED_READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
+  // engine is read from its record's `readsFileAccessPosture` grant, not a `connection.type` branch (CLAUDE.md).
   if (readsPosture && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);
   }
@@ -151,18 +150,18 @@ export async function frameCacheKey(
  * file.
  *
  * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
- * the first one's committed rows and LibreDB refuses, so `GRANTED_SINGLE_WRITER_FILE` decides it before any provider
- * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
+ * the first one's committed rows and LibreDB refuses, so the `singleWriterFile` grant of the connection's engine record
+ * decides it before any provider exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
  * (`GRANTED_OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
  * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
- * under always name the same owner. The row is read through `typeIdRow` (FND-1), so a type outside the
- * `DatabaseType` union is refused by name rather than read as an engine that keeps the owner, or, for a prototype
- * key, as one that drops it.
+ * under always name the same owner. The record is read through `servedEngineRecord`, so a type naming no engine is
+ * refused by name rather than read as an engine that keeps the owner, or, for a prototype key, as one that drops it.
  *
- * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no engine the server knows.
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
-  return typeIdRow(GRANTED_SINGLE_WRITER_FILE, connection.type) ? undefined : owner;
+  return servedEngineRecord(connection.type).grants.singleWriterFile ? undefined : owner;
 }
 
 /**
