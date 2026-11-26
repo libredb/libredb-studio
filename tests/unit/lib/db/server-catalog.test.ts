@@ -25,7 +25,9 @@ import {
   type EngineRecord,
   forgetServerCatalog,
   installServerCatalog,
+  legacyProviderEngine,
   legacyProviderRefusal,
+  legacyProviderType,
   serverCatalogInstalled,
   servedPackage,
   serverEngine,
@@ -391,6 +393,28 @@ describe("one engine record for every engine", () => {
     expect(() => servedPackage(servedRecord(legacyId))).toThrow(
       `The engine ${JSON.stringify(legacyId)} is served by LibreDB Studio's legacy adapter, which serves no provider package: a caller that reads a package of it is a host defect.`,
     );
+  });
+
+  test("legacyProviderEngine answers the record of an engine whose record offers a legacy provider, and refuses every other value as assertLegacyProvider does", () => {
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    expect(legacyProviderEngine(legacyId, "open")).toBe(servedRecord(legacyId));
+    installServerCatalog(composeServerCatalog([admittedFor("acme-lpe", admittedManifest("acmelpe"))], []));
+    expect(legacyProviderEngine(legacyId, "route")).toBe(servedRecord(legacyId));
+    const values: unknown[] = [undefined, null, "", 5, "constructor", "acmenosuch", "acmelpe"];
+    for (const value of values) {
+      for (const need of ["route", "open"] as const) {
+        const expected = thrown(() => assertLegacyProvider(value, need)) as Error;
+        const answered = thrown(() => legacyProviderEngine(value, need)) as Error;
+        expect(answered.constructor).toBe(expected.constructor);
+        expect(answered.message).toBe(expected.message);
+      }
+    }
+  });
+
+  test("legacyProviderType answers a legacy record's id and nothing for a package record's", () => {
+    installServerCatalog(composeServerCatalog([admittedFor("acme-lpt", admittedManifest("acmelpt"))], []));
+    for (const id of SHIPPED_DATABASE_TYPES) expect(legacyProviderType(servedRecord(id))).toBe(id);
+    expect(legacyProviderType(servedRecord("acmelpt"))).toBeUndefined();
   });
 });
 

@@ -1,7 +1,7 @@
 /**
- * LIBREDB_ENABLED_PROVIDERS, the enabled-provider allowlist, read in one place for every reader: the provider factory,
- * which refuses a type the list leaves out before anything is built, loaded or dialled (`assertProviderEnabled`), and
- * the SQLite sample, which is neither seeded nor listed when the factory could never open it.
+ * LIBREDB_ENABLED_PROVIDERS, the enabled-provider allowlist, read in one place for every reader: the open check, which
+ * refuses a type the list leaves out before anything is built, loaded or dialled (`assertProviderEnabled` in
+ * ./open-check), and the SQLite sample, which is neither seeded nor listed when the factory could never open it.
  */
 
 import type { DatabaseType } from "@/lib/types";

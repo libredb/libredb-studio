@@ -14,6 +14,7 @@ import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "
 import { offersSslPanel } from "./connection-form";
 import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
+import type { EngineConnection } from "./server-catalog";
 import { typeIdRow } from "./type-id";
 
 /**
@@ -21,7 +22,7 @@ import { typeIdRow } from "./type-id";
  * - `id`, `name` and `type`: the record's identity, name and engine, which every provider logs and keys on;
  * - `queryTimeout`: the statement timeout, which core reads back from `provider.config` when it reuses a provider;
  * - `readOnly` and `seedId`: the read-only mode and the seed it came from, which the read-only providers read to
- *   refuse a write by name, and which core decides on before the build (`assertReadOnlyHonoured` in ./factory);
+ *   refuse a write by name, and which core decides on before the build (`assertReadOnlyHonoured` in ./open-check);
  * - `managed`: whether the record is an operator's seed, which the server-identity grant reads
  *   (`./auth/server-identity-gate`).
  * None is a credential. Studio's display and browser facts (`createdAt`, `color`, `environment`, `group`,
@@ -122,7 +123,7 @@ function isPlainData(value: unknown): value is object {
  * (`decideTunnel` in `./tunnel-decision`), which those three entry points take ahead of the cache key and of
  * `createSSHTunnel`, because their copy is made before `providerConnection` runs and would hand it plain data.
  */
-export function assertTunnelRecordIsPlainData(connection: DatabaseConnection): void {
+export function assertTunnelRecordIsPlainData(connection: EngineConnection): void {
   const tunnel: unknown = connection.sshTunnel;
   if (tunnel === undefined || tunnel === null) return;
   if (!isPlainData(tunnel)) {
@@ -152,7 +153,7 @@ export function assertTunnelRecordIsPlainData(connection: DatabaseConnection): v
  * in `./factory`), beside `assertReadOnlyHonoured`: ahead of the cache key, so a cached provider is never handed to such
  * a record, and ahead of the copy, which would hand `providerConnection` plain data.
  */
-export function assertConnectionIsPlainData(connection: DatabaseConnection): void {
+export function assertConnectionIsPlainData(connection: EngineConnection): void {
   const tunnel: unknown = connection.sshTunnel;
   if (tunnel !== undefined && tunnel !== null) assertTunnelRecordIsPlainData(connection);
   if (!isPlainData(connection)) {
@@ -212,14 +213,14 @@ export type ProviderConnection = DatabaseConnection & WithTunnelFarEnd & WithLit
  * routes frame the seal on this function's answer for the record they resolved, so both sides digest the same fields.
  * Databend's sign-in latch reads the route through `requireTunnelRoute` in `./utils/require-tunnel-route`. A field the
  * engine does not declare is dropped and never refused here: stored records carry fields their engine does not take.
- * A field its engine refuses by name is dropped here too; `buildProvider` in `./factory` refuses it first, for a
- * provider built to connect (`refusedFieldRefusal`).
+ * A field its engine refuses by name is dropped here too; the open check that `buildProvider` in `./factory` runs
+ * refuses it first, for a provider built to connect (`assertOpenable` in `./open-check`).
  *
- * PRECONDITION. The tunnel is one core's decision accepted: its caller, `buildProvider` in `./factory`, runs
- * `assertProviderTunnel` (hence `decideTunnel`) first, which holds `host` and `username` to text on every present
- * tunnel, the values `tunnelRoute` measures. The field checks are not repeated here, which would be a second copy of
- * the decision and an import cycle with `./tunnel-decision`. The edit routes call it after `handleObjectRequest` built
- * their provider through `getOrCreateProvider`.
+ * PRECONDITION. The tunnel is one core's decision accepted: its caller, `buildProvider` in `./factory`, runs the open
+ * check first (`assertOpenable` in `./open-check`, hence `assertProviderTunnel` and `decideTunnel`), which holds
+ * `host` and `username` to text on every present tunnel, the values `tunnelRoute` measures. The field checks are not
+ * repeated here, which would be a second copy of the decision and an import cycle with `./tunnel-decision`. The edit
+ * routes call it after `handleObjectRequest` built their provider through `getOrCreateProvider`.
  *
  * WHAT IS REFUSED. A record that is not plain data (`isPlainData`), with or without a tunnel: core reads the record
  * before the copy is made (`assertReadOnlyHonoured`, `decideTunnel`, the cache key), and a copy of anything but plain

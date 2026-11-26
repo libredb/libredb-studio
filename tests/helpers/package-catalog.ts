@@ -11,7 +11,7 @@ import path from "node:path";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
-import type { ServerCatalog } from "@/lib/db/server-catalog";
+import type { EngineRecord, ServerCatalog } from "@/lib/db/server-catalog";
 import type { AdmittedForCatalog } from "@/lib/db/server-catalog-compose";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..");
@@ -132,5 +132,24 @@ export function withLegacyProviderOffers(
     if (engine === undefined) throw new Error(`the catalog holds no record of ${id}`);
     engines.set(id, Object.freeze({ ...engine, offers: Object.freeze({ ...engine.offers, legacyProvider: offered }) }));
   }
+  return Object.freeze({ engines, unavailable: catalog.unavailable });
+}
+
+/**
+ * `catalog` with the record of engine `id` replaced by the frozen record `change` answers for it: a crafted catalog, for
+ * the tests that hold a reader to the installed record rather than to Studio's tables. The install still holds each
+ * record's legacy provider offer to its id, so `change` keeps the offer.
+ *
+ * @throws {Error} Naming the engine, for an engine `catalog` holds no record of.
+ */
+export function withEngineRecord(
+  catalog: ServerCatalog,
+  id: string,
+  change: (engine: EngineRecord) => EngineRecord,
+): ServerCatalog {
+  const engines = new Map(catalog.engines);
+  const engine = engines.get(id);
+  if (engine === undefined) throw new Error(`the catalog holds no record of ${id}`);
+  engines.set(id, Object.freeze(change(engine)));
   return Object.freeze({ engines, unavailable: catalog.unavailable });
 }

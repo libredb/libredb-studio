@@ -710,7 +710,7 @@ export interface DatabaseConnection {
    * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
    * `src/lib/db/claim-grants.ts` answers and a census holds equal to the summary of
    * `ProviderCapabilities.writeReach`. On any other engine `true` is refused, by the seed schema
-   * at load and by `assertReadOnlyHonoured` in `src/lib/db/factory.ts` before anything is built or
+   * at load and by `assertReadOnlyHonoured` in `src/lib/db/open-check.ts` before anything is built or
    * dialled, because a mode the provider ignores would list the connection as read-only and send its
    * writes. A value that is not a boolean is refused on every engine.
    *

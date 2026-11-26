@@ -16,11 +16,11 @@ const READER = "src/lib/db/egress-decision.ts";
 const PROVIDERS = "src/lib/db/providers/";
 const FACTORY = "src/lib/db/factory.ts";
 const BOOT_PREFLIGHT = "src/lib/config/egress-preflight.ts";
-// The package session path is core and plays the factory's role for an engine an admitted provider package serves:
-// `src/lib/db/package-sessions.ts` takes the egress decision in its open checks, as the factory does before it builds,
-// so an invalid setting is refused before anything is opened, and `src/lib/provider-host/open-context.ts` hands the
-// decision to the package's `open` in its open context (docs/providers/CONTRACT.md, clause C-109).
-const PACKAGE_SESSIONS = "src/lib/db/package-sessions.ts";
+// The one ordered open check is core and runs before every session of every engine opens:
+// `src/lib/db/open-check.ts` takes the egress decision among its checks, so an invalid setting is refused before
+// anything is opened, and `src/lib/provider-host/open-context.ts` hands the decision to the package's `open` in its open
+// context (docs/providers/CONTRACT.md, clause C-109).
+const OPEN_CHECK = "src/lib/db/open-check.ts";
 const PACKAGE_OPEN_CONTEXT = "src/lib/provider-host/open-context.ts";
 const PACKAGES = "packages/";
 
@@ -146,8 +146,8 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(packageImportersOf(READER)).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/egress-decision.ts are the provider factory, the boot preflight, the package sessions and the package open context", () => {
-    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY, PACKAGE_SESSIONS, PACKAGE_OPEN_CONTEXT].sort());
+  test("the modules that import src/lib/db/egress-decision.ts are the provider factory, the boot preflight, the open check and the package open context", () => {
+    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY, OPEN_CHECK, PACKAGE_OPEN_CONTEXT].sort());
   });
 
   test("no module under src/lib/db/providers/ reaches src/lib/db/egress-decision.ts through its imports", () => {

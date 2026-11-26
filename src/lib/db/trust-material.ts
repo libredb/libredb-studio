@@ -7,9 +7,10 @@
  * needs nothing from here. A provider whose TLS is a library of its own never sees the variable: measured on
  * 2026-11-22, the one such provider is Db2, whose driver verifies with rustls against the operating system's store.
  * Core owns that read (FND-2, the provider plugins design section 0.1): this module is the only database code that
- * reads the variable or the file, and the provider factory hands the material, as data, to the engines whose
- * `READS_TRUST_MATERIAL` row in `./compatibility` is true; for an engine a provider package serves, the package open
- * context (`@/lib/provider-host/open-context`) hands it to the package's `open` when the engine's declaration reads it.
+ * reads the variable or the file, and the provider factory hands the material, as data, to the engines whose record's
+ * `connection.readsTrustMaterial` is true, for a legacy engine its `READS_TRUST_MATERIAL` row in `./compatibility`;
+ * for an engine a provider package serves, the package open context (`@/lib/provider-host/open-context`) hands it to
+ * the package's `open` when the engine's declaration reads it.
  *
  * What is read: an unset or empty variable is no certificate, as it is for Node.js. Otherwise the file is read as
  * UTF-8 and refused, with its reason, when it cannot be read, is empty or blank, holds a block under the legacy

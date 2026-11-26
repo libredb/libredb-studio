@@ -166,9 +166,11 @@ mock.module("@/lib/query-events/postgres-sink", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/query/route");
-// The real check the factory runs first (#1089). This file replaces `@/lib/db`, the route's own import,
-// and not `@/lib/db/factory`, so the test below can run the real refusal inside the replaced factory.
-const { assertReadOnlyHonoured } = await import("@/lib/db/factory");
+// The real check the factory runs first (#1089), over the engine's record as the factory reads it. This file replaces
+// `@/lib/db`, the route's own import, and not `@/lib/db/open-check`, so the test below can run the real refusal inside
+// the replaced factory.
+const { assertReadOnlyHonoured } = await import("@/lib/db/open-check");
+const { legacyProviderEngine } = await import("@/lib/db/server-catalog");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -559,7 +561,8 @@ describe("POST /api/db/query", () => {
   test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
     mockReadProviderDeclarations.mockClear();
     mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
-      assertReadOnlyHonoured(args[0] as DatabaseConnection);
+      const connection = args[0] as DatabaseConnection;
+      assertReadOnlyHonoured(legacyProviderEngine(connection.type, "open"), connection);
       return mockProvider;
     });
 

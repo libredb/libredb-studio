@@ -1465,11 +1465,13 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  * Which shipped engines take no SSH tunnel, and why (FND-2 slice 5): `null` where a connection of the engine may reach
  * its server through one, otherwise the whole sentence Studio refuses a connection whose tunnel is on with.
  *
- * Studio's review record of that fact. Core reads Studio's grant of it, `GRANTED_SSH_TUNNEL_REFUSAL`, in `decideTunnel`
- * (`./tunnel-decision`), on every entry point before any cache lookup, bastion dial or provider build, so no provider
- * refuses a tunnel itself; the connection dialog reads the same grant through `offersSshTunnel` in
- * `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`, exactly where the grant answers
- * `null`, so the dialog and core cannot disagree. Kept here, UI-free, for the reason `OPENS_LOCAL_FILE` is.
+ * Studio's review record of that fact. Core decides a tunnel in `decideTunnel` (`./tunnel-decision`), on every entry
+ * point before any cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself; it reads the
+ * engine record's `grants.sshTunnel`, which the legacy adapter (src/lib/provider-host/legacy-adapter/records.ts) builds
+ * from the engine's row of Studio's grant, `GRANTED_SSH_TUNNEL_REFUSAL`. The connection dialog reads that granted table
+ * itself, through `offersSshTunnel` in `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`,
+ * exactly where the row is `null`, so the dialog and core cannot disagree; `providerFields` in `./provider-connection`
+ * reads it too. Kept here, UI-free, for the reason `OPENS_LOCAL_FILE` is.
  *
  * The refused groups:
  *
@@ -1488,8 +1490,9 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and only
  * Studio's grant reader, src/lib/db/claim-grants.ts, reads it: every gate reads `GRANTED_SSH_TUNNEL_REFUSAL`, the more
- * restrictive of the request and this table's row, which is the row for every engine Studio ships. The table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
+ * restrictive of the request and this table's row, which is the row for every engine Studio ships, either itself (the
+ * connection dialog, `providerFields`) or as the record's `grants.sshTunnel` built from it (`decideTunnel`). The table
+ * is never a projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
  */
 export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
   postgres: null,

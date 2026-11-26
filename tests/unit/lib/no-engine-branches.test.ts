@@ -467,12 +467,6 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     reason: "the PostgreSQL image's default role name `postgres`, when POSTGRES_USER is unset",
   },
   {
-    path: "src/lib/db/factory.ts",
-    declaration: "assertClaimsGranted",
-    count: 1,
-    reason: "the parameter type of the `UNGRANTED_CLAIM_REFUSALS` grant it is handed, which holds no row here",
-  },
-  {
     path: "src/lib/seed/types.ts",
     declaration: "refuseMcpWhereNotOffered",
     count: 1,

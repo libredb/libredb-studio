@@ -19,7 +19,7 @@
  * - `singleWriterFile`, where neither value is restrictive, since a second read-write handle on a single-writer file
  *   and one handle shared between users both overreach: the row where the request equals it, false where no row exists;
  *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which
- *   `UNGRANTED_CLAIM_REFUSALS` holds and the factory's `assertClaimsGranted` raises before anything is touched.
+ *   `UNGRANTED_CLAIM_REFUSALS` holds and the open check's `assertClaimsGranted` raises before anything is touched.
  * - `agentCredentialForm`, unordered: the row where the request equals it, the record's null row read as `pair`, and
  *   `none` otherwise or where no row exists. The granted table keeps the record's vocabulary, null for the pair.
  * - `maskingExemptColumns`, unordered: the row where the request equals it, column pattern and reason, and null
@@ -632,21 +632,33 @@ export function bundledEngineGrants(id: DatabaseType): EngineGrants {
 /** Studio's grant of `policy.writeReach`, which the seed schema and the connection form read. */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 
-/** Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key and the borrow read. */
+/**
+ * Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key reads; the factory's borrow reads a
+ * legacy engine's row as its record's `grants.readsFileAccessPosture`.
+ */
 export const GRANTED_READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.readsFileAccessPosture;
 
-/** Studio's grant of `policy.deniedFileAccessRefusal`, which the factory and MCP availability read. */
+/**
+ * Studio's grant of `policy.deniedFileAccessRefusal`, which MCP availability reads; the open check reads a legacy
+ * engine's row as its record's `grants.deniedFileAccessRefusal`.
+ */
 export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
-/** Studio's grant of `policy.singleWriterFile`, which the factory's borrow and the provider cache key read. */
+/**
+ * Studio's grant of `policy.singleWriterFile`, which the provider cache key reads; the factory's borrow reads a legacy
+ * engine's row as its record's `grants.singleWriterFile`.
+ */
 export const GRANTED_SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.singleWriterFile;
 
 /** Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read. */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
-/** Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary, which every agent acquisition reads. */
+/**
+ * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary: every agent acquisition reads a legacy
+ * engine's row as its record's `grants.agentCredentialForm`.
+ */
 export const GRANTED_AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> =
   BUNDLED_GRANTS.agentCredentialForm;
 
@@ -670,13 +682,15 @@ export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType
 
 /**
  * Which engines keep a read-only connection's promise: true exactly where the granted write reach is not `open`
- * (clause M-52), which `assertReadOnlyHonoured` in src/lib/db/factory.ts reads before anything is built or dialled.
+ * (clause M-52): each legacy engine's record holds its row as `grants.readOnlyEnforced`, which `assertReadOnlyHonoured`
+ * in src/lib/db/open-check.ts reads before anything is built or dialled.
  */
 export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readOnlyEnforced;
 
 /**
  * The sentence every open of an engine is refused with where its claims leave a refusal no grant covers, null for every
- * other engine, which `assertClaimsGranted` in src/lib/db/factory.ts reads.
+ * other engine: each legacy engine's record holds its row as `grants.ungrantedRefusals`, which `assertClaimsGranted` in
+ * src/lib/db/open-check.ts reads.
  */
 export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
 
@@ -707,8 +721,8 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<Datab
 
 /**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
- * with, or null where the engine takes one. Core's tunnel decision, the provider's fields and the connection dialog
- * read it.
+ * with, or null where the engine takes one. The provider's fields and the connection dialog read it; core's tunnel
+ * decision reads a legacy engine's row as its record's `grants.sshTunnel`.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 
