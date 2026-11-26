@@ -20,7 +20,7 @@ import { packageCallError } from "@/lib/api/package-errors";
 import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
-import { getOrCreatePackageSession } from "@/lib/db/package-sessions";
+import { getOrCreateEditorSession } from "@/lib/db/factory";
 import { type EngineConnection, type EngineRecord, serverEngine } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
@@ -455,7 +455,7 @@ async function runOnPackageSession(
   const scrub = providerTextScrub(record, "any");
   const route = "api/db/query";
   const cached = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
-    getOrCreatePackageSession(connection, engine, editorExecutionContext(session, connection), wait),
+    getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait),
   ).catch((error: unknown) => {
     throw packageCallError("open", error, scrub, route);
   });

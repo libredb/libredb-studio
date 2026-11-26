@@ -2510,7 +2510,7 @@ describe("one open in flight per cache key", () => {
     try {
       logUnclaimedOpen(new ConnectionError(`refused by ${crypto.randomUUID()}`, "postgres"), {
         key: "key",
-        meta: { connectionId: "seed:orders", type: "postgres" },
+        meta: { connectionId: "seed:orders", frame: "frame", budget: 1_000, name: "seed:orders (PostgreSQL)" },
         signal: new AbortController().signal,
       });
       expect(warn.mock.calls).toEqual([

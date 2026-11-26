@@ -9,8 +9,9 @@
  * keeping its 400. The confirmation gate reads the statement under the grammar the declaration states, composed once
  * into the server catalog's record of the engine, with every claim that loosens the gate uncounted
  * (`gatePackageRun` in ./run-confirmation; docs/providers/CONTRACT.md, clause S-8). The statement runs on the engine's
- * cached session (`getOrCreatePackageSession` in src/lib/db/package-sessions.ts), opened within the engine's connect
- * budget while the request stays, and the session counts the run while its call runs, so the idle sweep keeps it.
+ * session in the provider factory's editor cache (`getOrCreateEditorSession` in src/lib/db/factory.ts), opened within
+ * the engine's connect budget while the request stays, and the entry counts the run while its call runs, so the idle
+ * sweep keeps it.
  *
  * The run goes through the host core the process's composition root installed (`hostCore`), with the session's handle
  * bound and the package's declared environment in every call's context. The execute is asked for one row past the page
@@ -48,13 +49,14 @@ import {
   hostPorts,
 } from "@/lib/api/editor-query";
 import { packageWarnings } from "@/lib/api/package-errors";
-import type { CachedPackageSession } from "@/lib/db/package-sessions";
+import type { CachedSession } from "@/lib/db/factory";
 import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import { DEFAULT_QUERY_TIMEOUT, newQueryCallScope } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { refusalError, stopError } from "@/lib/provider-host/access";
 import type { ExecuteRecord, PageRecord } from "@/lib/provider-host/core/console";
 import { hostCore } from "@/lib/provider-host/instance";
+import { openedSession } from "@/lib/provider-host/open-engine";
 
 /** One run on a package's session: `runEditorQuery`'s run, and the connection's own statement timeout. */
 export interface PackageQueryRun extends EditorQueryRun {
@@ -140,8 +142,8 @@ function packagePageBody(
 }
 
 /**
- * Runs one statement on `cached`, a package's session, and answers its first result's page. The session counts the run
- * while its call runs, so the idle sweep keeps it: until the record answers, or until the call a stop answered has
+ * Runs one statement on `cached`, the editor cache's entry of a package's session, and answers its first result's page.
+ * The entry counts the run while its call runs, so the idle sweep keeps it: until the record answers, or until the call a stop answered has
  * settled. The package's own errors reach the caller by reference (clause C-31); the route answers them with Studio's
  * sentence (`packageCallError` in ./package-errors).
  *
@@ -150,12 +152,9 @@ function packagePageBody(
  * @throws {FacetNotOfferedError} Not-sent, for bound params the session does not honour.
  * @throws {StudioOffsetRefusal} Not-sent, for a non-zero offset the session does not honour.
  */
-export async function runPackageEditorQuery(
-  cached: CachedPackageSession,
-  run: PackageQueryRun,
-): Promise<EditorQueryAnswer> {
+export async function runPackageEditorQuery(cached: CachedSession, run: PackageQueryRun): Promise<EditorQueryAnswer> {
   const core = hostCore();
-  const { session, env } = cached;
+  const { session, env } = openedSession(cached.opened);
   const timeout = run.queryTimeout ?? DEFAULT_QUERY_TIMEOUT;
   const deadline = executeDeadlineFor(timeout, Date.now());
   const views = executeViewsFor(timeout, run.signal);

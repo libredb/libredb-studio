@@ -64,6 +64,8 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "acquireExecutionProfileProvider",
     "withOneShotTunnel",
     "findCachedProvider",
+    "getOrCreateEditorSession",
+    "openEngineOnce",
   ],
   "src/lib/provider-host/open-engine.ts": ["openEngine"],
   "src/lib/provider-host/legacy-adapter/open.ts": ["openLegacyEngine"],
@@ -223,9 +225,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   openEngine: {
     "src/lib/db/factory.ts":
-      "createDatabaseProvider and readProviderDeclarations, gated above, open through it for the connection their caller hands them",
-    "src/lib/db/package-sessions.ts":
-      "the package session path opens only connections the query route and Test Connection resolved through resolveConnection, which opens a seed id only through visibleConnectionById and so through the review",
+      "createDatabaseProvider, readProviderDeclarations, getOrCreateEditorSession and openEngineOnce, gated above, open through it for the connection their caller hands them",
   },
   openLegacyEngine: {
     "src/lib/provider-host/open-engine.ts":
@@ -259,6 +259,13 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/mcp/context.ts":
       "opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
+  },
+  getOrCreateEditorSession: {
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+  },
+  openEngineOnce: {
+    "src/lib/api/test-connection.ts":
+      "testPackageConnection opens the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
   },
   withOneShotTunnel: {
     "src/lib/api/test-connection.ts":

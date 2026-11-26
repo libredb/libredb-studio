@@ -1,7 +1,7 @@
 /**
  * A provider package written into a scratch providers directory and admitted through Studio's own boot admission
- * (`bootAdmission` in src/lib/provider-host/boot.ts), for the tests of the package session path
- * (src/lib/db/package-sessions.ts): its manifest is the SDK's minimal manifest, read by path and never copied
+ * (`bootAdmission` in src/lib/provider-host/boot.ts), for the tests of a package's sessions in the provider factory's
+ * editor cache (src/lib/db/factory.ts): its manifest is the SDK's minimal manifest, read by path and never copied
  * (tests/helpers/package-catalog.ts), with its engine id, its calls and any member a case changes replaced; its entry
  * imports nothing, as admission requires, and default-exports a record whose functions each call the hook of the same
  * name a test sets on `globalThis[Symbol.for("libredb-test.<engine id>")]`, so a test decides at run time what the

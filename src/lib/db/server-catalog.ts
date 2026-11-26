@@ -47,7 +47,8 @@
  * `resolveConnection` with `engines` `bundled-and-package`; Test Connection then validates the connection against the
  * engine's field rules and opens one session through the package (`testPackageConnection` in
  * src/lib/api/test-connection.ts), and the query route runs a statement on the engine's cached session
- * (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over src/lib/db/package-sessions.ts.
+ * (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over the provider factory's opens of any
+ * record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
@@ -89,7 +90,7 @@ export type EngineId = string & { readonly [ENGINE]: true };
 /**
  * A connection of any engine the server knows, its type read as text: what the engine-neutral readers of a connection's
  * fields take (the cache key's frame, the connection fingerprint), which frame the type as text and read no row keyed
- * by it, and what the package session path takes.
+ * by it, and what the factory's opens of any record take (`getOrCreateEditorSession`, `openEngineOnce` in ./factory).
  */
 export type EngineConnection = Omit<DatabaseConnection, "type"> & { readonly type: string };
 

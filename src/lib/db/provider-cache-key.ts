@@ -117,9 +117,9 @@ export interface KeyFrame {
 /**
  * The key {@link providerCacheKey} answers, from the engine's facts as `frame` states them rather than from Studio's
  * rows keyed by the connection's type: the id, the server, the credentials and the mode, the deny posture's segment
- * for an engine that reads one, and the owner, length-framed. Engine-neutral: the package session cache
- * (src/lib/db/package-sessions.ts) frames a provider package's engine with it, its facts read from Studio's grant of its
- * claims.
+ * for an engine that reads one, and the owner, length-framed. Engine-neutral: the editor's session of a provider
+ * package's engine (`getOrCreateEditorSession` in src/lib/db/factory.ts) is framed with it, its facts read from Studio's
+ * grant of its claims.
  */
 export async function frameCacheKey(
   connection: EngineConnection & WithTunnelFarEnd & WithLiteralSeedFile,

@@ -1,7 +1,6 @@
 /**
- * The idle sweep's two numbers, shared by the provider factory's caches (./factory) and the package session cache
- * (./package-sessions), which each sweep their own entries on their own timer: an entry unused for `IDLE_TIMEOUT_MS` is
- * closed, checked every `SWEEP_INTERVAL_MS`.
+ * The idle sweep's two numbers, read by the provider factory's caches (./factory), a provider package's sessions among
+ * the editor cache's entries: an entry unused for `IDLE_TIMEOUT_MS` is closed, checked every `SWEEP_INTERVAL_MS`.
  */
 
 /** Idle timeout: an entry unused for 30 minutes is closed. */

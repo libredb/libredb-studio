@@ -2,6 +2,7 @@ import {
   createDatabaseProvider,
   findOpenSingleWriterProvider,
   isSingleWriterFileOpen,
+  openEngineOnce,
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
@@ -19,8 +20,8 @@ import {
   waitedSeconds,
 } from "@/lib/db/errors";
 import { assertOpenable } from "@/lib/db/open-check";
-import { openPackageSessionOnce, teardownPackageSession } from "@/lib/db/package-sessions";
-import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
+import { teardownContractSession } from "@/lib/provider-host/core/contract-session";
+import { type OpenedPackageSession, openedSession } from "@/lib/provider-host/open-engine";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -116,11 +117,12 @@ function testDeadlineSentence(budgetMs: number): string {
  * before the budget starts, `connection` is read by the engine's own field rules, composed from its declaration
  * (`engine.fieldRules`), a refusal rejecting with a not-sent `DatabaseConfigError` carrying the declared sentence, and
  * then by the one ordered open check (`assertOpenable` in src/lib/db/open-check.ts). Then, within the engine's connect
- * budget from `now`, one session opens through the package (`openPackageSessionOnce`, which opens through the one open
- * function, `openEngine` in src/lib/provider-host/open-engine.ts), never cached; its health is read
- * through the host core's health call on the test's own deadline and signal (`readSessionHealthWithin`); and it is
- * closed under a cleanup context, waited for at most the teardown's close deadline, a close that fails or is cut logged
- * by kind and code and never changing the answer. Nothing is built by the provider factory and no tunnel opens.
+ * budget from `now`, one session opens through the package (`openEngineOnce` in src/lib/db/factory.ts, the factory's
+ * open without its cache, through the one open function, `openEngine` in src/lib/provider-host/open-engine.ts), never
+ * cached; its health is read through the host core's health call on the test's own deadline and signal
+ * (`readSessionHealthWithin`); and it is closed under a cleanup context, waited for at most the teardown's close
+ * deadline (`teardownContractSession` in src/lib/provider-host/core/contract-session.ts), a close that fails or is cut
+ * logged by kind and code and never changing the answer. No legacy provider is built and no tunnel opens.
  *
  * The client never receives a package's own words: an open that fails with a package's error rejects with a not-sent
  * `ConnectionError` naming its code, and a health read that fails answers the degraded success with a sentence naming
@@ -153,7 +155,9 @@ export async function testPackageConnection(
   const within = <T>(work: Promise<T>): Promise<T> => untilDeadline(work, deadline, expired);
   let opened: OpenedPackageSession;
   try {
-    opened = await within(openPackageSessionOnce(connection, engine, execution, now + budget, deadline));
+    opened = openedSession(
+      await within(openEngineOnce(connection, engine, execution, { deadline: now + budget, signal: deadline })),
+    );
   } catch (error) {
     if (error instanceof DatabaseError) throw error;
     logPackageError("open", error, scrub, route);
@@ -183,7 +187,7 @@ export async function testPackageConnection(
     if (health.kind === "ended") throw expired();
     return { success: true, message: "Connection successful", latency: Date.now() - startTime };
   } finally {
-    const outcome = await teardownPackageSession(session, env);
+    const outcome = await teardownContractSession(session, env);
     if (outcome.close !== "done") {
       logger.warn("Test Connection's session of a provider package did not close", {
         route,
