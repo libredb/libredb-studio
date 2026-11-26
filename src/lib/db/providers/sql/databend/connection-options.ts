@@ -120,7 +120,7 @@ const WAREHOUSE_NAME = /^[A-Za-z0-9_-]{1,63}$/;
 const C0_CONTROL = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}]`);
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-/** Every fixed sentence this module throws, so the provider-doc tests read them back. */
+/** Every fixed sentence this module throws. */
 export const DATABEND_CONNECTION_SENTENCES = Object.freeze({
   userRequired:
     "User is required: Databend signs in every request as a SQL user, root on a fresh self-hosted node. Nothing was sent.",

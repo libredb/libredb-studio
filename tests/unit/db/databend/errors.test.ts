@@ -32,8 +32,30 @@ import {
   transportFailure,
   unsentStopError,
 } from "@/lib/db/providers/sql/databend/errors";
-import { DatabendError, type DatabendErrorCategory } from "@/lib/db/providers/sql/databend/transport";
+import {
+  DatabendError,
+  type DatabendErrorCategory,
+  type DatabendTruncation,
+} from "@/lib/db/providers/sql/databend/transport";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
+import path from "node:path";
+import { createErrorResponse } from "@/lib/api/errors";
+import { DATABEND_DSN_CAUTIONS, DATABEND_DSN_REFUSALS, DATABEND_SSLMODE_NOTICES } from "@/lib/connection-string-parser";
+import { DATABEND_ANSWER_SENTENCES } from "@/lib/db/providers/sql/databend/answer";
+import { databendCloudHostWarehouse } from "@/lib/db/providers/sql/databend/cloud-host";
+import {
+  DATABEND_CELL_BUDGET,
+  DATABEND_CONNECTION_SENTENCES,
+  DATABEND_DEFAULT_PORT,
+  DATABEND_STATEMENT_BYTES,
+} from "@/lib/db/providers/sql/databend/connection-options";
+import { DATABEND_PROVIDER_SENTENCES } from "@/lib/db/providers/sql/databend/index";
+import { DATABEND_MONITORING_SENTENCES } from "@/lib/db/providers/sql/databend/introspect";
+import { DATABEND_LABEL_SENTENCES } from "@/lib/db/providers/sql/databend/labels";
+import { DATABEND_OBJECT_SENTENCES } from "@/lib/db/providers/sql/databend/objects";
+import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
+import { DATABEND_EXPLAIN_DECLINES } from "@/lib/explain/databend-text";
+import { readFileSync } from "node:fs";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -1060,5 +1082,399 @@ describe("serverWords, a server text a sentence names on its own (HASIM-D-5)", (
   test("is cut at 300 characters, as a refusal's text is, after the forms are looked for", () => {
     expect(serverWords("x".repeat(400), FORMS)).toBe(`${"x".repeat(300)}...`);
     expect(serverWords(`${"x".repeat(400)}${TEST_PASSWORD}`, FORMS)).toBe(WITHHELD);
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+/** A placeholder standing where a template takes a number. */
+const slot = (name: string): number => name as unknown as number;
+/** The statement budget's own cut, as a cut result reports it. */
+const BYTES_CUT: DatabendTruncation = { bound: "bytes", limit: DATABEND_STATEMENT_BYTES };
+const CELLS_CUT: DatabendTruncation = { bound: "cells", limit: DATABEND_CELL_BUDGET };
+const ROWS_CUT: DatabendTruncation = { bound: "rows", limit: MAX_UNLIMITED_ROWS };
+/**
+ * Every sentence of each exported record, keyed as the record is, each template filled with placeholders.
+ * A key the code adds and this map lacks fails the key check below.
+ */
+const QUOTED: Readonly<Record<string, { readonly keys: readonly string[]; readonly quotes: readonly string[] }>> = {
+  DATABEND_CONNECTION_SENTENCES: {
+    keys: Object.keys(DATABEND_CONNECTION_SENTENCES),
+    quotes: [
+      DATABEND_CONNECTION_SENTENCES.userRequired,
+      DATABEND_CONNECTION_SENTENCES.userColon,
+      DATABEND_CONNECTION_SENTENCES.control("User"),
+      DATABEND_CONNECTION_SENTENCES.control("Password"),
+      DATABEND_CONNECTION_SENTENCES.malformed("User"),
+      DATABEND_CONNECTION_SENTENCES.malformed("Password"),
+      DATABEND_CONNECTION_SENTENCES.warehouse,
+      DATABEND_CONNECTION_SENTENCES.plaintext,
+      DATABEND_CONNECTION_SENTENCES.queryTimeout,
+      DATABEND_CONNECTION_SENTENCES.wrongType("[field]", "[type]"),
+    ],
+  },
+  DATABEND_ANSWER_SENTENCES: {
+    keys: Object.keys(DATABEND_ANSWER_SENTENCES),
+    quotes: [DATABEND_ANSWER_SENTENCES.resultMode(""), DATABEND_ANSWER_SENTENCES.resultMode("[mode]")],
+  },
+  DATABEND_ERROR_SENTENCES: {
+    keys: Object.keys(S),
+    quotes: [
+      S.latched("[time]", "[until]"),
+      S.signInRefused,
+      S.possibleLockout,
+      S.cloudSqlUser,
+      S.statementForbidden("[server text]"),
+      S.signInMissing,
+      S.followUpRefused,
+      S.warehouseRefused("[warehouse]"),
+      S.warehouseRequired,
+      S.hostRefused,
+      S.middlewareRefused("[server text]"),
+      S.middlewareRefused(""),
+      S.nothingRan,
+      S.resuming("[warehouse]", "[seconds]"),
+      S.unavailable("[cause]", "[seconds]"),
+      S.noAnswer("[cause]"),
+      S.warehouseStarting,
+      S.cancelledBeforeAnswer,
+      S.deadlineBeforeAnswer("[seconds]"),
+      S.cancelUnanswered,
+      S.deadline("[seconds]"),
+      S.deadlineUnacknowledged("[seconds]"),
+      S.cancelled,
+      S.protocol("[fault]"),
+      S.server(slot("[status]"), "[server text]"),
+      S.tls("[transport error]"),
+      S.network("[host]", slot("[port]"), "[cause]"),
+      S.currentDatabase,
+    ],
+  },
+  DATABEND_PROTOCOL_FAULTS: {
+    keys: Object.keys(DATABEND_PROTOCOL_FAULTS),
+    quotes: [
+      DATABEND_PROTOCOL_FAULTS.notAnswer,
+      DATABEND_PROTOCOL_FAULTS.notJson,
+      DATABEND_PROTOCOL_FAULTS.prototypeKey,
+      DATABEND_PROTOCOL_FAULTS.field("[field]"),
+      DATABEND_PROTOCOL_FAULTS.cell,
+      DATABEND_PROTOCOL_FAULTS.width(slot("[cells]"), slot("[columns]")),
+      DATABEND_PROTOCOL_FAULTS.link,
+      DATABEND_PROTOCOL_FAULTS.queryId,
+      DATABEND_PROTOCOL_FAULTS.sessionId,
+      DATABEND_PROTOCOL_FAULTS.proxySession,
+      DATABEND_PROTOCOL_FAULTS.pageSchema,
+      DATABEND_PROTOCOL_FAULTS.pollBound,
+      DATABEND_PROTOCOL_FAULTS.rows,
+      DATABEND_PROTOCOL_FAULTS.schema,
+      DATABEND_PROTOCOL_FAULTS.values,
+      DATABEND_PROTOCOL_FAULTS.depth,
+    ],
+  },
+  DATABEND_LABEL_SENTENCES: {
+    keys: Object.keys(DATABEND_LABEL_SENTENCES),
+    quotes: Object.values(DATABEND_LABEL_SENTENCES),
+  },
+  DATABEND_PROVIDER_SENTENCES: {
+    keys: Object.keys(DATABEND_PROVIDER_SENTENCES),
+    quotes: [
+      DATABEND_PROVIDER_SENTENCES.params,
+      DATABEND_PROVIDER_SENTENCES.resultCut(BYTES_CUT),
+      DATABEND_PROVIDER_SENTENCES.resultCut(CELLS_CUT),
+      DATABEND_PROVIDER_SENTENCES.resultCut(ROWS_CUT),
+      DATABEND_PROVIDER_SENTENCES.closeFailed("final"),
+      DATABEND_PROVIDER_SENTENCES.closeFailed("rollback"),
+      DATABEND_PROVIDER_SENTENCES.closeFailed("logout"),
+      DATABEND_PROVIDER_SENTENCES.closeRefused("final"),
+      DATABEND_PROVIDER_SENTENCES.closeRefused("rollback"),
+      DATABEND_PROVIDER_SENTENCES.closeRefused("logout"),
+      DATABEND_PROVIDER_SENTENCES.closeSkipped("logout"),
+      DATABEND_PROVIDER_SENTENCES.warningsLeftOut(slot("[count]")),
+      DATABEND_PROVIDER_SENTENCES.databaseMissing("[database]"),
+      DATABEND_PROVIDER_SENTENCES.unverifiedTls,
+      DATABEND_PROVIDER_SENTENCES.slotsBusy("[seconds]"),
+      DATABEND_PROVIDER_SENTENCES.maintenanceRefused("[operation]"),
+    ],
+  },
+  DATABEND_MONITORING_SENTENCES: {
+    keys: Object.keys(DATABEND_MONITORING_SENTENCES),
+    quotes: [
+      DATABEND_MONITORING_SENTENCES.killNeedsId,
+      DATABEND_MONITORING_SENTENCES.killIdRefused,
+      DATABEND_MONITORING_SENTENCES.killAsked("[session id]"),
+    ],
+  },
+  DATABEND_DSN_REFUSALS: {
+    keys: Object.keys(DATABEND_DSN_REFUSALS),
+    quotes: Object.values(DATABEND_DSN_REFUSALS),
+  },
+  DATABEND_SSLMODE_NOTICES: {
+    keys: Object.keys(DATABEND_SSLMODE_NOTICES),
+    quotes: Object.values(DATABEND_SSLMODE_NOTICES),
+  },
+  DATABEND_DSN_CAUTIONS: {
+    keys: Object.keys(DATABEND_DSN_CAUTIONS),
+    quotes: [DATABEND_DSN_CAUTIONS.caFile, DATABEND_DSN_CAUTIONS.sslmode("verify-full")],
+  },
+  DATABEND_EXPLAIN_DECLINES: {
+    keys: Object.keys(DATABEND_EXPLAIN_DECLINES),
+    quotes: [
+      DATABEND_EXPLAIN_DECLINES.binding("[word]", "[construct]"),
+      DATABEND_EXPLAIN_DECLINES.writer("[name]"),
+      DATABEND_EXPLAIN_DECLINES.hint,
+      DATABEND_EXPLAIN_DECLINES.stage,
+      DATABEND_EXPLAIN_DECLINES.formFeed,
+      DATABEND_EXPLAIN_DECLINES.taggedDollar,
+      DATABEND_EXPLAIN_DECLINES.unterminated,
+      DATABEND_EXPLAIN_DECLINES.hintAdvice,
+      DATABEND_EXPLAIN_DECLINES.formFeedAdvice,
+      DATABEND_EXPLAIN_DECLINES.taggedDollarAdvice,
+    ],
+  },
+  DATABEND_OBJECT_SENTENCES: {
+    keys: Object.keys(DATABEND_OBJECT_SENTENCES),
+    quotes: [
+      DATABEND_OBJECT_SENTENCES.bound(BYTES_CUT),
+      DATABEND_OBJECT_SENTENCES.incomplete("[surface]", BYTES_CUT),
+      DATABEND_OBJECT_SENTENCES.bulkCut(BYTES_CUT),
+      DATABEND_OBJECT_SENTENCES.incomplete("definition", BYTES_CUT),
+      DATABEND_OBJECT_SENTENCES.unknownTableType("[type]"),
+      DATABEND_OBJECT_SENTENCES.unknownKind("[kind]"),
+      DATABEND_OBJECT_SENTENCES.badLimit(slot("[limit]")),
+      DATABEND_OBJECT_SENTENCES.noColumns("[object]"),
+      DATABEND_OBJECT_SENTENCES.noColumnsLeftOut(["[object]"]),
+      DATABEND_OBJECT_SENTENCES.noDefinition("[object]"),
+      DATABEND_OBJECT_SENTENCES.noPassword("[user]"),
+      DATABEND_OBJECT_SENTENCES.sourceLabel,
+    ],
+  },
+};
+
+describe("the sentences of the error paths and the exported records", () => {
+  test("the network sentence says the MySQL and Flight SQL ports are not used (owner decision Q6)", () => {
+    expect(S.network("[host]", slot("[port]"), "[cause]")).toContain("3307 (MySQL) and 8900 (Flight SQL) are not used");
+  });
+
+  test("an older Cloud host's warehouse is named as a Warehouse is in the no-answer and resuming sentences (RI-3)", () => {
+    // The sentences once connect() has put the host's warehouse into the options they read, which
+    // cloud-host.test.ts drives through the provider.
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "user",
+      sql: "SELECT 1",
+      warehouse: databendCloudHostWarehouse("tn3ftqihs--eric.gw.aws-us-east-2.default.databend.com"),
+      endpoint: { host: "tn3ftqihs--eric.gw.aws-us-east-2.default.databend.com", port: 443 },
+      timeoutMs: 60_000,
+      secretForms: [],
+    };
+    const refusal = (status: number) => ({
+      status,
+      contentType: "text/plain",
+      code: null,
+      gatewayKind: null,
+      text: "",
+    });
+    expect(refusalError(refusal(502), ctx).message).toBe(`${S.noAnswer("HTTP 502")} ${S.warehouseStarting}`);
+    expect(refusalError(refusal(503), { ...ctx, request: "get" }).message).toBe(S.resuming("eric", "60"));
+    // Only the no-answer sentence adds it: a dropped connection and a stop before the first answer do, and the
+    // outcome-unknown sentences of a stop after it do not (Z1).
+    const unanswered = { answered: false, killAcknowledged: false };
+    const answered = { answered: true, killAcknowledged: false };
+    expect(transportFailure(new TransportError("network", "reset"), unanswered, ctx).message).toBe(
+      `${S.noAnswer("reset")} ${S.warehouseStarting}`,
+    );
+    expect(stopError("cancel", unanswered, ctx).message).toBe(
+      `${S.noAnswer(S.cancelledBeforeAnswer)} ${S.warehouseStarting}`,
+    );
+    expect(stopError("cancel", answered, ctx).message).toBe(S.cancelUnanswered);
+    expect(stopError("deadline", answered, ctx).message).toBe(S.deadlineUnacknowledged("60"));
+  });
+
+  test("a kill refused for want of the privilege is shown as Databend wrote it (cl-ops F2)", () => {
+    // Databend's refusal as the pinned image answered `studio_reader`'s kill of another session (measured 2026-10-08).
+    const refusal =
+      "Permission denied: privilege [Super] is required on *.* for user 'studio_reader'@'%' with roles [public,studio_ro]. Note: Please ensure that your current role have the appropriate permissions to create a new Object";
+    // The refusal answers with the statement's id, so Studio shows it as Databend wrote it, nothing appended.
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "provider",
+      sql: "KILL QUERY 's1'",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 10_000,
+      secretForms: [],
+    };
+    const refused = answerError({ id: "q", error: { code: 1063, message: refusal, detail: null } }, ctx, null);
+    expect(refused.message).toBe(refusal);
+  });
+
+  test("every exported sentence record has exactly the keys listed, in order", () => {
+    const expectedKeys: Readonly<Record<string, readonly string[]>> = {
+      DATABEND_CONNECTION_SENTENCES: [
+        "userRequired",
+        "userColon",
+        "control",
+        "malformed",
+        "warehouse",
+        "plaintext",
+        "queryTimeout",
+        "wrongType",
+      ],
+      DATABEND_ANSWER_SENTENCES: ["resultMode"],
+      DATABEND_ERROR_SENTENCES: [
+        "latched",
+        "signInRefused",
+        "possibleLockout",
+        "cloudSqlUser",
+        "statementForbidden",
+        "signInMissing",
+        "followUpRefused",
+        "warehouseRefused",
+        "warehouseRequired",
+        "hostRefused",
+        "middlewareRefused",
+        "nothingRan",
+        "resuming",
+        "unavailable",
+        "noAnswer",
+        "warehouseStarting",
+        "cancelledBeforeAnswer",
+        "deadlineBeforeAnswer",
+        "cancelUnanswered",
+        "deadline",
+        "deadlineUnacknowledged",
+        "cancelled",
+        "protocol",
+        "server",
+        "tls",
+        "network",
+        "currentDatabase",
+      ],
+      DATABEND_PROTOCOL_FAULTS: [
+        "notAnswer",
+        "notJson",
+        "prototypeKey",
+        "field",
+        "cell",
+        "width",
+        "link",
+        "queryId",
+        "sessionId",
+        "proxySession",
+        "pageSchema",
+        "pollBound",
+        "rows",
+        "schema",
+        "values",
+        "depth",
+      ],
+      DATABEND_LABEL_SENTENCES: [
+        "analyzeGlobalDesc",
+        "vacuumGlobalDesc",
+        "slowQueriesEmptyState",
+        "sessionsEmptyState",
+        "tableStatsCaption",
+      ],
+      DATABEND_PROVIDER_SENTENCES: [
+        "params",
+        "resultCut",
+        "closeFailed",
+        "closeRefused",
+        "closeSkipped",
+        "warningsLeftOut",
+        "databaseMissing",
+        "unverifiedTls",
+        "slotsBusy",
+        "maintenanceRefused",
+      ],
+      DATABEND_MONITORING_SENTENCES: ["killNeedsId", "killIdRefused", "killAsked"],
+      DATABEND_DSN_REFUSALS: ["fragment", "userinfo", "signIn", "flight", "jdbc", "shellExport"],
+      DATABEND_SSLMODE_NOTICES: ["require", "enable"],
+      DATABEND_DSN_CAUTIONS: ["caFile", "sslmode"],
+      DATABEND_EXPLAIN_DECLINES: [
+        "binding",
+        "writer",
+        "hint",
+        "stage",
+        "formFeed",
+        "taggedDollar",
+        "unterminated",
+        "hintAdvice",
+        "formFeedAdvice",
+        "taggedDollarAdvice",
+      ],
+      DATABEND_OBJECT_SENTENCES: [
+        "bound",
+        "incomplete",
+        "bulkCut",
+        "unknownTableType",
+        "unknownKind",
+        "badLimit",
+        "noColumns",
+        "noColumnsLeftOut",
+        "noDefinition",
+        "noPassword",
+        "sourceLabel",
+      ],
+    };
+    for (const [record, { keys }] of Object.entries(QUOTED)) {
+      expect(keys, record).toEqual([...expectedKeys[record]]);
+    }
+  });
+
+  test("the resuming sentence reaches a route as written with 503, and a timeout gets 504 (GAP-CL-1)", async () => {
+    const ctx: DatabendFailureContext = {
+      request: "get",
+      origin: "provider",
+      sql: "SELECT 1",
+      warehouse: "[warehouse]",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 10_000,
+      secretForms: [],
+    };
+    const resuming = createErrorResponse(
+      toDatabaseError(stopError("deadline", { answered: true, killAcknowledged: true }, ctx), ctx),
+    );
+    expect(resuming.status).toBe(503);
+    expect(((await resuming.json()) as { error: string }).error).toBe(S.resuming("[warehouse]", "10"));
+    const timeout = createErrorResponse(new TimeoutError(S.deadline("10"), "databend", 10_000));
+    expect(timeout.status).toBe(504);
+  });
+
+  test("an in-body error's position is in Databend's own excerpt and on the error, never marked in the editor (SHC-2)", () => {
+    expect(read("src/components/studio/BottomPanel.tsx")).toContain("The query failed.");
+    // The editor draws no marker for a query error: a marker added later changes this row.
+    expect(read("src/components/QueryEditor.tsx")).not.toContain("setModelMarkers");
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "user",
+      sql: "SELECT nope",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 60_000,
+      secretForms: [],
+    };
+    const excerpt = "error: \n  --> SQL:1:8\n  |\n1 | SELECT nope\n  |        ^^^^ column nope doesn't exist";
+    const failed = answerError({ id: "q", error: { code: 1065, message: excerpt, detail: null } }, ctx, null);
+    expect(failed.position).toBe(8);
+  });
+
+  test("a long refusal and a long statement error are cut and marked", () => {
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "user",
+      sql: "SELECT 1",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 60_000,
+      secretForms: [],
+    };
+    const long = "x".repeat(5000);
+    const refused = refusalError(
+      { status: 400, contentType: "text/plain", code: 400, gatewayKind: null, text: long },
+      ctx,
+    );
+    const refusalCut = /x+/.exec(refused.message)?.[0].length ?? 0;
+    expect(refused.message).toBe(S.middlewareRefused(`${"x".repeat(refusalCut)}...`));
+    const failed = answerError({ id: "q", error: { code: 1006, message: long, detail: null } }, ctx, null);
+    const statementCut = /x+/.exec(failed.message)?.[0].length ?? 0;
+    expect(failed.message).toBe(`${"x".repeat(statementCut)}...`);
   });
 });

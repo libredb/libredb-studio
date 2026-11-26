@@ -215,3 +215,36 @@ describe("the shared limiter under databend", () => {
     expect(applyQueryLimit(sql, 500, 0, {}, "databend")).toMatchObject({ sql, wasLimited: false, originalLimit: 5 });
   });
 });
+
+/** The sentence constants of sql-text.ts, every export of it but the guard function. */
+const GUARD_SENTENCES: readonly string[] = [
+  DATABEND_FORM_FEED,
+  DATABEND_HINT_SEMICOLON,
+  DATABEND_HINT_TOKEN,
+  DATABEND_IDENTIFIER_DOLLAR,
+  DATABEND_MULTIPLE_STATEMENTS,
+  DATABEND_NO_STATEMENT,
+  DATABEND_STAGE_RUN_ON,
+  DATABEND_TAGGED_DOLLAR,
+  DATABEND_UNTERMINATED_SPAN,
+];
+
+describe("the guard's sentences, a hint and the stage rule", () => {
+  test("sql-text.ts exports nine guard sentences", () => {
+    expect(GUARD_SENTENCES).toHaveLength(9);
+  });
+
+  test("a SET_VAR hint is not refused", () => {
+    expect(databendStatementRefusal("SELECT /*+ SET_VAR(timezone='UTC') */ now()")).toBeNull();
+  });
+
+  test("the stage rule passes the <@ operator and a quoted stage name, and refuses a bare one", () => {
+    const arrowAt = "SELECT parse_json('[1]')<@/*c*/parse_json('[1,2]') AS r";
+    expect(databendStatementRefusal(arrowAt)).toBeNull();
+    for (const name of ["@s[1]", "@s/a--b.csv"]) {
+      expect(databendStatementRefusal(`SELECT $1 FROM ${name}`)).toBe(DATABEND_STAGE_RUN_ON);
+      expect(databendStatementRefusal(`SELECT $1 FROM '${name}'`)).toBeNull();
+    }
+    expect(databendStatementRefusal("LIST @s PATTERN = '.*a--b[.]csv'")).toBeNull();
+  });
+});

@@ -751,3 +751,43 @@ describe("the sentences", () => {
     expect(Object.keys(DATABEND_MONITORING_SENTENCES)).toEqual(["killNeedsId", "killIdRefused", "killAsked"]);
   });
 });
+
+describe("the sessions read and Studio's own statements", () => {
+  test("a session's command gives its state and the activity the panels count (F8)", async () => {
+    const columns = ["session_id", "user_name", "host", "database_name", "command", "query_text"];
+    const runner: DatabendStatementRunner = async (sql) => {
+      expect(sql).toBe(databendSessionsSql(DATABEND_DEFAULT_SESSION_LIMIT));
+      return {
+        schema: columns.map((name) => ({ name, type: "String" })),
+        rows: [
+          ["s1", "u", "h", "d", "Query", "SELECT 1"],
+          ["s2", "u", "h", "d", "Aborting", "SELECT 2"],
+        ],
+        truncated: null,
+        notices: [],
+        hasResultSet: true,
+        affect: null,
+      };
+    };
+    expect((await getActiveSessions(runner)).map((session) => [session.state, session.activity])).toEqual([
+      ["active", "active"],
+      ["aborting", "other"],
+    ]);
+  });
+
+  test("the sessions and overview reads select the query id that leaves Studio's own statements out (CL-OPS-1)", async () => {
+    const sessions = databendSessionsSql(DATABEND_DEFAULT_SESSION_LIMIT);
+    expect(sessions).toContain("current_query_id AS query_id");
+    expect(sessions.endsWith(` LIMIT ${DATABEND_DEFAULT_SESSION_LIMIT + DATABEND_LIMITER_OPTIONS.perEngine}`)).toBe(
+      true,
+    );
+    const sent: string[] = [];
+    await getOverview(async (sql) => {
+      sent.push(sql);
+      return { schema: [], rows: [], truncated: null, notices: [], hasResultSet: true, affect: null };
+    });
+    const count = sent.find((sql) => sql.includes("system.processes")) ?? "";
+    expect(count).toContain("SELECT current_query_id AS query_id, count(*) OVER () AS running ");
+    expect(count.endsWith(` ORDER BY created_time DESC LIMIT ${DATABEND_MAX_MONITORING_LIMIT}`)).toBe(true);
+  });
+});

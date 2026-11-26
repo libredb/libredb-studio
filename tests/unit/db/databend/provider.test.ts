@@ -53,6 +53,10 @@ import {
   wireIds,
 } from "../../../helpers/databend-node-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { DATABEND_DEFAULT_PORT } from "@/lib/db/providers/sql/databend/connection-options";
+import { buildResultExport } from "@/lib/export/result-export";
 
 // ============================================================================
 // A fake query server
@@ -1596,5 +1600,61 @@ describe("Studio's own statements are left out of the Sessions panel and the act
     expect((await provider.getOverview()).activeConnections).toBe(1);
     answer.open({ schema: [column("editor_statement", "UInt8")], data: [["0"]] });
     expect((await running).rowCount).toBe(1);
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "databend-doc",
+  name: "Databend",
+  type: "databend",
+  host: "localhost",
+  port: DATABEND_DEFAULT_PORT,
+  user: "root",
+  createdAt: new Date(0),
+};
+const provider = new DatabendProvider(CONNECTION);
+const capabilities = provider.getCapabilities();
+const UI = DB_UI_CONFIG.databend;
+
+describe("the label, the export writer, the parameter refusal, Explain and the import refusal", () => {
+  test("the dialog's label is Databend", () => {
+    expect(UI.label).toBe("Databend");
+  });
+
+  test("the skipped row's comment names a type by its outer name, as the writer builds it (R-SQL-2)", () => {
+    const skipped = (type: string) =>
+      buildResultExport("sql-insert", {
+        rows: [{ c: "x" }],
+        fields: ["c"],
+        tabName: "users",
+        dialect: "databend",
+        columnTypes: { c: type },
+      }).content;
+    expect(skipped("Nullable(Map(String, Int32))")).toBe(
+      '-- Row 1 skipped: column "c" holds a value of type Map, which databend has no literal for.',
+    );
+    expect(skipped("Array(Nullable(Int32))")).toContain("holds a value of type Array,");
+    expect(skipped("X".repeat(100))).toContain(`holds a value of type ${"X".repeat(64)}...,`);
+  });
+
+  test("a statement with bound parameters is refused with the params sentence", async () => {
+    let message = "";
+    try {
+      await provider.query("SELECT 1", [1]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe(DATABEND_PROVIDER_SENTENCES.params);
+  });
+
+  test("Explain is databend-text", () => {
+    expect(capabilities.explainFormat).toBe("databend-text");
+  });
+
+  test("the import dialog has no target on Databend: no kind takes row writes and no table is created (D4)", () => {
+    // What the dialog reads from the declaration: no kind takes row writes, and no create-table.
+    expect(capabilities.createTable).toBeUndefined();
+    expect((capabilities.objectKinds ?? []).some((kind) => kind.acceptsRowWrites === true)).toBe(false);
+    expect(importRefusal(capabilities)).toBe(IMPORT_NO_TARGET);
   });
 });

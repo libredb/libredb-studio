@@ -180,3 +180,55 @@ describe("retryDecision: attempts and backoff", () => {
     },
   );
 });
+
+describe("the retry schedule", () => {
+  test("a page retries twice, a provisioning warehouse five times with backoff, and a query 503 not at all", () => {
+    const steps = [1, 2, 3, 4, 5].map((attempt) =>
+      retryDecision({
+        request: "page",
+        status: 503,
+        gatewayKind: null,
+        transportKind: null,
+        attempt,
+        msLeft: 600_000,
+        retryAfter: null,
+        random: 0.5,
+        pageTimerRetried: false,
+      }),
+    );
+    expect(steps.slice(0, 2)).toEqual([
+      { retry: true, delayMs: 1000 },
+      { retry: true, delayMs: 2000 },
+    ]);
+    expect(steps[2]).toEqual({ retry: false });
+    const post = (attempt: number) =>
+      retryDecision({
+        request: "query",
+        status: 200,
+        gatewayKind: "ProvisionWarehouseTimeout",
+        transportKind: null,
+        attempt,
+        msLeft: 600_000,
+        retryAfter: null,
+        random: 0.5,
+        pageTimerRetried: false,
+      });
+    expect([1, 2, 3, 4, 5].map((attempt) => post(attempt))).toEqual(
+      [1000, 2000, 4000, 8000, 8000].map((delayMs) => ({ retry: true, delayMs })),
+    );
+    expect(post(6)).toEqual({ retry: false });
+    expect(
+      retryDecision({
+        request: "query",
+        status: 503,
+        gatewayKind: null,
+        transportKind: null,
+        attempt: 1,
+        msLeft: 600_000,
+        retryAfter: null,
+        random: 0.5,
+        pageTimerRetried: false,
+      }),
+    ).toEqual({ retry: false });
+  });
+});

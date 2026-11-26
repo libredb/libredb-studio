@@ -33,7 +33,7 @@ const FIXTURE_FILES = [
   "tests/components/LoginPage.test.tsx",
   "tests/components/ConnectionSignature.test.tsx",
   "tests/hooks/use-connection-form.test.ts",
-  "tests/unit/db/databend/provider-doc.test.ts",
+  "tests/unit/db/databend/connection-options.test.ts",
 ];
 
 function sourceOf(path: string, text: string): ts.SourceFile {

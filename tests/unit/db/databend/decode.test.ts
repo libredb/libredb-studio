@@ -204,3 +204,12 @@ describe("decodeOutcome: the one-row DML answer", () => {
     expect(narrow.rowCount).toBe(1);
   });
 });
+
+describe("a count past 2^53", () => {
+  test("a count from 2^53 up is the nearest number, while the row keeps it exact", () => {
+    const column = "number of rows updated";
+    const decoded = decodeOutcome({ schema: [{ name: column, type: "UInt64" }], rows: [["9007199254740993"]] }, "U");
+    expect(decoded.rowCount).toBe(2 ** 53);
+    expect(decoded.rows).toEqual([{ [column]: "9007199254740993" }]);
+  });
+});

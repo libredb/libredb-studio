@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DATABEND_KILL_SPEC, DATABEND_LABEL_SENTENCES, DATABEND_LABELS } from "@/lib/db/providers/sql/databend/labels";
+import { DATABEND_DEFAULT_PORT } from "@/lib/db/providers/sql/databend/connection-options";
+import { DatabendProvider } from "@/lib/db/providers/sql/databend/index";
+import { type DatabaseConnection } from "@/lib/types";
 
 /** The en dash and the em dash, built from their code points so this file holds neither. */
 const DASHES = new RegExp("[\\u2013\\u2014]");
@@ -63,5 +66,28 @@ describe("DATABEND_KILL_SPEC", () => {
   test("the kill targets a session id from the Sessions panel, so it has no table or global control", () => {
     expect(DATABEND_KILL_SPEC).toEqual({ label: "Kill Query", perEntity: false, global: false });
     expect(Object.isFrozen(DATABEND_KILL_SPEC)).toBe(true);
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "databend-doc",
+  name: "Databend",
+  type: "databend",
+  host: "localhost",
+  port: DATABEND_DEFAULT_PORT,
+  user: "root",
+  createdAt: new Date(0),
+};
+const provider = new DatabendProvider(CONNECTION);
+const capabilities = provider.getCapabilities();
+
+describe("the declared capabilities and the kill card", () => {
+  test("no table creation is declared, a warehouse resumes billed compute, four kinds are listed and the kill card is Kill Query", () => {
+    expect(capabilities.createTable).toBeUndefined();
+    expect(capabilities.resumesBilledCompute).toBeUndefined();
+    expect(new DatabendProvider({ ...CONNECTION, warehouse: "wh" }).getCapabilities().resumesBilledCompute).toBe(true);
+    const kinds = (capabilities.objectKinds ?? []).map((kind) => `\`${kind.id}\``);
+    expect(kinds).toHaveLength(4);
+    expect(DATABEND_KILL_SPEC.label).toBe("Kill Query");
   });
 });

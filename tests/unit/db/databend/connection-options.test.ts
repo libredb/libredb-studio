@@ -25,6 +25,10 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { DATABEND_DSN_CAUTIONS, DATABEND_DSN_REFUSALS, parseConnectionString } from "@/lib/connection-string-parser";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { DatabendProvider } from "@/lib/db/providers/sql/databend/index";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -534,5 +538,87 @@ describe("the latch key [X03]", () => {
 
   test("ignores the warehouse, since the user is locked whatever compute is named", () => {
     expect(build({ warehouse: "a" }).latchKey).toBe(build({ warehouse: "b" }).latchKey);
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "databend-doc",
+  name: "Databend",
+  type: "databend",
+  host: "localhost",
+  port: DATABEND_DEFAULT_PORT,
+  user: "root",
+  createdAt: new Date(0),
+};
+const provider = new DatabendProvider(CONNECTION);
+const capabilities = provider.getCapabilities();
+const UI = DB_UI_CONFIG.databend;
+const MIB = 1024 * 1024;
+
+describe("the limiter, the dialog, the paste reader and the response cap", () => {
+  test("the tree, monitoring and probe reads share an engine limiter of two", () => {
+    // DATABEND_LIMITER_OPTIONS: one engine key for the process, which the tree, monitoring and probe reads share.
+    expect(DATABEND_LIMITER_OPTIONS.perEngine).toBe(2);
+  });
+
+  test("the dialog's fields and default port are the provider's", () => {
+    expect(UI.connectionFields).toEqual([
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "warehouse",
+      "allowInsecureAuth",
+    ]);
+    expect(UI.defaultPort).toBe(String(DATABEND_DEFAULT_PORT));
+    expect(capabilities.defaultPort).toBe(DATABEND_DEFAULT_PORT);
+  });
+
+  test("each Databend scheme is read as a Databend paste, and an unread login parameter is listed as ignored", () => {
+    for (const scheme of ["`databend://`", "`databend+http://`", "`databend+https://`"]) {
+      expect(parseConnectionString(`${scheme.slice(1, -1)}root@localhost:8000/`)?.type).toBe("databend");
+    }
+    const ignored = parseConnectionString("databend://root@localhost:8000/?login=disable");
+    expect(ignored?.ignoredParameters).toEqual(["login"]);
+  });
+
+  test("tls_ca_file is listed with the parameters that are not applied, as its caution says (RI-2)", () => {
+    const read = (query: string) => parseConnectionString(`databend://root@localhost:8000/db?${query}`);
+    expect(read("tls_ca_file=/ca.pem")?.cautions).toEqual([DATABEND_DSN_CAUTIONS.caFile]);
+    expect(read("sslmode=verify-full")?.cautions).toEqual([DATABEND_DSN_CAUTIONS.sslmode("verify-full")]);
+    for (const mode of ["disable", "require", "enable"]) expect(read(`sslmode=${mode}`)?.cautions).toBeUndefined();
+    expect(read("tls_ca_file=/ca.pem&role=r&warehouse=w")?.ignoredParameters).toEqual(["role"]);
+    expect(read("access_token=t&role=r")?.refusal).toBe(DATABEND_DSN_REFUSALS.signIn);
+    expect(read("role=r&enable_dphyp=1")?.ignoredParameters).toEqual(["role"]);
+    expect(read("role=r&enable_dphyp=1")?.unnamedParameters).toBe(1);
+  });
+
+  test("a paste past an unread sslmode gets the scheme's port and unticks the cleartext consent", () => {
+    const port = (scheme: string) => parseConnectionString(`${scheme}root@host/db?sslmode=verify-full`)?.port;
+    expect([port("databend+http://"), port("databend://"), port("databend+https://")]).toEqual(["80", "443", "443"]);
+    for (const scheme of ["databend://", "databend+http://", "databend+https://"])
+      expect(parseConnectionString(`${scheme}root@host/db`)?.allowInsecureAuth, scheme).toBe(false);
+  });
+
+  test("an @ past the address part is refused whatever the address part holds, and reads one way encoded", () => {
+    // The password is generated per run; the second paste puts an @ inside it.
+    const pw = crypto.randomUUID();
+    const encoded = `databend://root:${pw}@host:443/db?role=analyst%40corp`;
+    expect(parseConnectionString(encoded)?.refusal).toBeUndefined();
+    for (const text of [
+      `databend://root:${pw}@host:443/db?role=analyst@corp`,
+      `databend://root:${pw}@ss/x@host:443/db`,
+    ])
+      expect(parseConnectionString(text)?.refusal).toBe(DATABEND_DSN_REFUSALS.userinfo);
+  });
+
+  test("the record's credential warning is a user and password pair", () => {
+    const [warning] = CREDENTIAL_WARNINGS.databend ?? [];
+    expect(warning?.kind).toBe("pair");
+  });
+
+  test("the response cap is 16 MiB", () => {
+    expect(DATABEND_RESPONSE_CAP_BYTES).toBe(16 * MIB);
   });
 });

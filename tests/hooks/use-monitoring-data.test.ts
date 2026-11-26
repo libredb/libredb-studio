@@ -8,6 +8,8 @@ import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import type { DatabaseConnection } from "@/lib/types";
+import path from "node:path";
+import { readFileSync } from "node:fs";
 
 // =============================================================================
 // Test Data
@@ -1413,5 +1415,27 @@ describe("useMonitoringData previewMaintenance (spec 3.11)", () => {
 
     await expect(result.current.previewMaintenance("compact", "users")).rejects.toThrow("No connection is selected");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+/** Prose is one sentence per line, so a sentence that spans lines is compared with its line breaks read as spaces. */
+const flat = (text: string): string => text.replace(/\s*\n\s*/g, " ");
+
+describe("the kill a refused session gets", () => {
+  test("a refused kill throws the provider's message and shows it as an error toast (cl-ops F2)", () => {
+    const hook = read("src/hooks/use-monitoring-data.ts");
+    expect(hook).toContain('throw new Error(result.error || "Failed to kill session");');
+    expect(hook).toContain("toast.error(errorMessage);");
+  });
+
+  test("the Sessions panel asks before it terminates, and the hook reports the session terminated (U98)", () => {
+    // The panel's copy as the shared UI holds it today; U98 changes both.
+    expect(read("src/components/monitoring/tabs/SessionsTab.tsx")).toContain("Terminate Session?");
+    const dialog =
+      "will forcefully end the connection and may cause data loss if the session has uncommitted transactions";
+    expect(flat(read("src/components/monitoring/tabs/SessionsTab.tsx"))).toContain(dialog);
+    expect(read("src/hooks/use-monitoring-data.ts")).toContain("`Session ${pid} terminated successfully`");
   });
 });
