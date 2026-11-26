@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import schema from "../src/register.schema.json";
-import type { RegisterGrants, RegisterRow, RegisterStatementLanguage } from "../src/index";
+import type { RegisterAgentReading, RegisterGrants, RegisterRow, RegisterStatementLanguage } from "../src/index";
 
 /** A grant member's vocabulary in the schema's terms: the keywords that decide its TypeScript type. */
 type Shape =
@@ -85,6 +85,10 @@ const GRANT_SHAPES = {
       null,
     ],
   },
+  agentReadings: {
+    type: "array",
+    items: { enum: ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"] },
+  },
   servesOneSession: { type: ["string", "null"] },
   agentExecution: { type: "boolean" },
   ownWords: { enum: ["scrubbed", "code-only"] },
@@ -134,11 +138,12 @@ describe("the types are the schema's", () => {
       Equal<Mismatched, never>,
       Equal<keyof typeof GRANT_SHAPES, keyof RegisterGrants>,
       Equal<RegisterStatementLanguage | null, RegisterGrants["statementLanguage"]>,
+      Equal<readonly RegisterAgentReading[], RegisterGrants["agentReadings"]>,
       Equal<keyof NonNullable<RegisterRow["reasons"]>, keyof RegisterGrants>,
-    ] = [true, true, true, true];
+    ] = [true, true, true, true, true];
     const grants = schema.$defs.grants;
 
-    expect(parity).toEqual([true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true]);
     expect(shapeOf(grants, "/$defs/grants")).toEqual({ type: "object", properties: GRANT_SHAPES });
     expect(Object.keys(grants.properties)).toEqual(Object.keys(GRANT_SHAPES));
     expect(Object.keys(schema.$defs.reasons.properties)).toEqual(Object.keys(GRANT_SHAPES));

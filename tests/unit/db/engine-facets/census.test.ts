@@ -9,6 +9,7 @@ import { type EngineFacets, MONITORING_PANELS, type MonitoringPanel } from "@/li
 import { CURATED_OPERATION_KINDS, type CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { MonitoringData } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 /** The flat and dual placements, as the execution UI census keeps them; every other id is `<family>/<id>/engine-facets.ts`. */
@@ -153,7 +154,8 @@ const VECTOR_READINGS: readonly CuratedOperationKind[] = ["table-stats", "index-
  * (`KAFKA_AGENT_WITHHELD.storage`), etcd withholds `table-stats`, and MQTT, Sparkplug, OPC UA and MTConnect withhold
  * `health`.
  *
- * Transcribed from that measurement, never derived from `ENGINE_FACETS`, for the reason `EXPECTED_OFFERED` gives.
+ * Transcribed from that measurement, never derived from `ENGINE_FACETS` or from the grant register's legacy rows, which
+ * hold Studio's review of the claim, for the reason `EXPECTED_OFFERED` gives.
  */
 const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOperationKind[]>> = {
   bigquery: ["sessions", "slow-queries", "table-stats", "storage", "health"],
@@ -200,6 +202,15 @@ const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOpe
   trino: ["sessions", "slow-queries", "table-stats", "storage", "health"],
   weaviate: VECTOR_READINGS,
 };
+
+/** Studio's review of each engine's agent readings claim: its legacy row's `agentReadings` in the grant register. */
+const REVIEWED_AGENT_READINGS = legacyRegisterTable("agentReadings");
+
+/** Each source of an engine's agent readings the census holds: the facet rows and the register's legacy rows. */
+const AGENT_READING_SOURCES: readonly (readonly [string, (id: DatabaseType) => readonly CuratedOperationKind[]])[] = [
+  ["facet row", (id) => ENGINE_FACETS[id].agentReadings],
+  ["legacy row", (id) => REVIEWED_AGENT_READINGS[id]],
+];
 
 const offeredBy = (id: DatabaseType): MonitoringPanel[] =>
   MONITORING_PANELS.filter((panel) => ENGINE_FACETS[id].monitoring[panel] === "offered");
@@ -258,27 +269,36 @@ describe("engine facets registry census", () => {
   });
 
   test("each engine offers the agent readings measured on the agent handle", () => {
-    const declared = Object.fromEntries(ALL.map((id) => [id, [...ENGINE_FACETS[id].agentReadings]]));
-    expect(declared).toEqual(Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_AGENT_READINGS[id]]])));
+    for (const [source, readingsOf] of AGENT_READING_SOURCES) {
+      const stated = Object.fromEntries(ALL.map((id) => [id, [...readingsOf(id)]]));
+      expect({ source, stated }).toEqual({
+        source,
+        stated: Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_AGENT_READINGS[id]]])),
+      });
+    }
   });
 
   test("every agent reading is the kind of a panel the row offers, or health", () => {
-    const stray = ALL.flatMap((id) =>
-      ENGINE_FACETS[id].agentReadings
-        .filter((kind) => {
-          const panel = AGENT_READING_PANELS[kind];
-          return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
-        })
-        .map((kind) => `${id} ${kind}`),
+    const stray = AGENT_READING_SOURCES.flatMap(([source, readingsOf]) =>
+      ALL.flatMap((id) =>
+        readingsOf(id)
+          .filter((kind) => {
+            const panel = AGENT_READING_PANELS[kind];
+            return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
+          })
+          .map((kind) => `${source} ${id} ${kind}`),
+      ),
     );
     expect(stray).toEqual([]);
   });
 
   test("agent readings are listed once each, in CURATED_OPERATION_KINDS order", () => {
-    const misordered = ALL.filter((id) => {
-      const readings = ENGINE_FACETS[id].agentReadings;
-      return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
-    });
+    const misordered = AGENT_READING_SOURCES.flatMap(([source, readingsOf]) =>
+      ALL.filter((id) => {
+        const readings = readingsOf(id);
+        return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
+      }).map((id) => `${source} ${id}`),
+    );
     expect(misordered).toEqual([]);
   });
 

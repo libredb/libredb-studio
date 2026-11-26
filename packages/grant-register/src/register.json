@@ -23,6 +23,13 @@
         "supersededBy": []
       },
       "statementLanguage": null,
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
@@ -55,6 +62,10 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -89,6 +100,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -122,6 +141,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -156,6 +183,14 @@
         "supersededBy": []
       },
       "statementLanguage": null,
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
@@ -189,6 +224,10 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -222,6 +261,12 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -253,6 +298,12 @@
       "sshTunnel": "DuckDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
       "agentCredential": null,
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -294,6 +345,11 @@
         ]
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -329,6 +385,10 @@
         "supersededBy": []
       },
       "statementLanguage": "etcdctl",
+      "agentReadings": [
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -336,7 +396,8 @@
     "reasons": {
       "writeReach": "The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit and maintenance operation before any request while the mode holds (`write-policy.ts`).",
       "exposable": "Offered with every answer metadata only, as agent mode reads it: key names and values carry secrets, so `inspect_schema` lists no key prefix, since every agent-mode handle withholds them, and `run_etcd_read` answers the closed table's names, counts and sizes under a user the server proves reads only, on no Kubernetes storage prefix and not on every key.",
-      "statementRead": "Opened on its own: run_etcd_read runs under the boundary agent mode uses, the provider's closed table of metadata reads and a user the server shows, before every command, to hold no root role and only READ, on no Kubernetes storage prefix and not on every key, with every answer projected to names, counts and sizes (docs/providers/etcd.md section 15.7)."
+      "statementRead": "Opened on its own: run_etcd_read runs under the boundary agent mode uses, the provider's closed table of metadata reads and a user the server shows, before every command, to hold no root role and only READ, on no Kubernetes storage prefix and not on every key, with every answer projected to names, counts and sizes (docs/providers/etcd.md section 15.7).",
+      "agentReadings": "`table-stats` is withheld: the agent handle's table statistics read refuses it, since that handle withholds key names."
     }
   },
   {
@@ -360,6 +421,9 @@
       "sshTunnel": "Firestore does not run through an SSH tunnel: every request goes over TLS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
       "agentCredential": null,
       "statementLanguage": "fsquery",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -395,6 +459,9 @@
         "supersededBy": []
       },
       "statementLanguage": "influxql",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -430,6 +497,9 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -465,6 +535,9 @@
         "supersededBy": []
       },
       "statementLanguage": "kafkaread",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -472,7 +545,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the topic list, every end offset and every group's committed offsets unchanged after every provider surface.",
       "statementRead": "Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and ListOffsets reads alone, answered metadata-only with a platform's own topics withheld (docs/providers/kafka.md section 16).",
-      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place.",
+      "agentReadings": "`storage` is withheld: the agent handle's storage read refuses it."
     }
   },
   {
@@ -499,6 +573,9 @@
         "supersededBy": []
       },
       "statementLanguage": "kubectl",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -531,6 +608,11 @@
       "sshTunnel": "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
       "agentCredential": null,
       "statementLanguage": "libredbkv",
+      "agentReadings": [
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -570,6 +652,12 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -604,6 +692,11 @@
         "supersededBy": []
       },
       "statementLanguage": "milvusrpc",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -639,6 +732,9 @@
       "sshTunnel": null,
       "agentCredential": null,
       "statementLanguage": "modbusread",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": "Its tree is the connection's register map, so a second session would only dial a device that may serve one client at a time.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -674,6 +770,14 @@
         "supersededBy": []
       },
       "statementLanguage": "mongo",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -706,6 +810,7 @@
         "supersededBy": []
       },
       "statementLanguage": "mqttread",
+      "agentReadings": [],
       "servesOneSession": "Its tree reads nothing from the broker, so a second session would only cost one more broker read at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -713,7 +818,8 @@
     "reasons": {
       "writeReach": "Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no write to enforce against. The valve repeats the check on the bytes.",
       "exposable": "Offered with every answer metadata only, as agent mode reads it: topic names and payloads are withheld, so `inspect_schema` refuses an MQTT connection by name, since a broker declares no relation kind, and `run_mqtt_read` answers one window's totals or one named topic's counts and flags, with its window and the completeness sentence.",
-      "statementRead": "Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet encoder and valve, which send no PUBLISH and no Will, with every answer projected to one window's counts and flags, never a topic name or a payload, and carrying its window and the completeness sentence as notes (docs/providers/mqtt.md section 15)."
+      "statementRead": "Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet encoder and valve, which send no PUBLISH and no Will, with every answer projected to one window's counts and flags, never a topic name or a payload, and carrying its window and the completeness sentence as notes (docs/providers/mqtt.md section 15).",
+      "agentReadings": "`health` is withheld: the agent handle's health read refuses it, so no reading is offered."
     }
   },
   {
@@ -740,6 +846,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -769,6 +883,7 @@
       "sshTunnel": null,
       "agentCredential": null,
       "statementLanguage": "mtconnectread",
+      "agentReadings": [],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -777,7 +892,8 @@
       "writeReach": "Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).",
       "exposable": "Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device model with the agent's adapter connections withheld.",
       "statementRead": "Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).",
-      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in.",
+      "agentReadings": "`health` is withheld: the agent handle's health read refuses it, so no reading is offered."
     }
   },
   {
@@ -804,6 +920,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -836,6 +960,12 @@
         "supersededBy": []
       },
       "statementLanguage": "cypher",
+      "agentReadings": [
+        "sessions",
+        "table-stats",
+        "index-stats",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -871,6 +1001,9 @@
         "supersededBy": []
       },
       "statementLanguage": "netconfrpc",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": "It holds one NETCONF session per provider, and a device may admit few sessions, none measured, so a second session could be refused where the editor's answers.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -908,6 +1041,7 @@
         "supersededBy": []
       },
       "statementLanguage": "opcuaread",
+      "agentReadings": [],
       "servesOneSession": "Its tree lists no node, so a second session would only take one more of the server's sessions at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -916,7 +1050,8 @@
       "writeReach": "Structural rather than a mode: the client seam names eight read services and none of them writes, so there is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).",
       "exposable": "Offered only beneath the read roots its seed declares, which its `policy.readRootsRequired` grant holds MCP to: an OPC UA server declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers every node outside the roots exactly as a missing one.",
       "statementRead": "Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that session, with every other node id answered as a missing one and nothing sent for it (docs/providers/opcua.md section 15).",
-      "hostPathFields": "The client certificate and private key a seed connection names, read by the OPC UA library from the host."
+      "hostPathFields": "The client certificate and private key a seed connection names, read by the OPC UA library from the host.",
+      "agentReadings": "`health` is withheld: the agent handle's health read refuses it, so no reading is offered."
     }
   },
   {
@@ -943,6 +1078,11 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -977,6 +1117,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1007,6 +1155,9 @@
       "sshTunnel": null,
       "agentCredential": null,
       "statementLanguage": "oxiacli",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1042,6 +1193,14 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1075,6 +1234,11 @@
         "supersededBy": []
       },
       "statementLanguage": "promql",
+      "agentReadings": [
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1108,6 +1272,11 @@
         "supersededBy": []
       },
       "statementLanguage": "qdrantapi",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1144,6 +1313,9 @@
         "supersededBy": []
       },
       "statementLanguage": "rabbitread",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1178,6 +1350,12 @@
         "supersededBy": []
       },
       "statementLanguage": "rediscli",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1210,6 +1388,9 @@
         "supersededBy": []
       },
       "statementLanguage": "s3api",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1244,6 +1425,9 @@
       "sshTunnel": "SNMP does not run through an SSH tunnel: the tunnel forwards TCP, and SNMP reads travel as UDP datagrams. Turn the tunnel off.",
       "agentCredential": null,
       "statementLanguage": "snmpget",
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": "Its tree is the bundled catalog, so a second session would only probe the agent once more at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1276,6 +1460,14 @@
       "sshTunnel": "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off.",
       "agentCredential": null,
       "statementLanguage": null,
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
@@ -1306,6 +1498,9 @@
       "sshTunnel": null,
       "agentCredential": null,
       "statementLanguage": null,
+      "agentReadings": [
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
@@ -1335,6 +1530,7 @@
       "sshTunnel": null,
       "agentCredential": null,
       "statementLanguage": "sparkplugread",
+      "agentReadings": [],
       "servesOneSession": "Its tree is the session's own connect read, so a second session would answer another read's snapshot after a broker read of its own.",
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1343,7 +1539,8 @@
       "writeReach": "Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no will parameter at all, so no later edit can register a death certificate by passing a value (5.4).",
       "exposable": "Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read` answers one window's totals or one named object's counts, with its window and the completeness sentence.",
       "statementRead": "Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a metric name or a value, and carrying its window and the completeness sentence as notes (docs/providers/sparkplug.md section 15).",
-      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in.",
+      "agentReadings": "`health` is withheld: the agent handle's health read refuses it, so no reading is offered."
     }
   },
   {
@@ -1367,6 +1564,12 @@
       "sshTunnel": "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
       "agentCredential": null,
       "statementLanguage": "sql",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1404,6 +1607,13 @@
         "supersededBy": []
       },
       "statementLanguage": "sql",
+      "agentReadings": [
+        "sessions",
+        "slow-queries",
+        "table-stats",
+        "storage",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
@@ -1437,6 +1647,11 @@
         "supersededBy": []
       },
       "statementLanguage": "weaviateapi",
+      "agentReadings": [
+        "table-stats",
+        "index-stats",
+        "health"
+      ],
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
