@@ -11,7 +11,7 @@ import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
 import type { DatabaseType } from "@/lib/types";
-import { admittedFor, admittedManifest, withLegacyProviderOffers } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { namedLabels } from "../../helpers/repo-text-scope";
 
 const ADMIN: McpCaller = { username: "alice", role: "admin" };
@@ -90,19 +90,16 @@ describe("mcpConnectionUnavailable", () => {
   });
 
   test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", () => {
-    // A crafted catalog: a legacy engine's record that offers no legacy provider, and a package's record that offers one.
-    // The answer follows the offer, never whether the id is one of Studio's bundled engines.
+    // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
+    // catalog whose offer disagrees with the id, so the answer follows the offer of a valid record.
     installServerCatalog(
-      withLegacyProviderOffers(
-        composeServerCatalog([admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))], []),
-        { sqlite: false, acmeavailoffer: true },
-      ),
+      composeServerCatalog([admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))], []),
     );
     const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
-    expect(mcpConnectionUnavailable(ADMIN, listed("sqlite"))).toBe(
+    expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailoffer"))).toBe(
       "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
-    expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailoffer"))).toBeNull();
+    expect(mcpConnectionUnavailable(ADMIN, listed("sqlite"))).toBeNull();
   });
 
   // A connection whose type names no provider (FND-1) has no row in any table, so its refusal is the one sentence every

@@ -54,7 +54,9 @@
  * (src/lib/provider-host/instance.ts), because Next.js loads instrumentation, which installs it, and each route
  * handler, which reads it, as separate module instances of one process. It is plain frozen data, Maps and the field
  * rules' compiled patterns and bound checks, which every bundle of one realm reads alike. It is installed once: a second
- * install is a host defect, refused by name, and so is a catalog that lacks a legacy engine's record.
+ * install is a host defect, refused by name, and so is a catalog that lacks a legacy engine's record or holds a record
+ * whose `legacyProvider` offer disagrees with its id, because `assertLegacyProvider` narrows a type to `DatabaseType`
+ * from that offer: a record offers a legacy provider exactly when the legacy adapter serves its id.
  *
  * With nothing installed, the accessor answers from the legacy adapter's records alone. That is the documented state of
  * every process that runs no boot admission: the published library, the VS Code backend child, and a test that installs
@@ -288,7 +290,9 @@ export function servedPackage(engine: EngineRecord): ServedPackage {
  * Installs `catalog` as the process's server catalog, once.
  *
  * @throws {Error} When a catalog is installed already: boot composes it once, and a second composition is a host defect;
- * or when `catalog` lacks a record of a legacy engine, which every composed catalog holds.
+ * when `catalog` lacks a record of a legacy engine, which every composed catalog holds; or when a record's
+ * `legacyProvider` offer disagrees with its id, since `assertLegacyProvider` narrows a type to `DatabaseType` from that
+ * offer: a record offers a legacy provider exactly when the legacy adapter serves its id.
  */
 export function installServerCatalog(catalog: ServerCatalog): void {
   const holder = globalThis as CatalogHolder;
@@ -301,6 +305,15 @@ export function installServerCatalog(catalog: ServerCatalog): void {
         `The server's engine catalog holds no record of the legacy engine ${quoteTypeId(id)}: every composed catalog holds every legacy record.`,
       );
     }
+  }
+  for (const [id, engine] of catalog.engines) {
+    const legacy = LEGACY_ENGINES.has(id);
+    if (engine.offers.legacyProvider === legacy) continue;
+    throw new Error(
+      legacy
+        ? `The server's engine catalog's record of the legacy engine ${quoteTypeId(id)} offers no legacy provider: a record offers a legacy provider exactly when its engine is a legacy engine.`
+        : `The server's engine catalog's record of ${quoteTypeId(id)} offers a legacy provider, and the legacy adapter serves no engine of that id: a record offers a legacy provider exactly when its engine is a legacy engine.`,
+    );
   }
   holder[CATALOG_KEY] = catalog;
 }

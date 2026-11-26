@@ -117,8 +117,8 @@ export function withFieldRules(engine: EditableEngine): void {
 
 /**
  * `catalog` with the record of each engine `legacyProvider` names replaced by a frozen copy whose offer of the legacy
- * provider surface is the value given: a crafted catalog, which no composition answers, for the tests that hold every
- * check to read the record's offer and never the id's membership.
+ * provider surface is the value given: a crafted catalog, which no composition answers and `installServerCatalog`
+ * refuses, for the test that holds the install to refuse a record whose offer disagrees with its id.
  *
  * @throws {Error} Naming the engine, for an engine `catalog` holds no record of.
  */

@@ -18,7 +18,7 @@ import { resetCache } from "@/lib/seed";
 import { type ConnectionBody, resolveConnection } from "@/lib/seed/resolve-connection";
 import * as vaultClient from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
-import { admittedFor, admittedManifest, withLegacyProviderOffers } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 
 function vaultReference(): string {
   return "${vault:secret/data/x#y}";
@@ -127,25 +127,23 @@ describe("a package engine on a connection route", () => {
   });
 
   test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", async () => {
-    // A crafted catalog: a legacy engine's record that offers no legacy provider, and a package's record that offers one.
-    // A route that serves bundled engines alone follows the offer, never whether the id is one of Studio's.
+    // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
+    // catalog whose offer disagrees with the id, so a route that serves bundled engines alone follows a valid record's
+    // offer.
     forgetServerCatalog();
-    installServerCatalog(
-      withLegacyProviderOffers(composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], []), {
-        postgres: false,
-        acmeserved: true,
-      }),
+    installServerCatalog(composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], []));
+    const refusal = await resolveConnection({ connection: inline("acmeserved") }, ADMIN).catch(
+      (error: unknown) => error,
     );
-    const refusal = await resolveConnection({ connection: inline("postgres") }, ADMIN).catch((error: unknown) => error);
     expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
     expect([
       (refusal as PackageEngineUnsupportedError).code,
       (refusal as PackageEngineUnsupportedError).typeId,
-    ]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "postgres"]);
+    ]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeserved"]);
     expect((refusal as Error).message).toBe(
       "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
     );
-    const resolved = await resolveConnection({ connection: inline("acmeserved") }, ADMIN);
-    expect(resolved).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
+    const resolved = await resolveConnection({ connection: inline("postgres") }, ADMIN);
+    expect(resolved).toMatchObject({ type: "postgres", host: "db.example", managed: false });
   });
 });

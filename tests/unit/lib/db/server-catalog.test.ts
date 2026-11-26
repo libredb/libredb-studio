@@ -304,22 +304,17 @@ describe("one engine record for every engine", () => {
     for (const value of values) {
       expect<unknown>(serverEngine(value)).toEqual({ kind: "refused", refusal: typeIdRefusal(value) });
     }
-    // The check reads the record's offer, never the id's membership: a crafted catalog whose legacy record offers no
-    // legacy provider is refused as a package's engine is, and a package record that offers one passes.
+    // The check reads the record's offer, which the install holds to the id: a package's record offers no legacy
+    // provider and is refused, and a legacy record offers one and passes.
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
-    installServerCatalog(
-      withLegacyProviderOffers(composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], []), {
-        [legacyId]: false,
-        acmeoffer: true,
-      }),
-    );
-    const refused = thrown(() => assertLegacyProvider(legacyId, "open")) as PackageEngineUnsupportedError;
+    installServerCatalog(composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], []));
+    const refused = thrown(() => assertLegacyProvider("acmeoffer", "open")) as PackageEngineUnsupportedError;
     expect(refused).toBeInstanceOf(PackageEngineUnsupportedError);
-    expect([refused.code, refused.typeId]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", legacyId]);
+    expect([refused.code, refused.typeId]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeoffer"]);
     expect(refused.message).toBe(
       "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
-    expect(legacyProviderRefusal("acmeoffer", "route")).toBeNull();
+    expect(legacyProviderRefusal(legacyId, "route")).toBeNull();
   });
 
   test("a legacy record offers the legacy provider surface, explain, database, catalog and unbounded pages, and a package record offers none of them", () => {
@@ -367,6 +362,23 @@ describe("one engine record for every engine", () => {
       `The server's engine catalog holds no record of the legacy engine ${JSON.stringify(missing)}: every composed catalog holds every legacy record.`,
     );
     expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("installing a catalog whose record offers a legacy provider for an id the legacy adapter does not serve, or none for one it serves, is a host defect, named", () => {
+    // `assertLegacyProvider` narrows a type to `DatabaseType` from the record's offer, so the install holds the offer to
+    // the id: a record offers a legacy provider exactly when its id is a legacy engine's.
+    const composed = composeServerCatalog([admittedFor("acme-claim", admittedManifest("acmeclaim"))], []);
+    expect(() => installServerCatalog(withLegacyProviderOffers(composed, { acmeclaim: true }))).toThrow(
+      `The server's engine catalog's record of ${JSON.stringify("acmeclaim")} offers a legacy provider, and the legacy adapter serves no engine of that id: a record offers a legacy provider exactly when its engine is a legacy engine.`,
+    );
+    expect(serverCatalogInstalled()).toBe(false);
+    const legacyId = SHIPPED_DATABASE_TYPES[2] as string;
+    expect(() => installServerCatalog(withLegacyProviderOffers(composed, { [legacyId]: false }))).toThrow(
+      `The server's engine catalog's record of the legacy engine ${JSON.stringify(legacyId)} offers no legacy provider: a record offers a legacy provider exactly when its engine is a legacy engine.`,
+    );
+    expect(serverCatalogInstalled()).toBe(false);
+    installServerCatalog(composed);
+    expect(serverCatalogInstalled()).toBe(true);
   });
 
   test("servedPackage answers a package record's package with its declared session, and a legacy record's is a host defect", () => {
