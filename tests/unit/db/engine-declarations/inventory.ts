@@ -35,7 +35,7 @@ function projected(member: string): string {
 }
 /** The destination of a granted table: Studio's grant, computed from the declared request and Studio's record. */
 const GRANTED =
-  "core-owned: Studio's grant of a claim, computed from the engine's request and Studio's review record of the claim (docs/providers/CONTRACT.md, clause M-54)";
+  "core-owned: Studio's grant of a claim, computed from the engine's request and Studio's grant for the engine (docs/providers/CONTRACT.md, clause M-54)";
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
 
