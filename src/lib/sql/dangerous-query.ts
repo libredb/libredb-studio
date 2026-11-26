@@ -1,6 +1,7 @@
 // The editor's confirmation gate, out of `QuerySafetyDialog.tsx` so a caller that bundles no component can ask it:
 // the VS Code extension's child answers `query/target` with its verdict.
 import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import {
   confirmFormQuery,
@@ -836,43 +837,60 @@ function writesInLaterStatements(query: string, grammar: SqlGrammar): boolean {
 }
 
 /**
- * `grammar` as the gate reads an engine a provider package serves: with no exempt form. Each form is a claim that
- * loosens the gate, counted only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`), and the record
- * holds no row for an engine Studio does not ship (docs/providers/CONTRACT.md, S-8).
+ * The SQL text grants the confirmation gate reads for an engine a provider package serves, from the server catalog's
+ * record of the engine (`EngineRecord.grants`): whether its register row reviewed the grammar it declares, and the
+ * grant of each claim that loosens the gate for that grammar.
  */
-function packageGateGrammar(grammar: SqlGrammar): SqlGrammar {
-  return grammar.confirmExemptForms === undefined ? grammar : { ...grammar, confirmExemptForms: [] };
+export type PackageGateGrants = Pick<EngineGrants, "reviewedGrammar" | "readsSqlText" | "confirmExemptForms">;
+
+/**
+ * `grammar` as the gate reads an engine a provider package serves: with only the exempt forms `grants` grants. Each
+ * form is a claim that loosens the gate, counted only where the engine's register row grants it for the grammar that
+ * row reviewed (docs/providers/CONTRACT.md, S-8).
+ */
+function packageGateGrammar(grammar: SqlGrammar, grants: PackageGateGrants): SqlGrammar {
+  return grammar.confirmExemptForms === undefined
+    ? grammar
+    : { ...grammar, confirmExemptForms: grants.confirmExemptForms };
 }
 
 /**
  * Whether part of `text` could not be read under `grammar`, the grammar an engine a provider package serves declares:
- * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. The text
- * is read as SQL whatever the declaration says of it: its text-not-SQL claim loosens the gate, and Studio's review
- * record holds no row for such an engine (S-8).
+ * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. False
+ * where no register row reviewed the grammar, which is never read (`packageStatementAsks` asks about every statement
+ * there), and where the row grants the claim that the engine's text is not SQL; otherwise the text is read as SQL
+ * (S-8).
  */
-export function packageUnreadableRun(text: string, grammar: SqlGrammar): boolean {
+export function packageUnreadableRun(text: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
+  if (!grants.reviewedGrammar || !grants.readsSqlText) return false;
   return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
 }
 
 /**
  * Whether the confirmation gate asks about `statement` on an engine a provider package serves, read under `grammar`,
- * the grammar its declaration states, composed into the server catalog's record of the engine
- * (docs/providers/CONTRACT.md, clause S-8). Every claim that would loosen the gate is read at its restrictive value,
- * since Studio's review record holds no row for such an engine: the text is read as SQL, and no exempt form is
- * counted. `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other
- * runs: true asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about
- * `EXPLAIN UPDATE t SET x = 1`, which true reads as a plan. So the statement is read under both values, and asks where
- * either asks. No vocabulary row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks
- * where part of the text cannot be read, where the statement writes, and where a later statement of the split writes:
- * `isDangerousQuery`'s own answer for an engine with no row and no reviewed claim, read from the package's data.
+ * the grammar its declaration states, composed into the server catalog's record of the engine, with `grants`, the SQL
+ * text grants that record holds (docs/providers/CONTRACT.md, clause S-8).
+ *
+ * Where no register row reviewed the grammar, every statement asks and none is read. Otherwise each claim that would
+ * loosen the gate counts only as the row grants it: a granted text-not-SQL claim skips the unreadable check and the
+ * split, and a granted exempt form is read as exempt; every other claim is read at its restrictive value.
+ * `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other runs: true
+ * asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about `EXPLAIN UPDATE t SET x = 1`,
+ * which true reads as a plan. So the statement is read under both values, and asks where either asks. No vocabulary
+ * row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks where part of the text
+ * cannot be read, where the statement writes, and, for text read as SQL, where a later statement of the split writes.
  */
-export function packageStatementAsks(statement: string, grammar: SqlGrammar): boolean {
-  const read = packageGateGrammar(grammar);
+export function packageStatementAsks(statement: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
+  if (!grants.reviewedGrammar) return true;
+  const read = packageGateGrammar(grammar, grants);
   return (
-    packageUnreadableRun(statement, read) ||
+    packageUnreadableRun(statement, read, grants) ||
     [false, true].some((explainExecutesWithAnalyze) => {
       const explaining = { ...read, explainExecutesWithAnalyze };
-      return writesUnderGrammar(statement, explaining) || writesInLaterStatements(statement, explaining);
+      return (
+        writesUnderGrammar(statement, explaining) ||
+        (grants.readsSqlText && writesInLaterStatements(statement, explaining))
+      );
     })
   );
 }

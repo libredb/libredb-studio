@@ -582,7 +582,7 @@ Where no register row reviews the grammar an engine declares, its query events k
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
 The gate counts such a claim only where Studio grants it, and grants it to an engine a provider package serves only through its register row (M-84); every other reader reads it as declared.
-Where no register row grants either claim to an engine a provider package serves, the gate reads its statements as SQL under its declared grammar, counts no exempt form, and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
+Where no register row reviews the grammar an engine declares, the gate asks about every statement of the engine; under a reviewed grammar it reads a provider package's statements under that grammar and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
 
 ### S-9 (normative): Update target words and completion quoting
 

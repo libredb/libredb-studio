@@ -353,7 +353,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "sqlText.redaction",
     ],
     reason:
-      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, whose exempt forms the gate never counts (packageStatementAsks)",
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (packageStatementAsks)",
   },
   {
     path: "src/lib/db/server-catalog.ts",
@@ -806,9 +806,9 @@ describe("engine declaration readers", () => {
     ]);
     expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toHaveLength(2);
     // The only readers of them: the projection, its generated module and the SQL grammar that composes each row, the
-    // server catalog's composition, which hands an admitted package's grammar to the gate, which counts none of its
-    // exempt forms (packageStatementAsks in src/lib/sql/dangerous-query.ts) and never reads its readsSqlText, and
-    // hands its SQL text request to the grant reader, which grants each claim against the engine's register row.
+    // server catalog's composition, which hands an admitted package's grammar to the gate, which counts only the claims
+    // the engine's record grants (packageStatementAsks in src/lib/sql/dangerous-query.ts), and hands its SQL text
+    // request to the grant reader, which grants each claim against the engine's register row.
     const readers = [
       ...new Set(claimReaders(DECLARATION_READERS, CONFIRMATION_GATE_CLAIMS).map((problem) => problem.split(" ")[0])),
     ];

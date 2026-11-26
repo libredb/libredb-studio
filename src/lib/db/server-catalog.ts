@@ -169,7 +169,8 @@ export interface EngineOffers {
   /**
    * Studio's statement vocabulary rows for the engine, read by its id: the confirmation gate reads a statement through
    * them (`confirmationVerdict` in src/lib/editor/statement-analysis.ts). An engine without them is confirmed under its
-   * `statementGrammar`, with every claim that loosens the gate uncounted (`packageConfirmationVerdict`).
+   * `statementGrammar` with the claims that loosen the gate its record grants for the grammar its register row
+   * reviewed, every statement asked where no row reviewed it (`packageConfirmationVerdict`).
    */
   readonly statementVocabulary: boolean;
   /** An SSH tunnel core opens for the connection. */
@@ -194,7 +195,8 @@ export interface EngineRecord {
   /**
    * The grammar the engine's statements are confirmed under: for a package, the grammar its declaration states
    * (`sqlText.grammar`), composed once by `grammarFromFacts` (./sql-grammar), which the confirmation gate reads with
-   * every claim that loosens it uncounted (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); for a legacy
+   * the claims that loosen it its record grants for the grammar its register row reviewed, every statement asked where
+   * no row reviewed it (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); for a legacy
    * engine, its row of Studio's grammar table (`sqlGrammarFor`). The query event builder reads a statement and its
    * error text under it too (`buildQueryEvent` in src/lib/query-events/build.ts).
    */

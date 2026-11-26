@@ -49,6 +49,7 @@ import {
   tamperedBundle,
   temporaryRootProblems,
   unavailableProblems,
+  unconfirmedProblems,
   unsupportedProblems,
   bundleProblems,
 } from "../../../scripts/out-of-tree-acceptance";
@@ -66,8 +67,9 @@ const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
 
 /**
  * Studio's answers as the acceptance met them, one real sample of each, captured from a green local run of the script
- * and a probe against the same build and providers directory on 2026-11-25 (main at the package session's head). The
- * package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
+ * and a probe against the same build and providers directory on 2026-11-25 (main at the package session's head);
+ * `listBody`'s `confirmation: "unconfirmed"` mark is the one a green local run of the script asserted on 2026-11-27,
+ * once the gate asked about every statement of an engine no register row reviews. The package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
  * session cookie's value is drawn at run time.
  */
 const SAMPLES = {
@@ -86,6 +88,7 @@ const SAMPLES = {
     rowCount: 2,
     executionTime: 0,
     pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
+    confirmation: "unconfirmed",
   },
   admittedLine: `[INFO ] [2026-11-25T18:02:02.835Z] {route=provider-boot, package=${fixture.name} ${fixture.version}, engines=${engineId}} A provider package was admitted`,
   refusalLine: `[WARN ] [2026-11-25T18:00:30.243Z] {route=provider-boot} PROVIDER_DIGEST_MISMATCH: ${fixture.name} ${fixture.version}: its files differ from the digest its lock entry pins`,
@@ -538,6 +541,19 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     const list = fixture.acceptance.statements[0] as (typeof fixture.acceptance.statements)[number];
     expect(rowsProblems({ status: 200, body: SAMPLES.listBody }, list)).toEqual([]);
     expect(saveProblems({ status: 200, body: SAMPLES.saveBody })).toEqual([]);
+  });
+
+  test("an answer to a fixture statement must be marked unconfirmed: no register row reviews the fixture's grammar, so the gate asks about every statement, and the default advisory mode runs a request that sends no confirmation field", () => {
+    const list = fixture.acceptance.statements[0] as (typeof fixture.acceptance.statements)[number];
+    expect(unconfirmedProblems({ status: 200, body: SAMPLES.listBody }, list)).toEqual([]);
+    const unmarked: Record<string, unknown> = { ...SAMPLES.listBody };
+    delete unmarked.confirmation;
+    expect(unconfirmedProblems({ status: 200, body: unmarked }, list)).toEqual([
+      `"${list.statement}" answered without the mark confirmation: "unconfirmed", so the gate did not ask about it`,
+    ]);
+    expect(unconfirmedProblems({ status: 200, body: { ...unmarked, confirmation: "confirmed" } }, list)).not.toEqual(
+      [],
+    );
   });
 
   test("an unavailable answer must carry the code PROVIDER_UNAVAILABLE exactly and name the refusal code, so IDENTITY_PROVIDER_UNAVAILABLE fails", () => {

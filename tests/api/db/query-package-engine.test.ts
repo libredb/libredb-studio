@@ -2,8 +2,9 @@
  * `POST /api/db/query` on an engine an admitted provider package serves, through the real `resolveServedConnection`,
  * the provider factory's real editor cache, the real confirmation gate, the real run (`runEditorQuery` in
  * src/lib/api/editor-query.ts) and the real host core: the route opens, gates and runs a legacy and a package engine
- * through one open, one gate and one run; the statement is read under the grammar the package declares, with every
- * claim that loosens the gate uncounted; the session opens once per key through the package; the run answers the
+ * through one open, one gate and one run; every statement of an engine whose grammar no register row reviews is asked
+ * about, and the statement of one whose grammar its row reviewed is read under that grammar with the claims that loosen
+ * the gate its row grants; the session opens once per key through the package; the run answers the
  * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
  * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; a package's own
  * words reach the client only where its register row grants them, and then through core's scrub; and each run records one editor event naming its engine by its id, whose record decides
@@ -32,7 +33,12 @@ import { installHostCore } from "@/lib/provider-host/instance";
 import { buildQueryEvent } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import { parseResponseJSON } from "../../helpers/mock-next";
-import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
+import {
+  admitSessionPackages,
+  declaredGrammarSha256,
+  type SessionPackage,
+  setHooks,
+} from "../../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 
 const realAuth = await import("@/lib/auth");
@@ -107,29 +113,45 @@ const MAIN = "acmeqmain";
 const BARE = "acmeqbare";
 const LOOSE = "acmeqloose";
 const WORDS = "acmeqwords";
+const REVIEWED = "acmeqreviewed";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
+
+/** A package whose register row reviews the grammar it declares and grants no claim that loosens the gate. */
+const REVIEWED_PACKAGE: SessionPackage = { name: "acme-q-reviewed", engine: REVIEWED };
+const EXEMPT_FORM = ["ALTER", "SESSION", "SET"];
+/** A package declaring two claims that would loosen the gate, both granted by its register row for its grammar. */
+const LOOSE_PACKAGE: SessionPackage = {
+  name: "acme-q-loose",
+  engine: LOOSE,
+  edit: (engine) => {
+    const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
+    sqlText.readsSqlText = false;
+    sqlText.grammar.confirmExemptForms = [EXEMPT_FORM];
+  },
+};
 
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
   engines = await admitSessionPackages(
     providers,
     [
+      // No register row reviews the grammar of MAIN, BARE or WORDS.
       { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
       { name: "acme-q-bare", engine: BARE },
-      {
-        name: "acme-q-loose",
-        engine: LOOSE,
-        // Two claims that would loosen the gate, which Studio's review record lists for no engine it does not ship.
-        edit: (engine) => {
-          const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
-          sqlText.readsSqlText = false;
-          sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
-        },
-      },
+      LOOSE_PACKAGE,
       { name: "acme-q-words", engine: WORDS },
+      REVIEWED_PACKAGE,
     ],
-    { [WORDS]: { ownWords: "scrubbed" } },
+    {
+      [WORDS]: { ownWords: "scrubbed" },
+      [REVIEWED]: { grammarSha256: declaredGrammarSha256(REVIEWED_PACKAGE) },
+      [LOOSE]: {
+        grammarSha256: declaredGrammarSha256(LOOSE_PACKAGE),
+        readsSqlText: false,
+        confirmExemptForms: [EXEMPT_FORM],
+      },
+    },
   );
 });
 afterAll(async () => {
@@ -233,8 +255,8 @@ beforeEach(() => {
 
 describe("POST /api/db/query on an engine a provider package serves", () => {
   test("a query on an admitted engine answers the package's rows through the host core", async () => {
-    const seen = hooksFor(MAIN);
-    const { status, body } = await post({ connection: connectionOf(MAIN), sql: "SELECT 1", options: { limit: 5 } });
+    const seen = hooksFor(REVIEWED);
+    const { status, body } = await post({ connection: connectionOf(REVIEWED), sql: "SELECT 1", options: { limit: 5 } });
     expect(status).toBe(200);
     expect(body).toEqual({
       rows: [
@@ -252,14 +274,14 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
   });
 
   test("the query route runs one gate and one run for a legacy and a package engine, told apart only by the record's offers", async () => {
-    const seen = hooksFor(MAIN);
+    const seen = hooksFor(REVIEWED);
     for (const list of [opens, gates, runs]) list.length = 0;
 
     const legacy = await post({
       connection: { id: `conn-${randomUUID()}`, name: "Scratch", type: "sqlite", database: ":memory:" },
       sql: "SELECT 1 AS one",
     });
-    const served = await post({ connection: connectionOf(MAIN), sql: "SELECT 1", options: { limit: 5 } });
+    const served = await post({ connection: connectionOf(REVIEWED), sql: "SELECT 1", options: { limit: 5 } });
 
     expect(legacy.status).toBe(200);
     expect(legacy.body).toMatchObject({ rows: [{ one: 1 }], fields: ["one"] });
@@ -275,15 +297,40 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       executionTime: 3,
       pagination: { limit: 5, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
     });
-    expect(opens).toEqual(["sqlite", MAIN]);
-    expect(gates).toEqual(["sqlite", MAIN]);
+    expect(opens).toEqual(["sqlite", REVIEWED]);
+    expect(gates).toEqual(["sqlite", REVIEWED]);
     expect(runs).toEqual(["provider", "session"]);
     expect(names(seen)).toEqual(["open", "execute"]);
   });
 
-  test("the statement is read under the package's declared grammar, and a write asks for a confirmation", async () => {
+  test("a package engine no register row reviews asks about every statement, a read included", async () => {
     const seen = hooksFor(MAIN);
     const connection = connectionOf(MAIN);
+    expect(engines.get(MAIN)?.grants.reviewedGrammar).toBe(false);
+    const asked = await post({ connection, sql: "SELECT 1", confirmation: "ask" });
+    expect(asked.status).toBe(428);
+    expect(asked.body).toMatchObject({
+      code: "CONFIRMATION_REQUIRED",
+      confirmation: { unreadable: false, typedConfirmation: null },
+    });
+    expect(names(seen)).toEqual([]);
+    // The advisory default runs a request that sends no confirmation field, and marks it unconfirmed.
+    const unasked = await post({ connection, sql: "SELECT 1" });
+    expect(unasked.status).toBe(200);
+    expect(unasked.body).toMatchObject({
+      rows: [
+        { key: "alpha", value: 1 },
+        { key: "beta", value: "two" },
+      ],
+    });
+    expect(unasked.body.confirmation).toBe("unconfirmed");
+    expect(names(seen)).toEqual(["open", "execute"]);
+  });
+
+  test("the statement is read under the package's declared grammar its register row reviewed, and a write asks for a confirmation", async () => {
+    const seen = hooksFor(REVIEWED);
+    const connection = connectionOf(REVIEWED);
+    expect(engines.get(REVIEWED)?.grants.reviewedGrammar).toBe(true);
     const asked = await post({ connection, sql: "DELETE FROM t", confirmation: "ask" });
     expect(asked.status).toBe(428);
     expect(asked.body).toMatchObject({ code: "CONFIRMATION_REQUIRED", confirmation: { typedConfirmation: null } });
@@ -299,14 +346,19 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(analyzed.status).toBe(428);
     expect(names(seen)).toEqual(["open", "execute"]);
 
-    // A declaration that claims its text is not SQL and exempts a form: neither claim is counted.
+    // A declaration that claims its text is not SQL and exempts a form, both granted by its register row: the form
+    // runs, and the text is not split, so a write after the first statement is not read; its own write still asks.
     const loose = hooksFor(LOOSE);
-    for (const sql of ["ALTER SESSION SET x = 1", "DELETE FROM t", "SELECT 1; DROP TABLE x"]) {
-      const answer = await post({ connection: connectionOf(LOOSE), sql, confirmation: "ask" });
-      expect([sql, answer.status]).toEqual([sql, 428]);
+    const looseConnection = connectionOf(LOOSE);
+    expect(engines.get(LOOSE)?.grants).toMatchObject({ readsSqlText: false, confirmExemptForms: [EXEMPT_FORM] });
+    const answer = await post({ connection: looseConnection, sql: "DELETE FROM t", confirmation: "ask" });
+    expect(answer.status).toBe(428);
+    expect(names(loose)).toEqual([]);
+    for (const sql of ["ALTER SESSION SET x = 1", "SELECT 1; DROP TABLE x", "SELECT 1"]) {
+      const ran = await post({ connection: looseConnection, sql, confirmation: "ask" });
+      expect([sql, ran.status]).toEqual([sql, 200]);
     }
-    expect((await post({ connection: connectionOf(LOOSE), sql: "SELECT 1", confirmation: "ask" })).status).toBe(200);
-    expect(names(loose)).toEqual(["open", "execute"]);
+    expect(names(loose)).toEqual(["open", "execute", "execute", "execute"]);
   });
 
   test("bound params and an offset the package does not honour are refused before the call, not-sent", async () => {

@@ -5,6 +5,7 @@ import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import {
   hasUnreadableRun,
   isDangerousQuery,
+  type PackageGateGrants,
   packageStatementAsks,
   packageUnreadableRun,
 } from "@/lib/sql/dangerous-query";
@@ -231,21 +232,23 @@ export function confirmationVerdict(
 
 /**
  * The confirmation verdict of `statement` on an engine a provider package serves, read under `grammar`, the grammar its
- * declaration states (docs/providers/CONTRACT.md, clause S-8): `confirmationVerdict`'s answer, with the reading
- * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`. No vocabulary row of
- * Studio's applies to such an engine, so no typed ask comes from one; on a production connection the connection's name
- * is asked (`escalatedAsk`), and refused where it has none.
+ * declaration states, with `grants`, the SQL text grants of the engine's record (docs/providers/CONTRACT.md, clause
+ * S-8): `confirmationVerdict`'s answer, with the reading `packageStatementAsks` for whether the gate asks and
+ * `packageUnreadableRun` for `unreadable`, so every statement asks where no register row reviewed the grammar. No
+ * vocabulary row of Studio's applies to such an engine, so no typed ask comes from one; on a production connection the
+ * connection's name is asked (`escalatedAsk`), and refused where it has none.
  */
 export function packageConfirmationVerdict(
   statement: string,
   grammar: SqlGrammar,
+  grants: PackageGateGrants,
   connectionName: string | undefined,
   connectionEnvironment: ConnectionEnvironment | undefined,
 ): ConfirmationVerdict {
-  if (!packageStatementAsks(statement, grammar)) return { decision: "run" };
+  if (!packageStatementAsks(statement, grammar, grants)) return { decision: "run" };
   const typedConfirmation = resolvedTypedConfirmation(escalatedAsk(undefined, connectionEnvironment), connectionName);
   if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
-  return { decision: "confirm", unreadable: packageUnreadableRun(statement, grammar), typedConfirmation };
+  return { decision: "confirm", unreadable: packageUnreadableRun(statement, grammar, grants), typedConfirmation };
 }
 
 /**

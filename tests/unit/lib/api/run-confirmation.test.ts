@@ -23,10 +23,14 @@ import {
 import { logger } from "@/lib/logger";
 import { type EngineConnection, type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseConnection } from "@/lib/types";
+import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
-import { admittedFor, admittedManifest, type EditableEngine } from "../../../helpers/package-catalog";
+import { randomUUID } from "node:crypto";
+import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../../helpers/package-catalog";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 
 const NOW = Date.UTC(2026, 10, 22, 12, 0, 0);
@@ -58,13 +62,28 @@ function request(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
   return { ...changed, engine: overrides.engine ?? servedEngineRecord(changed.connection.type) };
 }
 
-/** The record the server catalog composes for a package serving engine `id`, its minimal manifest changed by `edit`. */
-function packageEngine(id: string, edit: (engine: EditableEngine) => void = () => undefined): EngineRecord {
-  const engine = composeServerCatalog(
-    [admittedFor(`${id}-package`, admittedManifest(id, edit))],
-    [],
-    STUDIO_GRANT_REGISTER,
-  ).engines.get(id);
+/**
+ * The record the server catalog composes for a package serving engine `id`, its minimal manifest changed by `edit`:
+ * against Studio's register, which holds no row for it, where `grants` is absent; otherwise against a register holding
+ * its row granting `grants`, `grammarSha256` the digest of the grammar it declares unless `grants` names another, every
+ * other member at its restrictive value.
+ */
+function packageEngine(
+  id: string,
+  edit: (engine: EditableEngine) => void = () => undefined,
+  grants?: Partial<RegisterGrants>,
+): EngineRecord {
+  const manifest = admittedManifest(id, edit);
+  const pkg = admittedFor(`${id}-package`, manifest);
+  const declared = (manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar;
+  const register =
+    grants === undefined
+      ? STUDIO_GRANT_REGISTER
+      : parseGrantRegister(
+          [packageRow(pkg, id, { grammarSha256: grammarSha256(declared), ...grants })],
+          LEGACY_ENGINE_IDS,
+        );
+  const engine = composeServerCatalog([pkg], [], register).engines.get(id);
   if (engine === undefined) throw new Error(`the composed catalog holds no record of ${id}`);
   return engine;
 }
@@ -582,14 +601,53 @@ describe("the gate on an engine a provider package serves", () => {
     createdAt: new Date(0),
   } as unknown as EngineConnection;
 
-  /** The server catalog's record of the package's engine, its minimal manifest changed by `edit`. */
-  const declared = (edit: (engine: EditableEngine) => void = () => undefined) => packageEngine("acmegate", edit);
+  /**
+   * The server catalog's record of the package's engine, its minimal manifest changed by `edit`, its register row
+   * reviewing the grammar it declares and granting `grants`, every other claim at its restrictive value.
+   */
+  const declared = (edit: (engine: EditableEngine) => void = () => undefined, grants: Partial<RegisterGrants> = {}) =>
+    packageEngine("acmegate", edit, grants);
 
   function packageRequest(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
     return request({ connection: kv, engine: declared(), ...overrides });
   }
 
-  test("a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name", async () => {
+  test("a package engine no register row reviews asks about every statement, a read included, and a production connection asks its name", async () => {
+    const unreviewed = [
+      packageEngine("acmegate"),
+      packageEngine("acmegate", undefined, { grammarSha256: grammarSha256({ planted: randomUUID() }) }),
+      packageEngine("acmegate", undefined, { grammarSha256: null }),
+    ];
+    for (const engine of unreviewed) {
+      expect(engine.grants.reviewedGrammar).toBe(false);
+      // A read and a run that never closes ask as a write does, and none is reported unreadable: nothing is read.
+      for (const sql of ["SELECT 1", "SELECT 'never closed", "DELETE FROM t"]) {
+        expect([sql, await gateRun(packageRequest({ engine, sql }), clock)]).toMatchObject([
+          sql,
+          {
+            kind: "answer",
+            status: 428,
+            body: { confirmation: { unreadable: false, typedConfirmation: null, classificationFailed: false } },
+          },
+        ]);
+      }
+      const production = { ...kv, environment: "production" } as EngineConnection;
+      expect(
+        await gateRun(packageRequest({ engine, connection: production, sql: "SELECT 1", confirmation: "ask" }), clock),
+      ).toMatchObject({
+        status: 428,
+        body: {
+          error: CONFIRMATION_TYPED_MESSAGE,
+          confirmation: { typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] } },
+        },
+      });
+      expect(
+        await gateRun(packageRequest({ engine, connection: { ...production, name: "" }, sql: "SELECT 1" }), clock),
+      ).toEqual({ kind: "answer", status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } });
+    }
+  });
+
+  test("a package run is classified under the declared grammar its register row reviewed: a read runs, a write asks, a production connection asks its name", async () => {
     for (const sql of ["SELECT 1", "-- a note\nSELECT id FROM t"]) {
       expect(await gateRun(packageRequest({ sql }), clock)).toEqual({ kind: "run", unconfirmed: false });
     }
@@ -635,25 +693,39 @@ describe("the gate on an engine a provider package serves", () => {
     });
   });
 
-  test("a package's loosening claims are not counted: text-not-SQL and an exempt form still ask", async () => {
-    // The declaration claims its text is not SQL and exempts ALTER SESSION SET: Studio's review record lists neither
-    // claim for an engine it does not ship, so the gate reads the text as SQL and the form asks as ALTER does.
-    const engine = declared((declaration) => {
+  test("a package's loosening claims are counted only as its register row grants them for the grammar it reviewed: a granted text-not-SQL claim and exempt form spare, ungranted ones still ask", async () => {
+    const form = ["ALTER", "SESSION", "SET"];
+    /** The declaration claims its text is not SQL and exempts ALTER SESSION SET. */
+    const loose = (declaration: EditableEngine) => {
       const sqlText = declaration.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
       sqlText.readsSqlText = false;
-      sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
-    });
-    expect(engine.statementGrammar.confirmExemptForms).toEqual([["ALTER", "SESSION", "SET"]]);
-    for (const sql of ["ALTER SESSION SET search_path = x", "DELETE FROM t", "SELECT 1; DROP TABLE x"]) {
-      expect(await gateRun(packageRequest({ engine, sql }), clock)).toMatchObject({
-        kind: "answer",
-        status: 428,
-      });
+      sqlText.grammar.confirmExemptForms = [form];
+    };
+    const both = { readsSqlText: false, confirmExemptForms: [form] };
+    const granted = declared(loose, both);
+    expect(granted.statementGrammar.confirmExemptForms).toEqual([form]);
+    expect(granted.grants).toMatchObject({ reviewedGrammar: true, readsSqlText: false, confirmExemptForms: [form] });
+    // Both claims granted: the form runs, and the text is neither checked for an unreadable run nor split.
+    const spared = ["ALTER SESSION SET search_path = x", "SELECT 'never closed", "SELECT 1; DROP TABLE x"];
+    for (const sql of [...spared, "SELECT 1"]) {
+      expect([sql, await gateRun(packageRequest({ engine: granted, sql }), clock)]).toEqual([
+        sql,
+        { kind: "run", unconfirmed: false },
+      ]);
     }
-    expect(await gateRun(packageRequest({ engine, sql: "SELECT 1" }), clock)).toEqual({
-      kind: "run",
-      unconfirmed: false,
+    expect(await gateRun(packageRequest({ engine: granted, sql: "DELETE FROM t" }), clock)).toMatchObject({
+      kind: "answer",
+      status: 428,
     });
+    // A claim the row does not grant, and a claim only the row lists, is read at its restrictive value.
+    for (const engine of [declared(loose), declared(undefined, both)]) {
+      for (const sql of [...spared, "DELETE FROM t"]) {
+        expect([sql, await gateRun(packageRequest({ engine, sql }), clock)]).toMatchObject([
+          sql,
+          { kind: "answer", status: 428 },
+        ]);
+      }
+    }
   });
 
   test("a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares", async () => {
@@ -732,19 +804,24 @@ describe("one gate for every engine, reading the record's confirmation reader", 
   const outcome = (decision: Awaited<ReturnType<typeof gateRun>>): string =>
     decision.kind === "run" ? "run" : String(decision.status);
 
-  test("gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with every loosening claim uncounted", async () => {
-    const loose = packageEngine("acmegate", (engine) => {
-      const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
-      sqlText.readsSqlText = false;
-      sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
-    });
+  test("gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with the claims its record grants", async () => {
+    // Its register row reviews the grammar it declares and grants neither loosening claim.
+    const loose = packageEngine(
+      "acmegate",
+      (engine) => {
+        const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
+        sqlText.readsSqlText = false;
+        sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+      },
+      {},
+    );
     const run = (engine: EngineRecord, sql: string) =>
       gateRun(request({ connection: connectionOf(engine.id), engine, sql, confirmation: "ask" }), clock).then(outcome);
 
     // Studio's statement vocabulary rows read a legacy engine's statements by its id.
     expect(await run(servedEngineRecord("redis"), "FLUSHALL")).toBe("428");
     expect(await run(servedEngineRecord("snowflake"), "ALTER SESSION SET QUERY_TAG = 'x'")).toBe("run");
-    // A package's engine is read under the grammar its declaration states, and neither loosening claim is counted.
+    // A package's engine is read under the grammar its declaration states, and neither ungranted claim is counted.
     expect(await run(loose, "ALTER SESSION SET QUERY_TAG = 'x'")).toBe("428");
     expect(await run(loose, "SELECT 1")).toBe("run");
     expect(await run(loose, "FLUSHALL")).toBe("run");
@@ -764,7 +841,7 @@ describe("one gate for every engine, reading the record's confirmation reader", 
         const { name, environment } = connectionOf(engine.id);
         const expected = engine.offers.statementVocabulary
           ? outcomeOf(() => confirmationVerdict(sql, engine.id as DatabaseConnection["type"], name, environment))
-          : outcomeOf(() => packageConfirmationVerdict(sql, engine.statementGrammar, name, environment));
+          : outcomeOf(() => packageConfirmationVerdict(sql, engine.statementGrammar, engine.grants, name, environment));
         // oxlint-disable-next-line no-await-in-loop -- each gate call runs after the one before.
         expect([engine.id, sql, await run(engine, sql)]).toEqual([engine.id, sql, expected]);
       }
@@ -773,7 +850,8 @@ describe("one gate for every engine, reading the record's confirmation reader", 
   });
 
   test("a record that offers a legacy provider and not Studio's statement vocabulary is read under its declared grammar, never by its id", async () => {
-    const crafted = packageEngine("acmegate");
+    // Its register row reviews the grammar it declares.
+    const crafted = packageEngine("acmegate", undefined, {});
     const declared = { ...crafted, offers: { ...crafted.offers, legacyProvider: true, statementVocabulary: false } };
     const run = (sql: string) =>
       gateRun(

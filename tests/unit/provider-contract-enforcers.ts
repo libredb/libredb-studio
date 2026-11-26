@@ -1300,13 +1300,19 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
-        "a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name",
-        "a package's loosening claims are not counted: text-not-SQL and an exempt form still ask",
+        "a package engine no register row reviews asks about every statement, a read included, and a production connection asks its name",
+        "a package run is classified under the declared grammar its register row reviewed: a read runs, a write asks, a production connection asks its name",
+        "a package's loosening claims are counted only as its register row grants them for the grammar it reviewed: a granted text-not-SQL claim and exempt form spare, ungranted ones still ask",
         "a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares",
-        "gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with every loosening claim uncounted",
+        "gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with the claims its record grants",
+      ],
+      "tests/unit/editor/statement-analysis.test.ts": [
+        "packageConfirmationVerdict asks about every statement under a grammar no register row reviewed, and reads none of it",
+        "packageConfirmationVerdict counts a granted text-not-SQL claim and a granted exempt form",
       ],
       "tests/api/db/query-package-engine.test.ts": [
-        "the statement is read under the package's declared grammar, and a write asks for a confirmation",
+        "a package engine no register row reviews asks about every statement, a read included",
+        "the statement is read under the package's declared grammar its register row reviewed, and a write asks for a confirmation",
       ],
     },
   },
