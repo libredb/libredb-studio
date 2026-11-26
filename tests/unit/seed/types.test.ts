@@ -1,11 +1,23 @@
 import { describe, it, expect } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parseGrantRegister } from "@libredb/grant-register";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { type EngineGrants, STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
+import {
+  forgetServerCatalog,
+  installServerCatalog,
+  type ServerCatalog,
+  serverCatalogInstalled,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import {
   refuseInvalidAgentCredential,
   refuseMcpWhereNotOffered,
@@ -21,6 +33,13 @@ import {
   legacyAgentCredentialTable,
   legacyRegisterTable,
 } from "../../helpers/legacy-register";
+import {
+  admittedFor,
+  admittedManifest,
+  packageRow,
+  withEngineRecord,
+  withLoosestClaims,
+} from "../../helpers/package-catalog";
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 const exposable = legacyRegisterTable("exposable");
@@ -449,7 +468,7 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
 /**
  * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
  * the grant of `mcp.exposable` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
- * handed a copy of the legacy rows' exposure that answers false for another shipped type, the way `readOnlyControl`
+ * handed a reader of the legacy rows' exposure that answers false for another shipped type, the way `readOnlyControl`
  * is handed its engine's answer, so no case depends on which engine the record refuses.
  */
 describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
@@ -457,7 +476,9 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
   const notOffered = (type: string) =>
     `mcp is not offered for ${type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`;
   const refusingOnly = (type: "kafka" | "redis") =>
-    SeedConnectionSchema.superRefine(refuseMcpWhereNotOffered({ ...exposable, [type]: false }));
+    SeedConnectionSchema.superRefine(
+      refuseMcpWhereNotOffered((engine) => ({ exposable: engine === type ? false : exposable[engine] })),
+    );
 
   it("accepts mcp: true on every shipped engine the record offers MCP for", () => {
     const offered = SHIPPED_DATABASE_TYPES.filter((type) => exposable[type]);
@@ -895,7 +916,9 @@ describe("SeedConnectionSchema: OPC UA's read roots", () => {
     ]);
     const loaded = SeedConnectionSchema.safeParse({ ...opcua, mcp: true, agentReadRoots: ["i=2256"] });
     expect(loaded.data?.mcp).toBe(true);
-    const offered = refuseMcpWithoutReadRoots({ ...readRootsRequired, opcua: false });
+    const offered = refuseMcpWithoutReadRoots((engine) => ({
+      readRootsRequired: engine === "opcua" ? false : readRootsRequired[engine],
+    }));
     const issues: unknown[] = [];
     offered({ id: "plant", type: "opcua", mcp: true }, { addIssue: (issue: unknown) => issues.push(issue) } as never);
     expect(issues).toEqual([]);
@@ -1049,12 +1072,12 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
   });
 
   /**
-   * The rule is pinned through `refuseReadOnlyWhereOpen` handed a copy of the legacy rows' write reach that answers otherwise for
+   * The rule is pinned through `refuseReadOnlyWhereOpen` handed a reader of the legacy rows' write reach that answers otherwise for
    * one engine each way, so the refusal is read from the record it is handed and from no other answer.
    */
   it("reads the record it is handed: an engine recorded open is refused, and one recorded none is admitted", () => {
     const schema = (reach: LegacyRegisterTable<"writeReach">) =>
-      SeedConnectionSchema.superRefine(refuseReadOnlyWhereOpen(reach));
+      SeedConnectionSchema.superRefine(refuseReadOnlyWhereOpen((engine) => ({ writeReach: reach[engine] })));
     const issuesOf = (reach: LegacyRegisterTable<"writeReach">, type: string) =>
       schema(reach)
         .safeParse({ ...validConn, type, password: ["${SEED", "SECRET}"].join("_"), readOnly: true })
@@ -1818,7 +1841,7 @@ describe("refuseInvalidAgentCredential: a dedicated agent user", () => {
       agentPassword: z.string().optional(),
       connectionString: z.string().optional(),
     })
-    .superRefine(refuseInvalidAgentCredential(table));
+    .superRefine(refuseInvalidAgentCredential((engine) => ({ agentCredential: table[engine] })));
   const issues = (fields: Record<string, unknown>) =>
     (schema.safeParse({ id: "store", type: "postgres", ...fields }).error?.issues ?? []).map((issue) => [
       issue.path.join("."),
@@ -1853,7 +1876,7 @@ describe("refuseMcpWithoutAgentCredential", () => {
       agentUser: z.string().optional(),
       agentPassword: z.string().optional(),
     })
-    .superRefine(refuseMcpWithoutAgentCredential(required));
+    .superRefine(refuseMcpWithoutAgentCredential((engine) => ({ agentCredentialRequired: required[engine] })));
   const issues = (fields: Record<string, unknown>) =>
     (schema.safeParse({ id: "store", ...fields }).error?.issues ?? []).map((issue) => [
       issue.path.join("."),
@@ -2096,5 +2119,114 @@ describe("SeedConfigSchema: the file-wide checks run once every entry's own fiel
     const unmanagedAgent = { ...pg, id: "b", managed: false, agentUser: "agent", agentPassword: "${P}" };
     expect(pathsOf([{ ...pg, id: "a", color: "red" }, unmanagedAgent])).toEqual(["connections.0.color"]);
     expect(pathsOf([{ ...pg, id: "a" }, unmanagedAgent])).toEqual(["connections.1.agentUser"]);
+  });
+});
+
+/**
+ * The seed schema's five refusals that read a grant read it from the engine record the connection's type names
+ * (`servedEngineRecord` in src/lib/db/server-catalog.ts), so a package engine's grant reaches them through its register
+ * row. Each catalog here is Studio's own composed in memory with one engine's grants changed, installed by the case that
+ * reads it and forgotten in `finally`, so no case leaves a catalog behind for the next.
+ */
+describe("SeedConnectionSchema: the grants it reads", () => {
+  /** Studio's own catalog with the grants of each engine `changes` names replaced by its record's grants and the change. */
+  const craftedCatalog = (changes: Readonly<Record<string, Partial<EngineGrants>>>): ServerCatalog => {
+    let catalog = composeServerCatalog([], [], STUDIO_GRANT_REGISTER);
+    for (const [id, change] of Object.entries(changes)) {
+      catalog = withEngineRecord(catalog, id, (engine) => ({
+        ...engine,
+        grants: Object.freeze({ ...engine.grants, ...change }),
+      }));
+    }
+    return catalog;
+  };
+  /** The issues of `seed` as path and message, with `catalog` installed. */
+  const issuesUnder = (catalog: ServerCatalog, seed: Record<string, unknown>) => {
+    installServerCatalog(catalog);
+    try {
+      return (SeedConnectionSchema.safeParse(seed).error?.issues ?? []).map((issue) => [
+        issue.path.join("."),
+        issue.message,
+      ]);
+    } finally {
+      forgetServerCatalog();
+    }
+  };
+  const agentPassword = `\${AGENT_${randomUUID().replaceAll("-", "_").toUpperCase()}}`;
+  const pg = { id: "store", name: "Store", type: "postgres", host: "db.internal", roles: ["*"] };
+  const mysql = { ...pg, type: "mysql" };
+  const qdrant = { ...pg, type: "qdrant", password: "${QDRANT_SECRET}" };
+  const pair = { agentUser: "agent", agentPassword };
+
+  it("the seed schema reads each refusal's grant from the engine record its type names, not Studio's table", () => {
+    // Studio's grants, read with nothing installed: what each crafted grant below differs from.
+    expect(SeedConnectionSchema.safeParse({ ...pg, mcp: true }).success).toBe(true);
+    expect(SeedConnectionSchema.safeParse({ ...qdrant, readOnly: true }).success).toBe(true);
+    expect(SeedConnectionSchema.safeParse({ ...pg, ...pair }).success).toBe(true);
+    expect(SeedConnectionSchema.safeParse({ ...mysql, password: "${MYSQL_SECRET}", ...pair }).success).toBe(true);
+
+    expect(issuesUnder(craftedCatalog({ postgres: { exposable: false } }), { ...pg, mcp: true })).toEqual([
+      [
+        "mcp",
+        "mcp is not offered for postgres: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+      ],
+    ]);
+    expect(issuesUnder(craftedCatalog({ qdrant: { writeReach: "open" } }), { ...qdrant, readOnly: true })).toEqual([
+      [
+        "readOnly",
+        "readOnly is not offered for qdrant: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.",
+      ],
+    ]);
+    expect(issuesUnder(craftedCatalog({ postgres: { agentCredential: null } }), { ...pg, ...pair })).toEqual(
+      ["agentUser", "agentPassword"].map((field) => [
+        field,
+        `Seed connection "store": ${field} is refused: a postgres seed takes no agent credential, so the agent and MCP could not run under one. Remove ${field} from this connection.`,
+      ]),
+    );
+    const superseded = craftedCatalog({
+      mysql: { agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze(["password"] as const) }) },
+    });
+    expect(issuesUnder(superseded, { ...mysql, password: "${MYSQL_SECRET}", ...pair })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "store" sets an agent credential beside password, which the mysql provider signs in with in preference to a user and password, so the agent and MCP would run under the connection\'s own credential. Remove password or the agent credential.',
+      ],
+    ]);
+    expect(issuesUnder(craftedCatalog({ postgres: { agentCredentialRequired: true } }), { ...pg, mcp: true })).toEqual([
+      [
+        "mcp",
+        'Seed connection "store" sets mcp: true on postgres without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
+      ],
+    ]);
+    expect(issuesUnder(craftedCatalog({ postgres: { readRootsRequired: true } }), { ...pg, mcp: true })).toEqual([
+      [
+        "mcp",
+        'Seed connection "store" sets mcp: true on postgres without agentReadRoots: MCP reads this engine only beneath read roots its seed declares. Add agentReadRoots, or remove mcp from this connection.',
+      ],
+    ]);
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  it("a seed of a package engine is refused at its type whatever its register row grants", () => {
+    const pkg = admittedFor("acme-seed", admittedManifest("acmeseed", withLoosestClaims));
+    const row = packageRow(pkg, "acmeseed", {
+      exposable: true,
+      agentCredentialRequired: false,
+      readRootsRequired: false,
+      writeReach: "none",
+    });
+    const catalog = composeServerCatalog([pkg], [], parseGrantRegister([row], LEGACY_ENGINE_IDS));
+    installServerCatalog(catalog);
+    try {
+      // Vacuity: the engine is served, and its row grants the opt-ins the seed asks for.
+      expect(servedEngineRecord("acmeseed").grants.exposable).toBe(true);
+      const parsed = SeedConnectionSchema.safeParse({ ...pg, type: "acmeseed", mcp: true, readOnly: true });
+      expect(parsed.error?.issues.map((issue) => [issue.path.join("."), issue.code])).toEqual([
+        ["type", "invalid_value"],
+      ]);
+    } finally {
+      forgetServerCatalog();
+    }
+    expect(serverCatalogInstalled()).toBe(false);
   });
 });

@@ -96,10 +96,7 @@ export const REGISTRIES: readonly Listed[] = [
     "GRANTED_MCP_STATEMENT_READ",
     "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
     "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED",
-    "GRANTED_OPENS_LOCAL_FILE",
-    "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION",
     "GRANTED_SSH_TUNNEL_REFUSAL",
-    "GRANTED_SEED_AGENT_CREDENTIAL",
     "GRANTED_AGENT_STATEMENT_LANGUAGE",
     "GRANTED_AGENT_READINGS",
   ].map((declaration) => ({
@@ -429,37 +426,6 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     declaration: "user",
     count: 1,
     reason: "the PostgreSQL image's default role name `postgres`, when POSTGRES_USER is unset",
-  },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "refuseMcpWhereNotOffered",
-    count: 1,
-    reason: "the parameter type of the `GRANTED_MCP_EXPOSABLE` grant it is handed, which holds no row here",
-  },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "refuseInvalidAgentCredential",
-    count: 1,
-    reason: "the parameter type of the `GRANTED_SEED_AGENT_CREDENTIAL` grant it is handed, which holds no row here",
-  },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "refuseMcpWithoutAgentCredential",
-    count: 1,
-    reason:
-      "the parameter type of the `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` grant it is handed, which holds no row here",
-  },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "refuseMcpWithoutReadRoots",
-    count: 1,
-    reason: "the parameter type of the `GRANTED_READ_ROOTS_REQUIRED` grant it is handed, which holds no row here",
-  },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "refuseReadOnlyWhereOpen",
-    count: 1,
-    reason: "the parameter type of the `GRANTED_WRITE_REACH` grant it is handed, which holds no row here",
   },
   { path: "src/lib/languages/oxiacli/commands.ts", declaration: "afterOxia", count: 1, reason: OXIA_PROGRAM },
   { path: "src/lib/languages/oxiacli/lexer.ts", declaration: "leadAndVerb", count: 1, reason: OXIA_PROGRAM },

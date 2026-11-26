@@ -10,8 +10,17 @@
 import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parseGrantRegister } from "@libredb/grant-register";
 import { z } from "zod";
+import { type EngineGrants, STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import {
+  forgetServerCatalog,
+  installServerCatalog,
+  serverCatalogInstalled,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import {
   type AdmissionOptions,
   type AdmissionResult,
@@ -24,10 +33,18 @@ import { type EnvelopeCode, x25519PrivateKey } from "@/lib/governance/hpke";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import { type Keyring, type OpenedSecret, openSealedSecret, type SecretBinding } from "@/lib/governance/lsb1";
 import { openGovernedSecret } from "@/lib/governance/secrets";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
 import { sealSecret } from "../../../helpers/governance/lsb1-seal";
 import { OUTSIDE_THE_UNION } from "../../../helpers/outside-the-union";
 import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import {
+  admittedFor,
+  admittedManifest,
+  packageRow,
+  withEngineRecord,
+  withLoosestClaims,
+} from "../../../helpers/package-catalog";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -60,6 +77,26 @@ const OPTIONS: AdmissionOptions = {
 
 const admit = (rows: readonly ConnectionRow[], options: Partial<AdmissionOptions> = {}): AdmissionResult =>
   admitConnectionRows(rows, { ...OPTIONS, ...options });
+
+/**
+ * What `read` answers with Studio's own catalog installed, the grants of each engine `changes` names replaced by its
+ * record's grants and the change, and forgotten whatever `read` does, so no case leaves a catalog behind.
+ */
+function underCatalog<T>(changes: Readonly<Record<string, Partial<EngineGrants>>>, read: () => T): T {
+  let catalog = composeServerCatalog([], [], STUDIO_GRANT_REGISTER);
+  for (const [id, change] of Object.entries(changes)) {
+    catalog = withEngineRecord(catalog, id, (engine) => ({
+      ...engine,
+      grants: Object.freeze({ ...engine.grants, ...change }),
+    }));
+  }
+  installServerCatalog(catalog);
+  try {
+    return read();
+  } finally {
+    forgetServerCatalog();
+  }
+}
 
 /** The heartbeat items of a result's skips. */
 const itemsOf = (result: AdmissionResult) => result.skipped.map((skip) => skip.item);
@@ -636,6 +673,95 @@ describe("admitConnectionRows", () => {
     expect(itemsOf(opcua)).toEqual([]);
     expect(opcua.admitted[0].read.mcp).toBeUndefined();
     expect(opcua.admitted[0].read.agentReadRoots).toBeUndefined();
+  });
+
+  test("the gate reads the connection's record's grants: an engine whose record grants exposure keeps the row's MCP opt-in, and one whose record does not leaves it off", () => {
+    const oxiaRow = connectionRow({
+      engine: "oxia",
+      definition: { host: "oxia.example.internal", port: 6648 },
+      columns: { mcp_enabled: true },
+    });
+    const postgresRow = connectionRow({ columns: { mcp_enabled: true } });
+    // The opt-in of the one admitted record, which the projection leaves undefined where the record carries none.
+    const mcpOf = (result: AdmissionResult) => {
+      expect(itemsOf(result)).toEqual([]);
+      expect(result.admitted).toHaveLength(1);
+      return result.admitted[0]?.read.mcp;
+    };
+    // Studio's grants, read with nothing installed: what each crafted grant below differs from.
+    expect(mcpOf(admit([oxiaRow], { allowedEngines: ["oxia"] }))).toBeUndefined();
+    expect(mcpOf(admit([postgresRow]))).toBe(true);
+
+    expect(
+      mcpOf(underCatalog({ oxia: { exposable: true } }, () => admit([oxiaRow], { allowedEngines: ["oxia"] }))),
+    ).toBe(true);
+    for (const change of [{ exposable: false }, { agentCredentialRequired: true }, { readRootsRequired: true }]) {
+      expect([change, mcpOf(underCatalog({ postgres: change }, () => admit([postgresRow])))]).toEqual([
+        change,
+        undefined,
+      ]);
+    }
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("a row is skipped as its engine record's grants say: a local file, and a server-level definition", () => {
+    const serverLevel = { host: "db.example.internal", port: 3306 };
+    const mysql = connectionRow({ engine: "mysql", definition: serverLevel });
+    const mysqlWithDatabase = connectionRow({ engine: "mysql", definition: { ...serverLevel, database: "orders" } });
+    const postgresServerLevel = connectionRow({ definition: { host: "db.example.internal", port: 5432 } });
+    // Studio's grants, read with nothing installed: what each crafted grant below differs from.
+    expect(itemsOf(admit([connectionRow()]))).toEqual([]);
+    expect(itemsOf(admit([mysql]))).toEqual([]);
+    expect(itemsOf(admit([postgresServerLevel]))).toEqual([
+      skipItem(ID, "SERVER_LEVEL_NOT_ALLOWED", { path: "database" }),
+    ]);
+
+    expect(itemsOf(underCatalog({ postgres: { opensLocalFile: true } }, () => admit([connectionRow()])))).toEqual([
+      skipItem(ID, "ENGINE_UNSUPPORTED"),
+    ]);
+    const mysqlServerLevel = { mysql: { serverLevelAtAdmission: true } };
+    expect(itemsOf(underCatalog(mysqlServerLevel, () => admit([mysql])))).toEqual([
+      skipItem(ID, "SERVER_LEVEL_NOT_ALLOWED", { path: "database" }),
+    ]);
+    const admitted = underCatalog(mysqlServerLevel, () => admit([mysqlWithDatabase]));
+    expect([itemsOf(admitted), admitted.admitted.map((connection) => connection.read.type)]).toEqual([[], ["mysql"]]);
+    const postgres = underCatalog({ postgres: { serverLevelAtAdmission: false } }, () => admit([postgresServerLevel]));
+    expect([itemsOf(postgres), postgres.admitted.map((connection) => connection.read.type)]).toEqual([
+      [],
+      ["postgres"],
+    ]);
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("a package engine's row is skipped as PROVIDER_UNKNOWN whatever its register row grants", () => {
+    // The loosest claims but a server level without a database, which admission reads true where either the request or
+    // the row is.
+    const manifest = admittedManifest("acmegoverned", (engine) => {
+      withLoosestClaims(engine);
+      engine.connection.serverLevelWithoutDatabase = false;
+    });
+    const pkg = admittedFor("acme-governed", manifest);
+    const row = packageRow(pkg, "acmegoverned", {
+      exposable: true,
+      agentCredentialRequired: false,
+      readRootsRequired: false,
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+    });
+    installServerCatalog(composeServerCatalog([pkg], [], parseGrantRegister([row], LEGACY_ENGINE_IDS)));
+    try {
+      // Vacuity: the engine is served, and its row grants what governance would read.
+      const grants = servedEngineRecord("acmegoverned").grants;
+      expect([grants.exposable, grants.opensLocalFile, grants.serverLevelAtAdmission]).toEqual([true, false, false]);
+      const result = admit([connectionRow({ engine: "acmegoverned", columns: { mcp_enabled: true } })], {
+        allowedEngines: [...OPTIONS.allowedEngines, "acmegoverned"],
+      });
+      expect([result.admitted, itemsOf(result)]).toEqual([[], [skipItem(ID, "PROVIDER_UNKNOWN")]]);
+      expect(opened).toEqual([]);
+    } finally {
+      forgetServerCatalog();
+    }
+    expect(serverCatalogInstalled()).toBe(false);
   });
 
   test("an opener failure that carries no envelope code is no row's fault, so admission throws it", () => {

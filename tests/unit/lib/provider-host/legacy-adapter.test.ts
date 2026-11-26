@@ -37,7 +37,7 @@ import {
 } from "@/lib/provider-host/legacy-adapter/identity";
 import { LEGACY_ENGINES, LEGACY_OFFERS } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseType } from "@/lib/types";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../../helpers/legacy-register";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const DECLARATIONS = path.join(ROOT, "src/lib/db/engine-declarations");
@@ -110,12 +110,13 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   agentCredentialRequired: grants.GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
   readOnlyEnforced: READ_ONLY_ENFORCED_FROM_ROWS,
   ungrantedRefusals: NO_UNGRANTED_REFUSAL,
-  opensLocalFile: grants.GRANTED_OPENS_LOCAL_FILE,
+  opensLocalFile: legacyRegisterTable("opensLocalFile"),
   hostPathFields: legacyRegisterTable("hostPathFields"),
-  serverLevelAtAdmission: grants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
+  // A legacy engine's request equals its row, so the grant restrictive when true is the row.
+  serverLevelAtAdmission: legacyRegisterTable("serverLevelWithoutDatabase"),
   serverLevelAtCatalogChoice: SERVER_LEVEL_AT_CATALOG_CHOICE,
   sshTunnel: grants.GRANTED_SSH_TUNNEL_REFUSAL,
-  agentCredential: grants.GRANTED_SEED_AGENT_CREDENTIAL,
+  agentCredential: legacyAgentCredentialTable(),
   statementLanguage: grants.GRANTED_AGENT_STATEMENT_LANGUAGE,
   agentReadings: grants.GRANTED_AGENT_READINGS,
   ownWords: legacyRegisterTable("ownWords"),
@@ -124,7 +125,11 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
 };
 
 /** The grant members the grant reader builds as a new value rather than handing on its row's own. */
-const COPIED_GRANT_MEMBERS: ReadonlySet<string> = new Set(["maskingExemptColumns", "hostPathFields"]);
+const COPIED_GRANT_MEMBERS: ReadonlySet<string> = new Set([
+  "maskingExemptColumns",
+  "hostPathFields",
+  "agentCredential",
+]);
 
 /**
  * The plain objects and arrays `value` holds, itself included, that are not frozen, by their path. A compiled pattern
@@ -180,11 +185,14 @@ describe("the legacy adapter's records", () => {
   test("each legacy record's grants equal the grant reader's rows for its id", () => {
     for (const id of SHIPPED_DATABASE_TYPES) {
       const engine = legacyRecord(id);
+      // The record holds the grant reader's own grants, so a copied member below is the reader's object, not a copy.
+      expect(engine.grants).toBe(grants.legacyEngineGrants(id));
       expect(Object.keys(engine.grants).sort()).toEqual(Object.keys(GRANT_TABLES).sort());
       for (const [member, table] of Object.entries(GRANT_TABLES)) {
         const granted = engine.grants[member as keyof EngineRecord["grants"]];
-        // Equal rather than identical only where the grant reader builds a new value: a masking exemption, and a host
-        // path field list the request adds to.
+        // Equal rather than identical to the oracle only where the grant reader builds a new value: a masking
+        // exemption, a host path field list the request adds to, and an agent credential, whose superseding fields it
+        // narrows.
         if (COPIED_GRANT_MEMBERS.has(member)) expect([member, granted]).toEqual([member, table[id] as never]);
         else expect(granted).toBe(table[id] as never);
       }

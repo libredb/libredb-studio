@@ -1,10 +1,12 @@
 /**
  * An engine MCP reads only under a seed's own agent credential, refused without one at load and at open.
  *
- * Studio's grant of the claim, `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` (src/lib/db/claim-grants.ts), names S3 alone,
- * whose reads run-s3-read.test.ts drives, so this file replaces it, in its own process, with a copy whose Postgres row
- * the test sets. The seed schema and the MCP context both read the replaced grant, so a refusal either one stopped
- * making is a failure here, with the shipped rows unchanged.
+ * Studio's grant of the claim names S3 alone, whose reads run-s3-read.test.ts drives, so this file grants it to Postgres
+ * in two ways, with the shipped rows unchanged. The seed schema reads the grant from the engine record the connection's
+ * type names (`servedEngineRecord` in src/lib/db/server-catalog.ts), so the load case installs Studio's own catalog with
+ * Postgres's record granting the claim, and forgets it before the next case. The MCP context still reads Studio's table,
+ * `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` (src/lib/db/claim-grants.ts), which this file replaces, in its own process,
+ * with a copy whose Postgres row the open cases set. So a refusal either one stopped making is a failure here.
  *
  * The load is the seed file's: the schema refuses it by name. The open is MCP's: a connection that was loaded while the
  * row was false is still in the seed cache when the row turns true, which is a connection loaded past the schema, and
@@ -32,6 +34,9 @@ mock.module("@/lib/db/claim-grants", () => ({ ...realGrants, GRANTED_MCP_AGENT_C
 const route = await import("@/app/api/mcp/route");
 const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
 const { SeedConfigSchema } = await import("@/lib/seed/types");
+const { forgetServerCatalog, installServerCatalog, serverCatalogInstalled } = await import("@/lib/db/server-catalog");
+const { composeServerCatalog } = await import("@/lib/db/server-catalog-compose");
+const { withEngineRecord } = await import("../../helpers/package-catalog");
 const { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import("../../helpers/mcp-fixtures");
 const { connectClient, routeServe } = await import("../../helpers/mcp-harness");
 const { mintTestToken, useMcpChannel } = await import("../../helpers/mcp-token");
@@ -92,10 +97,22 @@ afterAll(() => {
 
 describe("an engine the registry reads only under an agent credential", () => {
   test("refuses the seed file at load, by name, at mcp", () => {
-    required.postgres = true;
     const path = seedWithoutAgentCredential();
+    const catalog = withEngineRecord(
+      composeServerCatalog([], [], realGrants.STUDIO_GRANT_REGISTER),
+      "postgres",
+      (engine) => ({ ...engine, grants: Object.freeze({ ...engine.grants, agentCredentialRequired: true }) }),
+    );
 
-    const parsed = SeedConfigSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
+    installServerCatalog(catalog);
+    let parsed: ReturnType<typeof SeedConfigSchema.safeParse>;
+    try {
+      parsed = SeedConfigSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
+    } finally {
+      forgetServerCatalog();
+    }
+
+    expect(serverCatalogInstalled()).toBe(false);
 
     expect(parsed.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
       [

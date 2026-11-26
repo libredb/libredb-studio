@@ -15,12 +15,11 @@
  * Studio's grant of a claim, ./claim-grants); `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by
  * its six readers. The open check (./open-check), core's tunnel decision (./tunnel-decision), the provider factory's
  * other reads of a grant, the provider cache key, `clientCapabilities`, `catalogChoice`, the provider's fields, the
- * file and host path admissions and the session capacity class read none of these tables: they read the grants of the
- * engine's record (`EngineRecord` in ./server-catalog), which they look up through `legacyProviderEngine` or
- * `servedEngineRecord`, and which refuse a value naming no engine with this module's sentence. Other reads are still by
- * bare index, of other per-engine tables and of some of these (the seed schema's `GRANTED_WRITE_REACH` refinement, the
- * VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module unless it calls
- * it.
+ * file and host path admissions, the session capacity class and the seed schema's grant refusals read none of these
+ * tables: they read the grants of the engine's record (`EngineRecord` in ./server-catalog), which they look up through
+ * `legacyProviderEngine` or `servedEngineRecord`, and which refuse a value naming no engine with this module's
+ * sentence. Other reads are still by bare index, of other per-engine tables and of some of these (the VS Code backend's
+ * `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module unless it calls it.
  *
  * `compatibility.ts` never imports this module: the set below is built from `SHIPPED_DATABASE_TYPES` as this module
  * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. So no checked
