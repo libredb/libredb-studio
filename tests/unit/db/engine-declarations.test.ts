@@ -111,6 +111,7 @@ import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
+import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
@@ -257,6 +258,10 @@ const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
 const statementLanguage = legacyRegisterTable("statementLanguage");
 const agentReadings = legacyRegisterTable("agentReadings");
+const readsSqlTextRow = legacyRegisterTable("readsSqlText");
+const confirmExemptFormsRow = legacyRegisterTable("confirmExemptForms");
+const redactionRow = legacyRegisterTable("redaction");
+const grammarSha256Row = legacyRegisterTable("grammarSha256");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -3110,6 +3115,20 @@ describe("the census", () => {
     const redactions = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.redaction);
     expect(new Set(redactions.map(({ kind }) => kind)).size).toBe(3);
     expect(new Set(redactions.flatMap((r) => (r.kind === "sql" ? [r.nameQuote] : []))).size).toBe(4);
+  });
+
+  test("each declaration's SQL text claims are its legacy row's: readsSqlText, the exempt forms, the redaction and the grammar's SHA-256", () => {
+    // The grant reader hands a legacy engine its row's redaction and grammar digest as its request, so the request
+    // equals the declaration only while each declaration states its row's.
+    expect(differing((type, d) => d.sqlText.readsSqlText === readsSqlTextRow[type])).toEqual([]);
+    expect(
+      differing((type, d) => sameValue(d.sqlText.grammar.confirmExemptForms, confirmExemptFormsRow[type])),
+    ).toEqual([]);
+    expect(differing((type, d) => sameValue(d.sqlText.redaction, redactionRow[type]))).toEqual([]);
+    expect(differing((type, d) => grammarSha256(d.sqlText.grammar) === grammarSha256Row[type])).toEqual([]);
+    // Vacuity: the rows hold both readings of the text and some exempt form.
+    expect(new Set(Object.values(readsSqlTextRow)).size).toBe(2);
+    expect(Object.values(confirmExemptFormsRow).some((forms) => forms.length > 0)).toBe(true);
   });
 
   test("sqlText.updateTarget is the row's, each word set in its order", () => {

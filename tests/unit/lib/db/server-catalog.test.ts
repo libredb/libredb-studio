@@ -22,6 +22,7 @@ import {
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
+import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   DatabaseConfigError,
   PackageEngineUnsupportedError,
@@ -803,9 +804,17 @@ describe("a package engine's register row", () => {
     ownWords: "code-only",
     servesOneSession: null,
     agentExecution: false,
+    redaction: { kind: "none" },
+    readsSqlText: true,
+    confirmExemptForms: [],
+    decidesAlone: false,
+    reviewedGrammar: false,
   };
 
-  /** A row granting each claim its loosest value, and the three host members granted. */
+  /**
+   * A row granting each claim its loosest value, and the three host members granted; it reviews no grammar, so its SQL
+   * text members grant nothing.
+   */
   const LOOSEST_ROW = {
     writeReach: "none",
     readsFileAccessPosture: false,
@@ -867,6 +876,12 @@ describe("a package engine's register row", () => {
       ownWords: "scrubbed",
       servesOneSession: LOOSEST_ROW.servesOneSession,
       agentExecution: true,
+      // The row reviews no grammar: every SQL text claim at its restrictive value.
+      redaction: { kind: "none" },
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: false,
     });
     expect(Object.isFrozen(granted)).toBe(true);
 
@@ -894,6 +909,56 @@ describe("a package engine's register row", () => {
       NO_ROW_GRANTS,
     );
     expect(grantsOf([loose], STUDIO_GRANT_REGISTER, "acmerow")).toEqual(NO_ROW_GRANTS);
+  });
+
+  test("a package record's SQL text grants are its register row's for the grammar the row reviewed, and restrictive without a row or for another grammar", () => {
+    const form = ["ALTER", "SESSION", "SET"];
+    const manifest = admittedManifest("acmetext", (engine) => {
+      engine.sqlText.readsSqlText = false;
+      engine.sqlText.redaction = { kind: "sql", nameQuote: '"' };
+      (engine.sqlText.grammar as Record<string, unknown>).confirmExemptForms = [form];
+    });
+    const text = admittedFor("acme-text", manifest);
+    const reviewed = grammarSha256((manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar);
+    const sqlTextRow = (grants: Partial<RegisterGrants>) =>
+      registerOf(
+        packageRow(text, "acmetext", {
+          redaction: { kind: "sql", nameQuote: '"' },
+          readsSqlText: false,
+          confirmExemptForms: [form],
+          decidesAlone: true,
+          grammarSha256: reviewed,
+          ...grants,
+        }),
+      );
+    const sqlTextOf = (grants: EngineGrants) => {
+      const { redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar } = grants;
+      return { redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar };
+    };
+    const restrictive = {
+      redaction: { kind: "none" },
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: false,
+    } as const;
+
+    // The row reviewed the grammar the package declares: each claim is the row's.
+    expect(sqlTextOf(grantsOf([text], sqlTextRow({}), "acmetext"))).toEqual({
+      redaction: { kind: "sql", nameQuote: '"' },
+      readsSqlText: false,
+      confirmExemptForms: [form],
+      decidesAlone: true,
+      reviewedGrammar: true,
+    });
+    expect(grantsOf([text], sqlTextRow({ redaction: { kind: "none" } }), "acmetext").redaction).toEqual({
+      kind: "none",
+    });
+    // A row for another grammar, a row that reviews none, and no row: every SQL text claim at its restrictive value.
+    const other = grammarSha256({ planted: randomUUID() });
+    expect(sqlTextOf(grantsOf([text], sqlTextRow({ grammarSha256: other }), "acmetext"))).toEqual(restrictive);
+    expect(sqlTextOf(grantsOf([text], sqlTextRow({ grammarSha256: null }), "acmetext"))).toEqual(restrictive);
+    expect(sqlTextOf(grantsOf([text], STUDIO_GRANT_REGISTER, "acmetext"))).toEqual(restrictive);
   });
 
   test("a register row for another version or digest of the same package grants nothing", () => {

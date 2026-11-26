@@ -70,6 +70,7 @@ import {
 } from "@/lib/db/engine-catalog/projection";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS, migrationDdlFor } from "@/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS, sqlEngineGenerators } from "@/lib/db/query-generators";
+import { declaredSqlTextRequest } from "@/lib/db/server-catalog-compose";
 import { composeSqlGrammar, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { composeSqlWriting, SQL_WRITING_FUNCTIONS, sqlWritingFor } from "@/lib/db/sql-writing";
 import { unknownTypeSentence } from "@/lib/db/type-id";
@@ -503,16 +504,24 @@ describe("each projection of the admitted declarations, built with and without a
   });
 
   test("the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set", () => {
-    // Each engine is granted against its legacy row of the grant register, or none for the fixture, and each set's
-    // grant reads the seed-only fields its own declarations project, as a loader's would.
+    // Each engine is granted against its legacy row of the grant register, or none for the fixture, with the SQL text
+    // request its declaration states, as the server catalog's composer makes a package's, and each set's grant reads
+    // the seed-only fields its own declarations project, as a loader's would.
     const legacyRows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
     const grantsOf = (set: readonly EngineDeclaration[]) => {
       const requests = projectClaimRequests(set);
       const seedOnly = projectConnectionTables(set).seedOnly;
+      const declared = new Map(set.map((declaration) => [declaration.id, declaration]));
       return Object.fromEntries(
         Object.entries(requests).map(([id, requested]) => [
           id,
-          grantEngineClaims(id, requested, Object.hasOwn(legacyRows, id) ? legacyRows[id] : null, seedOnly),
+          grantEngineClaims(
+            id,
+            requested,
+            declaredSqlTextRequest(declared.get(id) as EngineDeclaration),
+            Object.hasOwn(legacyRows, id) ? legacyRows[id] : null,
+            seedOnly,
+          ),
         ]),
       );
     };
@@ -553,7 +562,14 @@ describe("each projection of the admitted declarations, built with and without a
       ownWords: "code-only",
       servesOneSession: null,
       agentExecution: false,
+      redaction: { kind: "none" },
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: false,
     });
+    // Every shipped engine's declared grammar is the one its row reviewed.
+    expect(SHIPPED_DATABASE_TYPES.filter((id) => !shipped[id]?.reviewedGrammar)).toEqual([]);
 
     const removed = grantsOf([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
     expect(removed).toEqual(shipped);

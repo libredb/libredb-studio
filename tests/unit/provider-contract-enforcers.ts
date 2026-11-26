@@ -636,7 +636,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it",
         "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment",
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar and the server catalog's composition, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
       ],
       "tests/unit/mcp/served-engines.test.ts": [
         "an engine agent mode does not execute on is not served, whatever its rows say",
@@ -1283,7 +1283,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar and the server catalog's composition, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
         "a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name",
