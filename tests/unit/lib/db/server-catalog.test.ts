@@ -72,6 +72,7 @@ const OFFER_KEYS = [
   "ownWords",
   "queryEventText",
   "sshTunnel",
+  "statementVocabulary",
   "testCautions",
   "unboundedPage",
 ];
@@ -301,6 +302,11 @@ describe("one engine record for every engine", () => {
     expect(Object.keys(packaged.engine).sort()).toEqual(RECORD_KEYS);
     expect(Object.keys(legacy.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(packaged.engine.offers).sort()).toEqual(OFFER_KEYS);
+    // Studio's statement vocabulary rows are keyed by a legacy engine's id; a package's engine has none.
+    expect([legacy.engine.offers.statementVocabulary, packaged.engine.offers.statementVocabulary]).toEqual([
+      true,
+      false,
+    ]);
     expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
   });
 

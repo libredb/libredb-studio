@@ -9,8 +9,8 @@
  * same file is the operator's, and the documented server-identity path answers. A provider opened as the server with
  * the mode off is not served to the same row once the mode is on, because the provider cache key frames the marker.
  *
- * The real POST /api/db/query, operator loader, resolveConnection, factory, BigQuery and Firestore providers and
- * their token sources run here. Only two modules are replaced: the session, and `createNodeTransport` with a fake
+ * The real POST /api/db/query, operator loader, resolveServedConnection, factory, BigQuery and Firestore providers
+ * and their token sources run here. Only two modules are replaced: the session, and `createNodeTransport` with a fake
  * Google that counts token grants and logs every API request with its `authorization`.
  * `mock.module()` is process-wide, so the runner gives this file its own process.
  */

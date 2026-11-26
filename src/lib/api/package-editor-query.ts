@@ -3,15 +3,16 @@
  * (./editor-query) over the package's contract session rather than a legacy provider's bridged one, which
  * `POST /api/db/query` runs for such an engine.
  *
- * Before the run, the route reads the page bounds and the statement timeout as for any engine and holds no console
- * text bound, which is a row of Studio's keyed by engine. It refuses a plan, a key-space `database`, a server-level
- * `catalog` and an unbounded page by name, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, before any open, a malformed field
- * keeping its 400. The confirmation gate reads the statement under the grammar the declaration states, composed once
- * into the server catalog's record of the engine, with every claim that loosens the gate uncounted
- * (`gatePackageRun` in ./run-confirmation; docs/providers/CONTRACT.md, clause S-8). The statement runs on the engine's
- * session in the provider factory's editor cache (`getOrCreateEditorSession` in src/lib/db/factory.ts), opened within
- * the engine's connect budget while the request stays, and the entry counts the run while its call runs, so the idle
- * sweep keeps it.
+ * Before the run, the route reads the page bounds and the statement timeout as for any engine, and applies no console
+ * text bound, since the engine's record offers none (a row of Studio's keyed by engine). It refuses each field the
+ * record does not offer, a plan, a key-space `database`, a server-level `catalog` and an unbounded page, by name, as
+ * `PACKAGE_ENGINE_UNSUPPORTED`, 501, before any open, a malformed field keeping its 400. The confirmation gate, one for
+ * every engine, reads the statement under the grammar the declaration states, composed once into the server catalog's
+ * record of the engine, with every claim that loosens the gate uncounted, since the record offers no statement
+ * vocabulary rows (`gateRun` in ./run-confirmation; docs/providers/CONTRACT.md, clause S-8). The statement runs on the
+ * engine's session in the provider factory's editor cache (`getOrCreateEditorSession` in src/lib/db/factory.ts), opened
+ * within the engine's connect budget while the request stays, and the entry counts the run while its call runs, so the
+ * idle sweep keeps it.
  *
  * The run goes through the host core the process's composition root installed (`hostCore`), with the session's handle
  * bound and the package's declared environment in every call's context. The execute is asked for one row past the page

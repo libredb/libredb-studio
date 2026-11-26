@@ -15,6 +15,7 @@ import {
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
@@ -341,6 +342,7 @@ export async function POST(req: NextRequest) {
       route: "multi-query",
       issuer: runConfirmationIssuerForSession(guard.session),
       connection,
+      engine: servedEngineRecord(connection.type),
       catalog: requestCatalog(body),
       sql,
       params: undefined,

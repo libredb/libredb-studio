@@ -6,8 +6,8 @@
  * read again once the operator loader's cache is older than SEED_CACHE_TTL_MS, so after that the same connection id
  * must be refused the server's identity, and a provider opened under the grant must not be served to it.
  *
- * The real POST /api/db/query, operator loader, resolveConnection, factory, BigQuery provider and token source run
- * here. Only two modules are replaced: the session, and `createNodeTransport` with a fake Google that counts token
+ * The real POST /api/db/query, operator loader, resolveServedConnection, factory, BigQuery provider and token source
+ * run here. Only two modules are replaced: the session, and `createNodeTransport` with a fake Google that counts token
  * grants and logs every API request with its `authorization`, so the log shows which provider answered.
  * `mock.module()` is process-wide, so the runner gives this file its own process.
  */

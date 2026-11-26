@@ -6,7 +6,7 @@
  * listener that records every request, so "nothing was sent" is measured on the server side. A seed-file connection
  * with a reference, opened through the same route, is the control that shows the fake Vault is wired and answers.
  *
- * Only the session and the provider cache are replaced; the seed loader, the discovery loader, resolveConnection
+ * Only the session and the provider cache are replaced; the seed loader, the discovery loader, resolveServedConnection
  * and the Vault client are the real ones.
  */
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";

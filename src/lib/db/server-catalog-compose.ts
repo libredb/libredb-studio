@@ -56,6 +56,7 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   catalog: false,
   unboundedPage: false,
   consoleTextBound: false,
+  statementVocabulary: false,
   queryEventText: false,
   sshTunnel: false,
   hostFiles: false,

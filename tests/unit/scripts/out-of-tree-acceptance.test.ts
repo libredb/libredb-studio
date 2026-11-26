@@ -49,6 +49,7 @@ import {
   tamperedBundle,
   temporaryRootProblems,
   unavailableProblems,
+  unsupportedProblems,
   bundleProblems,
 } from "../../../scripts/out-of-tree-acceptance";
 import { moduleSpecifiers } from "../lib/db/provider-imports/scan";
@@ -552,6 +553,32 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(unavailableProblems({ status: 400, body: { code: "PROVIDER_UNKNOWN" } }, refusal)).not.toEqual([]);
     expect(unavailableProblems({ status: 503, body: SAMPLES.unavailableBody }, refusal)).toEqual([]);
     expect(unavailableProblems({ status: 400, body: SAMPLES.unknownBody }, refusal)).not.toEqual([]);
+  });
+
+  test("an explain answer must be 501 PACKAGE_ENGINE_UNSUPPORTED naming explain, so a 200 or another code fails", () => {
+    const body = {
+      error: "This LibreDB Studio does not serve explain in a query on an engine of a provider package yet.",
+      code: STUDIO.unsupported,
+      statusCode: 501,
+      kind: "package-engine-unsupported",
+      outcome: "unknown",
+    };
+    expect(STUDIO.unsupported).toBe("PACKAGE_ENGINE_UNSUPPORTED");
+    expect(unsupportedProblems({ status: 501, body }, "explain")).toEqual([]);
+    expect(unsupportedProblems({ status: 200, body: SAMPLES.listBody }, "explain")).not.toEqual([]);
+    expect(unsupportedProblems({ status: 200, body }, "explain").join(" ")).toContain("200");
+    for (const code of ["PROVIDER_UNAVAILABLE", "PACKAGE_ENGINE_UNSUPPORTED_X"]) {
+      expect(unsupportedProblems({ status: 501, body: { ...body, code } }, "explain").join(" ")).toContain(code);
+    }
+    const database = { ...body, error: body.error.replace("explain", "database") };
+    expect(unsupportedProblems({ status: 501, body: database }, "explain").join(" ")).toContain("explain");
+    // The field is named as a whole word, so a sentence naming only `explainer` does not name it.
+    const explainer = { ...body, error: body.error.replace("explain", "explainer") };
+    expect(unsupportedProblems({ status: 501, body: explainer }, "explain")).not.toEqual([]);
+    // Each problem list ends with the body, so the step's failure shows what Studio answered.
+    expect(unsupportedProblems({ status: 400, body: SAMPLES.unknownBody }, "explain").at(-1)).toContain(
+      "PROVIDER_UNKNOWN",
+    );
   });
 
   test("the refusal line is found only for the code, name and version asked, and the first boot's output must name no refusal of the package", () => {

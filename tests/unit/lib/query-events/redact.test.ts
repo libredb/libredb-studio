@@ -86,8 +86,9 @@ describe("redactStatement", () => {
     expect(VECTORS.some((vector) => vector.engine === "redis")).toBe(true);
   });
 
-  // Server side the statement is redacted only after `resolveConnection` admitted the type, so an engine id Studio does
-  // not know never reaches here from a request; a caller that hands one anyway is refused by name (FND-1).
+  // Server side the statement is redacted only after `resolveConnection` or `resolveServedConnection` admitted the
+  // type, so an engine id Studio does not know never reaches here from a request; a caller that hands one anyway is
+  // refused by name (FND-1).
   test("an engine id Studio does not know is refused by name, and the refusal repeats none of the statement", () => {
     const literal = crypto.randomUUID();
     const refusal = refusalThrownBy(() => redactStatement(`SELECT '${literal}'`, "constructor" as DatabaseType));

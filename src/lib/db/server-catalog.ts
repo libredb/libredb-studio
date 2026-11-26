@@ -153,6 +153,12 @@ export interface EngineOffers {
   readonly unboundedPage: boolean;
   /** Studio's console text bound for the engine (`consoleTextByteLimit` in ./destructive-commands), read by its id. */
   readonly consoleTextBound: boolean;
+  /**
+   * Studio's statement vocabulary rows for the engine, read by its id: the confirmation gate reads a statement through
+   * them (`confirmationVerdict` in src/lib/editor/statement-analysis.ts). An engine without them is confirmed under its
+   * `statementGrammar`, with every claim that loosens the gate uncounted (`packageConfirmationVerdict`).
+   */
+  readonly statementVocabulary: boolean;
   /** A query event that keeps the statement's and the error's text (src/lib/query-events). */
   readonly queryEventText: boolean;
   /** An SSH tunnel core opens for the connection. */
