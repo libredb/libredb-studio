@@ -1,7 +1,7 @@
 /**
  * Every shipped type-id keeps its provider triad (CLAUDE.md, the provider triad under "Rules & patterns"): its code,
  * its doc and its integration test, in exactly one layout, the legacy one or a workspace package
- * `packages/provider-<type-id>/`, plus its agent leg when its `AGENT_STATEMENT_LANGUAGE` row is non-null.
+ * `packages/provider-<type-id>/`, plus its agent leg when its granted statement language is non-null.
  *
  * `tests/helpers/provider-layout.ts` says where each leg is and why each refusal exists; this test runs it over the
  * whole type-id list, so a provider that lands without its doc or integration test, or a move that leaves a legacy

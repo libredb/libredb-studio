@@ -51,16 +51,17 @@
  * `legacyAgentCredentials` when this module loads, naming the engine and the field; and every other row is Studio's own
  * typed table, read as it stands.
  *
- * Studio's review of each policy, MCP and connection claim for an engine the legacy adapter serves is the engine's
- * legacy row of the grant register, `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id:
- * the register is read once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set,
- * and `legacyGrantRows` refuses by name a served engine the register holds no legacy row for, so no served engine is
- * read at a restrictive value by omission. A row's review notes say why it holds its value. The rows are hand-reviewed
- * data, never a projection of the declarations (clauses M-52, M-53 and M-83). A register its schema or its code rules
- * refuse fails this module's load, in the browser as on the server.
- * Studio's review of every other claim stays a hand-written record, the statement language record of
- * src/lib/db/compatibility.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
- * source reads those records, the facet rows' `agentReadings` by member, or loads the register, and
+ * Studio's review of each policy, MCP and connection claim and of the agent mode claim `agent.statementLanguage` for an
+ * engine the legacy adapter serves is the engine's legacy row of the grant register, `@libredb/grant-register` (clause
+ * M-54), keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads, with
+ * `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine the
+ * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
+ * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
+ * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
+ * the server.
+ * Studio's review of every other claim stays a hand-written record, the facet rows of src/lib/db/engine-facets, which
+ * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
+ * source reads `STUDIO_CLAIM_RECORDS` or the facet rows' `agentReadings` by member, or loads the register, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
  *
@@ -78,13 +79,22 @@ import type {
 } from "@libredb/provider-sdk/manifest";
 import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
-import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "./compatibility";
+import { SHIPPED_DATABASE_TYPES } from "./compatibility";
 import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
 import type { AgentCredentialForm, ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
+
+/**
+ * The statement language bundled engine `T` requests, `agent.statementLanguage` of its generated claim request, as its
+ * literal type. It carries no value to any gate: the agent packs' engine types read it. For every bundled engine the
+ * request equals the engine's legacy row in the grant register (tests/unit/db/engine-declarations.test.ts), so the
+ * type is the engine's granted statement language.
+ */
+export type StatementLanguageRequest<T extends DatabaseType> =
+  (typeof BUNDLED_CLAIM_REQUESTS)[T]["agent"]["statementLanguage"];
 
 /** A masking exemption as Studio's record holds it: a column pattern and a reason, or null. */
 type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null;
@@ -239,7 +249,7 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   serverLevelWithoutDatabase: legacyMember("serverLevelWithoutDatabase"),
   sshTunnel: legacyMember("sshTunnel"),
   agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, BODY_CONNECTION_FIELDS),
-  statementLanguage: AGENT_STATEMENT_LANGUAGE,
+  statementLanguage: legacyMember("statementLanguage"),
   agentReadings: ENGINE_FACETS,
 });
 

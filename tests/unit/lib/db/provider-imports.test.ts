@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { INWARD_IMPORTS } from "./provider-imports/inward-allowlist";
 import {
   type AllowlistEntry,
@@ -35,6 +35,9 @@ import {
   valueImportPaths,
   valueSpecifiers,
 } from "./provider-imports/scan";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ALLOWLIST_FILE = "tests/unit/lib/db/provider-imports/inward-allowlist.ts";
@@ -286,7 +289,7 @@ const INWARD_HEADER = "| Core file | Imports | Removed by | Destination |";
 const OUTWARD_HEADER = "| Module | Destination | Reason |";
 
 const STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(
-  Object.values(AGENT_STATEMENT_LANGUAGE).filter((language) => language !== null),
+  Object.values(statementLanguage).filter((language) => language !== null),
 );
 const SHIPPED_TYPE_IDS: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
 const NAMED_REMOVERS: ReadonlySet<string> = new Set(["PR 8b", "PR 11 policy", "PR 11 agent", "PR 12"]);

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
@@ -14,24 +14,22 @@ import { legacyRegisterTable } from "../../helpers/legacy-register";
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 const SHIPPED: McpExposure = {
   executes: AGENT_EXECUTION_ENGINES,
   exposable: exposable,
   statementRead: statementRead,
-  language: AGENT_STATEMENT_LANGUAGE,
+  language: statementLanguage,
 };
 const SHIPPED_TYPES = Object.keys(statementRead) as DatabaseType[];
-const LANGUAGES = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
+const LANGUAGES = [...new Set(Object.values(statementLanguage))].filter(
   (language): language is AgentStatementLanguageId => language !== null,
 );
 
 /** The four records, each read on its own: what the resolver must agree with. */
 const servedByRecords = (type: DatabaseType): boolean =>
-  AGENT_EXECUTION_ENGINES.includes(type) &&
-  exposable[type] &&
-  statementRead[type] &&
-  AGENT_STATEMENT_LANGUAGE[type] !== null;
+  AGENT_EXECUTION_ENGINES.includes(type) && exposable[type] && statementRead[type] && statementLanguage[type] !== null;
 
 /** A closed engine a flip of its MCP read row alone would open. */
 const opensWhenFlipped = (type: DatabaseType): boolean =>
@@ -47,18 +45,18 @@ describe("mcpStatementEngines", () => {
     expect(RUN_READ_QUERY_TYPES).toEqual(mcpStatementEngines("sql"));
     expect(RUN_READ_QUERY_TYPES).toEqual(
       AGENT_EXECUTION_ENGINES.filter(
-        (type) => exposable[type] && statementRead[type] && AGENT_STATEMENT_LANGUAGE[type] === "sql",
+        (type) => exposable[type] && statementRead[type] && statementLanguage[type] === "sql",
       ),
     );
   });
 
   // A row that opens one engine moves no other: flipping one engine's MCP statement read row, in a copy of the
   // shipped records, changes that engine's language's served set alone, and only by that engine.
-  test.each(SHIPPED_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] !== null))(
+  test.each(SHIPPED_TYPES.filter((type) => statementLanguage[type] !== null))(
     "flipping %s's MCP read row moves only its own language's served set, and only by it",
     (type) => {
       const flipped = { ...SHIPPED, statementRead: { ...statementRead, [type]: !statementRead[type] } };
-      const own = AGENT_STATEMENT_LANGUAGE[type];
+      const own = statementLanguage[type];
       for (const language of LANGUAGES) {
         const before = mcpStatementEngines(language);
         const after = mcpStatementEngines(language, flipped);
@@ -81,7 +79,7 @@ describe("mcpStatementEngines", () => {
   // agent mode executes on it, MCP is offered it and its MCP read row opens it.
   test("serves each engine in its own language, exactly where the four records allow it", () => {
     for (const type of SHIPPED_TYPES) {
-      const language = AGENT_STATEMENT_LANGUAGE[type];
+      const language = statementLanguage[type];
       if (language === null) continue;
       expect(mcpStatementEngines(language).includes(type)).toBe(servedByRecords(type));
     }
@@ -99,7 +97,7 @@ describe("mcpStatementEngines", () => {
   // InfluxDB 3's SQL shares a provider directory with InfluxDB's InfluxQL, and opening the first left the second shut.
   test("opening InfluxDB 3 leaves InfluxDB over InfluxQL unserved by every statement tool", () => {
     expect(statementRead.influxdb).toBe(false);
-    expect(AGENT_STATEMENT_LANGUAGE.influxdb).toBe("influxql");
+    expect(statementLanguage.influxdb).toBe("influxql");
     expect(mcpStatementEngines("influxql")).toEqual([]);
     expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
   });
@@ -110,7 +108,7 @@ describe("mcpStatementEngines", () => {
     expect(statementRead.opensearch).toBe(true);
     expect(exposable.opensearch).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("opensearch");
-    expect(AGENT_STATEMENT_LANGUAGE.opensearch).toBe("sql");
+    expect(statementLanguage.opensearch).toBe("sql");
     expect(RUN_READ_QUERY_TYPES).toContain("opensearch");
     expect(RUN_READ_QUERY_TYPES).toContain("elasticsearch");
     expect(mcpStatementEngines("sql", { ...SHIPPED, statementRead: { ...statementRead, opensearch: false } })).toEqual(

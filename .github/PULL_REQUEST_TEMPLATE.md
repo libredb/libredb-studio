@@ -52,7 +52,7 @@ Closes #
 - [ ] New and existing unit tests pass locally with my changes
 - [ ] The required CI test job passes the **100% line-coverage gate** (`bun run test:coverage` and `bun run coverage:check`)
 - [ ] If I changed `src/lib/db/providers/`, I updated the matching `tests/integration/db/` tests in the same PR (provider triad); `docs/providers/` is frozen until the engine moves into its package
-- [ ] If the type-id has a non-null `AGENT_STATEMENT_LANGUAGE` row, I kept its agent leg in step: the engine overlay under `src/lib/agent/languages/<statement-language>/engines/` and the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`
+- [ ] If the type-id's granted statement language is non-null, I kept its agent leg in step: the engine overlay under `src/lib/agent/languages/<statement-language>/engines/` and the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`
 - [ ] Any dependent changes have been merged and published
 
 ## Additional Notes

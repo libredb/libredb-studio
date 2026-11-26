@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { workflowAvailability } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
@@ -17,6 +17,9 @@ import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql"
 import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
  * The engine pack contract (#1821): what must hold for the pack an engine RESOLVES to, run over every engine that
@@ -30,9 +33,7 @@ import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
  * - the per-language census of offers, arms, rules and statement reads, which `tool-offer-census.test.ts` holds.
  */
 
-const ENGINES = (Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[]).filter(
-  (type) => AGENT_STATEMENT_LANGUAGE[type] !== null,
-);
+const ENGINES = SHIPPED_DATABASE_TYPES.filter((type) => statementLanguage[type] !== null);
 
 const WORKFLOWS = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowType[];
 
@@ -392,7 +393,7 @@ describe.each(ENGINES)("%s", (type) => {
   const pack: AgentEnginePack = agentEnginePack(type);
 
   test("is its language's pack, frozen, and is what the run resolver reads", () => {
-    expect<string | null>(pack.id).toBe(AGENT_STATEMENT_LANGUAGE[type]);
+    expect<string | null>(pack.id).toBe(statementLanguage[type]);
     for (const frozen of [pack, pack.client, pack.server, pack.execution, pack.server.adapter, pack.client.posture]) {
       expect(Object.isFrozen(frozen)).toBe(true);
     }

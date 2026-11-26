@@ -20,7 +20,6 @@
  * MySQL) and the compatibility table in `docs/providers/README.md`. Neither may
  * hold its own copy of the data.
  */
-import type { StatementLanguage } from "@libredb/provider-sdk/manifest";
 import type { DatabaseType } from "@/lib/types";
 import { BUNDLED_CATALOG } from "./engine-catalog/catalog.generated";
 import {
@@ -332,65 +331,6 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
   "sparkplug",
   "trino",
 ]);
-
-/**
- * The statement language agent mode sends each engine, or null where it sends the engine no statement: Studio's review
- * record of the claim an engine declaration requests at `agent.statementLanguage` (docs/providers/CONTRACT.md, clauses
- * M-52, M-53 and M-83). The declaration states each shipped engine's request as this table's row, and the table is
- * never a projection of declarations. Only Studio's grant reader, src/lib/db/claim-grants.ts, reads it as a value, and
- * every gate reads its grant, `GRANTED_AGENT_STATEMENT_LANGUAGE`, in its place
- * (tests/unit/db/claim-record-readers.test.ts).
- *
- * Literal-typed, so `AgentEngineType` and `AgentEngineFamily` in src/lib/agent/languages/pack.ts read each engine's
- * language by type, through a type-only import, which carries no value to any gate. Held here, beside
- * `AGENT_EXECUTION_ENGINES`, the review record of the agent statement path, so the grant reader in core reads it with
- * no import of the agent core.
- */
-export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
-  postgres: "sql",
-  bigquery: null,
-  snowflake: null,
-  spark: null,
-  mysql: "sql",
-  sqlite: "sql",
-  libsql: "sql",
-  duckdb: "sql",
-  oracle: "sql",
-  db2: "sql",
-  mssql: "sql",
-  clickhouse: "sql",
-  druid: "sql",
-  trino: "sql",
-  cassandra: "sql",
-  elasticsearch: "sql",
-  opensearch: "sql",
-  mongodb: "mongo",
-  couchbase: "sql",
-  redis: "rediscli",
-  prometheus: "promql",
-  kafka: "kafkaread",
-  etcd: "etcdctl",
-  neo4j: "cypher",
-  milvus: "milvusrpc",
-  qdrant: "qdrantapi",
-  weaviate: "weaviateapi",
-  influxdb: "influxql",
-  influxdb3: "sql",
-  oxia: "oxiacli",
-  databend: null,
-  s3: "s3api",
-  kubernetes: "kubectl",
-  mqtt: "mqttread",
-  firestore: "fsquery",
-  rabbitmq: "rabbitread",
-  opcua: "opcuaread",
-  mtconnect: "mtconnectread",
-  modbus: "modbusread",
-  netconf: "netconfrpc",
-  snmp: "snmpget",
-  sparkplug: "sparkplugread",
-  libredb: "libredbkv",
-} as const satisfies Record<DatabaseType, StatementLanguage>);
 
 /**
  * The refusal of an agent-mode Start whose workflow sends statements, on a connection of an engine granted

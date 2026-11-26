@@ -4,7 +4,7 @@
 import type { CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { ClusterUsageInput } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
-import type { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import type { StatementLanguageRequest } from "@/lib/db/claim-grants";
 import type { AgentLanguageCopy, AgentStatementLanguageId, AgentWorkflowVariant } from "../agent-manifest";
 import type { AgentCatalogCapture } from "../catalog-rows";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../composed-sql-primitives";
@@ -889,13 +889,13 @@ export type MemberOverride<V> =
 /** What an overlay may give of a facet: any of its members, each as a `MemberOverride`. Read by `defineOverlay`. */
 export type FacetOverrides<Facet> = { readonly [K in keyof Facet]?: MemberOverride<Facet[K]> };
 
-/** The engines that speak a statement language, read from the literal-typed `AGENT_STATEMENT_LANGUAGE`. */
+/** The engines that speak a statement language: those whose generated claim request names one, as its literal type. */
 export type AgentEngineType = {
-  [T in DatabaseType]: (typeof AGENT_STATEMENT_LANGUAGE)[T] extends null ? never : T;
+  [T in DatabaseType]: StatementLanguageRequest<T> extends null ? never : T;
 }[DatabaseType];
 
-/** The statement language an engine speaks, its family. */
-export type AgentEngineFamily<T extends AgentEngineType> = NonNullable<(typeof AGENT_STATEMENT_LANGUAGE)[T]>;
+/** The statement language an engine speaks, its family: its generated claim request's language, as its literal type. */
+export type AgentEngineFamily<T extends AgentEngineType> = NonNullable<StatementLanguageRequest<T>>;
 
 /**
  * The members of a SQL engine's server facet that are bound to its dialect: each one a verified composition, or

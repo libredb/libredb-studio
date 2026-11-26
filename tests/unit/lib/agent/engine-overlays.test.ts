@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { composeEstimatingExplain } from "@/lib/agent/composed-sql";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { engineClientPack, enginesSupporting } from "@/lib/agent/languages/engines/client";
@@ -101,6 +100,10 @@ import { typeIdRefusal } from "@/lib/db/type-id";
 import { getExplainStrategy } from "@/lib/explain";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
  * The engine overlays (#1821): one engine's pack is its family's pack with the engine's dialect laid on, and nothing
@@ -108,9 +111,9 @@ import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
  * `agentEnginePack` reads what it read before.
  */
 
-const ALL_TYPES = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
-const ENGINES = ALL_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] !== null);
-const SQL_ENGINES = ENGINES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] === "sql");
+const ALL_TYPES = SHIPPED_DATABASE_TYPES;
+const ENGINES = ALL_TYPES.filter((type) => statementLanguage[type] !== null);
+const SQL_ENGINES = ENGINES.filter((type) => statementLanguage[type] === "sql");
 
 /** The merged view's members: every dialect-bound member of every family. */
 const SERVER_DIALECT_MEMBERS: readonly (keyof AgentEngineServerDialect)[] = [
@@ -206,70 +209,70 @@ const without = (facet: object, key: string): Record<string, unknown> =>
   Object.fromEntries(Object.entries(facet).filter(([name]) => name !== key));
 
 describe("the engine registry", () => {
-  test("holds the engines that speak a statement language, in registry order", () => {
+  test("holds the engines that speak a statement language, in catalog order", () => {
     expect(ENGINES).toEqual([
-      "postgres",
-      "mysql",
-      "sqlite",
-      "libsql",
-      "duckdb",
-      "oracle",
-      "db2",
-      "mssql",
-      "clickhouse",
-      "druid",
-      "trino",
       "cassandra",
-      "elasticsearch",
-      "opensearch",
-      "mongodb",
+      "clickhouse",
       "couchbase",
-      "redis",
-      "prometheus",
-      "kafka",
+      "db2",
+      "druid",
+      "duckdb",
+      "elasticsearch",
       "etcd",
-      "neo4j",
-      "milvus",
-      "qdrant",
-      "weaviate",
+      "firestore",
       "influxdb",
       "influxdb3",
-      "oxia",
-      "s3",
+      "kafka",
       "kubernetes",
-      "mqtt",
-      "firestore",
-      "rabbitmq",
-      "opcua",
-      "mtconnect",
+      "libredb",
+      "libsql",
+      "milvus",
       "modbus",
+      "mongodb",
+      "mqtt",
+      "mssql",
+      "mtconnect",
+      "mysql",
+      "neo4j",
       "netconf",
+      "opcua",
+      "opensearch",
+      "oracle",
+      "oxia",
+      "postgres",
+      "prometheus",
+      "qdrant",
+      "rabbitmq",
+      "redis",
+      "s3",
       "snmp",
       "sparkplug",
-      "libredb",
+      "sqlite",
+      "trino",
+      "weaviate",
     ]);
     expect(SQL_ENGINES).toEqual([
-      "postgres",
-      "mysql",
-      "sqlite",
-      "libsql",
-      "duckdb",
-      "oracle",
-      "db2",
-      "mssql",
-      "clickhouse",
-      "druid",
-      "trino",
       "cassandra",
-      "elasticsearch",
-      "opensearch",
+      "clickhouse",
       "couchbase",
+      "db2",
+      "druid",
+      "duckdb",
+      "elasticsearch",
       "influxdb3",
+      "libsql",
+      "mssql",
+      "mysql",
+      "opensearch",
+      "oracle",
+      "postgres",
+      "sqlite",
+      "trino",
     ]);
   });
 
   test.each(ALL_TYPES)("%s has a client pack exactly when it speaks a language, over that language's facet", (type) => {
-    const language = AGENT_STATEMENT_LANGUAGE[type];
+    const language = statementLanguage[type];
     if (language === null) {
       expect(() => engineClientPack(type)).toThrow(new Error(`no engine pack for ${type}`));
     } else if (language === "sql") {
@@ -392,7 +395,7 @@ describe("the engine packs", () => {
       if (overridden.includes(member)) continue;
       expect(value).toBe((server as unknown as Record<string, unknown>)[member]);
     }
-    const client = languageClientPack(AGENT_STATEMENT_LANGUAGE[type] as "sql");
+    const client = languageClientPack(statementLanguage[type] as "sql");
     expect(Object.keys(without(pack.client, "dialect"))).toEqual(Object.keys(client));
     for (const [member, value] of Object.entries(without(pack.client, "dialect"))) {
       expect(value).toBe((client as unknown as Record<string, unknown>)[member]);
@@ -469,7 +472,7 @@ describe("engineServerDialect", () => {
 
   test("profileComposition is supplied on exactly the five verified engines, and DuckDB declares it unsupported (B111)", () => {
     const supplied = SQL_ENGINES.filter((type) => engineServerDialect(type).profileComposition !== "unsupported");
-    expect(supplied).toEqual(["postgres", "mysql", "sqlite", "libsql", "mssql"]);
+    expect(supplied).toEqual(["libsql", "mssql", "mysql", "postgres", "sqlite"]);
     expect(engineServerDialect("duckdb").profileComposition).toBe("unsupported");
     const counted = supplied.filter((type) => {
       const composition = engineServerDialect(type).profileComposition;
@@ -551,7 +554,7 @@ describe("engineServerDialect", () => {
         const catalogRead = engineServerDialect(type).catalogRead;
         return catalogRead !== "unsupported" && catalogRead[member] !== undefined;
       });
-    expect(supplied("declaredSchema")).toEqual(["sqlite", "libsql"]);
+    expect(supplied("declaredSchema")).toEqual(["libsql", "sqlite"]);
     expect(supplied("retry")).toEqual(["postgres"]);
     expect(supplied("mapRows")).toEqual(["elasticsearch", "opensearch"]);
     expect(supplied("commandShaped")).toEqual(["elasticsearch", "opensearch"]);
@@ -570,7 +573,7 @@ describe("engineServerDialect", () => {
   });
   test("statistics is supplied on PostgreSQL, SQLite, SQL Server and libSQL, and only SQLite and libSQL probe first or note a limit", () => {
     const supplied = SQL_ENGINES.filter((type) => engineServerDialect(type).statistics !== "unsupported");
-    expect(supplied).toEqual(["postgres", "sqlite", "libsql", "mssql"]);
+    expect(supplied).toEqual(["libsql", "mssql", "postgres", "sqlite"]);
     expect(engineServerDialect("duckdb").statistics).toBe("unsupported");
     expect(engineServerDialect("mysql").statistics).toBe("unsupported");
     expect(engineServerDialect("clickhouse").statistics).toBe("unsupported");
@@ -583,12 +586,12 @@ describe("engineServerDialect", () => {
       return statistics;
     };
     expect(supplied.map((type) => reading(type).probe)).toEqual([
-      null,
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
       null,
+      null,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
     ]);
-    expect(supplied.filter((type) => reading(type).limitNote !== undefined)).toEqual(["sqlite", "libsql"]);
+    expect(supplied.filter((type) => reading(type).limitNote !== undefined)).toEqual(["libsql", "sqlite"]);
     for (const type of supplied) {
       expect(Object.isFrozen(reading(type))).toBe(true);
       expect(typeof reading(type).build).toBe("function");

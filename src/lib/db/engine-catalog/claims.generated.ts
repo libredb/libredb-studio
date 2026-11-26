@@ -4,7 +4,7 @@ import type { DatabaseType } from "@/lib/types";
 import type { ClaimRequestEntry } from "./projection";
 
 /** Each engine's policy, MCP, connection and agent mode claim requests, read only by claim-grants.ts (M-83). */
-export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestEntry>> = Object.freeze({
+export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
   bigquery: Object.freeze({
     policy: Object.freeze({
       writeReach: "open",
@@ -1267,4 +1267,4 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "index-stats", "health"] as const) }),
     agent: Object.freeze({ statementLanguage: "weaviateapi" }),
   }),
-});
+}) satisfies Readonly<Record<DatabaseType, ClaimRequestEntry>>;

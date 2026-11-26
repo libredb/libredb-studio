@@ -15,7 +15,8 @@
  * - legacy code found in more than one place is refused, because a test that took the first would read the wrong one;
  * - a package serves only the type-id its directory names until the provider manifest can declare several, so a doc
  *   or an integration test for a type-id in any other package is refused;
- * - the agent leg (a non-null `AGENT_STATEMENT_LANGUAGE` row) has a place only in the legacy layout so far,
+ * - the agent leg (a non-null statement language in the engine's legacy register row) has a place only in the legacy
+ *   layout so far,
  *   `src/lib/agent/languages/<language>/engines/<type-id>.ts` beside that language's `client.ts`, so a type-id with
  *   such a row is refused in a package until the change that moves it gives the package a place for it.
  *
@@ -24,10 +25,12 @@
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 import { PROVIDER_DIRECTORY_MAP } from "./provider-directory-map";
+import { legacyRegisterTable } from "./legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 export interface ProviderTriad {
   readonly type: DatabaseType;
@@ -103,7 +106,7 @@ function resolve(root: string, type: DatabaseType): Resolution {
   const code = legacyCode(root, type);
   const legacyDoc = ["docs", "providers", `${type}.md`];
   const legacyTest = ["tests", "integration", "db", `${type}-provider.test.ts`];
-  const language = AGENT_STATEMENT_LANGUAGE[type];
+  const language = statementLanguage[type];
   const missing = (legs: Segments[]) => {
     for (const leg of legs)
       if (!existsSync(path.join(root, ...leg))) problems.push(`${type}: ${relative(leg)} is missing.`);

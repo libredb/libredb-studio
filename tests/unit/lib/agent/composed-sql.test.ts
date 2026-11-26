@@ -12,12 +12,15 @@ import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/st
 import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
 import { trinoAgentStatementRefusal } from "@/lib/db/providers/sql/trino/agent-boundary";
 import { AGENT_REQUIREMENT_ENGINES, AGENT_WORKFLOW_VARIANTS, workflowAvailability } from "@/lib/agent/agent-manifest";
-import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
  * The SQL the SERVER composes (#329 T6, planning decision P1).
@@ -1211,7 +1214,7 @@ describe("the composers are reachable, which is the defect that put this file he
    * registration is removed again, whatever the functions themselves still say.
    *
    * It walks the shipped engines whose statement language is SQL, read from
-   * `AGENT_STATEMENT_LANGUAGE`, rather than a name, because the defect was never about
+   * their legacy register rows, rather than a name, because the defect was never about
    * DuckDB: the docblock of `CATALOG_COMPOSERS`, now each engine overlay's `catalogRead`, asserted that
    * every SQL engine agent mode reads statements on has an entry there, and until this loop existed NOTHING enforced
    * it - a hardcoded `"duckdb"` passes for ever while another SQL variant joins with no
@@ -1221,7 +1224,7 @@ describe("the composers are reachable, which is the defect that put this file he
    */
   test("every SQL execution engine composes every kind rather than refusing UNSUPPORTED_DIALECT", () => {
     const composers = AGENT_REQUIREMENT_ENGINES["sql-composers"];
-    for (const dialect of SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] === "sql")) {
+    for (const dialect of SHIPPED_DATABASE_TYPES.filter((type) => statementLanguage[type] === "sql")) {
       if (!composers.includes(dialect)) {
         // An engine that declares no estimating plan is held out of every workflow that requires the composers, so no
         // run there needs a plan that could only refuse; its declaration is what refuses here.

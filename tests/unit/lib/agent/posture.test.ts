@@ -5,7 +5,7 @@ import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import * as grants from "@/lib/db/claim-grants";
 import * as compatibility from "@/lib/db/compatibility";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -52,7 +52,7 @@ const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
 /**
  * The dialects whose grounding capture is a COMPOSED CATALOG READ: the engines whose server
- * `catalogCapture` is supplied, in `AGENT_STATEMENT_LANGUAGE` order.
+ * `catalogCapture` is supplied, in catalog order.
  *
  * The server dialect is server tier, so a posture module that imported it would stop being
  * client-safe - which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records. So the
@@ -60,9 +60,7 @@ const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
  * them honest: an engine that gains a `catalogCapture` fails this file until the copy names it.
  */
 function catalogPlanDialects(): string[] {
-  return (Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[]).filter(
-    (type) => engineServerDialect(type).catalogCapture !== "unsupported",
-  );
+  return SHIPPED_DATABASE_TYPES.filter((type) => engineServerDialect(type).catalogCapture !== "unsupported");
 }
 
 describe("agentPosture in plan mode", () => {

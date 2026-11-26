@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { composeCatalogRead, composeStatisticsAvailabilityProbe } from "@/lib/agent/composed-sql";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -25,6 +24,10 @@ import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 // The agent's statements run through the host core's read-only execute, and plan mode's statistics read through its
 // console execute, so this file installs one for its runs.
@@ -1091,13 +1094,10 @@ describe("the statistics read under the operations profile and the statement gua
    * set is computed from the registries: a SQL-family engine whose dialect reads statistics and supplies no catalog
    * capture, which is the dialect that grounds under the operations profile in plan mode and in the operations workflow.
    */
-  const engines = (Object.entries(AGENT_STATEMENT_LANGUAGE) as [DatabaseType, string | null][])
-    .filter(([, language]) => language === "sql")
-    .map(([type]) => type)
-    .filter((type) => {
-      const dialect = engineServerDialect(type);
-      return dialect.statistics !== "unsupported" && dialect.catalogCapture === "unsupported";
-    });
+  const engines = SHIPPED_DATABASE_TYPES.filter((type) => statementLanguage[type] === "sql").filter((type) => {
+    const dialect = engineServerDialect(type);
+    return dialect.statistics !== "unsupported" && dialect.catalogCapture === "unsupported";
+  });
 
   test("every statement the statistics read sends under the operations profile passes the statement guard", () => {
     expect(engines.length).toBeGreaterThan(0);

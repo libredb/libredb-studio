@@ -1,9 +1,7 @@
 /**
  * The grant register's legacy rows (packages/grant-register/src/register.json) against the hand-written records Studio
  * still keeps in core: one legacy row for every engine the legacy adapter serves, each member a record answers equal to
- * the engine's row of that record, each review note of such a member equal to the comment above that row, and the
- * grants `grantClaims` computes from the rows equal to the grants it computes from `STUDIO_CLAIM_RECORDS`, for every
- * claim and every engine.
+ * the engine's row of that record, and each review note of such a member equal to the comment above that row.
  *
  * The rows were written once from the records and are hand-reviewed data from then on, never a projection of a
  * declaration; while a record and its member's rows both exist, this census holds them equal, so the change that
@@ -20,18 +18,8 @@ import path from "node:path";
 import { LEGACY_KEY, type RegisterGrants, type RegisterRow, readGrantRegister } from "@libredb/grant-register";
 import registerSchema from "@libredb/grant-register/register.schema.json";
 import ts from "typescript";
-import {
-  type ClaimRecords,
-  grantClaims,
-  HOST_PATH_FIELD_NAMES,
-  legacyAgentCredentials,
-  STATEMENT_LANGUAGE_NAMES,
-  STUDIO_CLAIM_RECORDS,
-} from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, SERVES_ONE_SESSION } from "@/lib/db/compatibility";
-import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
-import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { HOST_PATH_FIELD_NAMES, STATEMENT_LANGUAGE_NAMES } from "@/lib/db/claim-grants";
+import { AGENT_EXECUTION_ENGINES, SERVES_ONE_SESSION } from "@/lib/db/compatibility";
 import {
   DIGEST_FORM,
   ENGINE_ID_FORM,
@@ -69,6 +57,7 @@ const REGISTER_ONLY = [
   "serverLevelWithoutDatabase",
   "sshTunnel",
   "agentCredential",
+  "statementLanguage",
 ] as const satisfies readonly Member[];
 
 /** The members held equal to a record here: every grant member but the register-only ones and `ownWords`. */
@@ -76,7 +65,6 @@ type RecordMember = Exclude<Member, "ownWords" | (typeof REGISTER_ONLY)[number]>
 
 /** Each grant member read from a keyed record: the record's name, its module and its rows. */
 const KEYED: Readonly<Record<Exclude<RecordMember, "agentExecution">, readonly [string, string, unknown]>> = {
-  statementLanguage: ["AGENT_STATEMENT_LANGUAGE", "src/lib/db/compatibility.ts", AGENT_STATEMENT_LANGUAGE],
   servesOneSession: ["SERVES_ONE_SESSION", "src/lib/db/compatibility.ts", SERVES_ONE_SESSION],
 };
 
@@ -202,51 +190,6 @@ describe("the legacy rows", () => {
         engine: row.engine,
         reasons: notes.get(row.engine) ?? {},
       });
-    }
-  });
-
-  test("the grants computed from the legacy rows equal Studio's grant of every claim for every engine the legacy adapter serves", () => {
-    const rows = legacyRows();
-    // Typed by RegisterGrants, so the compiler holds each member's register type assignable to Studio's record.
-    const record = <M extends keyof RegisterGrants>(member: M): Readonly<Record<string, RegisterGrants[M]>> =>
-      Object.fromEntries(rows.map((row) => [row.engine, row.grants[member]]));
-    const fromRows: ClaimRecords = {
-      writeReach: record("writeReach"),
-      readsFileAccessPosture: record("readsFileAccessPosture"),
-      deniedFileAccessRefusal: record("deniedFileAccessRefusal"),
-      singleWriterFile: record("singleWriterFile"),
-      readRootsRequired: record("readRootsRequired"),
-      agentCredentialForm: record("agentCredentialForm"),
-      maskingExemptColumns: record("maskingExemptColumns"),
-      exposable: record("exposable"),
-      statementRead: record("statementRead"),
-      metadataReadChangesState: record("metadataReadChangesState"),
-      agentCredentialRequired: record("agentCredentialRequired"),
-      opensLocalFile: record("opensLocalFile"),
-      hostPathFields: record("hostPathFields"),
-      serverLevelWithoutDatabase: record("serverLevelWithoutDatabase"),
-      sshTunnel: record("sshTunnel"),
-      agentCredential: legacyAgentCredentials(
-        Object.fromEntries(rows.map((row) => [row.engine, row.grants])),
-        BODY_CONNECTION_FIELDS,
-      ),
-      statementLanguage: record("statementLanguage"),
-      agentReadings: ENGINE_FACETS,
-    };
-    const fromRegister = grantClaims(BUNDLED_CLAIM_REQUESTS, fromRows, SEED_ONLY_FIELDS);
-    const fromRecords = grantClaims(BUNDLED_CLAIM_REQUESTS, STUDIO_CLAIM_RECORDS, SEED_ONLY_FIELDS);
-
-    expect(Object.keys(fromRecords)).toHaveLength(21);
-    for (const member of Object.keys(fromRecords) as (keyof typeof fromRecords)[]) {
-      expect(Object.keys(fromRegister[member])).toEqual([...LEGACY_ENGINE_IDS]);
-      for (const engine of LEGACY_ENGINE_IDS) {
-        const at = engine as keyof typeof BUNDLED_CLAIM_REQUESTS;
-        expect({ member, engine, grant: fromRegister[member][at] }).toEqual({
-          member,
-          engine,
-          grant: fromRecords[member][at] as never,
-        });
-      }
     }
   });
 });

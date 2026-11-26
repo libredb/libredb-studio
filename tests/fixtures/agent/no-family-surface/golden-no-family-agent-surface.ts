@@ -2,7 +2,7 @@
  * The behaviour-neutral oracle of the agent's surface on an engine with no statement family, the companion of
  * `golden-sql-agent-surface.ts` and `golden-language-agent-surface.ts`.
  *
- * Such an engine maps to null in `AGENT_STATEMENT_LANGUAGE`, so a run on it persists no `statementLanguage` and still
+ * Such an engine's granted statement language is null, so a run on it persists no `statementLanguage` and still
  * opens: the operations workflow in agent mode, and every workflow in planning mode. What it reads then is recorded
  * here, per engine: the first request the model is sent for an agent-mode operations run and for a plan of the
  * operations and query-optimization workflows (system prompt, every message, every tool's JSON schema as the SDK
@@ -44,11 +44,11 @@ import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
 
 /**
- * The engine with no statement family on the base commit, frozen here rather than read from `AGENT_STATEMENT_LANGUAGE`,
- * which gains families. It is Spark, a SQL engine whose dialect has no agent language, because it has no read-only
- * boundary to join a family on; Oracle held the place until it joined. No non-SQL engine is left without a family:
- * Sparkplug held the non-SQL place until it joined the last of them, and Redis before it, so the golden holds Spark
- * alone.
+ * The engine with no statement family on the base commit, frozen here rather than read from the engines' granted
+ * statement language, which gains families. It is Spark, a SQL engine whose dialect has no agent language, because it
+ * has no read-only boundary to join a family on; Oracle held the place until it joined. No non-SQL engine is left
+ * without a family: Sparkplug held the non-SQL place until it joined the last of them, and Redis before it, so the
+ * golden holds Spark alone.
  */
 const ENGINES: readonly DatabaseType[] = ["spark"];
 

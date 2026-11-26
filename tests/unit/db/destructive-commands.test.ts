@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
-import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   consoleTextByteLimit,
@@ -33,6 +33,9 @@ import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { statementLanguageFamilyDirectory } from "../../helpers/statement-language-family";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementLanguage = legacyRegisterTable("statementLanguage");
 
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in
@@ -411,7 +414,8 @@ describe("vocabularyDecidesAlone", () => {
  * row module, as `"<key> <specifier>"`, or `"<key> inline"` for a value that is not an imported identifier.
  *
  * A row module is the `destructive` module of the family directory of the key's own statement language
- * (`statementLanguageFamilyDirectory(AGENT_STATEMENT_LANGUAGE[key])`), or a `destructive` module under
+ * (`statementLanguageFamilyDirectory(statementLanguage[key])`, the language of the key's legacy register row), or a
+ * `destructive` module under
  * `@/lib/db/providers/` for a row whose language slice has not moved it yet.
  */
 function rowsNotFromARowModule(source: ts.SourceFile): string[] {
@@ -448,8 +452,8 @@ function rowsNotFromARowModule(source: ts.SourceFile): string[] {
       offending.push(`${key} inline`);
       continue;
     }
-    if (!Object.hasOwn(AGENT_STATEMENT_LANGUAGE, key)) throw new Error(`${key} is not a type id`);
-    const language = AGENT_STATEMENT_LANGUAGE[key as DatabaseType];
+    if (!Object.hasOwn(statementLanguage, key)) throw new Error(`${key} is not a type id`);
+    const language = statementLanguage[key as DatabaseType];
     const familyRow =
       language === null
         ? undefined

@@ -66,7 +66,6 @@ export interface Debt extends Listed {
 
 const DISPLAY_ORDER = "display order only";
 const INBOUND = "an inbound mapping from an outside name to a type id";
-const AGENT_LEG = "the agent-leg pattern, guarded by its own tests";
 const STORAGE_BACKEND = "the storage backend `STORAGE_PROVIDER` names, not an engine";
 const COMPATIBILITY = "a total per-engine compatibility table, compile-enforced over the type-id union";
 const FIELDS = "the UI-free connection field table, compile-enforced over the type-id union";
@@ -359,7 +358,6 @@ export const REGISTRIES: readonly Listed[] = [
     reason:
       "the statements and paging clause run_read_query names for each engine, a total table compile-enforced over the type-id union",
   },
-  { path: "src/lib/db/compatibility.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
   {
     path: "src/lib/agent/agent-manifest.ts",
     declaration: "AgentAvailabilityTables",
