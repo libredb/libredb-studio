@@ -181,7 +181,7 @@ describe("SSH tunnel discipline (#457)", () => {
 
   // ── The tree ──────────────────────────────────────────────────────────────
 
-  test("every connecting caller of createDatabaseProvider tunnels", () => {
+  test("every connecting caller of createDatabaseProvider or openEngineOnce tunnels", () => {
     const violations = walk(SRC)
       .map((full) => {
         const relPath = repoRelative(full);

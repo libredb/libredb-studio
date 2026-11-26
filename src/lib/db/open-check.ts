@@ -7,7 +7,8 @@
  * its engine. The editor's session of a package's record also runs it before its cache key
  * (`getOrCreateEditorSession` in ./factory), on the context it then opens with. Test Connection's one-shot open
  * (`openEngineOnce` in ./factory, read by `testConnection` in src/lib/api/test-connection.ts) runs it through the one
- * open function, in the same turn its budget starts, before anything is awaited.
+ * open function before the open, and, for a record that offers an SSH tunnel, inside the one-shot tunnel scope
+ * (`withOneShotTunnel` in ./factory) after the tunnel opens.
  *
  * IN THIS ORDER, the first refusal thrown, each a `DatabaseConfigError` naming the engine by `legacyProviderType`
  * (./server-catalog), a legacy record's type and nothing for a package record's:

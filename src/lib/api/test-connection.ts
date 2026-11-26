@@ -143,8 +143,9 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  * - the borrow of a handle already holding the connection's file, where the record grants a single-writer file
  *   (`grants.singleWriterFile`);
  * - the open, through the factory's one-shot open of any record (`openEngineOnce`), which runs the one ordered open
- *   check first, in the same turn the budget starts: a legacy provider built and not connected, which this connects,
- *   or a provider package's connected session;
+ *   check before the open, and, where the record offers an SSH tunnel, inside the one-shot tunnel scope after the
+ *   tunnel opens: a legacy provider built and not connected, which this connects, or a provider package's connected
+ *   session;
  * - the connect warnings and test-only cautions, where the record offers them (`offers.testCautions`);
  * - the words of a failure (`offers.ownWords`): `"scrubbed"`, a provider's own error and its health failure's
  *   sentence pass core's scrub of `connection`; `"code-only"`, a package's open or health failure is logged once as

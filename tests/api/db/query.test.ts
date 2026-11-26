@@ -105,7 +105,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
     }
     // A managed id resolves from the OPERATOR's config and everything the caller attached to the
-    // request is discarded — which the real `resolveConnection` does for the same reason (a `seed:`
+    // request is discarded, which the real `resolveConnection` does for the same reason (a `seed:`
     // id is the operator's namespace, GHSA-3wh2-8x78). This is exactly the path the top-level
     // `database` field has to survive: nothing the caller sent on a connection reaches this object.
     if (typeof body.connectionId === "string" && body.connectionId.startsWith("seed:")) {
