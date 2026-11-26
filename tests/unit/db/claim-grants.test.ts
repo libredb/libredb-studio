@@ -4,10 +4,10 @@
  * src/lib/db/claim-grants.ts states, the claim's restrictive value where no review row exists, by one rule per claim
  * shape. `grantClaims` is read here with hand-made requests and records, each built from the shipped ones with one
  * engine changed or for an id no shipped engine uses, and the bundled grant tables are read against Studio's records
- * for every shipped engine. `legacyGrantRows`, which reads the grant register's legacy rows the policy, MCP and
- * connection records are composed from, is read against a register of two rows of the committed one, and `legacyAgentCredentials`, which
- * narrows each row's agent credential to the text fields a connection form draws, against committed rows and rows
- * changed by hand.
+ * for every shipped engine. `legacyGrantRows`, which reads the grant register's legacy rows the policy, MCP,
+ * connection and statement language records are composed from, is read against a register of two rows of the
+ * committed one, and `legacyAgentCredentials`, which narrows each row's agent credential to the text fields a
+ * connection form draws, against committed rows and rows changed by hand.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
