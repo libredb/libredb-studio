@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { DatabaseConfigError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { SNMP_WITHHELD_SUBTREES } from "@/lib/db/providers/network/snmp/agent-statement";
@@ -41,7 +41,7 @@ describe("the registries", () => {
     expect(AGENT_EXECUTION).toContain("snmp");
     expect(exposable.snmp).toBe(true);
     expect(statementRead.snmp).toBe(true);
-    expect(READ_ONLY_ENFORCED.snmp).toBe(true);
+    expect(legacyEngineGrants("snmp").readOnlyEnforced).toBe(true);
   });
 
   test("the factory hands the provider its execution context", async () => {

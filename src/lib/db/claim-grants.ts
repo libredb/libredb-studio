@@ -8,7 +8,7 @@
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
  * M-53) where the record holds no row, one rule per claim shape:
  * - `writeReach`, ordered `open`, `guarded`, `none` from the most restrictive: the more restrictive of the two, `open`
- *   where no row exists. `READ_ONLY_ENFORCED` is true exactly where the granted write reach is not `open`.
+ *   where no row exists. An engine's `readOnlyEnforced` is true exactly where the granted write reach is not `open`.
  * - `readsFileAccessPosture`, `readRootsRequired`, `metadataReadChangesState` and `agentCredentialRequired`,
  *   restrictive when true: true where the request or the row is, or no row exists.
  * - `exposable` and `statementRead`, restrictive when false: true only where the request and the row both are. An
@@ -19,8 +19,8 @@
  *   null takes the row's refusal, and takes `UNGRANTED_DENIED_FILE_ACCESS_SENTENCE`, core's own, where no row exists.
  * - `singleWriterFile`, where neither value is restrictive, since a second read-write handle on a single-writer file
  *   and one handle shared between users both overreach: the row where the request equals it, false where no row exists;
- *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which
- *   `UNGRANTED_CLAIM_REFUSALS` holds and the open check's `assertClaimsGranted` raises before anything is touched.
+ *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which the
+ *   engine's `ungrantedRefusals` holds and the open check's `assertClaimsGranted` raises before anything is touched.
  * - `agentCredentialForm`, unordered: the row where the request equals it, the record's null row read as `pair`, and
  *   `none` otherwise or where no row exists. The granted table keeps the record's vocabulary, null for the pair.
  * - `maskingExemptColumns`, unordered: the row where the request equals it, column pattern and reason, and null
@@ -830,20 +830,6 @@ export const GRANTED_MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseTy
  */
 export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.agentCredentialRequired;
-
-/**
- * Which engines keep a read-only connection's promise: true exactly where the granted write reach is not `open`
- * (clause M-52): each legacy engine's record holds its row as `grants.readOnlyEnforced`, which `assertReadOnlyHonoured`
- * in src/lib/db/open-check.ts reads before anything is built or dialled.
- */
-export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readOnlyEnforced;
-
-/**
- * The sentence every open of an engine is refused with where its claims leave a refusal no grant covers, null for every
- * other engine: each legacy engine's record holds its row as `grants.ungrantedRefusals`, which `assertClaimsGranted` in
- * src/lib/db/open-check.ts reads.
- */
-export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
 
 /**
  * Studio's grant of `connection.opensLocalFile`, which governance reads; the file admission of the legacy adapter's

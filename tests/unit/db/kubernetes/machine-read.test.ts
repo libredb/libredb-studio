@@ -28,7 +28,7 @@ import {
 } from "../../../helpers/kubernetes-console";
 import { jsonAnswer, type KubernetesAnswerFn } from "../../../helpers/kubernetes-transport";
 import { errorKind } from "@/lib/db/error-record";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
 const exposable = legacyRegisterTable("exposable");
@@ -409,7 +409,7 @@ describe("logs on the agent path", () => {
 
 describe("the read-only and MCP records", () => {
   test("Kubernetes is enforced read-only, exposed over MCP and offers the MCP statement read", () => {
-    expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
+    expect(legacyEngineGrants("kubernetes").readOnlyEnforced).toBe(true);
     expect(exposable.kubernetes).toBe(true);
     expect(statementRead.kubernetes).toBe(true);
   });

@@ -93,8 +93,8 @@ export function assertProviderEnabled(engine: EngineRecord): void {
  * Refuse a `readOnly` the engine cannot keep, before anything is built or dialled (#1089).
  *
  * A read-only connection is a promise its provider keeps by refusing every write before any request, so it is accepted
- * only where the record's `grants.readOnlyEnforced` is true, which for a legacy engine is its row of
- * `READ_ONLY_ENFORCED` (./claim-grants). Anywhere else the connection would open able to write under a mode that says
+ * only where the record's `grants.readOnlyEnforced` is true, which Studio derives from its grant of the engine's write
+ * reach (./claim-grants). Anywhere else the connection would open able to write under a mode that says
  * it cannot, which is refused rather than ignored. A value that is not a boolean is refused on every engine, because a
  * string read as true on one path and as absent on another is two modes. The message names the field and never echoes
  * the value.

@@ -707,8 +707,8 @@ export interface DatabaseConnection {
    * command, an object edit and a maintenance operation with a refusal that names the read-only mode
    * and where it was set, and sends nothing.
    *
-   * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
-   * `src/lib/db/claim-grants.ts` answers and a census holds equal to the summary of
+   * Accepted only on an engine whose provider enforces it, which the engine record's `grants.readOnlyEnforced`
+   * (`src/lib/db/claim-grants.ts`) answers and a census holds equal to the summary of
    * `ProviderCapabilities.writeReach`. On any other engine `true` is refused, by the seed schema
    * at load and by `assertReadOnlyHonoured` in `src/lib/db/open-check.ts` before anything is built or
    * dialled, because a mode the provider ignores would list the connection as read-only and send its

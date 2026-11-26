@@ -7,7 +7,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  * The unit and integration tests drive the provider over a recorded transport, so they prove the code is
  * right and nothing about whether a user can reach it. What a new type-id needs in order to be SELECTABLE
  * lives outside the provider, and the connection dialog's fields for MQTT are declarations
- * (`DatabaseUIConfig`, `READ_ONLY_ENFORCED`), which is why this runs in a browser.
+ * (`DatabaseUIConfig`, the engine record's `grants.readOnlyEnforced`), which is why this runs in a browser.
  *
  * The refusals here are answered before any socket opens, so no broker is needed: a `$share/` filter is
  * refused by the provider's own reader, and the two of them are asserted by their own text.

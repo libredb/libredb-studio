@@ -81,6 +81,16 @@ const SERVER_LEVEL_AT_CATALOG_CHOICE = Object.fromEntries(
   ]),
 ) as Readonly<Record<DatabaseType, boolean>>;
 
+/** Whether each shipped engine keeps a read-only connection's promise: where its legacy row's write reach is not open. */
+const READ_ONLY_ENFORCED_FROM_ROWS = Object.fromEntries(
+  SHIPPED_DATABASE_TYPES.map((id) => [id, legacyRegisterTable("writeReach")[id] !== "open"]),
+) as Readonly<Record<DatabaseType, boolean>>;
+
+/** The refusal at open no grant covers, for every shipped engine: none, since each request equals its legacy row. */
+const NO_UNGRANTED_REFUSAL = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, null])) as Readonly<
+  Record<DatabaseType, null>
+>;
+
 /**
  * Each member of an engine's grants, for every shipped engine: the grant reader's exported table where a reader still
  * reads one, the register's legacy rows of the member where the grant is the row, and, for a member the grant reader
@@ -98,8 +108,8 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   statementRead: grants.GRANTED_MCP_STATEMENT_READ,
   metadataReadChangesState: grants.GRANTED_MCP_METADATA_READ_CHANGES_STATE,
   agentCredentialRequired: grants.GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-  readOnlyEnforced: grants.READ_ONLY_ENFORCED,
-  ungrantedRefusals: grants.UNGRANTED_CLAIM_REFUSALS,
+  readOnlyEnforced: READ_ONLY_ENFORCED_FROM_ROWS,
+  ungrantedRefusals: NO_UNGRANTED_REFUSAL,
   opensLocalFile: grants.GRANTED_OPENS_LOCAL_FILE,
   hostPathFields: legacyRegisterTable("hostPathFields"),
   serverLevelAtAdmission: grants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,

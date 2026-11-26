@@ -7,7 +7,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  * The unit and integration tests drive the provider over a recorded transport, so they prove the code
  * is right and nothing about whether a user can reach it. What a new type-id needs in order to be
  * SELECTABLE lives outside the provider, and the connection dialog's fields for etcd are declarations
- * (`DatabaseUIConfig`, `READ_ONLY_ENFORCED`), which is why this runs in a browser.
+ * (`DatabaseUIConfig`, the engine record's `grants.readOnlyEnforced`), which is why this runs in a browser.
  *
  * The refusal a password without TLS gets is checked through Test Connection, which the server answers
  * before any socket opens, so no etcd is needed; it is asserted by its own text. It runs on the second
@@ -121,7 +121,7 @@ test.describe("etcd in the connection dialog", () => {
 
   test("another engine draws no Read-only toggle", async ({ page }) => {
     // The control for the toggle: PostgreSQL's provider does not enforce the mode, so the locator the
-    // etcd test finds finds nothing here (READ_ONLY_ENFORCED).
+    // etcd test finds finds nothing here (the engine record's `grants.readOnlyEnforced`).
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();
 

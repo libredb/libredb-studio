@@ -110,7 +110,7 @@ import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
@@ -3973,10 +3973,16 @@ describe("the census", () => {
     expect(isMember("agent.overlay.dialect.catalogRead")).toBe(true);
   });
 
-  test("READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open", () => {
-    expect(differing((type, d) => READ_ONLY_ENFORCED[type] === (d.policy.writeReach !== "open"))).toEqual([]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
+  test("each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open", () => {
+    expect(
+      differing((type, d) => legacyEngineGrants(type).readOnlyEnforced === (d.policy.writeReach !== "open")),
+    ).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).readOnlyEnforced).length).toBeGreaterThan(
+      0,
+    );
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !legacyEngineGrants(type).readOnlyEnforced).length).toBeGreaterThan(
+      0,
+    );
   });
 
   test("each declaration's policy and MCP segments hold exactly the claims the grant register's legacy rows review", () => {

@@ -6,7 +6,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  * Gate 2 and gate 5 for the Weaviate provider (#1566 spec 8.3), the Qdrant shape (e2e/qdrant-provider.spec.ts).
  *
  * What a new type-id needs in order to be SELECTABLE lives outside the provider, as declarations
- * (`DatabaseUIConfig`, `READ_ONLY_ENFORCED`, the credential record), which is why this runs in a browser. The
+ * (`DatabaseUIConfig`, the engine record's `grants.readOnlyEnforced`, the credential record), which is why this runs in a browser. The
  * refusal a key without TLS gets is checked through Test Connection, which the server answers before any socket
  * opens, so no Weaviate is needed. It runs on the second server because Test Connection spends the shared account's
  * per-process rate-limit bucket, and it signs in as the admin for the reason e2e/neo4j-provider.spec.ts gives.

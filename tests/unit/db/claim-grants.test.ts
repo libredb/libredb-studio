@@ -43,11 +43,9 @@ import {
   legacyAgentCredentials,
   legacyEngineGrants,
   legacyGrantRows,
-  READ_ONLY_ENFORCED,
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
-  UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
   UNGRANTED_SSH_TUNNEL_SENTENCE,
@@ -150,7 +148,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => UNGRANTED_CLAIM_REFUSALS[type] !== null)).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).ungrantedRefusals !== null)).toEqual([]);
     // Vacuity: the shipped records hold rows that differ from each claim's restrictive value.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_WRITE_REACH[type] !== "open").length).toBeGreaterThan(0);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_MCP_EXPOSABLE[type]).length).toBeGreaterThan(0);
@@ -356,9 +354,11 @@ describe("Studio's grant of each policy and MCP claim", () => {
     refused(request({}, { agentCredentialRequired: wrong(null) }), "mcp.agentCredentialRequired", "null");
   });
 
-  test("READ_ONLY_ENFORCED is true exactly where the granted write reach is not open", () => {
+  test("each engine's readOnlyEnforced grant is true exactly where the granted write reach is not open", () => {
     expect(
-      SHIPPED_DATABASE_TYPES.filter((type) => READ_ONLY_ENFORCED[type] !== (GRANTED_WRITE_REACH[type] !== "open")),
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) => legacyEngineGrants(type).readOnlyEnforced !== (GRANTED_WRITE_REACH[type] !== "open"),
+      ),
     ).toEqual([]);
     expect(grantOf("etcd", request({ writeReach: "guarded" })).readOnlyEnforced).toBe(true);
     expect(grantOf("modbus", request({ writeReach: "none" })).readOnlyEnforced).toBe(true);
@@ -377,8 +377,6 @@ describe("Studio's grant of each policy and MCP claim", () => {
       GRANTED_MCP_STATEMENT_READ,
       GRANTED_MCP_METADATA_READ_CHANGES_STATE,
       GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-      READ_ONLY_ENFORCED,
-      UNGRANTED_CLAIM_REFUSALS,
       GRANTED_OPENS_LOCAL_FILE,
       GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
       GRANTED_SSH_TUNNEL_REFUSAL,

@@ -102,8 +102,6 @@ export const REGISTRIES: readonly Listed[] = [
     "GRANTED_SEED_AGENT_CREDENTIAL",
     "GRANTED_AGENT_STATEMENT_LANGUAGE",
     "GRANTED_AGENT_READINGS",
-    "READ_ONLY_ENFORCED",
-    "UNGRANTED_CLAIM_REFUSALS",
   ].map((declaration) => ({
     path: "src/lib/db/claim-grants.ts",
     declaration,

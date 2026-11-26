@@ -92,9 +92,9 @@
  * src/lib/db/engine-catalog/claims.generated.ts, which only Studio's grant reader, src/lib/db/claim-grants.ts, reads,
  * granting each request no further than Studio's review of the claim for the engine, which src/lib/db/claim-grants.ts
  * states (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83). The census holds each shipped engine's request equal to its record's row, so a record changed without
- * its declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
- * member, since Studio derives it from the granted write reach, and `connection.readsTrustMaterial`, which is no claim,
- * is authored too.
+ * its declaration, or a declaration without its record, fails there by claim and engine. An engine's grant of
+ * `readOnlyEnforced` has no member, since Studio derives it from the granted write reach, and
+ * `connection.readsTrustMaterial`, which is no claim, is authored too.
  * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of the agent
  * segment is written from Studio's tables. The SQL text claim, the redaction, is written from Studio's record: the row of the
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.

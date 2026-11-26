@@ -9,7 +9,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  * What a user sees in the connection dialog when choosing Oxia (SB3-5.8), and the refusals Test Connection answers.
  *
  * What a new type-id needs in order to be SELECTABLE lives outside the provider, as declarations (`DatabaseUIConfig`,
- * `READ_ONLY_ENFORCED`, the credential record), which is why this runs in a browser. Every refusal it asserts is
+ * the engine record's `grants.readOnlyEnforced`, the credential record), which is why this runs in a browser. Every refusal it asserts is
  * answered by the server before any socket to an Oxia server opens, so no Oxia is needed and CI runs it as it is. It
  * runs on the second server because Test Connection spends the shared account's per-process rate-limit bucket, and it
  * signs in as the admin for the reason e2e/neo4j-provider.spec.ts gives. Every sentence it expects is imported from

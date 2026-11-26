@@ -73,7 +73,7 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { secretForms } from "@/lib/db/utils/server-text";
@@ -7053,7 +7053,7 @@ describe("assertReadOnlyHonoured", () => {
   });
 
   test("readOnly: true is refused on every engine that does not enforce it, naming the type and the field", () => {
-    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !legacyEngineGrants(type).readOnlyEnforced);
     // Vacuity, by name: an empty population would refuse nothing and pass.
     expect(refusing).toContain("postgres");
     for (const type of refusing) {

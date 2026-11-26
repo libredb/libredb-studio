@@ -10,7 +10,7 @@ import { fingerprintNetconfrpc, netconfrpcRowCapAdvice } from "@/lib/agent/langu
 import { NETCONFRPC_CLIENT_PACK } from "@/lib/agent/languages/netconfrpc/client";
 import { NETCONFRPC_TOOL_OVERRIDES } from "@/lib/agent/languages/netconfrpc/definitions";
 import { NETCONFRPC_SERVER_PACK } from "@/lib/agent/languages/netconfrpc/server";
-import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {
@@ -65,7 +65,7 @@ describe("the registries", () => {
     expect(AGENT_EXECUTION).toContain("netconf");
     expect(exposable.netconf).toBe(false);
     expect(statementRead.netconf).toBe(false);
-    expect(READ_ONLY_ENFORCED.netconf).toBe(true);
+    expect(legacyEngineGrants("netconf").readOnlyEnforced).toBe(true);
   });
 
   test("the factory hands the provider its execution context", async () => {
