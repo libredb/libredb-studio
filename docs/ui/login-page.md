@@ -205,7 +205,7 @@ The login page follows the app's premium dark aesthetic:
 | `src/components/login/wire-compatible-line.tsx` | Wire-compatible engine line, both surfaces, from `WIRE_COMPATIBLE_ENGINES` |
 | `src/lib/db-showcase.ts` | Showcase order and the derived engine list |
 | `src/lib/distribution/channels.generated.ts` | Generated live-channel list (`bun run channels:showcase`) |
-| `src/lib/db/compatibility.ts` | The engines the agent card may claim execution on |
+| `src/lib/db/claim-grants.ts` | The engines the agent card may claim execution on (`GRANTED_AGENT_EXECUTION_ENGINES`) |
 | `tests/components/LoginPage.test.tsx` | Component tests — rendering, form submission, OIDC mode, the TOTP step, and the pinned agent claim |
 | `e2e/login.spec.ts` | Browser assertions that both showcase blocks render every derived entry, desktop and mobile |
 
@@ -230,7 +230,7 @@ The login page follows the app's premium dark aesthetic:
 Edit the `features` array and hero text in `login-form.tsx`. Every count and every
 product name in those cards is **derived**, not written: the engine count is
 `listShowcaseDatabases().length`, the channel count is `LIVE_CHANNELS.length`, and the
-agent card's sentence names the engines in `AGENT_EXECUTION_ENGINES`. Issue #425 exists
+agent card's sentence counts the engines in `GRANTED_AGENT_EXECUTION_ENGINES`. Issue #425 exists
 because the previous copy typed those answers by hand and stopped tracking the product
 three providers and two dozen channels later, so re-introducing a literal here is the one
 edit this page asks you not to make. Change the wording around the values freely.
@@ -246,7 +246,7 @@ both read from a single source:
 | Block | Component | Source of truth |
 |---|---|---|
 | Supported Databases | `src/components/login/database-showcase.tsx` | `DB_UI_CONFIG` via `listShowcaseDatabases()` (`src/lib/db-showcase.ts`) — label, brand icon and accent colour all come from the provider's own UI config |
-| Proof row (engine / channel / agent-mode counts) | `src/components/login/hero-proof.tsx` | `src/lib/distribution/channels.generated.ts`, generated from `distribution/channels.yaml` by `bun run channels:showcase` and gated in CI; group names from `src/lib/distribution/deploy-groups.ts`; agent-mode engines from `src/lib/db/compatibility.ts` |
+| Proof row (engine / channel / agent-mode counts) | `src/components/login/hero-proof.tsx` | `src/lib/distribution/channels.generated.ts`, generated from `distribution/channels.yaml` by `bun run channels:showcase` and gated in CI; group names from `src/lib/distribution/deploy-groups.ts`; agent-mode engines from `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts` |
 | Connection signature | `src/components/login/connection-signature.tsx` | `ENGINE_URI_SCHEMES` in `src/lib/db/connection-string/index.ts`, paired with each engine's own `defaultPort` — it can only show a URI the parser accepts, which is why SQLite, Druid and LibreDB never appear there |
 | Wire-compatible line | `src/components/login/wire-compatible-line.tsx` | `WIRE_COMPATIBLE_ENGINES` in `src/lib/db/compatibility.ts` — names the engines that connect through a driver of their own name's making; the per-engine tier stays in the docs table, not on this line |
 

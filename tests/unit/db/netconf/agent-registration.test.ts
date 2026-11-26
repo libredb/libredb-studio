@@ -11,7 +11,6 @@ import { NETCONFRPC_CLIENT_PACK } from "@/lib/agent/languages/netconfrpc/client"
 import { NETCONFRPC_TOOL_OVERRIDES } from "@/lib/agent/languages/netconfrpc/definitions";
 import { NETCONFRPC_SERVER_PACK } from "@/lib/agent/languages/netconfrpc/server";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {
@@ -23,7 +22,10 @@ import { NETCONF_AGENT_SENTENCES } from "@/lib/db/providers/network/netconf/agen
 import { NETCONF_WITHHELD_TEXT } from "@/lib/db/providers/network/netconf/agent-withheld";
 import { NETCONF_LABELS } from "@/lib/db/providers/network/netconf/labels";
 import type { DatabaseConnection } from "@/lib/types";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
@@ -60,7 +62,7 @@ const connection = {
 describe("the registries", () => {
   test("netconf speaks netconfrpc, executes agent reads, and MCP stays closed with the read-only flag untouched", () => {
     expect(statementLanguage.netconf).toBe("netconfrpc");
-    expect(AGENT_EXECUTION_ENGINES).toContain("netconf");
+    expect(AGENT_EXECUTION).toContain("netconf");
     expect(exposable.netconf).toBe(false);
     expect(statementRead.netconf).toBe(false);
     expect(READ_ONLY_ENFORCED.netconf).toBe(true);

@@ -21,8 +21,8 @@ export const READ_CLASS_TOOLS: readonly AgentToolName[] = Object.freeze<AgentToo
  *
  * Its tools are not built on the read-class four. All three of the read-class tools it leaves out,
  * `inspect_schema`, `run_read_query` and `inspect_plan`, reach the database under the `agent-read-only` profile,
- * which the factory grants only to a provider with `queryReadOnly`, and only the engines `AGENT_EXECUTION_ENGINES`
- * (`src/lib/db/compatibility.ts`) names implement it. Offering any of them here would reintroduce, tool by tool, the exact
+ * which the factory grants only to a provider with `queryReadOnly`, and only the engines `GRANTED_AGENT_EXECUTION_ENGINES`
+ * (`src/lib/db/claim-grants.ts`) names implement it. Offering any of them here would reintroduce, tool by tool, the exact
  * engine restriction this workflow exists to escape: the run would open on an engine with no read-only statement
  * path, be offered a tool, call it, and be answered by an acquisition that refuses the engine. `inspect_schema` was
  * checked rather than assumed: it is answered under that profile too (a composed catalog statement through

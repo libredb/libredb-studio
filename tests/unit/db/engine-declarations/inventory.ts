@@ -94,12 +94,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   },
   {
     module: COMPATIBILITY,
-    name: "SERVES_ONE_SESSION",
-    destination:
-      "core-owned: which engines serve their tree from one session is the host's own measurement, and no manifest declares it",
-  },
-  {
-    module: COMPATIBILITY,
     name: "CONNECTION_FORM_URI_MODE",
     destination: "engine declaration: connection.connectionString.dialogOffersUri",
   },

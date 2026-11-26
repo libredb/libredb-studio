@@ -361,7 +361,7 @@ export async function POST(req: Request) {
          than opening (B49), and it is the same grant the rail and the safety strip
          read, so the notice and the refusal cannot disagree about which engines they
          are talking about.
-       - **The REVIEW RECORD**, `AGENT_EXECUTION_ENGINES`, the record the provider
+       - **The REVIEW RECORD**, `GRANTED_AGENT_EXECUTION_ENGINES`, the record the provider
          factory's statement profiles and the core read path read again at run time. An
          engine whose language would open the run but which the record does not list is
          answered with `notReviewedSentence`, naming it. Read after the language, so an

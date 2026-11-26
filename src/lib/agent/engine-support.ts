@@ -1,7 +1,7 @@
 /**
  * Names, joined the way a sentence joins them: `a`, `a and b`, `a, b and c`.
  *
- * It lives here because the review record it joins, `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`, is
+ * It lives here because the review record it joins, `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`, is
  * printed in three places: the login hero
  * (`src/components/login/hero-proof.tsx`), the agent posture popover (`src/lib/agent/posture.ts`)
  * and the MCP `run_read_query` description (`src/lib/mcp/tools/statement-arms.ts`), which

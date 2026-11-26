@@ -2256,7 +2256,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the class reads Studio's records and the connection, never a provider or a manifest",
       ],
       "tests/unit/db/compatibility.test.ts": [
-        "is exhaustive over the shipped engines and frozen, each reason a sentence",
+        "each legacy row's one-session reason is a sentence",
         "names a reason for every engine whose legacy row grants a single-writer file",
       ],
       "tests/isolated/factory.test.ts": [

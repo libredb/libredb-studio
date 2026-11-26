@@ -6,18 +6,18 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
 
+const agentExecution = legacyRegisterEngines("agentExecution");
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
 const statementLanguage = legacyRegisterTable("statementLanguage");
 
 const SHIPPED: McpExposure = {
-  executes: AGENT_EXECUTION_ENGINES,
+  executes: agentExecution,
   exposable: exposable,
   statementRead: statementRead,
   language: statementLanguage,
@@ -29,11 +29,11 @@ const LANGUAGES = [...new Set(Object.values(statementLanguage))].filter(
 
 /** The four records, each read on its own: what the resolver must agree with. */
 const servedByRecords = (type: DatabaseType): boolean =>
-  AGENT_EXECUTION_ENGINES.includes(type) && exposable[type] && statementRead[type] && statementLanguage[type] !== null;
+  agentExecution.includes(type) && exposable[type] && statementRead[type] && statementLanguage[type] !== null;
 
 /** A closed engine a flip of its MCP read row alone would open. */
 const opensWhenFlipped = (type: DatabaseType): boolean =>
-  !statementRead[type] && AGENT_EXECUTION_ENGINES.includes(type) && exposable[type];
+  !statementRead[type] && agentExecution.includes(type) && exposable[type];
 
 const symmetricDifference = (a: readonly DatabaseType[], b: readonly DatabaseType[]): DatabaseType[] => [
   ...a.filter((type) => !b.includes(type)),
@@ -44,9 +44,7 @@ describe("mcpStatementEngines", () => {
   test("RUN_READ_QUERY_TYPES is exactly the SQL engines every exposure record lets through", () => {
     expect(RUN_READ_QUERY_TYPES).toEqual(mcpStatementEngines("sql"));
     expect(RUN_READ_QUERY_TYPES).toEqual(
-      AGENT_EXECUTION_ENGINES.filter(
-        (type) => exposable[type] && statementRead[type] && statementLanguage[type] === "sql",
-      ),
+      agentExecution.filter((type) => exposable[type] && statementRead[type] && statementLanguage[type] === "sql"),
     );
   });
 
@@ -88,7 +86,7 @@ describe("mcpStatementEngines", () => {
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {
     const closed = { ...statementRead, duckdb: false };
     expect(exposable.duckdb).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("duckdb");
+    expect(agentExecution).toContain("duckdb");
     expect(mcpStatementEngines("sql", { ...SHIPPED, statementRead: closed })).toEqual(
       mcpStatementEngines("sql").filter((type) => type !== "duckdb"),
     );
@@ -107,7 +105,7 @@ describe("mcpStatementEngines", () => {
   test("OpenSearch is served by run_read_query alone, through its own row, beside Elasticsearch's", () => {
     expect(statementRead.opensearch).toBe(true);
     expect(exposable.opensearch).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("opensearch");
+    expect(agentExecution).toContain("opensearch");
     expect(statementLanguage.opensearch).toBe("sql");
     expect(RUN_READ_QUERY_TYPES).toContain("opensearch");
     expect(RUN_READ_QUERY_TYPES).toContain("elasticsearch");
@@ -122,7 +120,7 @@ describe("mcpStatementEngines", () => {
   });
 
   test("an engine agent mode does not execute on is not served, whatever its rows say", () => {
-    const executes = AGENT_EXECUTION_ENGINES.filter((type) => type !== "mysql");
+    const executes = agentExecution.filter((type) => type !== "mysql");
     expect(mcpStatementEngines("sql", { ...SHIPPED, executes })).not.toContain("mysql");
   });
 });

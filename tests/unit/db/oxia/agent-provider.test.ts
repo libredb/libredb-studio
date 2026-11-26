@@ -24,8 +24,10 @@ import {
 } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { errorKind } from "@/lib/db/error-record";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
@@ -341,6 +343,6 @@ describe("the machine access records", () => {
   test("Oxia is run by the agent and is not exposed over MCP", () => {
     expect(exposable.oxia).toBe(false);
     expect(statementRead.oxia).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).toContain("oxia");
+    expect(AGENT_EXECUTION).toContain("oxia");
   });
 });

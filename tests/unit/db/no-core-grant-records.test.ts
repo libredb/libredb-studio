@@ -7,9 +7,8 @@
  * A record is found two ways:
  * - every entry of the engine table inventory (tests/unit/db/engine-declarations/inventory.ts) whose destination is a
  *   claim table, `REVIEW_RECORD_PHRASE`, or a granted table, `GRANTED_DESTINATION`;
- * - by name, `UNINVENTORIED_GRANT_RECORDS`, the records the inventory cannot see or classifies otherwise: a host review
- *   record it holds as core-owned, a list of engine ids, an array of rows, and the records as the grant reader hands
- *   them over.
+ * - by name, `UNINVENTORIED_GRANT_RECORDS`, the records the inventory cannot see or classifies otherwise: a list of
+ *   engine ids, an array of rows, and the records as the grant reader hands them over.
  * A detected record the list does not name fails by name, and so does an entry whose module no longer exports its name
  * or an M7 reader file that does not exist or does not import the name.
  *
@@ -26,7 +25,7 @@ import { ENGINE_TABLE_INVENTORY, GRANTED_DESTINATION, REVIEW_RECORD_PHRASE } fro
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
 /** What removes a record: an item of M3, or milestone M7 with the browser modules that read the projection. */
-type RemovedBy = { readonly item: 2 | 3 | 4 | 6 } | { readonly milestone: "M7"; readonly readers: readonly string[] };
+type RemovedBy = { readonly item: 3 | 4 | 6 } | { readonly milestone: "M7"; readonly readers: readonly string[] };
 
 interface GrantRecordEntry {
   readonly module: string;
@@ -37,17 +36,12 @@ interface GrantRecordEntry {
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
 const CLAIM_GRANTS = "src/lib/db/claim-grants.ts";
 
-const ITEM_2 = { item: 2 } as const;
 const ITEM_3 = { item: 3 } as const;
 
 /** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
 const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  ...["SERVES_ONE_SESSION", "AGENT_EXECUTION_ENGINES"].map((name) => ({
-    module: COMPATIBILITY,
-    name,
-    removedBy: ITEM_2,
-  })),
-  { module: CLAIM_GRANTS, name: "STUDIO_CLAIM_RECORDS", removedBy: ITEM_2 },
+  { module: CLAIM_GRANTS, name: "STUDIO_CLAIM_RECORDS", removedBy: ITEM_3 },
+  { module: CLAIM_GRANTS, name: "GRANTED_ONE_SESSION_ENGINES", removedBy: ITEM_3 },
   ...[
     "GRANTED_AGENT_CREDENTIAL_FORM",
     "GRANTED_DENIED_FILE_ACCESS_REFUSAL",
@@ -96,12 +90,28 @@ const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     name: "GRANTED_AGENT_READINGS",
     removedBy: { milestone: "M7", readers: ["src/lib/agent/agent-manifest.ts"] },
   },
+  {
+    module: CLAIM_GRANTS,
+    name: "GRANTED_AGENT_EXECUTION_ENGINES",
+    removedBy: {
+      milestone: "M7",
+      readers: ["src/components/login/hero-proof.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
+    },
+  },
 ];
 
 /** The grant records the engine table inventory cannot see or classifies otherwise, each with why. */
 const UNINVENTORIED_GRANT_RECORDS: readonly (Pick<GrantRecordEntry, "module" | "name"> & { readonly why: string })[] = [
-  { module: COMPATIBILITY, name: "SERVES_ONE_SESSION", why: "a host review record the inventory holds as core-owned" },
-  { module: COMPATIBILITY, name: "AGENT_EXECUTION_ENGINES", why: "a list of engine ids, not a table keyed by engine" },
+  {
+    module: CLAIM_GRANTS,
+    name: "GRANTED_ONE_SESSION_ENGINES",
+    why: "a list of engine ids, not a table keyed by engine",
+  },
+  {
+    module: CLAIM_GRANTS,
+    name: "GRANTED_AGENT_EXECUTION_ENGINES",
+    why: "a list of engine ids, not a table keyed by engine",
+  },
   {
     module: "src/lib/db/confirmation-claim-review.ts",
     name: "CONFIRMATION_CLAIM_REVIEW",
@@ -181,11 +191,10 @@ describe("the exit of M3", () => {
 
     expect(claimTables).toHaveLength(2);
     expect(grantedTables).toHaveLength(21);
-    expect(count('{"item":2}')).toBe(3);
-    expect(count('{"item":3}')).toBe(17);
+    expect(count('{"item":3}')).toBe(19);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"item":6}')).toBe(1);
-    expect(count('{"milestone":"M7"')).toBe(4);
+    expect(count('{"milestone":"M7"')).toBe(5);
   });
 
   test("the list's checks fail by name on a stale entry, a module that does not export the name and a reader that does not import it", () => {

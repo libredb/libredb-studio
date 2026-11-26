@@ -4,18 +4,19 @@
  *
  * The host decides it from Studio's own records and the connection's own fields, before any provider exists: never from
  * a built provider, whose declarations reach no gate (clause M-57), and never from a manifest, which has no member for
- * it. A connection serves one session where `SERVES_ONE_SESSION` (`./compatibility`) names a reason for its engine, the
- * census's reasons kept there, and where its database is in memory, one database per handle, as the file admission
- * reads the name (`namesInMemoryDatabase` in `./provider-files`). It serves several otherwise.
+ * it. A connection serves one session where its engine is on `GRANTED_ONE_SESSION_ENGINES` (`./claim-grants`), the
+ * engines whose legacy row of the grant register names the reason Studio's census found, and where its database is in
+ * memory, one database per handle, as the file admission reads the name (`namesInMemoryDatabase` in
+ * `./provider-files`). It serves several otherwise.
  *
  * The class decides sharing only and authorizes nothing: the provider factory reads it to choose which session a tree,
  * monitoring or health read, or a kill, runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass
  * the same checks.
  */
 import type { DatabaseConnection } from "@/lib/types";
-import { SERVES_ONE_SESSION } from "./compatibility";
+import { GRANTED_ONE_SESSION_ENGINES } from "./claim-grants";
 import { namesInMemoryDatabase } from "./provider-files";
-import { typeIdRow } from "./type-id";
+import { assertDatabaseType } from "./type-id";
 
 /** Whether a connection's tree reads on the editor's session (`one`) or on a metadata session of its own. */
 export type SessionCapacity = "one" | "several";
@@ -28,6 +29,7 @@ export type SessionCapacity = "one" | "several";
  * @throws {DatabaseConfigError} When the file it names is refused by name, as the file admission refuses it.
  */
 export function sessionCapacity(connection: DatabaseConnection): SessionCapacity {
-  if (typeIdRow(SERVES_ONE_SESSION, connection.type) !== null) return "one";
+  assertDatabaseType(connection.type);
+  if (GRANTED_ONE_SESSION_ENGINES.includes(connection.type)) return "one";
   return namesInMemoryDatabase(connection) ? "one" : "several";
 }

@@ -61,7 +61,8 @@
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one SELECT of that keyspace or of system_schema (docs/providers/cassandra.md section 14).",
-      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place.",
+      "agentExecution": "The boundary is the role's: one holding only SELECT on the connection's keyspace, which the server refuses every write, DDL and GRANT statement as Unauthorized, proven before every statement to be no superuser, to hold no other permission, and to reach no column masked with a user-defined function, on a 5.0 server whose own refusal of a DROP proves it enforces grants, each statement on a session of its own."
     }
   },
   {
@@ -93,7 +94,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).",
+      "agentExecution": "The engine refuses writes for the request itself, under `readonly = 1`, and its user is proven at open to hold nothing that setting leaves usable."
     }
   },
   {
@@ -126,7 +128,8 @@
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user whose only roles are query_select on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it, and a fence that sends one SELECT (docs/providers/couchbase.md section 15).",
-      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place.",
+      "agentExecution": "The boundary is the user's: one whose only role is query_select on named scopes of the connection's bucket (a role on every scope also reaches its _system scope, so it is refused). The query service refuses such a user every write, DDL, GRANT, function call, CURL() and sequence statement, and the user is proven before every statement through GET /whoami, a group's roles included, on a server whose own refusal of a DELETE proves it enforces the role, with only one SELECT sent, since such a user may still run UPDATE STATISTICS and EXECUTE."
     }
   },
   {
@@ -191,7 +194,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user checked before every statement, on the statement's own connection, to hold nothing but CONNECT and SELECT (docs/providers/db2.md section 10.1)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user checked before every statement, on the statement's own connection, to hold nothing but CONNECT and SELECT (docs/providers/db2.md section 10.1).",
+      "agentExecution": "The boundary is the user's: one holding CONNECT and SELECT, proven before every statement to hold nothing else that writes and to reach no code, view, sequence or control that runs with another's authority, with every statement a fullselect in a unit of work rolled back on a connection of its own."
     }
   },
   {
@@ -224,7 +228,8 @@
     },
     "reasons": {
       "writeReach": "Druid native SQL refuses a write, but that is the engine's grammar: Studio sends the statement the editor holds.",
-      "statementRead": "Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a LOOKUP of a literal key is kept out by the statement fence alone (backlog B151)."
+      "statementRead": "Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a LOOKUP of a literal key is kept out by the statement fence alone (backlog B151).",
+      "agentExecution": "The boundary is the engine's: under the native engine its SQL endpoint refuses every INSERT, REPLACE, UPDATE, DELETE, MERGE and DDL statement and every read of EXTERN, whoever asks, which the open and every statement prove with an INSERT the server must refuse, and the request context naming the engine is written by Studio, with only one SELECT sent, since a SET before a statement would select another engine."
     }
   },
   {
@@ -258,7 +263,8 @@
       "singleWriterFile": "This engine keeps its own copy of the catalog in a second read-write handle and checkpoints it over the file when it closes, so every user of a connection is served the one open handle.",
       "opensLocalFile": "A database file (or `:memory:`) opened by the native DuckDB addon in Studio's own process.",
       "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none.",
-      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in.",
+      "agentExecution": "This engine bounds a statement with its own read-only mechanism: the database file is opened read-only."
     }
   },
   {
@@ -295,7 +301,8 @@
     "reasons": {
       "writeReach": "As Druid: the SQL grammar has no write, and Studio sends whatever the editor holds.",
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL endpoint's grammar, which holds no write, on a server checked at open to be the release line whose write refusals were captured (docs/providers/elasticsearch.md section 5.9). OpenSearch, served by the same provider directory, has a row of its own.",
-      "agentCredential": "The transport sends the API key pair in preference to user and password (src/lib/db/providers/sql/search/http-transport.ts), so an agent pair beside it would run under the key."
+      "agentCredential": "The transport sends the API key pair in preference to user and password (src/lib/db/providers/sql/search/http-transport.ts), so an agent pair beside it would run under the key.",
+      "agentExecution": "The boundary is the engine's: the grammar of its SQL endpoint, the one route that carries statement text, holds no write or DDL statement, and every one sent raw there is refused, and the open checks the server is the measured 9.1 line."
     }
   },
   {
@@ -395,7 +402,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`src/lib/languages/influxql/policy.ts`) is the only boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request; the route table reaches no write endpoint.",
       "exposable": "Both offered for the metadata tools, which list database, measurement and column names and types only. Both providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by its `mcp.statementRead` grant, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (backlog B94).",
-      "statementRead": "Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope rests on the agent's statement reader alone, and no layer that reads the answer can hold it (backlog B94)."
+      "statementRead": "Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope rests on the agent's statement reader alone, and no layer that reads the answer can hold it (backlog B94).",
+      "agentExecution": "The boundary is the principal's: a 1.x user refused SHOW USERS as needing the admin privilege, or a 2.x token that lists no system bucket, refused a no-op DELETE on every database it lists, proven before every statement, so an admin, a server with authentication off and a principal that can write anywhere, where SELECT ... INTO would land, are refused; the engine's SQL line is refused on this path. Studio's reader admits one SELECT, SHOW of the catalog or EXPLAIN of a SELECT, with no comment."
     }
   },
   {
@@ -429,7 +437,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and the 3.12 planner refuses every write besides.",
       "agentCredentialForm": "The agent's token, sent as the bearer credential instead of the connection's own.",
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals on a server checked at open to be that line, behind the read policy and the system schema fence (docs/providers/influxdb3.md section 3.5)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals on a server checked at open to be that line, behind the read policy and the system schema fence (docs/providers/influxdb3.md section 3.5).",
+      "agentExecution": "The boundary is the engine's: the 3.12 Core planner refuses every write and DDL statement on the one route that carries statement text, whatever the token, and the open checks the server is that line."
     }
   },
   {
@@ -497,7 +506,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any socket, and the provider offers no object edit and no maintenance operation.",
       "agentCredentialForm": "The agent's bearer token, whose RBAC bounds what the agent reads.",
-      "exposable": "Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no Kubernetes kind is, so no object name, a Secret's included, reaches it."
+      "exposable": "Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no Kubernetes kind is, so no object name, a Secret's included, reaches it.",
+      "agentExecution": "This engine has no read-only session: Studio's request allowlist on the final method and path of every request, plus the identity's RBAC, is the boundary."
     }
   },
   {
@@ -532,7 +542,8 @@
       "statementRead": "Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved internal namespace is left out of every answer (docs/providers/libredb.md section 15).",
       "metadataReadChangesState": "The operations open holds the file's exclusive lock until the handle has been idle for 30 minutes.",
       "opensLocalFile": "The embedded store this app creates, a file on Studio's own volume.",
-      "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none."
+      "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none.",
+      "agentExecution": "The boundary is the handle's: an embedded file with no principal, which each statement opens on a handle of its own through Studio's read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no call that can write the file, the engine's one write path refusing before any write; Studio's reader admits get, prefix and range only."
     }
   },
   {
@@ -565,7 +576,8 @@
     },
     "reasons": {
       "agentCredentialForm": "The agent's bearer token for the database, sent instead of the connection's own.",
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a token proven at open to be read-only and refused every write by the server (docs/providers/libsql.md section 3.6)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a token proven at open to be read-only and refused every write by the server (docs/providers/libsql.md section 3.6).",
+      "agentExecution": "The boundary is the token: one the server refuses every write for, proven at open by writes that change nothing and that the server must refuse, and by the token's own read-only claim."
     }
   },
   {
@@ -599,7 +611,8 @@
     "reasons": {
       "writeReach": "Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is a read (vector-family E8).",
       "exposable": "Offered for the metadata tools (vector-family E17), and for `run_milvus_read`, which its `mcp.statementRead` grant opens on it.",
-      "statementRead": "Opened on its own: run_milvus_read runs under the boundary agent mode uses, the provider's closed RPC table and a user the server proves read-only before every request, every call naming a collection sent only when the user's own collection list holds it, every answer projected to names, counts and flags (docs/providers/milvus.md, section Agent mode)."
+      "statementRead": "Opened on its own: run_milvus_read runs under the boundary agent mode uses, the provider's closed RPC table and a user the server proves read-only before every request, every call naming a collection sent only when the user's own collection list holds it, every answer projected to names, counts and flags (docs/providers/milvus.md, section Agent mode).",
+      "agentExecution": "The boundary is the provider's gRPC stub filtered to a closed table of RPCs, whose only writes, Load and Release, no agent request reaches, with a user the server proves read-only before every request: it must be refused the list of users, and every privilege its roles and public grant must be a read, so a connection naming no user, root, the admin role, a role that writes, loads or releases and a server with authorization off are refused; Studio's reader admits the database, collection, schema, statistics, load state, partition, index and alias reads in the connection's own database, so no search runs a function on the server, and every answer carries names, counts and flags only."
     }
   },
   {
@@ -664,6 +677,9 @@
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
+    },
+    "reasons": {
+      "agentExecution": "This engine has no read-only session: the connection's user is the boundary, proven, when a connection that sends statements opens, by the server's own account of its privileges and by a write the server must refuse, with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of a read's session as its deadline."
     }
   },
   {
@@ -727,6 +743,9 @@
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
+    },
+    "reasons": {
+      "agentExecution": "This engine has no read-only transaction of any kind, so the open verifies that the session's principal cannot write, and each statement is then admitted one at a time by asking the optimizer to compile it without running it."
     }
   },
   {
@@ -788,6 +807,9 @@
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed"
+    },
+    "reasons": {
+      "agentExecution": "A two-layer boundary: a least-privilege principal, because DDL ends a read-only transaction through its implicit commit, and a read-only transaction (`START TRANSACTION READ ONLY`) for the writes the grants alone would not stop."
     }
   },
   {
@@ -821,7 +843,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: this version of the provider refuses every write before it is sent, offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.",
       "exposable": "Offered for the metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for `run_cypher_read`, which its `mcp.statementRead` grant opens on it.",
-      "statementRead": "Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the server's own classification of every statement (docs/providers/neo4j.md section 15)."
+      "statementRead": "Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the server's own classification of every statement (docs/providers/neo4j.md section 15).",
+      "agentExecution": "The boundary is the user's, on Enterprise Edition only: before every statement the server must name Enterprise at a version whose built-in routines are pinned, every granted privilege of every role must be a read, LOAD must be revoked or denied, and every procedure and function the user can execute must be a built-in, so an administrator, a user that writes or loads, a server with an extension the user can run and Community Edition, which has no roles, are refused. Studio's reader admits one statement of the editor's read policy with no comment, and the server's EXPLAIN classification and a READ session stand behind it."
     }
   },
   {
@@ -926,7 +949,8 @@
     },
     "reasons": {
       "writeReach": "As Elasticsearch, and the server's own DELETE can be switched on in 2.x.",
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL plugin's refusal of every write, on a server whose DELETE is proved off and whose release line was checked at open, with a statement check that keeps hidden and dot-led indices from each statement (docs/providers/opensearch.md section 5.9)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL plugin's refusal of every write, on a server whose DELETE is proved off and whose release line was checked at open, with a statement check that keeps hidden and dot-led indices from each statement (docs/providers/opensearch.md section 5.9).",
+      "agentExecution": "The boundary is the engine's: its SQL plugin refuses every write and DDL statement sent raw, and since a cluster setting can turn its DELETE on, the open proves that DELETE off (the setting reads off, and a DELETE on a fresh name is refused) and checks the server is the measured 3.8 line."
     }
   },
   {
@@ -958,7 +982,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user set READ ONLY, checked before every statement on that statement's own session to reach nothing READ ONLY leaves open and to hold no grant on a schema Oracle maintains beyond the policy catalogs (docs/providers/oracle.md section 5.7)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user set READ ONLY, checked before every statement on that statement's own session to reach nothing READ ONLY leaves open and to hold no grant on a schema Oracle maintains beyond the policy catalogs (docs/providers/oracle.md section 5.7).",
+      "agentExecution": "The boundary is the user's: one set READ ONLY, which the server refuses every write for, proven before every statement to reach no code, sequence, package, directory, system privilege or database link that runs outside it, with every statement in a read-only transaction the driver rolls back."
     }
   },
   {
@@ -1022,7 +1047,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "serverLevelWithoutDatabase": "An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts); a connection string never does."
+      "serverLevelWithoutDatabase": "An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts); a connection string never does.",
+      "agentExecution": "This engine bounds a statement with its own read-only mechanism: it refuses the write inside `BEGIN READ ONLY`."
     }
   },
   {
@@ -1090,7 +1116,8 @@
       "writeReach": "Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it refuses every route that is not a read before any request (vector-family spec 4.4).",
       "agentCredentialForm": "The agent's API key or JWT, sent instead of the connection's own.",
       "exposable": "Offered for the metadata tools, carrying names and types only (vector-family spec 4.4), and for `run_qdrant_read`, which its `mcp.statementRead` grant opens on it.",
-      "statementRead": "Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists, before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section Agent mode)."
+      "statementRead": "Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists, before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section Agent mode).",
+      "agentExecution": "The boundary is the provider's closed table of read routes, which can name no write, with a key proved read-only before every request by its JWT claims, when it has them, granting access r alone, and by the server refusing an empty alias update and an empty point delete on every collection the key lists, so a connection with no key, the API key, a JWT that writes any collection or alias and a server with no key configured are refused; Studio's reader admits the version, collection, alias, count and cluster reads, so no query reaches the inference address, and every answer carries names, counts and flags only."
     }
   },
   {
@@ -1349,7 +1376,8 @@
       "opensLocalFile": "A database file opened through `bun:sqlite` or `node:sqlite` in Studio's own process.",
       "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none.",
       "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in.",
-      "servesOneSession": "A file serves a second session; an in-memory database is another database per handle, which the class reads from the connection."
+      "servesOneSession": "A file serves a second session; an in-memory database is another database per handle, which the class reads from the connection.",
+      "agentExecution": "This engine bounds a statement with its own read-only mechanism: the database file is opened read-only."
     }
   },
   {
@@ -1381,7 +1409,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out (backlog B166)."
+      "statementRead": "Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out (backlog B166).",
+      "agentExecution": "The boundary is the operator's access control: it must refuse every identity every catalog's table functions, since a pass-through function runs its text in the catalog's source under the catalog's own credential, outside the engine's read-only transaction, and catalog management must be refused, which the open and every statement prove with calls that run nothing and the server must refuse by permission (the engine's own read-only access control passes, told apart by a table procedure it alone refuses), with every statement in a read-only transaction rolled back and only one SELECT sent."
     }
   },
   {
@@ -1416,7 +1445,8 @@
       "writeReach": "As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it refuses every route that is not a read, and every request that would wake a cold tenant, before any request.",
       "agentCredentialForm": "The agent's API key, sent instead of the connection's own.",
       "exposable": "As Milvus and Qdrant (#1566 spec 3.5): offered for the metadata tools, and for `run_weaviate_read`, which reads one metadata request under the agent's own boundary; inspect_schema lists a collection's properties and vectors and never its tenants or aliases.",
-      "statementRead": "Opened on its own: run_weaviate_read runs under the boundary agent mode uses, the provider's closed table of read requests and a key the server proves before every read to hold the viewer role's read actions only, answered through the metadata-only projection (docs/providers/weaviate.md section 15)."
+      "statementRead": "Opened on its own: run_weaviate_read runs under the boundary agent mode uses, the provider's closed table of read requests and a key the server proves before every read to hold the viewer role's read actions only, answered through the metadata-only projection (docs/providers/weaviate.md section 15).",
+      "agentExecution": "The boundary is the provider's closed table of read requests, which can name no write, with a key the server proves a viewer before every request, so a connection with no key, an admin key, a role that writes and a server with RBAC off are refused; Studio's reader admits the meta, schema, shard, tenant, alias and node reads and a bare aggregate count, a COLD tenant is refused rather than woken, and every answer carries names, counts and flags only."
     }
   }
 ]

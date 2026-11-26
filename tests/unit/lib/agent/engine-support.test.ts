@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterEngines } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 /**
- * `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) is Studio's review record of the engines
- * agent and MCP statements run on, and every statement gate reads it at run time: the start of a run,
+ * `GRANTED_AGENT_EXECUTION_ENGINES` (`src/lib/db/claim-grants.ts`), the engines whose legacy row of the grant
+ * register grants `agentExecution`, is Studio's review record of the engines agent and MCP statements run on, and every statement gate reads it at run time: the start of a run,
  * the factory's statement profiles and the core read path refuse an engine it does not list with
  * `PROFILE_ENGINE_NOT_REVIEWED`, whatever its provider implements. A provider's `queryReadOnly` is a
  * second precondition, required and never enough.
@@ -32,7 +35,7 @@ import type { DatabaseType } from "@/lib/types";
  *    would count it.
  *
  * Adding `queryReadOnly` to any provider, adding a provider, or adding a `DatabaseType`
- * therefore fails this file until `AGENT_EXECUTION_ENGINES` is updated to match.
+ * therefore fails this file until the engine's legacy row is updated to match.
  */
 
 const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
@@ -103,18 +106,13 @@ async function hasReadOnlyPath(type: DatabaseType): Promise<boolean> {
   return typeof prototype.queryReadOnly === "function";
 }
 
-describe("AGENT_EXECUTION_ENGINES", () => {
-  test("is frozen, so no code widens the review record at run time", () => {
-    expect(Object.isFrozen(AGENT_EXECUTION_ENGINES)).toBe(true);
-    expect(() => (AGENT_EXECUTION_ENGINES as DatabaseType[]).push("spark")).toThrow(TypeError);
-  });
-
+describe("the agent execution review rows", () => {
   test("the factory dispatches on exactly the DatabaseType union", () => {
     expect([...dispatch.keys()].sort()).toEqual([...databaseTypes].sort());
   });
 
   test("every listed engine is a real DatabaseType", () => {
-    for (const type of AGENT_EXECUTION_ENGINES) {
+    for (const type of AGENT_EXECUTION) {
       expect(databaseTypes).toContain(type);
     }
   });
@@ -126,31 +124,31 @@ describe("AGENT_EXECUTION_ENGINES", () => {
   test("names exactly the engines whose provider offers queryReadOnly", async () => {
     const results = await Promise.all(databaseTypes.map(hasReadOnlyPath));
     const measured = databaseTypes.filter((_, index) => results[index]);
-    expect(measured.sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
+    expect(measured.sort()).toEqual([...AGENT_EXECUTION].sort());
   });
 
   test("firestore offers its metadata-only read path, so agent mode executes on it", async () => {
     expect(databaseTypes).toContain("firestore");
     expect(await hasReadOnlyPath("firestore")).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("firestore");
+    expect(AGENT_EXECUTION).toContain("firestore");
   });
 
   test("mqtt now offers the read-only statement path, so agent mode executes on it", async () => {
     expect(databaseTypes).toContain("mqtt");
     expect(await hasReadOnlyPath("mqtt")).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("mqtt");
+    expect(AGENT_EXECUTION).toContain("mqtt");
   });
 
   test("sparkplug now offers the read-only statement path, so agent mode executes on it", async () => {
     expect(databaseTypes).toContain("sparkplug");
     expect(await hasReadOnlyPath("sparkplug")).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("sparkplug");
+    expect(AGENT_EXECUTION).toContain("sparkplug");
   });
 
   test("spark still offers no read-only statement path, so agent mode does not execute on it", async () => {
     expect(databaseTypes).toContain("spark");
     expect(await hasReadOnlyPath("spark")).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("spark");
+    expect(AGENT_EXECUTION).not.toContain("spark");
   });
 });
 
@@ -176,7 +174,7 @@ describe("namedList", () => {
   test("the engines agent mode executes on read as one list", () => {
     // Derived from the array rather than typed out, so this stays true of the next engine
     // and fails only if the JOIN regresses.
-    const names = AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label);
+    const names = AGENT_EXECUTION.map((type) => getDBConfig(type).label);
     const sentence = namedList(names);
 
     for (const name of names) expect(sentence).toContain(name);

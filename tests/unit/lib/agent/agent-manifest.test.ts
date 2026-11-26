@@ -20,19 +20,22 @@ import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/co
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
-import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
- * The manifest against what each provider declares, as `engine-support.test.ts` holds `AGENT_EXECUTION_ENGINES` to
+ * The manifest against what each provider declares, as `engine-support.test.ts` holds `GRANTED_AGENT_EXECUTION_ENGINES` to
  * the drivers: the record is the list, so it must answer exactly where a provider has a read-only statement path.
  */
 describe("the statement language review rows", () => {
@@ -57,7 +60,7 @@ describe("the statement language review rows", () => {
   // record's own refusal there is reached only by an engine a later build drops from it.
   test("an engine has a language exactly when the review record lists it", () => {
     const withLanguage = SHIPPED_DATABASE_TYPES.filter((type) => statementLanguage[type] !== null);
-    expect([...withLanguage].sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
+    expect([...withLanguage].sort()).toEqual([...AGENT_EXECUTION].sort());
   });
 });
 
@@ -628,7 +631,7 @@ describe("workflowAvailability", () => {
     },
     // Held empty here whatever the live mirror says, so the refusal is driven by the table and not by the census.
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": [] },
-    reviewed: AGENT_EXECUTION_ENGINES,
+    reviewed: AGENT_EXECUTION,
   } as const;
 
   const AGENT_READINGS_SENTENCE =
@@ -670,7 +673,7 @@ describe("workflowAvailability", () => {
       languages: statementLanguage,
       variants: AGENT_WORKFLOW_VARIANTS,
       requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "agent-readings": [] },
-      reviewed: AGENT_EXECUTION_ENGINES,
+      reviewed: AGENT_EXECUTION,
     } as const;
     expect(workflowAvailability("agent", "operations", "spark", tables)).toEqual({
       open: false,
@@ -755,7 +758,7 @@ describe("workflowAvailability", () => {
     languages: statementLanguage,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
-    reviewed: AGENT_EXECUTION_ENGINES,
+    reviewed: AGENT_EXECUTION,
   } as const;
 
   test.each(["investigation", "database-assessment", "data-analysis"] as const)(
@@ -807,7 +810,7 @@ describe("workflowAvailability", () => {
     languages: statementLanguage,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: AGENT_REQUIREMENT_ENGINES,
-    reviewed: AGENT_EXECUTION_ENGINES.filter((type) => type !== "postgres"),
+    reviewed: AGENT_EXECUTION.filter((type) => type !== "postgres"),
   } as const;
 
   test("a statement workflow in agent mode on an engine the review record does not list is refused as not reviewed, though its language would open it", () => {

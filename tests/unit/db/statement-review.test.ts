@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
 import {
   acquireExecutionProfileProvider,
@@ -11,10 +11,14 @@ import { assertStatementsReviewed } from "@/lib/db/statement-review";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterEngines } from "../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 /**
  * The one core assertion every agent and MCP statement gate reads: an engine Studio's review record
- * (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`) does not list is refused by name, whatever its provider
+ * (`GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`) does not list is refused by name, whatever its provider
  * implements. The refused set is computed from the shipped types minus the record, never written here, so an engine
  * added to either side is measured without an edit to this file.
  */
@@ -29,13 +33,11 @@ function thrownBy(call: () => void): unknown {
   }
 }
 
-const unreviewed: readonly DatabaseType[] = SHIPPED_DATABASE_TYPES.filter(
-  (type) => !AGENT_EXECUTION_ENGINES.includes(type),
-);
+const unreviewed: readonly DatabaseType[] = SHIPPED_DATABASE_TYPES.filter((type) => !AGENT_EXECUTION.includes(type));
 
 describe("the review record of agent and MCP statements", () => {
   test("admits every engine on the review record", () => {
-    for (const type of AGENT_EXECUTION_ENGINES) expect(thrownBy(() => assertStatementsReviewed(type))).toBeNull();
+    for (const type of AGENT_EXECUTION) expect(thrownBy(() => assertStatementsReviewed(type))).toBeNull();
   });
 
   test("refuses by name, with a deny code of its own, every shipped type the record does not list", () => {
@@ -45,7 +47,7 @@ describe("the review record of agent and MCP statements", () => {
       expect(error).toBeInstanceOf(ExecutionProfileError);
       expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
       expect((error as ExecutionProfileError).message).toBe(
-        `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`,
+        `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`,
       );
     }
   });
@@ -100,7 +102,7 @@ describe("the acquisition reads the review record", () => {
       }),
     );
     const expected = cases.map(({ profile, type }) => {
-      const refusedByRecord = executionContextFor(profile).sendsStatements && !AGENT_EXECUTION_ENGINES.includes(type);
+      const refusedByRecord = executionContextFor(profile).sendsStatements && !AGENT_EXECUTION.includes(type);
       return `${profile} ${type}: ${refusedByRecord ? "PROFILE_ENGINE_NOT_REVIEWED" : "AGENT_CREDENTIAL_WITH_CONNECTION_STRING"}`;
     });
     expect(PROFILES.some((profile) => executionContextFor(profile).sendsStatements)).toBe(true);

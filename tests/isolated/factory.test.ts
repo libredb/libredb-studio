@@ -8197,7 +8197,7 @@ describe("the Snowflake provider in the factory", () => {
         expect(error).toBeInstanceOf(ExecutionProfileError);
         expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
         expect((error as Error).message).toBe(
-          'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+          'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements',
         );
         expect(connect).not.toHaveBeenCalled();
         expect(planted).not.toHaveBeenCalled();

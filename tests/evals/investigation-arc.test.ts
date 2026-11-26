@@ -248,7 +248,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
     dialects that supply no `catalogCapture`. The MySQL preset carries no
     `queryReadOnly`, so a run that tried to read one here would die on the fixture
     rather than pass quietly. The preset stands for an engine outside
-    `AGENT_EXECUTION_ENGINES`: the real MySQL provider has implemented `queryReadOnly`
+    `GRANTED_AGENT_EXECUTION_ENGINES`: the real MySQL provider has implemented `queryReadOnly`
     since #1629.
   */
   test("a plan run on an engine this server cannot ground says so instead of inventing tables", async () => {

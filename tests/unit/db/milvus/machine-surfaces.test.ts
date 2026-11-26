@@ -15,7 +15,6 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import { MILVUS_METADATA_ONLY } from "@/lib/db/providers/vector/milvus/metadata-read";
@@ -36,7 +35,10 @@ import {
 } from "../../../helpers/milvus-catalog-client";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const statementRead = legacyRegisterTable("statementRead");
 const exposable = legacyRegisterTable("exposable");
@@ -179,7 +181,7 @@ describe("inspect_schema", () => {
 describe("the model's own requests against Milvus", () => {
   test("run only on the agent read-only profile, answer metadata only, and MCP read opens on the same path", async () => {
     const { provider } = await connected();
-    const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
+    const engines: readonly string[] = AGENT_EXECUTION;
     expect(engines).toContain("milvus");
     expect(statementRead.milvus).toBe(true);
     expect(provider.getCapabilities().metadataOnly).toBe(MILVUS_METADATA_ONLY);
@@ -195,7 +197,7 @@ describe("the model's own requests against Milvus", () => {
 describe("the machine access records", () => {
   test("Milvus is exposed over MCP, run by the agent and offers the MCP statement read", () => {
     expect(exposable.milvus).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).toContain("milvus");
+    expect(AGENT_EXECUTION).toContain("milvus");
     expect(statementRead.milvus).toBe(true);
   });
 });

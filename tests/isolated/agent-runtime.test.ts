@@ -480,7 +480,7 @@ describe("a drive that fails before the loop", () => {
     await openRun("arun_notreviewed");
     mockResolveConnection.mockImplementationOnce(async () => {
       throw new ExecutionProfileError(
-        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements',
         "PROFILE_ENGINE_NOT_REVIEWED",
       );
     });

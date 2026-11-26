@@ -50,8 +50,8 @@ const WORKFLOWS: readonly AgentRunWorkflowType[] = [
 ];
 
 /**
- * The five SQL engines `AGENT_EXECUTION_ENGINES` named on the base commit, frozen here rather than imported: that
- * constant gains engines that are not SQL, and the oracle has to keep reading exactly these five.
+ * The five SQL engines `AGENT_EXECUTION_ENGINES` named on the base commit, frozen here rather than imported: the agent
+ * execution list gains engines that are not SQL, and the oracle has to keep reading exactly these five.
  */
 const ENGINES: readonly DatabaseType[] = ["postgres", "sqlite", "duckdb", "mssql", "mysql"];
 

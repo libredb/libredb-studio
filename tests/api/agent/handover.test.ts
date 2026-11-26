@@ -521,7 +521,7 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
       expect(res.status).toBe(500);
       expect(body.error).toBe(
-        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements',
       );
       expect(mockQueryReadOnly).not.toHaveBeenCalled();
       expect(mockQuery).not.toHaveBeenCalled();

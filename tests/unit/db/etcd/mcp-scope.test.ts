@@ -19,8 +19,10 @@ import { ETCD_PROOF_SENTENCES, proveEtcdReadOnly } from "@/lib/db/providers/keyv
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { type CapturedAnswer, capturedError, capturedMembers, capturedPermissions } from "../../../helpers/etcd-agent";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
@@ -128,7 +130,7 @@ describe("Studio's side", () => {
 
 describe("the machine access records", () => {
   test("etcd is run by the agent, exposed over MCP and offers the MCP statement read", () => {
-    expect(AGENT_EXECUTION_ENGINES).toContain("etcd");
+    expect(AGENT_EXECUTION).toContain("etcd");
     expect(exposable.etcd).toBe(true);
     expect(statementRead.etcd).toBe(true);
   });

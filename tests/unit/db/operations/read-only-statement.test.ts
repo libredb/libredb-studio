@@ -1,6 +1,5 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import path from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { errorKind } from "@/lib/db/error-record";
 import {
   ExecutionProfileError,
@@ -22,6 +21,10 @@ import { PROVIDER_TEXT_WITHHELD, type ProviderTextScrub, providerTextScrub } fro
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
+import { legacyRegisterEngines } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 /**
  * The one core call of a budgeted provider read (`runReadOnlyReading`) and its row and byte hold: core holds the
@@ -693,7 +696,7 @@ describe("Studio's own class for core's refusals of an answer", () => {
 
 describe("the review record", () => {
   const notReviewed = (type: string) =>
-    `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`;
+    `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`;
 
   test("refuses a statement on an engine the review record does not list by name, even when the provider implements queryReadOnly, and never calls or holds it", async () => {
     const queryReadOnly = mock(async () => answer([{ id: 1 }]));
@@ -739,7 +742,7 @@ describe("the review record", () => {
     const served = answer([{ id: 1 }]);
     const { provider } = providerAnswering(async () => served);
     const answers = await Promise.all(
-      AGENT_EXECUTION_ENGINES.map((type) =>
+      AGENT_EXECUTION.map((type) =>
         readStatement(provider, {
           type,
           scrub: noForms(type),
@@ -749,6 +752,6 @@ describe("the review record", () => {
       ),
     );
     expect(answers.every((answered) => answered === served)).toBe(true);
-    expect(answers).toHaveLength(AGENT_EXECUTION_ENGINES.length);
+    expect(answers).toHaveLength(AGENT_EXECUTION.length);
   });
 });

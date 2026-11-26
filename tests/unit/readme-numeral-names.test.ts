@@ -28,7 +28,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { legacyRegisterEngines } from "../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const ROOT = join(import.meta.dir, "..", "..");
 const read = (name: string): string => readFileSync(join(ROOT, name), "utf8");
@@ -88,7 +92,7 @@ const namedIn = (line: string): readonly string[] => ENGINE_NAMES.filter((name) 
 const FLEET_LIST_THRESHOLD = 28;
 
 /** The agent-mode engines as the READMEs write them; LibreDB is not an external engine, so it is not one of them. */
-const AGENT_ENGINE_NAMES = AGENT_EXECUTION_ENGINES.filter((type) =>
+const AGENT_ENGINE_NAMES = AGENT_EXECUTION.filter((type) =>
   (EXTERNAL_DATABASE_TYPES as readonly string[]).includes(type),
 ).map((type) => DB_UI_CONFIG[type].label.replace(/^Apache /, ""));
 

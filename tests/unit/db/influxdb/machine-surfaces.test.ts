@@ -12,7 +12,6 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { type AgentToolContext, readObjectInventoryForGrounding } from "@/lib/agent/tools";
@@ -32,6 +31,10 @@ import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../../h
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../../helpers/mcp-fixtures";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterEngines } from "../../../helpers/legacy-register";
+
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 // The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -342,14 +345,14 @@ describe("MCP inspect_schema (InfluxDB spec 6.5, E13)", () => {
 
 describe("which InfluxDB statements of the model's run (InfluxDB spec 6.5)", () => {
   test("the InfluxQL provider has a read-only statement path, and influxdb is an agent execution engine", async () => {
-    const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
+    const engines: readonly string[] = AGENT_EXECUTION;
     const connected = await connectedInfluxql("3.12.0-core");
     expect("queryReadOnly" in connected.provider).toBe(true);
     expect(engines).toContain(connected.connection.type);
   });
 
   test("the InfluxDB 3 provider has one, and influxdb3 is an agent execution engine", async () => {
-    const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
+    const engines: readonly string[] = AGENT_EXECUTION;
     const connected = await connectedSql();
     expect("queryReadOnly" in connected.provider).toBe(true);
     expect(engines).toContain(connected.connection.type);
