@@ -83,7 +83,7 @@ A clean local pass is still not a guarantee: the same job also runs `build:lib`,
 
 ### Rules & patterns
 
-> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts), which is the only list:
+> **⚠️ Providers are the lifeblood of this project — keep the triad: code ↔ tests in lockstep, the per-engine doc frozen until its engine moves into its package**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts), which is the only list:
 > - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `.../<type-id>/index.ts` when the provider is split across modules · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
 > - **Or as a workspace package:** Code: `packages/provider-<type-id>/src/` · Docs: `packages/provider-<type-id>/docs/<type-id>.md` · Tests: `packages/provider-<type-id>/tests/integration/<type-id>-provider.test.ts`.
 >   A type-id lives in exactly one layout, so the change that moves a provider deletes its legacy code, doc and integration test.

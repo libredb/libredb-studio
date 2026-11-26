@@ -1,8 +1,8 @@
 # Database Provider Reference
 
 This folder holds the **prime (canonical) reference for each database provider** in LibreDB Studio.
-There is exactly one document per provider, named by the provider's canonical **type-id** and kept
-in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CLAUDE.md)).
+There is exactly one document per provider, named by the provider's canonical **type-id** and frozen
+until its engine moves into its own package, where it is rewritten from the package's manifest (see the provider triad in [`../../CLAUDE.md`](../../CLAUDE.md)).
 
 | Provider | type-id | Family | Driver | Query language | Reference |
 |----------|---------|--------|--------|----------------|-----------|
@@ -58,7 +58,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
-  document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
+  document, because the provider triad is per type-id and each doc is the prime reference for its
   own product's measured behaviour.
 - **Each doc is frozen.** A doc here is not edited until its engine moves into its own package, where the doc is rewritten from the package's manifest.
   Code and `tests/integration/db/<type-id>-provider.test.ts` stay 1:1 per type-id and change together in the same PR, and `tests/unit/provider-doc-freeze.test.ts` refuses any test or script outside its reviewed list that reads a doc's text.
