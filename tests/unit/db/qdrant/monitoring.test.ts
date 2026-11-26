@@ -13,6 +13,9 @@ import {
 } from "@/lib/db/providers/vector/qdrant/monitoring";
 import { readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
 import { resultOf, SEEDED_COLLECTIONS, vectorCapture } from "../../../helpers/qdrant-surface-fixtures";
+import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
+import { QDRANT_BOUNDS } from "@/lib/db/providers/vector/qdrant/routes";
+import { type DatabaseConnection } from "@/lib/types";
 
 const seeded = (collection: string) =>
   readQdrantCollection(collection, resultOf(vectorCapture(`describe-${collection}`)));
@@ -119,5 +122,23 @@ describe("toQdrantIndexStats", () => {
     });
     const text = JSON.stringify([toQdrantIndexStats([collection]), toQdrantTableStats([collection])]);
     expect(text).not.toContain("MARKER_META");
+  });
+});
+
+const QDRANT: DatabaseConnection = {
+  id: "qdrant-doc",
+  name: "Qdrant",
+  type: "qdrant",
+  host: "qdrant.internal",
+  port: 6333,
+  createdAt: new Date(0),
+};
+const labels = new QdrantProvider(QDRANT).getLabels();
+
+describe("the monitoring labels", () => {
+  test("the table stats caption names the collection bound, and no empty state is set for slow queries or sessions", () => {
+    expect(labels.tableStatsCaption).toContain(`The first ${QDRANT_BOUNDS.tablesPanelCollections} collections.`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
   });
 });
