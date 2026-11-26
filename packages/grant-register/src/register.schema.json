@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:libredb:grant-register:0.1",
+  "title": "GrantRegister",
+  "description": "LibreDB's reviewed rows that grant an engine's claims (docs/providers/CONTRACT.md, clauses M-54 and M-84): a list of rows, each keyed by the engine and either a package's name, version and digest or the legacy key of an engine Studio still serves through its legacy adapter.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/row"
+  },
+  "$defs": {
+    "row": {
+      "description": "One engine's grants under one key, which is the engine and exactly one of `legacy` and `package`.",
+      "type": "object",
+      "properties": {
+        "legacy": {
+          "description": "The legacy key: the row describes Studio's own code for an engine its legacy adapter serves, and is deleted as the engine moves into a package of its own.",
+          "const": "@libredb/studio"
+        },
+        "package": {
+          "$ref": "#/$defs/packageKey"
+        },
+        "engine": {
+          "description": "The engine id the row grants, in the form of an engine id of the providers lock.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]{0,31}$",
+          "maxLength": 32
+        },
+        "grants": {
+          "$ref": "#/$defs/grants"
+        },
+        "reasons": {
+          "$ref": "#/$defs/reasons"
+        }
+      },
+      "required": ["engine", "grants"],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["legacy"]
+        },
+        {
+          "type": "object",
+          "required": ["package"]
+        }
+      ]
+    },
+    "packageKey": {
+      "description": "The package a row is reviewed for, in the forms of the providers lock: a new version or digest has no row until it is reviewed.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The package's name.",
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 214
+        },
+        "version": {
+          "description": "The package's exact version.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$",
+          "maxLength": 64
+        },
+        "digest": {
+          "description": "The digest of the package's tarball: sha256: and 64 lower-case hex characters.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        }
+      },
+      "required": ["name", "version", "digest"],
+      "additionalProperties": false
+    },
+    "text": {
+      "description": "A non-empty string.",
+      "type": "string",
+      "minLength": 1
+    },
+    "grants": {
+      "description": "What the row grants: one member per claim, each in its claim's vocabulary, and every member required, so no grant is left out by omission.",
+      "type": "object",
+      "properties": {
+        "writeReach": {
+          "description": "The write reach granted: open, guarded while the connection is read-only, or none.",
+          "enum": ["open", "guarded", "none"]
+        },
+        "readsFileAccessPosture": {
+          "description": "Whether the engine's editor handle opens under the caller's file access posture, read by its provider.",
+          "type": "boolean"
+        },
+        "deniedFileAccessRefusal": {
+          "description": "The sentence a connection is refused with when the caller's file access is denied, or null where the provider confines file access itself.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "singleWriterFile": {
+          "description": "Whether the engine keeps one handle per database file in the process.",
+          "type": "boolean"
+        },
+        "readRootsRequired": {
+          "description": "Whether agent mode and MCP read the engine only beneath the read roots a seed declares.",
+          "type": "boolean"
+        },
+        "agentCredentialForm": {
+          "description": "The form of the agent credential the engine signs an agent in with, or null for a user and a password.",
+          "enum": ["token", "service-account-key", "dedicated-user", "none", null]
+        },
+        "maskingExemptColumns": {
+          "description": "The column pattern masking passes over and why, or null where masking exempts no column.",
+          "type": ["object", "null"],
+          "properties": {
+            "column": {
+              "$ref": "#/$defs/text"
+            },
+            "reason": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "required": ["column", "reason"],
+          "additionalProperties": false
+        },
+        "exposable": {
+          "description": "Whether a seed connection of the engine may be exposed to MCP clients.",
+          "type": "boolean"
+        },
+        "statementRead": {
+          "description": "Whether an MCP client may run a statement on the engine.",
+          "type": "boolean"
+        },
+        "metadataReadChangesState": {
+          "description": "Whether reading the engine's schema for an MCP client changes state the engine keeps, though it writes no data.",
+          "type": "boolean"
+        },
+        "agentCredentialRequired": {
+          "description": "Whether MCP reads the engine only under an agent credential of the seed's own, never under the connection's login.",
+          "type": "boolean"
+        },
+        "opensLocalFile": {
+          "description": "Whether a connection of the engine opens a file on Studio's own host rather than reach a server.",
+          "type": "boolean"
+        },
+        "hostPathFields": {
+          "description": "The connection fields that name a file on Studio's own host which the provider reads.",
+          "type": "array",
+          "items": {
+            "enum": ["clientCertificatePath", "clientPrivateKeyPath"]
+          },
+          "uniqueItems": true
+        },
+        "serverLevelWithoutDatabase": {
+          "description": "Whether a connection that names no database reaches the whole server.",
+          "type": "boolean"
+        },
+        "sshTunnel": {
+          "description": "The sentence a connection with an SSH tunnel is refused with, or null where the engine takes one.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "agentCredential": {
+          "description": "The agent credential a seed of the engine may carry, or null where it carries none.",
+          "type": ["object", "null"],
+          "properties": {
+            "form": {
+              "description": "pair is a user and a password, dedicated-pair the same with a user other than the connection's own, and secret a password alone.",
+              "enum": ["pair", "dedicated-pair", "secret"]
+            },
+            "supersededBy": {
+              "description": "The connection fields the provider signs in with in preference to a user and a password.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/text"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": ["form", "supersededBy"],
+          "additionalProperties": false
+        },
+        "statementLanguage": {
+          "description": "The statement language agent mode sends the engine, or null where it sends none.",
+          "enum": [
+            "sql",
+            "kubectl",
+            "mongo",
+            "libredbkv",
+            "influxql",
+            "weaviateapi",
+            "qdrantapi",
+            "cypher",
+            "milvusrpc",
+            "rediscli",
+            "etcdctl",
+            "oxiacli",
+            "rabbitread",
+            "kafkaread",
+            "s3api",
+            "fsquery",
+            "snmpget",
+            "netconfrpc",
+            "modbusread",
+            "promql",
+            "opcuaread",
+            "mtconnectread",
+            "mqttread",
+            "sparkplugread",
+            null
+          ]
+        },
+        "servesOneSession": {
+          "description": "Why the engine's connections serve their object tree from one session, the editor's, or null where a tree read may run on a session of its own.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "agentExecution": {
+          "description": "Whether agent mode executes statements on the engine.",
+          "type": "boolean"
+        },
+        "ownWords": {
+          "description": "Whether the client receives the engine's own words through core's scrub, or only Studio's sentence naming their code.",
+          "enum": ["scrubbed", "code-only"]
+        }
+      },
+      "required": [
+        "writeReach",
+        "readsFileAccessPosture",
+        "deniedFileAccessRefusal",
+        "singleWriterFile",
+        "readRootsRequired",
+        "agentCredentialForm",
+        "maskingExemptColumns",
+        "exposable",
+        "statementRead",
+        "metadataReadChangesState",
+        "agentCredentialRequired",
+        "opensLocalFile",
+        "hostPathFields",
+        "serverLevelWithoutDatabase",
+        "sshTunnel",
+        "agentCredential",
+        "statementLanguage",
+        "servesOneSession",
+        "agentExecution",
+        "ownWords"
+      ],
+      "additionalProperties": false
+    },
+    "reasons": {
+      "description": "Why the row grants what it does, by grant member: LibreDB's review notes, each a sentence or more.",
+      "type": "object",
+      "properties": {
+        "writeReach": { "$ref": "#/$defs/text" },
+        "readsFileAccessPosture": { "$ref": "#/$defs/text" },
+        "deniedFileAccessRefusal": { "$ref": "#/$defs/text" },
+        "singleWriterFile": { "$ref": "#/$defs/text" },
+        "readRootsRequired": { "$ref": "#/$defs/text" },
+        "agentCredentialForm": { "$ref": "#/$defs/text" },
+        "maskingExemptColumns": { "$ref": "#/$defs/text" },
+        "exposable": { "$ref": "#/$defs/text" },
+        "statementRead": { "$ref": "#/$defs/text" },
+        "metadataReadChangesState": { "$ref": "#/$defs/text" },
+        "agentCredentialRequired": { "$ref": "#/$defs/text" },
+        "opensLocalFile": { "$ref": "#/$defs/text" },
+        "hostPathFields": { "$ref": "#/$defs/text" },
+        "serverLevelWithoutDatabase": { "$ref": "#/$defs/text" },
+        "sshTunnel": { "$ref": "#/$defs/text" },
+        "agentCredential": { "$ref": "#/$defs/text" },
+        "statementLanguage": { "$ref": "#/$defs/text" },
+        "servesOneSession": { "$ref": "#/$defs/text" },
+        "agentExecution": { "$ref": "#/$defs/text" },
+        "ownWords": { "$ref": "#/$defs/text" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

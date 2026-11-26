@@ -1,0 +1,320 @@
+/**
+ * The grant register's reader: it validates a register against the register's schema, then refuses a repeated key and a
+ * legacy row for an engine the legacy adapter does not serve, reports every refusal of one read together, and answers
+ * a frozen row for a key or none. Every engine id here is synthetic and every digest generated at run time.
+ */
+import { describe, expect, test } from "bun:test";
+import committed from "../src/register.json";
+import { LEGACY_KEY, parseGrantRegister, readGrantRegister } from "../src/index";
+import { schemaRefusals } from "../src/schema-subset";
+import { digest, ENGINE_A, ENGINE_B, grants, legacyRow, omit, packageRow } from "./helpers/rows";
+
+const SERVED = [ENGINE_A, ENGINE_B];
+
+/** The lines of the refusal `read` throws, without the heading line. */
+function refusalLines(read: () => unknown): string[] {
+  try {
+    read();
+  } catch (error) {
+    const [heading, ...lines] = (error as Error).message.split("\n");
+    expect(heading).toBe("The grant register is refused:");
+    return lines;
+  }
+  throw new Error("the register was read without a refusal");
+}
+
+describe("refusals", () => {
+  test("the reader refuses a duplicate key, a legacy row for an engine the adapter does not serve, a malformed digest and a member outside its vocabulary, each by name", () => {
+    const repeated = digest();
+    expect(refusalLines(() => parseGrantRegister([legacyRow(), legacyRow()], SERVED))).toEqual([
+      "duplicate-key at /1: the row repeats the key of the row at /0",
+    ]);
+    expect(
+      refusalLines(() =>
+        parseGrantRegister(
+          [packageRow(ENGINE_B, { digest: repeated }), packageRow(ENGINE_B, { digest: repeated })],
+          SERVED,
+        ),
+      ),
+    ).toEqual(["duplicate-key at /1: the row repeats the key of the row at /0"]);
+    expect(refusalLines(() => parseGrantRegister([legacyRow("enginec")], SERVED))).toEqual([
+      "legacy-engine-not-served at /0/engine: the legacy adapter serves no engine of this id",
+    ]);
+    expect(
+      refusalLines(() => parseGrantRegister([packageRow(ENGINE_B, { digest: `${digest().toUpperCase()}` })], SERVED)),
+    ).toEqual(["pattern-mismatch at /0/package/digest: the value does not have the form the schema defines here"]);
+    expect(refusalLines(() => parseGrantRegister([packageRow(ENGINE_B, { digest: "sha256:ab" })], SERVED))).toEqual([
+      "pattern-mismatch at /0/package/digest: the value does not have the form the schema defines here",
+    ]);
+    expect(
+      refusalLines(() => parseGrantRegister([legacyRow(ENGINE_A, { grants: grants({ writeReach: "wide" }) })], SERVED)),
+    ).toEqual([
+      'value-not-allowed at /0/grants/writeReach: the value is not one the schema allows here, "open", "guarded", "none"',
+    ]);
+  });
+
+  test("a package row, one of each package's key, and a legacy row for one engine are distinct keys", () => {
+    const shared = { name: "@planted/provider-b", version: "1.2.3", digest: digest() };
+    const register = parseGrantRegister(
+      [
+        legacyRow(ENGINE_B),
+        packageRow(ENGINE_B, shared),
+        packageRow(ENGINE_A, shared),
+        packageRow(ENGINE_B, { ...shared, version: "1.2.4" }),
+        packageRow(ENGINE_B, { ...shared, name: "@planted/provider-c" }),
+        packageRow(ENGINE_B, { ...shared, digest: digest() }),
+      ],
+      SERVED,
+    );
+
+    expect(register.rowFor({ legacy: LEGACY_KEY, engine: ENGINE_B })?.engine).toBe(ENGINE_B);
+    expect(register.rowFor({ package: shared, engine: ENGINE_A })?.engine).toBe(ENGINE_A);
+  });
+
+  test("every refusal of one register is reported together, each naming its rule and the JSON Pointer of the value", () => {
+    const lacking = omit(grants(), "statementLanguage");
+    const value = [
+      legacyRow(ENGINE_A, { planted: 1, grants: grants({ exposable: "yes", sshTunnel: "" }) }),
+      packageRow(ENGINE_B, { version: "1.2", extra: true }),
+      { legacy: LEGACY_KEY, engine: "Engine-A", grants: lacking },
+    ];
+
+    expect(refusalLines(() => parseGrantRegister(value, SERVED))).toEqual([
+      "wrong-type at /0/grants/exposable: the value is not of the type the schema defines here, boolean",
+      "out-of-range at /0/grants/sshTunnel: the value is outside the length the schema allows here",
+      'unknown-key at /0: the key "planted" is not one the schema defines here',
+      "pattern-mismatch at /1/package/version: the value does not have the form the schema defines here",
+      'unknown-key at /1/package: the key "extra" is not one the schema defines here',
+      "pattern-mismatch at /2/engine: the value does not have the form the schema defines here",
+      'missing-key at /2/grants: the key "statementLanguage" is missing, which the schema requires here',
+    ]);
+  });
+
+  test("the code rules are read only once the schema admits the register", () => {
+    expect(
+      refusalLines(() => parseGrantRegister([legacyRow("enginec"), legacyRow("enginec", { x: 1 })], SERVED)),
+    ).toEqual(['unknown-key at /1: the key "x" is not one the schema defines here']);
+  });
+
+  test("a row with neither or both of legacy and package is refused as no-variant", () => {
+    const neither = omit(legacyRow(), "legacy");
+    const both = { ...packageRow(), legacy: LEGACY_KEY };
+
+    expect(refusalLines(() => parseGrantRegister([neither], SERVED))).toEqual([
+      "no-variant at /0: the value does not have exactly one of the shapes the schema defines here",
+    ]);
+    expect(refusalLines(() => parseGrantRegister([both], SERVED))).toEqual([
+      "no-variant at /0: the value does not have exactly one of the shapes the schema defines here",
+    ]);
+    expect(refusalLines(() => parseGrantRegister([legacyRow(ENGINE_A, { legacy: "@libredb/other" })], SERVED))).toEqual(
+      ['value-not-allowed at /0/legacy: the value is not the one the schema allows here, "@libredb/studio"'],
+    );
+  });
+
+  test("a register that is not a list is refused at the top level", () => {
+    expect(refusalLines(() => parseGrantRegister({ rows: [] }, SERVED))).toEqual([
+      "wrong-type at the top level: the value is not of the type the schema defines here, array",
+    ]);
+  });
+});
+
+describe("answers", () => {
+  test("a row is answered frozen, its lists and objects too, for its key, and none for a key the register holds no row for", () => {
+    const value = [
+      legacyRow(ENGINE_A, {
+        grants: grants({
+          hostPathFields: ["clientCertificatePath"],
+          agentCredential: { form: "pair", supersededBy: ["apiKeyId"] },
+          maskingExemptColumns: { column: "^a$", reason: "A planted reason." },
+        }),
+        reasons: { writeReach: "A planted review note." },
+      }),
+    ];
+    const register = parseGrantRegister(value, SERVED);
+    const row = register.rowFor({ legacy: LEGACY_KEY, engine: ENGINE_A });
+
+    expect(row).toEqual(value[0] as never);
+    expect(Object.isFrozen(row)).toBe(true);
+    expect(Object.isFrozen(row?.grants)).toBe(true);
+    expect(Object.isFrozen(row?.grants.hostPathFields)).toBe(true);
+    expect(Object.isFrozen(row?.grants.agentCredential)).toBe(true);
+    expect(Object.isFrozen(row?.grants.agentCredential?.supersededBy)).toBe(true);
+    expect(Object.isFrozen(row?.grants.maskingExemptColumns)).toBe(true);
+    expect(Object.isFrozen(row?.reasons)).toBe(true);
+    expect(Object.isFrozen(value[0])).toBe(false);
+    expect(register.rowFor({ legacy: LEGACY_KEY, engine: ENGINE_B })).toBeNull();
+  });
+
+  test("a package row is answered only for its exact name, version, digest and engine", () => {
+    const key = { name: "@planted/provider-b", version: "1.2.3", digest: digest() };
+    const register = parseGrantRegister([packageRow(ENGINE_B, key)], SERVED);
+
+    const row = register.rowFor({ package: key, engine: ENGINE_B });
+    if (row === null || !("package" in row)) throw new Error("the package row was not answered as a package row");
+    expect(row.package).toEqual(key);
+    expect(Object.isFrozen(row.package)).toBe(true);
+    for (const other of [
+      { package: { ...key, name: "@planted/provider-c" }, engine: ENGINE_B },
+      { package: { ...key, version: "1.2.4" }, engine: ENGINE_B },
+      { package: { ...key, digest: digest() }, engine: ENGINE_B },
+      { package: key, engine: ENGINE_A },
+      { legacy: LEGACY_KEY, engine: ENGINE_B } as const,
+    ]) {
+      expect(register.rowFor(other)).toBeNull();
+    }
+  });
+
+  test("the committed register is read through the same validation, with the engines of its legacy rows served", () => {
+    const rows = committed as readonly { readonly engine: string; readonly legacy?: string }[];
+    const served = rows.filter((row) => row.legacy !== undefined).map((row) => row.engine);
+    const register = readGrantRegister(served);
+
+    for (const engine of served) expect(register.rowFor({ legacy: LEGACY_KEY, engine })?.engine).toBe(engine);
+    expect(LEGACY_KEY).toBe("@libredb/studio");
+  });
+});
+
+describe("the schema reader", () => {
+  const PLAIN = { type: "string" };
+
+  /** The problem lines a schema is refused with, without the heading line. */
+  function schemaProblemLines(schema: unknown): string[] {
+    try {
+      schemaRefusals(schema, "x");
+    } catch (error) {
+      const [heading, ...lines] = (error as Error).message.split("\n");
+      expect(heading).toBe("The grant register's schema is refused:");
+      return lines;
+    }
+    throw new Error("the schema was read without a problem");
+  }
+
+  test("the reader refuses a schema keyword it does not read, naming it", () => {
+    expect(schemaProblemLines({ type: "string", format: "email" })).toEqual([
+      'schema-keyword-unread at the top level: the keyword "format" is not one this reader reads',
+    ]);
+    expect(schemaProblemLines({ type: "object", properties: { a: { type: "string", minimum: 1 } } })).toEqual([
+      'schema-keyword-unread at /properties/a: the keyword "minimum" is not one this reader reads',
+    ]);
+    expect(schemaProblemLines({ $defs: { a: { $id: "x" } } })).toEqual([
+      'schema-keyword-unread at /$defs/a: the keyword "$id" is not one this reader reads',
+    ]);
+    expect(schemaProblemLines({ items: { anyOf: [] } })).toEqual([
+      'schema-keyword-unread at /items: the keyword "anyOf" is not one this reader reads',
+    ]);
+  });
+
+  test("the reader refuses a keyword it reads in a form it does not read, naming the keyword and the form", () => {
+    const cases: [unknown, string][] = [
+      [7, "schema-value-unread at the top level: a schema is read only as an object"],
+      [{ properties: { a: true } }, "schema-value-unread at /properties/a: a schema is read only as an object"],
+      [{ $defs: [] }, 'schema-value-unread at the top level: the keyword "$defs" is read only as an object of schemas'],
+      [
+        { $ref: "https://example.invalid/x" },
+        'schema-value-unread at the top level: the keyword "$ref" is read only as a reference to a schema of the root\'s $defs, #/$defs/<name>',
+      ],
+      [
+        { $ref: "#/$defs/missing" },
+        'schema-value-unread at the top level: the keyword "$ref" is read only as a reference to a schema of the root\'s $defs, #/$defs/<name>',
+      ],
+      [
+        { type: "number" },
+        'schema-value-unread at the top level: the keyword "type" is read only as one or a list of object, array, string, boolean, null',
+      ],
+      [
+        { type: [] },
+        'schema-value-unread at the top level: the keyword "type" is read only as one or a list of object, array, string, boolean, null',
+      ],
+      [{ enum: "a" }, 'schema-value-unread at the top level: the keyword "enum" is read only as a list'],
+      [{ pattern: 1 }, 'schema-value-unread at the top level: the keyword "pattern" is read only as a string'],
+      [
+        { minLength: -1 },
+        'schema-value-unread at the top level: the keyword "minLength" is read only as a non-negative integer',
+      ],
+      [
+        { maxLength: 1.5 },
+        'schema-value-unread at the top level: the keyword "maxLength" is read only as a non-negative integer',
+      ],
+      [
+        { required: [1] },
+        'schema-value-unread at the top level: the keyword "required" is read only as a list of key names',
+      ],
+      [
+        { additionalProperties: PLAIN },
+        'schema-value-unread at the top level: the keyword "additionalProperties" is read only as false',
+      ],
+      [{ uniqueItems: false }, 'schema-value-unread at the top level: the keyword "uniqueItems" is read only as true'],
+      [
+        { properties: [] },
+        'schema-value-unread at the top level: the keyword "properties" is read only as an object of schemas',
+      ],
+      [
+        { oneOf: [] },
+        'schema-value-unread at the top level: the keyword "oneOf" is read only as a list of branches that each hold only type "object" and required',
+      ],
+      [
+        { oneOf: [{ type: "object", required: ["a"], properties: {} }] },
+        'schema-value-unread at the top level: the keyword "oneOf" is read only as a list of branches that each hold only type "object" and required',
+      ],
+      [
+        { oneOf: [{ type: "string", required: ["a"] }] },
+        'schema-value-unread at the top level: the keyword "oneOf" is read only as a list of branches that each hold only type "object" and required',
+      ],
+    ];
+    for (const [schema, line] of cases)
+      expect({ schema, lines: schemaProblemLines(schema) }).toEqual({ schema, lines: [line] });
+  });
+
+  test("the reader refuses a $ref chain that returns to a schema it left, before it reads a value", () => {
+    expect(
+      schemaProblemLines({ $ref: "#/$defs/a", $defs: { a: { $ref: "#/$defs/b" }, b: { $ref: "#/$defs/a" } } }),
+    ).toEqual([
+      "schema-ref-cycle at the top level: its $ref chain returns to a schema it left",
+      "schema-ref-cycle at /$defs/a: its $ref chain returns to a schema it left",
+      "schema-ref-cycle at /$defs/b: its $ref chain returns to a schema it left",
+    ]);
+    expect(schemaProblemLines({ $defs: { self: { type: "object", $ref: "#/$defs/self" } } })).toEqual([
+      "schema-ref-cycle at /$defs/self: its $ref chain returns to a schema it left",
+    ]);
+  });
+
+  test("a $ref that reads into the value, as a list of lists, is no cycle", () => {
+    const schema = { $ref: "#/$defs/list", $defs: { list: { type: "array", items: { $ref: "#/$defs/list" } } } };
+
+    expect(schemaRefusals(schema, [[], [[]]])).toEqual([]);
+    expect(schemaRefusals(schema, [[], ["x"]])).toEqual([
+      {
+        rule: "wrong-type",
+        pointer: "/1/0",
+        sentence: "the value is not of the type the schema defines here, array",
+      },
+    ]);
+  });
+
+  test("a pointer escapes ~ and / in a key, and a key on the prototype chain is no property", () => {
+    const schema = { type: "object", properties: { "a/b~c": { type: "string" } }, additionalProperties: false };
+
+    expect(schemaRefusals(schema, { "a/b~c": 1 })).toEqual([
+      {
+        rule: "wrong-type",
+        pointer: "/a~1b~0c",
+        sentence: "the value is not of the type the schema defines here, string",
+      },
+    ]);
+    expect(schemaRefusals(schema, JSON.parse('{"toString": "x"}'))).toEqual([
+      { rule: "unknown-key", pointer: "", sentence: 'the key "toString" is not one the schema defines here' },
+    ]);
+  });
+
+  test("a string's length is counted in code points, and an object is compared as a JSON value", () => {
+    expect(schemaRefusals({ type: "string", maxLength: 1 }, "\u{1F600}")).toEqual([]);
+    expect(schemaRefusals({ type: "string", minLength: 2 }, "\u{1F600}")).toHaveLength(1);
+    expect(schemaRefusals({ const: { a: [1, { b: null }] } }, { a: [1, { b: null }] })).toEqual([]);
+    expect(schemaRefusals({ const: { a: [1] } }, { a: [1, 2] })).toHaveLength(1);
+    expect(schemaRefusals({ const: { a: 1 } }, { b: 1 })).toHaveLength(1);
+    expect(schemaRefusals({ const: { a: 1 } }, [1])).toHaveLength(1);
+    expect(schemaRefusals({ type: "array", uniqueItems: true }, [{ a: 1 }, { a: 1 }])).toEqual([
+      { rule: "duplicate", pointer: "/1", sentence: "the item repeats an earlier item of its list" },
+    ]);
+  });
+});
