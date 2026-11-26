@@ -504,3 +504,20 @@ describe("evaluateInfluxSql: the text cap (E10)", () => {
     expect(performance.now() - started).toBeLessThan(5000);
   });
 });
+
+describe("the read keywords", () => {
+  test("the policy allows each of its six read keywords", () => {
+    // Keyed by the policy's keyword type, so a seventh read keyword fails the typecheck until it is probed here.
+    const probes: Readonly<Record<InfluxSqlKeyword, string>> = {
+      SELECT: "SELECT 1",
+      WITH: "WITH x AS (SELECT 1) SELECT * FROM x",
+      VALUES: "VALUES (1)",
+      SHOW: "SHOW TABLES",
+      EXPLAIN: "EXPLAIN SELECT 1",
+      DESCRIBE: 'DESCRIBE "home"',
+    };
+    for (const [keyword, text] of Object.entries(probes)) {
+      expect(evaluateInfluxSql(text)).toEqual({ allowed: true, keyword: keyword as never });
+    }
+  });
+});

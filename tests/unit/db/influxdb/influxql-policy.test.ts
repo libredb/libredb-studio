@@ -491,3 +491,51 @@ describe("the gate exports", () => {
     );
   });
 });
+
+/** One refused text per refusal class the policy has. */
+const REFUSED_EXAMPLES: readonly string[] = [
+  "-- nothing here",
+  'from(bucket: "home") |> range(start: -1h)',
+  "SELECT * FROM home WHERE time > now() - 10µs",
+  "SELECT * FROM home WHERE room = 'Kitchen",
+  "SELECT * FROM {home}",
+  "SELECT * FROM home WHERE room = $room",
+  "SELECT * FROM home; DROP DATABASE home",
+  "SHOW DATABASES SHOW DATABASES",
+  "DROP DATABASE home",
+  "EXPLAIN DROP DATABASE home",
+  "SELECT * FROM home DROP",
+  "SELECT mean(temp) INTO other..x FROM home",
+];
+
+describe("every refusal class", () => {
+  test("one refused text per class reaches every refusal reason, the too-long one with its own sentence", () => {
+    const reasons = new Set<InfluxqlRefusalReason>();
+    for (const example of REFUSED_EXAMPLES) {
+      const verdict = evaluateInfluxql(example);
+      if (verdict.allowed) throw new Error(`${example} is allowed`);
+      reasons.add(verdict.reason);
+    }
+    const tooLong = `SELECT * FROM home WHERE room = '${"a".repeat(INFLUXQL_MAX_TEXT_BYTES + 1 - 34)}'`;
+    const verdict = evaluateInfluxql(tooLong);
+    if (verdict.allowed) throw new Error("the long text is allowed");
+    expect(new TextEncoder().encode(tooLong).length).toBe(INFLUXQL_MAX_TEXT_BYTES + 1);
+    reasons.add(verdict.reason);
+    expect(verdict.message).toBe(INFLUXQL_POLICY_SENTENCES.tooLong(INFLUXQL_MAX_TEXT_BYTES + 1));
+    const every: readonly InfluxqlRefusalReason[] = [
+      "bound-parameter",
+      "empty",
+      "flux",
+      "into",
+      "lexical",
+      "multiple-statements",
+      "not-a-read",
+      "too-long",
+    ];
+    expect([...reasons].sort()).toEqual([...every]);
+  });
+
+  test("the Flux refusal names the section on coming from InfluxDB 2.x and Flux", () => {
+    expect(INFLUXQL_POLICY_SENTENCES.flux).toContain("section Coming from InfluxDB 2.x and Flux");
+  });
+});

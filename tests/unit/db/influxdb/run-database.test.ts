@@ -13,6 +13,15 @@ import {
   resolveRunDatabase,
   resolveSessionDatabase,
 } from "@/lib/db/providers/timeseries/influxdb/run-database";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import {
+  type InfluxAnswer,
+  type InfluxClientFactory,
+  type InfluxRequest,
+} from "@/lib/db/providers/timeseries/influxdb/client";
+import { INFLUXDB_DEFAULT_PORT } from "@/lib/db/providers/timeseries/influxdb/connection-options";
+import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
+import { type DatabaseConnection } from "@/lib/types";
 
 // R54 (4): every option the sentence names exists; a container row has no action, and SHOW names its database with ON.
 const CHOOSE =
@@ -300,5 +309,107 @@ describe("resolveSessionDatabase, the order of SPEC 5.8 for influxdb3", () => {
       database: "_internal",
       source: "connection",
     });
+  });
+});
+
+const INFLUXDB: DatabaseConnection = {
+  id: "influxdb-doc",
+  name: "InfluxDB",
+  type: "influxdb",
+  host: "127.0.0.1",
+  port: INFLUXDB_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+/** A client that answers the connect sequence of a 1.x server and records every request it is handed. */
+function scriptedClient(): { readonly factory: InfluxClientFactory; readonly requests: InfluxRequest<string>[] } {
+  const requests: InfluxRequest<string>[] = [];
+  const answer = (status: number, text: string): InfluxAnswer => ({ status, contentType: "application/json", text });
+  const client = {
+    send: async (request: InfluxRequest<string>): Promise<InfluxAnswer> => {
+      requests.push(request);
+      if (request.route === "ping") return answer(204, "");
+      if (request.route === "health") return answer(200, '{"version":"1.13.1"}');
+      if (request.values.q === "SHOW DATABASES" && requests.length === 3) {
+        return answer(
+          200,
+          '{"results":[{"statement_id":0,"series":[{"name":"databases","columns":["name"],"values":[["home"],["edge"]]}]}]}',
+        );
+      }
+      return answer(200, '{"results":[{"statement_id":0}]}');
+    },
+    close: () => {},
+  };
+  return { factory: (() => client) as unknown as InfluxClientFactory, requests };
+}
+
+describe("the database a statement is sent with", () => {
+  test("a statement that is not server-wide is sent with the connection's database", async () => {
+    const { factory, requests } = scriptedClient();
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
+    await connected.connect();
+    await connected.query("SHOW MEASUREMENTS");
+    const sent = requests[requests.length - 1].values;
+    expect(sent.db).toBe("home");
+    await connected.disconnect();
+  });
+
+  test("every SHOW form of the grammar is sent with its own text", async () => {
+    // Every SHOW statement of the influxql v1.4.1 parser.
+    const grammar: Readonly<Record<string, string>> = {
+      "SHOW CONTINUOUS QUERIES": "SHOW CONTINUOUS QUERIES",
+      "SHOW DATABASES": "SHOW DATABASES",
+      "SHOW DIAGNOSTICS": "SHOW DIAGNOSTICS",
+      "SHOW FIELD KEY CARDINALITY": "SHOW FIELD KEY CARDINALITY",
+      "SHOW FIELD KEY EXACT CARDINALITY": "SHOW FIELD KEY EXACT CARDINALITY",
+      "SHOW FIELD KEYS": "SHOW FIELD KEYS",
+      "SHOW GRANTS FOR": 'SHOW GRANTS FOR "reader"',
+      "SHOW MEASUREMENT CARDINALITY": "SHOW MEASUREMENT CARDINALITY",
+      "SHOW MEASUREMENT EXACT CARDINALITY": "SHOW MEASUREMENT EXACT CARDINALITY",
+      "SHOW MEASUREMENTS": "SHOW MEASUREMENTS",
+      "SHOW QUERIES": "SHOW QUERIES",
+      "SHOW RETENTION POLICIES": "SHOW RETENTION POLICIES",
+      "SHOW SERIES": "SHOW SERIES",
+      "SHOW SERIES CARDINALITY": "SHOW SERIES CARDINALITY",
+      "SHOW SERIES EXACT CARDINALITY": "SHOW SERIES EXACT CARDINALITY",
+      "SHOW SHARD GROUPS": "SHOW SHARD GROUPS",
+      "SHOW SHARDS": "SHOW SHARDS",
+      "SHOW STATS": "SHOW STATS",
+      "SHOW SUBSCRIPTIONS": "SHOW SUBSCRIPTIONS",
+      "SHOW TAG KEY CARDINALITY": "SHOW TAG KEY CARDINALITY",
+      "SHOW TAG KEY EXACT CARDINALITY": "SHOW TAG KEY EXACT CARDINALITY",
+      "SHOW TAG KEYS": "SHOW TAG KEYS",
+      "SHOW TAG VALUES": 'SHOW TAG VALUES WITH KEY = "room"',
+      "SHOW TAG VALUES CARDINALITY": 'SHOW TAG VALUES CARDINALITY WITH KEY = "room"',
+      "SHOW USERS": "SHOW USERS",
+    };
+    const { factory, requests } = scriptedClient();
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
+    await connected.connect();
+
+    for (const text of Object.values(grammar)) {
+      // oxlint-disable-next-line no-await-in-loop -- each run's request is read as the last one recorded.
+      await connected.query(text);
+      const sent = requests[requests.length - 1].values;
+      expect(sent.q).toBe(text);
+    }
+    await connected.disconnect();
+  });
+});
+
+describe("the session database sentence", () => {
+  test("more than ten session databases are listed as ten and a count of the rest", () => {
+    // Up to ten names, then "and N more".
+    const twelve = Array.from({ length: 12 }, (_, at) => `db${at + 1}`);
+    expect(RUN_DATABASE_SENTENCES.sessionMany(twelve)).toContain("db10 and 2 more");
   });
 });

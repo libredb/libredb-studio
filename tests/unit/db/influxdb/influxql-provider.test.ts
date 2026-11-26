@@ -27,6 +27,7 @@ import {
   INFLUX_LIST_CAP,
   INFLUX_RESPONSE_CAP_BYTES,
   INFLUX_ROW_CUT,
+  INFLUXDB_DEFAULT_PORT,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import {
@@ -48,6 +49,7 @@ import {
   recordingInfluxTransport,
   type ScriptedAnswer,
 } from "../../../helpers/influxdb-transport";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 
 const CONNECTION: DatabaseConnection = {
   id: "influxdb-unit",
@@ -1234,5 +1236,43 @@ describe("E6: no trusted internal path", () => {
     const sent = requests.filter((request) => request.form !== undefined);
     expect(sent.length).toBeGreaterThan(20);
     for (const request of sent) expect(evaluateInfluxql(request.form?.q as string).allowed).toBe(true);
+  });
+});
+
+const INFLUXDB: DatabaseConnection = {
+  id: "influxdb-doc",
+  name: "InfluxDB",
+  type: "influxdb",
+  host: "127.0.0.1",
+  port: INFLUXDB_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+const provider = new InfluxDBProvider(INFLUXDB);
+const labels = provider.getLabels();
+const capabilities = provider.getCapabilities();
+async function rejectionMessage(run: () => unknown): Promise<string> {
+  try {
+    await run();
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected a refusal");
+}
+
+describe("the container path, the capabilities and the monitoring labels", () => {
+  test("a path deeper than the database is refused by the object count", async () => {
+    const path = await rejectionMessage(() => provider.countObjects(["home", "autogen"]));
+    expect(path).toStartWith("An InfluxDB container path is [database], received ");
+  });
+
+  test("the provider writes nothing and neither pages results nor limits them outside the statement", () => {
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(capabilities.supportsExternalQueryLimiting).toBe(false);
+  });
+
+  test("the labels declare no empty state for the Queries and Sessions panels, which are not offered", () => {
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
   });
 });

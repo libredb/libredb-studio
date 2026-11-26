@@ -507,3 +507,9 @@ describe("shapeInfluxqlAgentAnswer refuses statement text by the answer's shape"
     expect(shapeInfluxqlAgentAnswer(body(name), WIDE, [], "SHOW MEASUREMENTS").rows.length).toBeGreaterThan(0);
   });
 });
+
+describe("the wire expansion bound", () => {
+  test("the agent reader allows a wire expansion of six", () => {
+    expect(INFLUXQL_AGENT_WIRE_EXPANSION).toBe(6);
+  });
+});

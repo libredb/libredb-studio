@@ -186,3 +186,10 @@ describe("agentReadFailure", () => {
     expect(agentReadFailure(new Error("other"), BUDGET, "q")).toBeUndefined();
   });
 });
+
+describe("the agent read bounds", () => {
+  test("the wire expansion is three and the envelope allowance 64 KiB", () => {
+    expect(AGENT_WIRE_EXPANSION).toBe(3);
+    expect(AGENT_ENVELOPE_ALLOWANCE_BYTES).toBe(64 * 1024);
+  });
+});

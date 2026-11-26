@@ -26,6 +26,15 @@ import { RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/r
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import { recordingInfluxTransport } from "../../../helpers/influxdb-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { createInfluxClient } from "@/lib/db/providers/timeseries/influxdb/client";
+import {
+  INFLUX_RESPONSE_CAP_BYTES,
+  INFLUXDB3_DEFAULT_PORT,
+} from "@/lib/db/providers/timeseries/influxdb/connection-options";
+import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/index";
+import { generateTableQuery } from "@/lib/query-generators";
+import { type DatabaseConnection } from "@/lib/types";
 
 const fixed = (key: string): string => INFLUX_ERROR_SENTENCES[key] as string;
 const template = (key: string) => INFLUX_ERROR_SENTENCES[key] as (...parts: string[]) => string;
@@ -803,5 +812,81 @@ describe("the exported sentences", () => {
     const shape = new InfluxAnswerShapeError("statement-error", "x");
     expect(shape.fault).toBe("statement-error");
     expect(shape.serverText).toBe("x");
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "influxdb3-doc",
+  name: "InfluxDB 3",
+  type: "influxdb3",
+  host: "localhost",
+  port: INFLUXDB3_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+const provider = new InfluxDB3Provider(CONNECTION);
+const capabilities = provider.getCapabilities();
+const CORE = "3.12.0-core";
+
+/** A fixed sentence of `INFLUX_ERROR_SENTENCES`, read by key. */
+function sentence(key: string): string {
+  const value = INFLUX_ERROR_SENTENCES[key];
+  if (typeof value !== "string") throw new TypeError(`${key} is not a sentence`);
+  return value;
+}
+/** What errors.ts needs to word a failure of a run against the session database `home`. */
+const QUERY_CONTEXT: InfluxErrorContext = {
+  type: "influxdb3",
+  phase: "query",
+  endpoint: { host: "localhost", port: INFLUXDB3_DEFAULT_PORT },
+  generation: "v3",
+  hasUser: false,
+  database: "home",
+  timeoutMs: 60_000,
+  responseCapBytes: INFLUX_RESPONSE_CAP_BYTES,
+  secretForms: [],
+};
+/** The sentence a committed 3.12.0 Core answer to the SQL query route becomes. */
+function wordedCapture(name: string): string {
+  const capture = loadInfluxCapture(CORE, name);
+  const answer: InfluxAnswer = { status: capture.status, contentType: capture.contentType, text: capture.body };
+  return toInfluxError(new InfluxAnswerError(answer, SQL_ROUTES.query.path), QUERY_CONTEXT).message;
+}
+
+describe("the InfluxDB 3 sentences over committed answers", () => {
+  test("an InfluxDB 2.9.1 server picked as InfluxDB 3 is refused with the no-SQL sentence", async () => {
+    // The mis-pick sentence as the provider words it over the committed 2.9.1 /ping and /health answers.
+    const wire = recordingInfluxTransport([
+      loadInfluxCapture("2.9.1", "ping-auth"),
+      loadInfluxCapture("2.9.1", "health-auth"),
+    ]);
+    const misPicked = new InfluxDB3Provider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, (options, routes) =>
+      createInfluxClient(options, routes, wire.factory),
+    );
+    const refusal = await misPicked.connect().then(
+      () => undefined,
+      (error: Error) => error.message,
+    );
+    expect(refusal).toBe(template("noSqlOnVersion")("InfluxDB 2.9.1"));
+  });
+
+  test("the table preview carries no LIMIT, and a file-limit answer is worded with the file-limit sentence", async () => {
+    const table = generateTableQuery(["home"], "influxdb3", capabilities);
+    expect(table).not.toMatch(/\bLIMIT\b/);
+    expect(wordedCapture("filelimit-sql")).toBe(sentence("fileLimit"));
+  });
+
+  test("the committed 3.12.0 SQL error answers are worded with their templates", () => {
+    expect(wordedCapture("sql-parse-error")).toBe(
+      template("sqlParse")('SQL error: ParserError("Expected: an expression, found: EOF")'),
+    );
+    expect(wordedCapture("sql-not-implemented")).toBe(
+      template("sqlNotImplemented")("This feature is not implemented: Unsupported SQL statement: SHOW DATABASES"),
+    );
+    expect(wordedCapture("sql-db-not-found")).toBe(template("sqlDatabaseNotFound")("home"));
+    expect(wordedCapture("sql-schema-error")).toBe(
+      template("sqlRefused")(
+        "Schema error: No field named nope. Valid fields are home.co, home.hum, home.room, home.temp, home.time.",
+      ),
+    );
   });
 });

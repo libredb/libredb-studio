@@ -111,7 +111,7 @@ function groupThousands(count: number): string {
   return String(count).replace(/\B(?=(\d{3})+$)/g, ",");
 }
 
-/** Every fixed refusal sentence of this policy, so the provider-doc test reads them back from the code. */
+/** Every fixed refusal sentence of this policy. */
 export const INFLUX_SQL_POLICY_SENTENCES = {
   empty: "There is no statement to run.",
   unterminated: "The statement has a string, a quoted name or a comment that never closes.",

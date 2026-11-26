@@ -28,10 +28,11 @@ import {
   INFLUX_LIST_CAP,
   INFLUX_RESPONSE_CAP_BYTES,
   INFLUX_ROW_CUT,
+  INFLUXDB3_DEFAULT_PORT,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import { INFLUXDB3_LABELS } from "@/lib/db/providers/timeseries/influxdb/labels";
-import { toInfluxHealth } from "@/lib/db/providers/timeseries/influxdb/monitoring";
+import { toInfluxHealth, toInfluxOverview } from "@/lib/db/providers/timeseries/influxdb/monitoring";
 import { RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/run-database";
 import { INFLUXDB3_OBJECT_KINDS, influxdb3PathRefusal } from "@/lib/db/providers/timeseries/influxdb/sql-objects";
 import {
@@ -67,6 +68,7 @@ import {
   type ScriptedAnswer,
 } from "../../../helpers/influxdb-transport";
 import { errorKind } from "@/lib/db/error-record";
+import { readPing } from "@/lib/db/providers/timeseries/influxdb/versions";
 
 const CONNECTION: DatabaseConnection = {
   id: "influxdb3-unit",
@@ -1144,5 +1146,53 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     providers.push(editor.provider);
     await editor.provider.connect();
     expect(editor.provider.isConnected()).toBe(true);
+  });
+});
+
+/** A provider built over a local server with no credential, never connected. */
+const LOCAL_CONNECTION: DatabaseConnection = {
+  id: "influxdb3-doc",
+  name: "InfluxDB 3",
+  type: "influxdb3",
+  host: "localhost",
+  port: INFLUXDB3_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+const provider = new InfluxDB3Provider(LOCAL_CONNECTION);
+const capabilities = provider.getCapabilities();
+const labels = provider.getLabels();
+const CORE = "3.12.0-core";
+
+describe("the bound-parameter refusal, the monitoring overview and the capabilities", () => {
+  test("a statement with bound parameters is refused", async () => {
+    let message = "";
+    try {
+      await provider.query("SELECT 1", [1]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toBe("");
+  });
+
+  test("no empty state is set for slow queries or sessions, and the overview names the version and database", () => {
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    const ping = loadInfluxCapture(CORE, "ping-auth");
+    const version = readPing({ status: ping.status, text: ping.body });
+    const overview = (cut: boolean) =>
+      toInfluxOverview({
+        version,
+        sessionDatabase: "home",
+        objectCount: cut ? INFLUX_LIST_CAP : 6,
+        objectCountCut: cut,
+        objects: "tables",
+      });
+    expect(overview(false).version).toBe("InfluxDB 3 Core 3.12.0, database home");
+  });
+
+  test("no table creation or container levels are declared, and the preview window is the last hour", () => {
+    expect(capabilities.createTable).toBeUndefined();
+    expect(capabilities.containerLevels).toBeUndefined();
+    expect(capabilities.previewTimeWindow?.since).toBe("now() - INTERVAL '1 hour'");
   });
 });

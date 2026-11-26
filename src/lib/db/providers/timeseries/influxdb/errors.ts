@@ -85,9 +85,9 @@ const MAX_ERROR_BODY = 65_536;
 const CLOUD_HOST_SUFFIXES: readonly string[] = [".cloud2.influxdata.com", ".influxdb.io"];
 
 /**
- * Every fixed sentence of spec 5.9 and the T08 and R33 amendments, templates as functions, so the provider-doc tests
- * read them back. `statementRefused` and `unrecognised` are plan-defined: spec 5.9 words no 200 statement error that
- * no row names, and no failure outside the four inputs.
+ * Every fixed sentence of spec 5.9 and the T08 and R33 amendments, templates as functions. `statementRefused` and
+ * `unrecognised` are plan-defined: spec 5.9 words no 200 statement error that no row names, and no failure outside
+ * the four inputs.
  */
 const SENTENCES = Object.freeze({
   parse: (text: string) => `InfluxDB could not parse the statement: ${text}`,

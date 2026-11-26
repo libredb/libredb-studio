@@ -83,3 +83,17 @@ describe.each(TYPES)("the %s record", (type) => {
     expect(options({ readOnly: undefined }).readOnlySeed).toBe(false);
   });
 });
+
+describe("the InfluxDB 1.x credential warning", () => {
+  test("the record declares a no-secret warning", () => {
+    const warning = CREDENTIAL_WARNINGS.influxdb?.find((entry) => entry.kind === "no-secret");
+    expect(warning).toBeDefined();
+  });
+});
+
+describe("the InfluxDB 3 credential warning", () => {
+  test("the record declares a no-secret warning", () => {
+    const noSecret = CREDENTIAL_WARNINGS.influxdb3?.find((entry) => entry.kind === "no-secret");
+    expect(noSecret).toBeDefined();
+  });
+});
