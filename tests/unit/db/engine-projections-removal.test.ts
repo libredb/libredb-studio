@@ -317,10 +317,8 @@ describe("each projection of the admitted declarations, built with and without a
     });
     expect(Object.values(shipped)).not.toContainEqual(entry);
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
-    // Its row composes with Studio's grammar function table, which holds nothing for it, and the redaction it is given,
-    // since the record has no row for it.
-    const row = composeSqlGrammar(FIXTURE.id as DatabaseType, entry, { kind: "none" }, SQL_GRAMMAR_FUNCTIONS);
-    expect(row.redaction).toEqual({ kind: "none" });
+    // Its row composes with Studio's grammar function table, which holds nothing for it.
+    const row = composeSqlGrammar(FIXTURE.id as DatabaseType, entry, SQL_GRAMMAR_FUNCTIONS);
     expect(row.grammar.trailingLimitClauses.at(-1)?.test("SELECT 1 WITH ACME HINT")).toBe(true);
     expect(row.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
 

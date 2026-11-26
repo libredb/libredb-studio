@@ -1,14 +1,14 @@
 /**
  * The SQL grammar registry is total over the type ids, each row is its declaration's SQL text composed with Studio's
- * record of its redaction (docs/providers/CONTRACT.md, clause M-78), the no-connection spec answers `undefined`, and
+ * grammar function table (docs/providers/CONTRACT.md, clause M-78), the no-connection spec answers `undefined`, and
  * every other value outside the `DatabaseType` union is refused by name (FND-1).
  */
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { composeSqlGrammar, SQL_GRAMMAR, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { NO_CONNECTION_SQL_GRAMMAR } from "@/lib/db/sql-grammar/no-connection";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { DatabaseType } from "@/lib/types";
@@ -23,10 +23,8 @@ describe("the SQL grammar registry", () => {
   });
 
   for (const id of ALL_IDS as DatabaseType[]) {
-    test(`${id}'s row is its declaration's SQL text composed with Studio's record of its redaction`, () => {
-      expect(SQL_GRAMMAR[id]).toEqual(
-        composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_TEXT_REDACTION[id], SQL_GRAMMAR_FUNCTIONS),
-      );
+    test(`${id}'s row is its declaration's SQL text composed with Studio's grammar function table`, () => {
+      expect(SQL_GRAMMAR[id]).toEqual(composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_GRAMMAR_FUNCTIONS));
     });
   }
 
@@ -63,14 +61,15 @@ describe("the SQL grammar registry", () => {
   });
 
   // A redaction reader guessing where a literal ends can store the literal, so `sql` redaction needs text that IS
-  // SQL and a grammar established for the engine, one whose declared facts are not the compatibility default's.
+  // SQL and a grammar established for the engine, one whose declared facts are not the compatibility default's. The
+  // redaction is the engine record's grant; the no-connection reading grants none.
   // Before the registry, `readerOf` refused both cases itself.
-  test.each([...Object.entries(SQL_GRAMMAR), ["no connection", NO_CONNECTION_SQL_GRAMMAR]] as [
-    string,
-    SqlGrammarSpec,
-  ][])("%s redacts as SQL only text it reads as SQL under its own grammar", (_id, spec) => {
-    if (spec.redaction.kind !== "sql") return;
-    expect(spec.readsSqlText).toBe(true);
-    expect(spec.grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
-  });
+  test.each(Object.entries(SQL_GRAMMAR) as [DatabaseType, SqlGrammarSpec][])(
+    "%s redacts as SQL only text it reads as SQL under its own grammar",
+    (id, spec) => {
+      if (servedEngineRecord(id).grants.redaction.kind !== "sql") return;
+      expect(spec.readsSqlText).toBe(true);
+      expect(spec.grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
+    },
+  );
 });

@@ -1,6 +1,8 @@
 /**
  * What Studio's readers read for one engine's statement text: its grammar facts plus the per-engine readings beside
- * them (redaction, the update-target reader and completion quoting). Each engine's row is composed from its declaration
+ * them (the update-target reader and completion quoting). The redaction the query event log keeps a statement by is no
+ * member of a row: it is the engine record's grant, composed by `composeStatementRedaction`
+ * (src/lib/db/sql-grammar/statement-redaction.ts) into a `SqlRedaction`. Each engine's row is composed from its declaration
  * (src/lib/db/sql-grammar/index.ts, `composeSqlGrammar`; docs/providers/CONTRACT.md, clause M-78), which states every
  * fact, so no engine inherits one from a base object. `SqlGrammar` itself still has optional facts (`dollarTags`,
  * `rawStrings`, `confirmForms` and others), which its readers default when a grammar leaves them out, and the
@@ -44,7 +46,6 @@ export interface SqlGrammarSpec {
    * `@/lib/db/confirmation-claim-review`) and otherwise reads the text as SQL. Every other reader reads it as declared.
    */
   readonly readsSqlText: boolean;
-  readonly redaction: SqlRedaction;
   readonly updateTarget: UpdateTargetGrammar;
   readonly completion: CompletionQuoting;
 }

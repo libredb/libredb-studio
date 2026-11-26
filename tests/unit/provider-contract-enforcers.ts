@@ -274,8 +274,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else",
         "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names",
         "every function a connection string row holds is named by its engine's declaration",
-        "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names",
-        "every function a grammar row holds is named by its engine's declaration",
+        "every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names",
+        "every function a grammar row or a statement redaction holds is named by its engine's declaration",
         "every name an SQL writing declaration states is its member's slot, and Studio's SQL writing function table binds it there to the function the engine's row runs",
         "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named",
         "every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs",
@@ -767,8 +767,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declaration-readers.test.ts": [
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
       ],
-      "tests/unit/db/sql-grammar/compose.test.ts": [
-        "the redaction is the record's row, a command reader bound through the function table, never the entry's",
+      "tests/unit/db/sql-grammar/statement-redaction.test.ts": [
+        "every legacy record's statement redaction is its granted redaction, a command reader bound through the grammar function table",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
@@ -1259,7 +1259,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.redaction is the row's redaction, a command reader named by its slot",
-        "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names",
+        "every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names",
       ],
       "tests/unit/lib/query-events/redact.test.ts": [
         "the vectors hold every literal form for postgres, mysql, mssql and oracle, and MongoDB and Redis commands",
@@ -1315,7 +1315,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.updateTarget is the row's, each word set in its order",
         "sqlText.completion names a segment formatter and a quoted qualifier reader exactly where the row has one",
-        "every function a grammar row holds is named by its engine's declaration",
+        "every function a grammar row or a statement redaction holds is named by its engine's declaration",
       ],
     },
     schema: ["/$defs/updateTargetWords", "/$defs/completionReaders"],

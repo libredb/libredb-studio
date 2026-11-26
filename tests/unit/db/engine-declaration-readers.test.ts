@@ -365,7 +365,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/sql-grammar/index.ts",
     members: SQL_TEXT_MEMBERS,
     reason:
-      "each engine's SQL grammar row, composed from the generated SQL text, Studio's hand-written redaction record and Studio's grammar function table, which binds each named function",
+      "each engine's SQL grammar row, composed from the generated SQL text and Studio's grammar function table, which binds each named function",
   },
   {
     path: "src/lib/db/sql-writing/index.ts",

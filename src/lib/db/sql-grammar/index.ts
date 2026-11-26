@@ -1,21 +1,23 @@
 /**
  * Every engine's SQL grammar row, one per type id, composed when this module loads (docs/providers/CONTRACT.md, clause
- * M-78) from three sources:
+ * M-78) from two sources:
  *
  * - the SQL text each engine's declaration authors, `sqlText.readsSqlText`, `grammar`, `updateTarget` and
  *   `completion`, projected into src/lib/db/engine-catalog/sql-text.generated.ts as `BUNDLED_SQL_TEXT`;
- * - Studio's review record of the `sqlText.redaction` claim, `SQL_TEXT_REDACTION` (./redaction.ts), written by hand and
- *   never read from a declaration, so a package never carries its own grant (clauses M-53 and M-54);
- * - Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS`, which binds each function name a declaration or the
- *   record gives to the function Studio's own source holds for that engine at that slot.
+ * - Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS`, which binds each function name a declaration gives to the
+ *   function Studio's own source holds for that engine at that slot.
+ *
+ * A row holds no redaction: the redaction reaches the query event log only as the engine record's grant of it, from the
+ * engine's register row, composed per event by ./statement-redaction.ts with this module's function table. That module
+ * stays out of this one because the VS Code webview and the browser bundle this module, and the grant reader's
+ * closure is one the webview's boundary refuses.
  *
  * The grammar is the declaration's facts in its member order, each fact a declaration states at the reading its absence
  * has left out (clause S-4), so a reader that reads an absent fact through `=== undefined` reads it as it always has,
  * and each trailing limit clause is compiled once, here. A declaration's grammar facts, its update target words and its
  * completion readers' names are therefore edited in its file under src/lib/db/engine-declarations and regenerated with
- * `bun run engines:generate`; its redaction is edited in ./redaction.ts.
+ * `bun run engines:generate`.
  */
-import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
 import type { SqlTextEntry } from "@/lib/db/engine-catalog/projection";
@@ -26,18 +28,11 @@ import { POSTGRES_FORMAT_SEGMENT, POSTGRES_READ_QUOTED_QUALIFIER } from "@/lib/d
 import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_SQL_GRAMMAR } from "./no-connection";
-import { SQL_TEXT_REDACTION } from "./redaction";
-import type {
-  CommandRedactionReader,
-  QuotedQualifierReader,
-  SegmentFormatter,
-  SqlGrammarSpec,
-  SqlRedaction,
-} from "./types";
+import type { CommandRedactionReader, QuotedQualifierReader, SegmentFormatter, SqlGrammarSpec } from "./types";
 
 /**
- * Studio's grammar function table: for each slot kind a declaration or the redaction record names a function at, the
- * functions Studio's own source holds, per engine and name. A name is bound only at its own kind, so a segment
+ * Studio's grammar function table: for each slot kind a declaration or an engine's granted redaction names a function
+ * at, the functions Studio's own source holds, per engine and name. A name is bound only at its own kind, so a segment
  * formatter is never run as a redaction reader.
  */
 export interface SqlGrammarFunctions {
@@ -50,13 +45,13 @@ export interface SqlGrammarFunctions {
 }
 
 /**
- * The functions the committed declarations and the redaction record name, each the one Studio's source holds for that
- * engine at that slot: MongoDB's and Redis's command redaction readers, and PostgreSQL's completion quoting. The
- * completion readers run in the browser, so only Studio's own functions are bound here: a name this table does not
- * hold, a package's included, is refused when the grammar is composed, and where a package's completion reader runs is
- * decided with the first package that names one (docs/providers/CONTRACT.md, clause S-10).
- * tests/unit/db/sql-grammar/compose.test.ts holds the table to exactly the names the committed declarations and the
- * record give.
+ * The functions the committed declarations and the legacy engines' granted redactions name, each the one Studio's
+ * source holds for that engine at that slot: MongoDB's and Redis's command redaction readers, bound per event by
+ * ./statement-redaction.ts, and PostgreSQL's completion quoting. The completion readers run in the browser, so only
+ * Studio's own functions are bound here: a name this table does not hold, a package's included, is refused when the
+ * grammar is composed, and where a package's completion reader runs is decided with the first package that names one
+ * (docs/providers/CONTRACT.md, clause S-10). tests/unit/db/sql-grammar/compose.test.ts holds the table to exactly the
+ * names the committed declarations and the legacy records' grants give.
  */
 export const SQL_GRAMMAR_FUNCTIONS: SqlGrammarFunctions = Object.freeze({
   redactionReaders: Object.freeze({
@@ -138,28 +133,10 @@ export function grammarFromFacts(facts: SqlTextEntry["grammar"]): SqlGrammar {
 }
 
 /**
- * The redaction `record` grants engine `id`: a `sql` and a `none` redaction as given, and a `command` redaction with
- * the reader it names bound through `functions`.
- *
- * @throws {Error} Naming the engine and the name, where `functions` holds no redaction reader for it under that name.
- */
-function redactionOf(id: DatabaseType, record: StatementRedaction, functions: SqlGrammarFunctions): SqlRedaction {
-  switch (record.kind) {
-    case "sql":
-      return Object.freeze({ kind: "sql", nameQuote: record.nameQuote });
-    case "command":
-      return Object.freeze({ kind: "command", read: boundFunction(id, functions.redactionReaders, record.reader) });
-    case "none":
-      return Object.freeze({ kind: "none" });
-  }
-}
-
-/**
- * Engine `id`'s grammar row, composed from `entry`, its projected SQL text, `redaction`, the row of Studio's record of
- * its redaction, and `functions`: the grammar by `grammarFromFacts`; `readsSqlText` as declared; the update target's flag and
- * its two word lists as sets in the declared order; each completion reader bound through `functions` or null; and the
- * redaction `redaction` grants, never anything `entry` holds. The row and every record in it are frozen, a trailing
- * limit clause apart, whose `lastIndex` is the engine's to write.
+ * Engine `id`'s grammar row, composed from `entry`, its projected SQL text, and `functions`: the grammar by
+ * `grammarFromFacts`; `readsSqlText` as declared; the update target's flag and its two word lists as sets in the
+ * declared order; and each completion reader bound through `functions` or null. The row holds no redaction. The row and
+ * every record in it are frozen, a trailing limit clause apart, whose `lastIndex` is the engine's to write.
  *
  * @throws {Error} Naming the engine and the name, for a function name `functions` holds none for at its slot, a name it
  * holds only at another slot included.
@@ -167,14 +144,12 @@ function redactionOf(id: DatabaseType, record: StatementRedaction, functions: Sq
 export function composeSqlGrammar(
   id: DatabaseType,
   entry: SqlTextEntry,
-  redaction: StatementRedaction,
   functions: SqlGrammarFunctions,
 ): SqlGrammarSpec {
   const { updateTarget, completion } = entry;
   return Object.freeze({
     grammar: grammarFromFacts(entry.grammar),
     readsSqlText: entry.readsSqlText,
-    redaction: redactionOf(id, redaction, functions),
     updateTarget: Object.freeze({
       dashCommentNeedsSeparator: updateTarget.dashCommentNeedsSeparator,
       extraQueryOpeners: Object.freeze(new Set(updateTarget.extraQueryOpeners)),
@@ -194,16 +169,15 @@ export function composeSqlGrammar(
 }
 
 /**
- * Every engine's grammar row, composed when this module loads from `BUNDLED_SQL_TEXT`, `SQL_TEXT_REDACTION` and
- * Studio's grammar function table, so a committed module naming a function Studio holds none for fails every importer
- * by that sentence. Keyed in the projection's ascending id order, and total over `DatabaseType`, since the generated
+ * Every engine's grammar row, composed when this module loads from `BUNDLED_SQL_TEXT` and Studio's grammar function
+ * table, so a committed module naming a function Studio holds none for fails every importer by that sentence. Keyed in the projection's ascending id order, and total over `DatabaseType`, since the generated
  * record is typed over it.
  */
 export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Object.freeze(
   Object.fromEntries(
     (Object.keys(BUNDLED_SQL_TEXT) as DatabaseType[]).map((id) => [
       id,
-      composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_TEXT_REDACTION[id], SQL_GRAMMAR_FUNCTIONS),
+      composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_GRAMMAR_FUNCTIONS),
     ]),
   ) as Record<DatabaseType, SqlGrammarSpec>,
 );

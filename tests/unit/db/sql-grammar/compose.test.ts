@@ -1,13 +1,14 @@
 /**
  * Studio's SQL grammar is composed when its module loads (docs/providers/CONTRACT.md, clause M-78): each engine's row
- * from the SQL text its declaration authors, projected into src/lib/db/engine-catalog/sql-text.generated.ts, the row of
- * Studio's hand-written redaction record, `SQL_TEXT_REDACTION`, and Studio's grammar function table,
- * `SQL_GRAMMAR_FUNCTIONS`, which binds each name a declaration or the record gives.
+ * from the SQL text its declaration authors, projected into src/lib/db/engine-catalog/sql-text.generated.ts, and
+ * Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS`, which binds each name a declaration gives. A row holds no
+ * redaction: the query event log reads the engine record's grant of it, composed by
+ * src/lib/db/sql-grammar/statement-redaction.ts with the same table.
  *
  * The census (tests/unit/db/engine-declarations.test.ts) reads every row back to its declaration fact by fact, and the
  * golden files hold what every reader answers from the rows; this file holds the composition itself: the absent
- * readings left out, each clause compiled once, every level frozen, each name bound at its own slot or refused by name,
- * and the redaction never read from the entry.
+ * readings left out, each clause compiled once, every level frozen, and each name bound at its own slot or refused by
+ * name.
  */
 import { describe, expect, test } from "bun:test";
 import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
@@ -16,8 +17,8 @@ import type { SqlTextEntry } from "@/lib/db/engine-catalog/projection";
 import { MONGODB_REDACTION_READER } from "@/lib/db/providers/document/mongodb/sql-grammar";
 import { REDIS_REDACTION_READER } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
 import { POSTGRES_FORMAT_SEGMENT, POSTGRES_READ_QUOTED_QUALIFIER } from "@/lib/db/providers/sql/postgres-sql-grammar";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { composeSqlGrammar, SQL_GRAMMAR, SQL_GRAMMAR_FUNCTIONS } from "@/lib/db/sql-grammar";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 
@@ -49,13 +50,16 @@ function frozenThrough(value: unknown): boolean {
 }
 
 describe("Studio's SQL grammar, composed from the declarations", () => {
-  test("each row is its declaration's SQL text composed with Studio's record of its redaction", () => {
+  test("each row is its declaration's SQL text composed with Studio's grammar function table, and holds no redaction", () => {
     expect(Object.keys(SQL_GRAMMAR)).toEqual(IDS);
-    expect(Object.keys(SQL_TEXT_REDACTION)).toEqual(IDS);
     for (const id of IDS) {
+      expect({ id, members: Object.keys(SQL_GRAMMAR[id]) }).toEqual({
+        id,
+        members: ["grammar", "readsSqlText", "updateTarget", "completion"],
+      });
       expect({ id, row: SQL_GRAMMAR[id] }).toEqual({
         id,
-        row: composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_TEXT_REDACTION[id], SQL_GRAMMAR_FUNCTIONS),
+        row: composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_GRAMMAR_FUNCTIONS),
       });
       expect(SQL_GRAMMAR[id].readsSqlText).toBe(BUNDLED_SQL_TEXT[id].readsSqlText);
       expect([...SQL_GRAMMAR[id].updateTarget.extraQueryOpeners]).toEqual([
@@ -95,7 +99,6 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
         confirmConfigKeys: null,
         explainExecutesWithAnalyze: false,
       }),
-      { kind: "none" },
       SQL_GRAMMAR_FUNCTIONS,
     );
     expect(Object.keys(absent.grammar)).toEqual(REQUIRED_FACTS);
@@ -123,7 +126,7 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
       confirmConfigKeys: [],
       explainExecutesWithAnalyze: true,
     };
-    const composed = composeSqlGrammar("postgres", postgresWith(stated), { kind: "none" }, SQL_GRAMMAR_FUNCTIONS);
+    const composed = composeSqlGrammar("postgres", postgresWith(stated), SQL_GRAMMAR_FUNCTIONS);
     const facts = Object.fromEntries(
       Object.entries(composed.grammar).filter(([fact]) => fact !== "trailingLimitClauses"),
     );
@@ -141,7 +144,6 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
     const snowflake = composeSqlGrammar(
       "snowflake",
       { ...BUNDLED_SQL_TEXT.snowflake, grammar: reordered },
-      SQL_TEXT_REDACTION.snowflake,
       SQL_GRAMMAR_FUNCTIONS,
     );
     expect(Object.keys(snowflake.grammar)).toEqual([...Object.keys(SQL_GRAMMAR.snowflake.grammar)].reverse());
@@ -156,12 +158,7 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
     expect(resolveSqlGrammar("postgres").trailingLimitClauses[0]).toBe(clauses[0]);
     expect(SQL_GRAMMAR.postgres.grammar.trailingLimitClauses).toBe(clauses);
     // A composition compiles its own.
-    const again = composeSqlGrammar(
-      "postgres",
-      BUNDLED_SQL_TEXT.postgres,
-      SQL_TEXT_REDACTION.postgres,
-      SQL_GRAMMAR_FUNCTIONS,
-    );
+    const again = composeSqlGrammar("postgres", BUNDLED_SQL_TEXT.postgres, SQL_GRAMMAR_FUNCTIONS);
     expect(again.grammar.trailingLimitClauses[0]).not.toBe(clauses[0]);
     expect(again.grammar.trailingLimitClauses[0]).toEqual(clauses[0]);
   });
@@ -183,33 +180,20 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
       composeSqlGrammar(
         "mysql",
         { ...mysql, completion: { ...mysql.completion, formatSegment: "formatSegment" } },
-        SQL_TEXT_REDACTION.mysql,
         SQL_GRAMMAR_FUNCTIONS,
       ),
     ).toThrow('mysql names the function "formatSegment", which Studio holds no function for.');
     const postgres = BUNDLED_SQL_TEXT.postgres;
     expect(() =>
-      composeSqlGrammar("postgres", postgres, { kind: "command", reader: "formatSegment" }, SQL_GRAMMAR_FUNCTIONS),
-    ).toThrow('postgres names the function "formatSegment", which Studio holds no function for.');
-    expect(() =>
       composeSqlGrammar(
         "postgres",
         { ...postgres, completion: { formatSegment: "readQuotedQualifier", readQuotedQualifier: null } },
-        SQL_TEXT_REDACTION.postgres,
         SQL_GRAMMAR_FUNCTIONS,
       ),
     ).toThrow('postgres names the function "readQuotedQualifier", which Studio holds no function for.');
-    expect(() =>
-      composeSqlGrammar(
-        "mongodb",
-        BUNDLED_SQL_TEXT.mongodb,
-        { kind: "command", reader: "toString" },
-        SQL_GRAMMAR_FUNCTIONS,
-      ),
-    ).toThrow('mongodb names the function "toString", which Studio holds no function for.');
   });
 
-  test("Studio's grammar function table holds exactly the functions the committed declarations and the redaction record name, each at its own slot", () => {
+  test("Studio's grammar function table holds exactly the functions the committed declarations and the legacy records' granted redactions name, each at its own slot", () => {
     const named = (read: (id: DatabaseType) => string | null) =>
       Object.fromEntries(
         IDS.flatMap((id) => {
@@ -227,7 +211,7 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
     ]);
     expect(tableNames(SQL_GRAMMAR_FUNCTIONS.redactionReaders)).toEqual(
       named((id) => {
-        const redaction = SQL_TEXT_REDACTION[id];
+        const redaction = servedEngineRecord(id).grants.redaction;
         return redaction.kind === "command" ? redaction.reader : null;
       }),
     );
@@ -247,24 +231,5 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
     expect(SQL_GRAMMAR.postgres.completion.formatSegment).toBe(POSTGRES_FORMAT_SEGMENT);
     expect(SQL_GRAMMAR.postgres.completion.readQuotedQualifier).toBe(POSTGRES_READ_QUOTED_QUALIFIER);
     expect(frozenThrough(SQL_GRAMMAR_FUNCTIONS)).toBe(true);
-  });
-
-  test("the redaction is the record's row, a command reader bound through the function table, never the entry's", () => {
-    for (const id of IDS) {
-      const record = SQL_TEXT_REDACTION[id];
-      const { redaction } = SQL_GRAMMAR[id];
-      if (record.kind === "command") {
-        expect({ id, kind: redaction.kind }).toEqual({ id, kind: "command" });
-      } else {
-        expect({ id, redaction }).toEqual({ id, redaction: record });
-      }
-    }
-    expect(SQL_GRAMMAR.mongodb.redaction).toEqual({ kind: "command", read: MONGODB_REDACTION_READER });
-    expect(SQL_GRAMMAR.redis.redaction).toEqual({ kind: "command", read: REDIS_REDACTION_READER });
-    // An entry that carries a redaction of its own is composed with the record's, whatever it states.
-    const planted = { ...BUNDLED_SQL_TEXT.mongodb, redaction: { kind: "none" } } as SqlTextEntry;
-    const composed = composeSqlGrammar("mongodb", planted, SQL_TEXT_REDACTION.mongodb, SQL_GRAMMAR_FUNCTIONS);
-    expect(composed.redaction).toEqual({ kind: "command", read: MONGODB_REDACTION_READER });
-    expect(Object.keys(BUNDLED_SQL_TEXT.mongodb)).not.toContain("redaction");
   });
 });

@@ -1,17 +1,17 @@
 /**
- * Studio's review record of the `sqlText.redaction` claim (docs/providers/CONTRACT.md, clauses M-53, M-54 and M-78):
- * per engine, how a statement is redacted before the query event log keeps it, the grant every reader reads. An engine
- * declaration requests its redaction at `sqlText.redaction`, and each shipped engine's request is its row here, written
- * into its declaration by scripts/generate-engine-declarations.ts; the row is never read from a declaration, so a
- * package never carries its own grant.
+ * Studio's record of the `sqlText.redaction` claim (docs/providers/CONTRACT.md, clauses M-53, M-54 and M-78): per
+ * engine, how a statement is redacted before the query event log keeps it. An engine declaration requests its
+ * redaction at `sqlText.redaction`, and each shipped engine's request is its row here, written into its declaration by
+ * scripts/generate-engine-declarations.ts. No reader of Studio's reads this record: the query event log reads the
+ * engine record's grant, from the engine's register row, which equals this row for every legacy engine
+ * (tests/unit/db/grant-register-legacy-rows.test.ts).
  *
  * Written by hand as one frozen literal, a row per engine in id order, so no projection of the declarations can feed it
  * (tests/unit/db/engine-declaration-readers.test.ts). A command redaction's reader is held by the name the declaration
- * gives it and bound through Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS` in
- * src/lib/db/sql-grammar/index.ts, when each engine's grammar row is composed, so this record holds no imported
- * binding. Its restrictive value is `none`, under which the query event log keeps nothing of a statement's text (M-53).
+ * gives it, so this record holds no imported binding. Its restrictive value is `none`, under which the query event log
+ * keeps nothing of a statement's text (M-53).
  *
- * A leaf with type imports only, so every reader, the browser's included, can load it.
+ * A leaf with type imports only.
  */
 import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
 import type { DatabaseType } from "@/lib/types";

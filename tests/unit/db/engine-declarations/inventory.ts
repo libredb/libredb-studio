@@ -234,7 +234,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/sql-grammar/index.ts",
     name: "SQL_GRAMMAR",
     destination:
-      "engine declaration: sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion, authored in each declaration and composed with Studio's grammar function table, its redaction read from SQL_TEXT_REDACTION",
+      "engine declaration: sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion, authored in each declaration and composed with Studio's grammar function table",
   },
   {
     module: "src/lib/db/sql-grammar/redaction.ts",

@@ -160,8 +160,9 @@ import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { assertOpenable } from "@/lib/db/open-check";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import type { EngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
+import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
 import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
@@ -337,7 +338,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 /** Every member a redaction of any kind may hold. */
 type RedactionMember = "kind" | "nameQuote" | "read";
 
-/** A row's redaction as a declaration writes it: a command reader named by its slot. */
+/** An engine's statement redaction as a declaration writes it: a command reader named by its slot. */
 function declaredRedaction(row: SqlRedaction): object {
   if (row.kind === "sql") return { kind: "sql", nameQuote: row.nameQuote };
   return row.kind === "command" ? { kind: "command", reader: "redactionReader" } : { kind: "none" };
@@ -346,6 +347,16 @@ function declaredRedaction(row: SqlRedaction): object {
 /** The reader of a command redaction, or undefined where the redaction is of another kind. */
 function commandReader(redaction: SqlRedaction): unknown {
   return redaction.kind === "command" ? redaction.read : undefined;
+}
+
+/** The statement redaction the query event log reads for a shipped engine: its record's grant, composed. */
+function statementRedaction(type: DatabaseType): SqlRedaction {
+  return composeStatementRedaction(servedEngineRecord(type));
+}
+
+/** A shipped engine's grammar row with its statement redaction beside it, for `functionPaths`. */
+function statementFunctions(type: DatabaseType): object {
+  return { ...SQL_GRAMMAR[type], redaction: statementRedaction(type) };
 }
 
 /**
@@ -440,7 +451,10 @@ function connectionStringNames(d: EngineDeclaration): string[] {
   ];
 }
 
-/** The slots of a SQL grammar row whose function the declaration names, as `functionPaths` spells them. */
+/**
+ * The slots of a SQL grammar row and of its engine's statement redaction whose function the declaration names, as
+ * `functionPaths` spells them over `statementFunctions`.
+ */
 function sqlTextSlotPaths(d: EngineDeclaration): string[] {
   const { redaction, completion } = d.sqlText;
   return [
@@ -3108,9 +3122,10 @@ describe("the census", () => {
   });
 
   test("sqlText.redaction is the row's redaction, a command reader named by its slot", () => {
-    expect(
-      differing((type, d) => sameValue(d.sqlText.redaction, declaredRedaction(SQL_GRAMMAR[type].redaction))),
-    ).toEqual([]);
+    // The row is the engine record's grant, composed into the statement redaction the query event log reads.
+    expect(differing((type, d) => sameValue(d.sqlText.redaction, declaredRedaction(statementRedaction(type))))).toEqual(
+      [],
+    );
     // Vacuity: every kind and more than one name quote are declared.
     const redactions = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.redaction);
     expect(new Set(redactions.map(({ kind }) => kind)).size).toBe(3);
@@ -3162,7 +3177,7 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("every function a grammar row holds is, through the census's own resolver, the very slot its declaration names", () => {
+  test("every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names", () => {
     expect(
       differing((type, d) => {
         const row = SQL_GRAMMAR[type];
@@ -3170,7 +3185,7 @@ describe("the census", () => {
         const same = (name: string | null, held: unknown) =>
           name === null || (typeof held === "function" && resolveNamed(type, name) === held);
         return (
-          (redaction.kind !== "command" || same(redaction.reader, commandReader(row.redaction))) &&
+          (redaction.kind !== "command" || same(redaction.reader, commandReader(statementRedaction(type)))) &&
           same(completion.formatSegment, row.completion.formatSegment) &&
           same(completion.readQuotedQualifier, row.completion.readQuotedQualifier)
         );
@@ -3180,9 +3195,11 @@ describe("the census", () => {
     expect(typeof resolveNamed("postgres", "readQuotedQualifier")).toBe("function");
   });
 
-  test("every function a grammar row holds is named by its engine's declaration", () => {
+  test("every function a grammar row or a statement redaction holds is named by its engine's declaration", () => {
     expect(
-      differing((type, d) => sameValue(sorted(functionPaths(SQL_GRAMMAR[type], "")), sorted(sqlTextSlotPaths(d)))),
+      differing((type, d) =>
+        sameValue(sorted(functionPaths(statementFunctions(type), "")), sorted(sqlTextSlotPaths(d))),
+      ),
     ).toEqual([]);
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) => sqlTextSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
@@ -3198,7 +3215,6 @@ describe("the census", () => {
     const specDeclaredAt: Readonly<Record<keyof SqlGrammarSpec, string>> = {
       grammar: "grammar",
       readsSqlText: "readsSqlText",
-      redaction: "redaction",
       updateTarget: "updateTarget",
       completion: "completion",
     };
@@ -3264,7 +3280,7 @@ describe("the census", () => {
           ...unplaced(row, specDeclaredAt, ""),
           ...unplaced(row.grammar, grammarDeclaredAt, "grammar."),
           ...unplaced(row.grammar.script, scriptDeclaredAt, "grammar.script."),
-          ...unplaced(row.redaction, redactionDeclaredAt, "redaction."),
+          ...unplaced(statementRedaction(type), redactionDeclaredAt, "redaction."),
           ...unplaced(row.updateTarget, updateTargetDeclaredAt, "updateTarget."),
           ...unplaced(row.completion, completionDeclaredAt, "completion."),
         ].map((member) => `${type}.${member}`);
@@ -3275,7 +3291,7 @@ describe("the census", () => {
         const { sqlText } = d;
         const redaction = Object.entries(redactionDeclaredAt).every(
           ([member, declaredMember]) =>
-            Object.hasOwn(SQL_GRAMMAR[type].redaction, member) === Object.hasOwn(sqlText.redaction, declaredMember),
+            Object.hasOwn(statementRedaction(type), member) === Object.hasOwn(sqlText.redaction, declaredMember),
         );
         return (
           placed(sqlText, specDeclaredAt) &&
