@@ -4,14 +4,16 @@
  * engine moves into its own package, where the document is rewritten from the package's manifest.
  *
  * The scan reads every tracked TypeScript and JavaScript file whose text holds `providers` or `providerTriad`, parses it with the
- * TypeScript compiler, and reports a file that builds a per-engine document path in one of five forms:
+ * TypeScript compiler, and reports a file that builds a per-engine document path in one of six forms:
  * 1. a string whose whole text, after any leading `./` or `../` segments, is `docs/providers/<name>.md`, with a
  *    `<name>` of lowercase letters and digits, so CONTRACT.md and README.md never match;
  * 2. a string whose whole text, after the same prefix, is the directory `docs/providers` or `docs/providers/`;
- * 3. a template expression whose head or any span text ends with `docs/providers/`;
- * 4. the strings `"docs"` then `"providers"` side by side in a call's arguments or an array literal, unless the next
+ * 3. a string whose whole text, after the same prefix, starts with `docs/providers/` and holds a glob metacharacter
+ *    (`*`, `?`, `[` or `{`), a pattern that matches every provider document;
+ * 4. a template expression whose head or any span text ends with `docs/providers/`;
+ * 5. the strings `"docs"` then `"providers"` side by side in a call's arguments or an array literal, unless the next
  *    element is `"CONTRACT.md"` or `"README.md"`;
- * 5. the member `.doc` of a `providerTriad(...)` call.
+ * 6. the member `.doc` of a `providerTriad(...)` call.
  * A path inside a comment, a regular expression or a longer sentence is never a form, because only whole string
  * nodes of the syntax tree are read. The scan is form-based: a path assembled another way (a variable holding
  * `"docs"` joined later with `"providers"`) is not seen, so a form found in review is added here. The engine set is
@@ -45,6 +47,8 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "tests/unit/db/errors.test.ts": "asserts that a load-failure message names the doc's path and reads no doc",
   "tests/unit/fixed-tool-count-matcher.test.ts": "a planted path in the matcher's scope test",
   "tests/unit/source-line-citation-matcher.test.ts": "a planted path in the matcher's citation test",
+  "tests/unit/mcp-documentation.test.ts":
+    "globs every provider doc for a fixed-text absence rule (no doc sends a language to an arm of its own) held to no code",
   "tests/unit/db/s3/live-environment.test.ts": SLICE_TWO,
   "tests/unit/db/databend/provider-doc.test.ts": SLICE_TWO,
   "tests/unit/db/etcd/provider-doc.test.ts": SLICE_TWO,
@@ -68,10 +72,11 @@ const CODE_FILE = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 const PREFIX = String.raw`(?:\.{1,2}/)*`;
 const DOC_PATH = new RegExp(`^${PREFIX}docs/providers/[a-z0-9]+\\.md$`);
 const DOC_DIRECTORY = new RegExp(`^${PREFIX}docs/providers/?$`);
+const DOC_GLOB = new RegExp(`^${PREFIX}docs/providers/.*[*?[{]`);
 const TEMPLATE_TAIL = /(?:^|\/)docs\/providers\/$/;
 const CENTRAL_DOCS = new Set(["CONTRACT.md", "README.md"]);
 
-type Form = "literal" | "directory" | "template" | "join" | "triad";
+type Form = "literal" | "directory" | "glob" | "template" | "join" | "triad";
 
 interface Found {
   readonly line: number;
@@ -96,6 +101,7 @@ function docPathForms(file: string, text: string): Found[] {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (DOC_PATH.test(node.text)) add(node, "literal");
       else if (DOC_DIRECTORY.test(node.text)) add(node, "directory");
+      else if (DOC_GLOB.test(node.text)) add(node, "glob");
     }
     if (
       ts.isTemplateExpression(node) &&
@@ -198,6 +204,10 @@ describe("the scanner finds each form and nothing else", () => {
     [`const doc = readFileSync(\`./${providers}/example.md\`, "utf8");`, "literal"],
     [`const dir = join(ROOT, "${providers}");`, "directory"],
     [`const dir = join(ROOT, "${providers}/");`, "directory"],
+    [`const docs = new Bun.Glob("${providers}/*.md").scanSync(ROOT);`, "glob"],
+    [`const docs = glob("./${providers}/**/*.md");`, "glob"],
+    [`const docs = glob("${providers}/{a,b}.md");`, "glob"],
+    [`const docs = glob("${providers}/[a-z]?.md");`, "glob"],
     [`const doc = \`${providers}/\${type}.md\`;`, "template"],
     [`const doc = \`\${ROOT}/${providers}/\${type}.md\`;`, "template"],
     [`const doc = path.join(ROOT, "docs", "providers", name);`, "join"],
@@ -219,6 +229,9 @@ describe("the scanner finds each form and nothing else", () => {
     `const code = providerTriad(ROOT, type).code;`,
     `const doc = other(ROOT, type).doc;`,
     `const doc = "${providers}/Example.md";`,
+    `const docs = new Bun.Glob("docs/*.md");`,
+    `const said = "see ${providers}/*.md for each engine";`,
+    `const docs = new Bun.Glob("src/${providers}/*.md");`,
   ])("%s is not", (source) => {
     expect(formsOf(source)).toEqual([]);
   });
