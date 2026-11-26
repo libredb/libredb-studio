@@ -1,7 +1,9 @@
+import type { EditorRunTarget } from "@/lib/api/editor-query";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { getOrCreateProvider } from "@/lib/db";
-import { findCachedProvider, getOrCreateMetadataProvider } from "@/lib/db/factory";
+import { findCachedProvider, getOrCreateEditorSession, getOrCreateMetadataProvider } from "@/lib/db/factory";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
@@ -13,9 +15,10 @@ import type { DatabaseConnection } from "@/lib/types";
  * execution context as its owner (docs/GOVERNANCE.md#per-user-providers).
  *
  * The one place a route decides this, so no route opens a provider under another posture or skips
- * the catalog check; `metadataProvider` below is the one other provider this file decides, the same way, for the
- * reads and the kill that must not wait for the editor's statements. Routes that act on the whole connection rather
- * than in one database, such as cancel, which finds a statement in whichever session runs it, call
+ * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
+ * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
+ * same way, for the reads and the kill that must not wait for the editor's statements. Routes that act on the whole
+ * connection rather than in one database, such as cancel, which finds a statement in whichever session runs it, call
  * `getOrCreateProvider` directly.
  *
  * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
@@ -29,6 +32,37 @@ export async function editorProvider(
 ): Promise<DatabaseProvider> {
   const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(session, connection), wait);
   return scopeToCatalog(connected, catalog);
+}
+
+/**
+ * What one editor statement runs on, for any record the server serves: the editor's session of `engine` for
+ * `connection` in the provider factory's editor cache (`getOrCreateEditorSession` in src/lib/db/factory.ts), opened
+ * under the session's editor posture as `editorProvider` opens it, with the same owner. A record that offers a legacy
+ * provider opens through `getOrCreateProvider`'s body with the same arguments, and its provider is scoped to `catalog`
+ * through the same `scopeToCatalog`; a provider package's session is answered with its declared environment, the
+ * entry, which counts the run while its call runs, and the connection's own statement timeout. `wait` is the request's
+ * own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it is.
+ * `POST /api/db/query` opens every engine through it.
+ *
+ * @throws {Error} A host defect, when a provider package's session is handed a catalog: the query route refuses a
+ *   catalog for an engine whose record offers none before any open.
+ */
+export async function editorTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+  catalog: string | undefined,
+  wait?: OpenWait,
+): Promise<EditorRunTarget> {
+  const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait);
+  const { opened } = entry;
+  if (opened.form === "provider") return { form: "provider", provider: await scopeToCatalog(opened.provider, catalog) };
+  if (catalog !== undefined) {
+    throw new Error(
+      "A provider package's session was handed a catalog, which the query route refuses before any open for an engine whose record offers none: a host defect.",
+    );
+  }
+  return { form: "session", session: opened.session, env: opened.env, entry, queryTimeout: connection.queryTimeout };
 }
 
 /**

@@ -139,7 +139,7 @@ export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusa
   return null;
 }
 
-/** One run of a statement that `checkEditorQuery` passed, on a provider the caller resolved. */
+/** One run of a statement that `checkEditorQuery` passed, on what the caller opened (`EditorRunTarget`). */
 export interface EditorQueryRun {
   /** The text that runs: the route's EXPLAIN-built one, or the caller's own. */
   statement: string;
@@ -228,8 +228,8 @@ export function openWithinCall<T>(
 }
 
 /**
- * `openWithinCall` with the allowance `budget` in milliseconds rather than read by type: the query route reads an
- * engine a provider package serves at its declared connect budget (`packageConnectBudget`).
+ * `openWithinCall` with the allowance `budget` in milliseconds rather than read by type: the query route reads every
+ * engine's budget from its record (`packageConnectBudget`), a legacy engine's being the one `connectBudgetFor` reads.
  */
 export async function openWithinBudget<T>(
   caller: AbortSignal,

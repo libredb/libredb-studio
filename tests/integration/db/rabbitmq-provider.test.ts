@@ -686,9 +686,10 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
       at("auth-seam.ts"),
       `export * from ${source("src/lib/auth.ts")};\nexport async function getSession() { return { role: "admin", username: "admin" }; }\nexport async function readSession() { return { kind: "authenticated", session: { role: "admin", username: "admin" } }; }\n`,
     );
-    // One provider slot behind both lookups the routes use: `@/lib/db` (query, object source) and `@/lib/db/factory`
-    // (Test Connection's one-shot open, which answers a legacy record's provider built and not connected). A module's own
-    // export wins over a name `export *` brings.
+    // One provider slot behind both lookups the routes use: `@/lib/db` (object source) and `@/lib/db/factory` (the query
+    // route's editor session, whose provider-form entry holds the slot's provider, and Test Connection's one-shot open,
+    // which answers a legacy record's provider built and not connected). A module's own export wins over a name
+    // `export *` brings.
     writeFileSync(
       at("provider-slot.ts"),
       [
@@ -697,12 +698,17 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         "export async function getOrCreateProvider() { return current; }",
         "export async function createDatabaseProvider() { return current; }",
         'export async function openEngineOnce() { return { form: "provider", provider: current }; }',
+        'export async function getOrCreateEditorSession() { return { opened: { form: "provider", provider: current } }; }',
         "",
       ].join("\n"),
     );
     for (const [file, real, names] of [
       ["db-seam.ts", "src/lib/db/index.ts", "createDatabaseProvider, getOrCreateProvider"],
-      ["factory-seam.ts", "src/lib/db/factory.ts", "createDatabaseProvider, getOrCreateProvider, openEngineOnce"],
+      [
+        "factory-seam.ts",
+        "src/lib/db/factory.ts",
+        "createDatabaseProvider, getOrCreateEditorSession, getOrCreateProvider, openEngineOnce",
+      ],
     ] as const) {
       writeFileSync(at(file), `export * from ${source(real)};\nexport { ${names} } from "./provider-slot.ts";\n`);
     }

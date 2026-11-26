@@ -299,8 +299,8 @@ export function createHandlers(
   const treeProviderOf = (record: OpenRecord) =>
     factory.getOrCreateMetadataProvider(record.connection, {}, record.posture);
   // The same provider, waited for only within an editor call's open wait, its engine's connect budget
-  // (`openWithinCall`), as the query and cancel routes wait for theirs: the call stops waiting when the wait ends, and
-  // the open goes on for the next call.
+  // (`openWithinCall`), the budget the query and cancel routes wait within too: the call stops waiting when the wait
+  // ends, and the open goes on for the next call.
   const providerWithin = (record: OpenRecord, wait: OpenWait) =>
     factory.getOrCreateProvider(record.connection, {}, record.posture, wait);
 

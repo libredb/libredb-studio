@@ -69,7 +69,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   ],
   "src/lib/provider-host/open-engine.ts": ["openEngine"],
   "src/lib/provider-host/legacy-adapter/open.ts": ["openLegacyEngine"],
-  "src/lib/api/editor-provider.ts": ["editorProvider", "metadataProvider", "cachedEditorProvider"],
+  "src/lib/api/editor-provider.ts": ["editorProvider", "editorTarget", "metadataProvider", "cachedEditorProvider"],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
   "src/lib/api/test-connection.ts": ["testConnection"],
 };
@@ -267,7 +267,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
   },
   getOrCreateEditorSession: {
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/lib/api/editor-provider.ts":
+      "editorTarget opens for the connection its caller hands it, and its one caller, POST /api/db/query, resolved it through resolveServedConnection first",
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
@@ -288,8 +289,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/pool-stats/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+  },
+  editorTarget: {
+    "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   metadataProvider: {
     "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,

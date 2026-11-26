@@ -2,20 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider } from "@/lib/api/editor-provider";
+import { editorTarget } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
-import { checkEditorQuery, openWithinBudget, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
+import { checkEditorQuery, openWithinBudget, runEditorQuery } from "@/lib/api/editor-query";
 import { packageCallError } from "@/lib/api/package-errors";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
-import { getOrCreateEditorSession } from "@/lib/db/factory";
-import type { EngineConnection, EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
+import type { EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
-import { openedSession } from "@/lib/provider-host/open-engine";
+import { openedProvider } from "@/lib/provider-host/open-engine";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -34,6 +33,9 @@ import {
   recordRefusedRequest,
   requestedConnectionId,
 } from "@/lib/query-events/route-events";
+
+/** The label this route's failures and late failures are logged under. */
+const ROUTE = "api/db/query";
 
 /**
  * The error an unreadable `explain` field gets. It names the whole allowed shape
@@ -119,9 +121,9 @@ export async function POST(req: NextRequest) {
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
-    // An engine of an admitted provider package is served too (`runEditorQuery` in src/lib/api/editor-query.ts): its connection
-    // resolves with every guard of every route, with the server catalog's record of its engine, whose offers decide each
-    // step below that differs between engines, and it runs on the package's session below.
+    // An engine of an admitted provider package is served too: its connection resolves with every guard of every route,
+    // with the server catalog's record of its engine, whose offers decide each step below that differs between engines,
+    // and every engine opens through one open and runs through one run (`editorTarget`, `runEditorQuery`).
     const { connection: named, engine } = await resolveServedConnection(body, guard.session);
     // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
     // by its type, so a package's connection is read as any other.
@@ -142,7 +144,7 @@ export async function POST(req: NextRequest) {
     }
 
     // The page bounds, the connection's statement timeout and the console text bound where the engine's record offers
-    // one, before any provider resolves (`src/lib/api/editor-query.ts`).
+    // one, before any open (`src/lib/api/editor-query.ts`).
     const refusal = checkEditorQuery({
       statement: sql,
       type: engine.offers.consoleTextBound ? connection.type : undefined,
@@ -249,7 +251,7 @@ export async function POST(req: NextRequest) {
        *
        * READ FROM THE DECLARATION, BEFORE ANY SOCKET. Capabilities are type-driven, so
        * `readProviderDeclarations`, the read `POST /api/db/provider-meta` takes (#457), answers the same
-       * question without connecting and without opening the connection's tunnel (FND-2 slice 5). Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
+       * question without connecting and without opening the connection's tunnel (FND-2 slice 5). Checked after the open (`editorTarget`), an unreachable Postgres answered 503 for a
        * request that was never valid, and a reachable one was connected only to be refused.
        *
        * Built under the session's editor posture, as provider-meta builds it, so a connection the
@@ -272,7 +274,7 @@ export async function POST(req: NextRequest) {
       /*
        * AND ONLY WHERE THERE IS A DATABASE TO NAME (spec 3.4). A walk declared with no container level
        * is one key space per connection (etcd), so a number here names nothing the engine has. It is
-       * refused from the same unconnected declaration, before `getOrCreateProvider`, so no provider, SSH
+       * refused from the same unconnected declaration, before the open (`editorTarget`), so no provider, SSH
        * forward or channel is opened or cached for it; `containerDepth` is the rule the Keys panel
        * applies before it sends one at all.
        */
@@ -291,7 +293,7 @@ export async function POST(req: NextRequest) {
 
     // The server's confirmation gate, one for every engine, reading the statement with the reader the engine's record
     // offers: after every field check and after the database override, so a token binds the connection that runs, and
-    // before the admission gate and any provider, so a request it answers opens nothing, runs nothing and records no
+    // before the admission gate and any open, so a request it answers opens nothing, runs nothing and records no
     // query event.
     const gate = await gateRun({
       route: "query",
@@ -306,34 +308,25 @@ export async function POST(req: NextRequest) {
     });
     if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
 
-    // Before the provider: a request the gate refuses opens nothing and runs nothing.
+    // Before the open: a request the gate refuses opens nothing and runs nothing.
     stage = "admission";
     admitQueryExecution();
     stage = "execution";
 
-    if (!engine.offers.legacyProvider) {
-      // THE RUN ON A PACKAGE'S ENGINE (`runEditorQuery` in src/lib/api/editor-query.ts): the package's session, cached per key, and
-      // the run through the host core.
-      const answered = await runOnPackageSession(req, guard.session, named, engine, {
-        statement: sql,
-        options,
-        params: bound.params,
-        queryId,
-      });
-      recordExecutedUnit(events, { connection, statement: submitted, started, ended: { rowCount: answered.rowCount } });
-      return NextResponse.json({ ...answered, ...(gate.unconfirmed && { confirmation: "unconfirmed" }) });
-    }
-
-    // The DuckDB editor file-access posture rides on the server-derived execution context: an
-    // admin keeps the full editor reach, every other role opens with external access off, and so
-    // does every role on a seed a non-admin role can use, whose one handle they share (non-admin DuckDB file access).
-    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a wait
-    // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
-    // `resolved` holds the connection narrowed for the callback, which TypeScript does not narrow `connection` in.
-    const resolved = connection;
-    const provider = await openWithinCall(req.signal, resolved.type, (wait) =>
-      editorProvider(guard.session, resolved, requestCatalog(body), wait),
-    );
+    // THE OPEN, ONE FOR EVERY ENGINE: the editor's session of the connection's record in the factory's editor cache
+    // (`editorTarget`), a legacy provider in the request's catalog or a provider package's session. The DuckDB editor
+    // file-access posture rides on the server-derived execution context: an admin keeps the full editor reach, every
+    // other role opens with external access off, and so does every role on a seed a non-admin role can use, whose one
+    // handle they share (non-admin DuckDB file access). The open is waited for within the connect budget the engine's
+    // record states (`packageConnectBudget`) and while the request stays (`openWithinBudget`): a wait that ends answers
+    // 504 or 499, not-sent, and the open goes on for the next request. A failure is answered in the words the record
+    // offers (`answeredFailure`). `opening` holds the connection narrowed for the callback, which TypeScript does not
+    // narrow `connection` in.
+    const opening = connection;
+    const scrub = providerTextScrub(connection, "any");
+    const target = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
+      editorTarget(guard.session, opening, engine, requestCatalog(body), wait),
+    ).catch(answeredFailure(engine, "open", scrub));
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling
@@ -347,7 +340,8 @@ export async function POST(req: NextRequest) {
     let statement = sql;
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {
-      const capabilities = provider.getCapabilities();
+      // Only an engine whose record offers a plan reaches here (`unofferedField`), and its open answered a provider.
+      const capabilities = openedProvider(target).getCapabilities();
       // `getExplainStrategy` indexes a Record, so a format outside this build's union
       // (an external implementer of the published interface can declare anything)
       // comes back undefined rather than null; a strict null check let that reach
@@ -366,19 +360,17 @@ export async function POST(req: NextRequest) {
       explainFormat = strategy.format;
     }
 
-    // The run itself, the steps the VS Code extension's backend child runs too (`src/lib/api/editor-query.ts`).
-    const { body: answered } = await runEditorQuery(
-      { form: "provider", provider },
-      {
-        statement,
-        options,
-        params: bound.params,
-        queryId,
-        signal: req.signal,
-        route: "api/db/query",
-        scrub: providerTextScrub(connection, "any"),
-      },
-    );
+    // The run itself, one for every engine, the steps the VS Code extension's backend child runs too
+    // (`src/lib/api/editor-query.ts`), on what the open answered.
+    const { body: answered } = await runEditorQuery(target, {
+      statement,
+      options,
+      params: bound.params,
+      queryId,
+      signal: req.signal,
+      route: ROUTE,
+      scrub,
+    }).catch(answeredFailure(engine, "execute", scrub));
     recordExecutedUnit(events, {
       connection,
       statement: submitted,
@@ -405,42 +397,25 @@ export async function POST(req: NextRequest) {
     }
     // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
     return createErrorResponse(error, {
-      route: "api/db/query",
+      route: ROUTE,
       scrub: connection === undefined ? undefined : providerTextScrub(connection, "any"),
     });
   }
 }
 
 /**
- * Opens the editor's session of `engine` for `connection` within the engine's connect budget and while the request
- * stays, and runs `run` on it through the host core (`runEditorQuery`). A provider package's own error is
- * answered with Studio's sentence naming its code and logged once, its words through core's scrub (`packageCallError`).
+ * How a failure of the editor's `call` on `engine` reaches the client, by how the engine's own words do
+ * (`EngineOffers.ownWords`), as Test Connection reads it: a legacy provider's error as it is, answered in its words
+ * through the connection's scrub, and a provider package's as Studio's sentence naming its code, logged once with its
+ * words through core's `scrub` (`packageCallError` in src/lib/api/package-errors.ts; docs/providers/CONTRACT.md, clause
+ * C-112).
  */
-async function runOnPackageSession(
-  req: NextRequest,
-  session: Parameters<typeof editorExecutionContext>[0],
-  connection: EngineConnection,
+function answeredFailure(
   engine: EngineRecord,
-  run: { statement: string; options: QueryPrepareOptions; params: unknown[] | undefined; queryId: string | undefined },
-) {
-  const record = connection as unknown as DatabaseConnection;
-  const scrub = providerTextScrub(record, "any");
-  const route = "api/db/query";
-  const cached = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
-    getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait),
-  ).catch((error: unknown) => {
-    throw packageCallError("open", error, scrub, route);
-  });
-  const target = {
-    form: "session",
-    ...openedSession(cached.opened),
-    entry: cached,
-    queryTimeout: connection.queryTimeout,
-  } as const;
-  const { body } = await runEditorQuery(target, { ...run, signal: req.signal, route, scrub }).catch(
-    (error: unknown) => {
-      throw packageCallError("execute", error, scrub, route);
-    },
-  );
-  return body;
+  call: "open" | "execute",
+  scrub: ProviderTextScrub,
+): (error: unknown) => never {
+  return (error) => {
+    throw engine.offers.ownWords === "code-only" ? packageCallError(call, error, scrub, ROUTE) : error;
+  };
 }

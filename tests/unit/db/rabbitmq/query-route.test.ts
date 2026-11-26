@@ -5,8 +5,9 @@
  * The provider is the real RabbitMQProvider; its management transport and its AMQP dial are seams this file writes,
  * and the AMQP peer is the fake peer on 127.0.0.1. Only the session and the provider lookup are replaced, as every
  * route test in this suite does, because the routes take both from modules with no seam: `@/lib/auth` for the
- * session, and `@/lib/db` and `@/lib/db/factory` for the provider this file built (Test Connection opens it through the
- * factory's one-shot open, `openEngineOnce`, which answers it as a legacy record's open does, built and not connected).
+ * session, and `@/lib/db` and `@/lib/db/factory` for the provider this file built (the query route opens it through the
+ * editor's session, `getOrCreateEditorSession`, whose entry holds it, and Test Connection through the factory's
+ * one-shot open, `openEngineOnce`, which answers it as a legacy record's open does, built and not connected).
  * The runner gives this file its own process, so the replacements reach no other file.
  *
  * Every case asserts that the route reached the seam it targets (the management path it asked for, or the dial), so
@@ -25,6 +26,7 @@ import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
 import type { ManagementTransportFactory } from "@/lib/db/providers/stream/rabbitmq/management/client";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockRequest, parseResponseJSON } from "../../../helpers/mock-next";
+import { editorEntryOf } from "../../../helpers/editor-session-entry";
 import { rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
 import {
   type FakePeer,
@@ -72,6 +74,7 @@ mock.module("@/lib/db", () => ({
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
   openEngineOnce: mock(async () => ({ form: "provider", provider: await providerOf() })),
+  getOrCreateEditorSession: mock(async () => editorEntryOf(await providerOf())),
 }));
 
 const { POST: query } = await import("@/app/api/db/query/route");

@@ -11,6 +11,7 @@ import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../helpers/editor-session-entry";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -76,10 +77,13 @@ mock.module("@/lib/seed/resolve-connection", () => {
   };
 });
 
-// Only `getOrCreateProvider` is replaced, and it hands back the REAL provider: the route's
-// `prepareQuery`, the driver's `LIMIT n OFFSET m` and the engine's own answer all stay.
-const dbModule = await import("@/lib/db");
-mock.module("@/lib/db", () => ({ ...dbModule, getOrCreateProvider: mock(async () => provider) }));
+// Only the editor's open, `getOrCreateEditorSession`, is replaced, and its entry hands back the REAL provider: the
+// route's `prepareQuery`, the driver's `LIMIT n OFFSET m` and the engine's own answer all stay.
+const factoryModule = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...factoryModule,
+  getOrCreateEditorSession: mock(async () => editorEntryOf(provider)),
+}));
 
 const { POST } = await import("@/app/api/db/query/route");
 const { useQueryExecution } = await import("@/hooks/use-query-execution");

@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } f
 import { randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -31,8 +32,9 @@ mock.module("@/lib/auth", () => ({
 }));
 
 /**
- * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
- * that needs an open's deadline to pass sets it to a few tens of milliseconds for itself.
+ * The real connect budgets, with `connectBudgetFor`, the factory's open deadline, and `packageConnectBudget`, the
+ * route's wait for the open, which it reads from the engine's record, each answering `budgetOverride` while a case sets
+ * one, so the case that needs an open's deadline to pass sets it to a few tens of milliseconds for itself.
  */
 const realConnectBudget = await import("@/lib/db/connect-budget");
 const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
@@ -40,6 +42,12 @@ let budgetOverride: number | undefined;
 mock.module("@/lib/db/connect-budget", () => ({
   openDeadlineSentence: realConnectBudget.openDeadlineSentence,
   connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
+}));
+const realOpenContext = { ...(await import("@/lib/provider-host/open-context")) };
+const realPackageConnectBudget = realOpenContext.packageConnectBudget;
+mock.module("@/lib/provider-host/open-context", () => ({
+  ...realOpenContext,
+  packageConnectBudget: (engine: EngineRecord) => budgetOverride ?? realPackageConnectBudget(engine),
 }));
 
 const { POST } = await import("@/app/api/db/query/route");

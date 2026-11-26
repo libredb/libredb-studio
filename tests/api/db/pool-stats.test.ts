@@ -67,6 +67,10 @@ mock.module("@/lib/db/factory", () => ({
   findCachedProvider: mock(() => null),
   // The barrel `@/lib/db` re-exports it from this module too; this route reads no object tree and no panel.
   getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
+  getOrCreateEditorSession: mock(async () => {
+    throw new Error("getOrCreateEditorSession is not read by this route");
+  }),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────

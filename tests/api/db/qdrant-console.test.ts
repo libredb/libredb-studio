@@ -6,7 +6,7 @@
  *
  * The provider is the real QdrantProvider, connected over a client whose answers this file writes, from the
  * captures of the seeded server (tests/helpers/qdrant-surface-fixtures.ts) unless a test replaces one. Only the
- * session and the provider cache are replaced. The credential is the stand-in TEST_PASSWORD.
+ * session and the provider cache, with the query route's open of the editor's session, are replaced. The credential is the stand-in TEST_PASSWORD.
  */
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -19,6 +19,7 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { recordedAnswer } from "../../helpers/qdrant-surface-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -62,6 +63,11 @@ const mockGetOrCreateProvider = mock(async () => {
   if (current === undefined) throw new Error("no provider was connected for this test");
   return current;
 });
+/** The query route's open, the editor's session of the connection's record: its entry holds the connected provider. */
+const mockGetOrCreateEditorSession = mock(async () => {
+  if (current === undefined) throw new Error("no provider was connected for this test");
+  return editorEntryOf(current);
+});
 
 // The spread form, not a hand-written five-key stub: `src/lib/auth.ts` exports more
 // names than such a stub carries, and only one of them is being replaced here (backlog D85).
@@ -84,6 +90,9 @@ mock.module("@/lib/db", () => ({
   }),
 }));
 
+const actualFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({ ...actualFactory, getOrCreateEditorSession: mockGetOrCreateEditorSession }));
+
 const { POST: query } = await import("@/app/api/db/query/route");
 const { POST: multiQuery } = await import("@/app/api/db/multi-query/route");
 const { POST: cancel } = await import("@/app/api/db/cancel/route");
@@ -91,6 +100,7 @@ const { POST: cancel } = await import("@/app/api/db/cancel/route");
 beforeEach(() => {
   clearRateLimitState();
   mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateEditorSession.mockClear();
 });
 
 afterEach(async () => {
@@ -158,7 +168,7 @@ describe("the console text bound and the one-statement rule of the registered ty
       "The statement is 1048577 bytes in UTF-8, over the 1048576-byte limit for this connection type. Shorten it to run it.",
     );
     expect(JSON.stringify(data)).not.toContain("xxxx");
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateEditorSession).not.toHaveBeenCalled();
   });
 
   test("POST /api/db/multi-query sends a Qdrant text to the single-statement route, splitting nothing", async () => {

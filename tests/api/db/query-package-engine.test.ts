@@ -1,14 +1,17 @@
 /**
- * `POST /api/db/query` on an engine an admitted provider package serves (`runEditorQuery` in src/lib/api/editor-query.ts),
- * through the real `resolveServedConnection`, the provider factory's real editor cache, the real confirmation gate and
- * the real host core: the statement is read under the grammar the package declares, with every claim that loosens the
- * gate uncounted; the session opens once per key through the package; the run answers the package's rows keyed by
- * column name; a request field the package does not honour, and one the route does not serve for such an engine, is
- * refused before any call; a caller that leaves sends the package's cancel; and a package's own words never reach the
- * client.
+ * `POST /api/db/query` on an engine an admitted provider package serves, through the real `resolveServedConnection`,
+ * the provider factory's real editor cache, the real confirmation gate, the real run (`runEditorQuery` in
+ * src/lib/api/editor-query.ts) and the real host core: the route opens, gates and runs a legacy and a package engine
+ * through one open, one gate and one run; the statement is read under the grammar the package declares, with every
+ * claim that loosens the gate uncounted; the session opens once per key through the package; the run answers the
+ * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
+ * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; and a package's own
+ * words never reach the client.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
- * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked.
+ * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked;
+ * the editor's open, the gate and the run are wrapped to record what each was handed, each calling the real function,
+ * and the legacy provider's own entry points reject by name.
  * Nothing awaits a timer: the cancel case waits on a promise the package's execute resolves when it starts, and on one
  * its cancel resolves.
  */
@@ -35,6 +38,48 @@ mock.module("@/lib/auth", () => ({
     kind: "authenticated",
     session: { role: "admin", username: "admin", iat: 1_700_000_000 },
   })),
+}));
+
+/*
+ * What the route opens, gates and runs, recorded by name around the real functions: the editor's one open of any record,
+ * the one gate, and the one run, by the form the open answered. Neither of the legacy provider's own entry points is
+ * reached: each rejects by name.
+ */
+const opens: string[] = [];
+const gates: string[] = [];
+const runs: string[] = [];
+const unreached = () => Promise.reject(new Error("the factory's getOrCreateProvider was reached"));
+// Each real function is held before its module is mocked: a mocked module's namespace object answers the mock, so a
+// delegate read through it would call itself.
+const realFactory = { ...(await import("@/lib/db/factory")) };
+const openEditorSession = realFactory.getOrCreateEditorSession;
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateProvider: unreached,
+  getOrCreateEditorSession: (...args: Parameters<typeof openEditorSession>) => {
+    opens.push(args[1].id);
+    return openEditorSession(...args);
+  },
+}));
+const realDb = { ...(await import("@/lib/db")) };
+mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: unreached }));
+const realGate = { ...(await import("@/lib/api/run-confirmation")) };
+const gateRun = realGate.gateRun;
+mock.module("@/lib/api/run-confirmation", () => ({
+  ...realGate,
+  gateRun: (request: Parameters<typeof gateRun>[0]) => {
+    gates.push(request.engine.id);
+    return gateRun(request);
+  },
+}));
+const realRun = { ...(await import("@/lib/api/editor-query")) };
+const runEditorQuery = realRun.runEditorQuery;
+mock.module("@/lib/api/editor-query", () => ({
+  ...realRun,
+  runEditorQuery: (...args: Parameters<typeof runEditorQuery>) => {
+    runs.push(args[0].form);
+    return runEditorQuery(...args);
+  },
 }));
 
 const { POST } = await import("@/app/api/db/query/route");
@@ -180,6 +225,36 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     });
     expect(names(seen)).toEqual(["open", "execute"]);
     expect(seen.calls[1]?.args[1]).toEqual({ statement: "SELECT 1", page: { limit: 6, offset: 0 } });
+  });
+
+  test("the query route runs one gate and one run for a legacy and a package engine, told apart only by the record's offers", async () => {
+    const seen = hooksFor(MAIN);
+    for (const list of [opens, gates, runs]) list.length = 0;
+
+    const legacy = await post({
+      connection: { id: `conn-${randomUUID()}`, name: "Scratch", type: "sqlite", database: ":memory:" },
+      sql: "SELECT 1 AS one",
+    });
+    const served = await post({ connection: connectionOf(MAIN), sql: "SELECT 1", options: { limit: 5 } });
+
+    expect(legacy.status).toBe(200);
+    expect(legacy.body).toMatchObject({ rows: [{ one: 1 }], fields: ["one"] });
+    expect(served.status).toBe(200);
+    expect(served.body).toEqual({
+      rows: [
+        { key: "alpha", value: 1 },
+        { key: "beta", value: "two" },
+      ],
+      fields: ["key", "value"],
+      columnTypes: { value: "text" },
+      rowCount: 2,
+      executionTime: 3,
+      pagination: { limit: 5, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
+    });
+    expect(opens).toEqual(["sqlite", MAIN]);
+    expect(gates).toEqual(["sqlite", MAIN]);
+    expect(runs).toEqual(["provider", "session"]);
+    expect(names(seen)).toEqual(["open", "execute"]);
   });
 
   test("the statement is read under the package's declared grammar, and a write asks for a confirmation", async () => {

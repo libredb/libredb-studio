@@ -2776,6 +2776,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a query on an admitted engine answers the package's rows through the host core",
+        "the query route runs one gate and one run for a legacy and a package engine, told apart only by the record's offers",
         "a refused package's engine and an unknown type answer as the server catalog answers them",
       ],
     },

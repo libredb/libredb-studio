@@ -46,9 +46,10 @@
  * serve an engine whose record offers no legacy provider in this Studio: each resolves its connection with its record
  * through `resolveServedConnection` (src/lib/seed/resolve-connection.ts), which reads the type through
  * `servedEngineRecord`; Test Connection then runs one test for every record, which reads what differs from the record's
- * offers and grants (`testConnection` in src/lib/api/test-connection.ts), and the query route runs a statement on a
- * package engine's cached session (`runEditorQuery` in src/lib/api/editor-query.ts), both over the
- * provider factory's opens of any record (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
+ * offers and grants (`testConnection` in src/lib/api/test-connection.ts), and the query route opens every record's
+ * cached editor session and runs a statement on it with one run (`editorTarget` in src/lib/api/editor-provider.ts,
+ * `runEditorQuery` in src/lib/api/editor-query.ts), both over the provider factory's opens of any record
+ * (`openEngineOnce` and `getOrCreateEditorSession` in ./factory).
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *

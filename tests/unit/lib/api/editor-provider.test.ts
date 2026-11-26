@@ -1,7 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import type { CachedSession } from "@/lib/db/factory";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -22,8 +25,20 @@ const cachedByKey = new Map<string, DatabaseProvider>();
 /** Every open of a metadata session, as `getOrCreateMetadataProvider` receives it. */
 const openedMetadata: { connection: DatabaseConnection; options: unknown; context: unknown; rest: unknown[] }[] = [];
 let metadataSession: DatabaseProvider;
+/** Every open of an editor session, as `getOrCreateEditorSession` receives it, and the entry the case sets it to answer. */
+const openedEditor: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
+let editorEntry: CachedSession;
 mock.module("@/lib/db/factory", () => ({
   findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
+  getOrCreateEditorSession: async (
+    connection: EngineConnection,
+    engine: EngineRecord,
+    context: unknown,
+    ...rest: unknown[]
+  ) => {
+    openedEditor.push({ connection, engine, context, rest });
+    return editorEntry;
+  },
   getOrCreateMetadataProvider: async (
     connection: DatabaseConnection,
     options: unknown,
@@ -35,7 +50,9 @@ mock.module("@/lib/db/factory", () => ({
   },
 }));
 
-const { cachedEditorProvider, editorProvider, metadataProvider } = await import("@/lib/api/editor-provider");
+const { cachedEditorProvider, editorProvider, editorTarget, metadataProvider } = await import(
+  "@/lib/api/editor-provider"
+);
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
 const session = (role: string) => ({ role });
@@ -83,6 +100,60 @@ describe("editorProvider", () => {
 
     connected = providerOf({});
     await expect(editorProvider(session("user"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
+  });
+});
+
+/** What the query route runs one statement on, for any record: the editor's session of the record, opened once. */
+describe("editorTarget", () => {
+  const legacyEngine = { id: "postgres", offers: { legacyProvider: true } } as unknown as EngineRecord;
+  const packageEngine = { id: "acmeps", offers: { legacyProvider: false } } as unknown as EngineRecord;
+  const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
+  /** A provider package's session entry, its session and environment stand-ins the case reads back by reference. */
+  function sessionEntry() {
+    const session = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session, env }, engine: packageEngine, running: 0 } as unknown;
+    return { entry: entry as CachedSession, session, env };
+  }
+
+  test("editorTarget opens any record's editor session under the session's editor posture: a legacy provider in the request's catalog, and a package's session with its entry and the connection's statement timeout", async () => {
+    const shop = providerOf({});
+    const server = providerOf({ catalogSessions: true }, { shop });
+    editorEntry = { opened: { form: "provider", provider: server }, engine: legacyEngine } as unknown as CachedSession;
+    openedEditor.length = 0;
+    const wait = { signal: new AbortController().signal };
+
+    const legacy = await editorTarget(session("admin"), connection, legacyEngine, "shop", wait);
+    expect(legacy.form).toBe("provider");
+    expect(legacy.form === "provider" && legacy.provider).toBe(shop);
+    const whole = await editorTarget(session("user"), connection, legacyEngine, undefined);
+    expect(whole.form === "provider" && whole.provider).toBe(server);
+
+    const { entry, session: packageSession, env } = sessionEntry();
+    editorEntry = entry;
+    const target = await editorTarget(session("user"), packageConnection, packageEngine, undefined, wait);
+    expect(target as unknown).toEqual({ form: "session", session: packageSession, env, entry, queryTimeout: 1234 });
+    expect(target.form === "session" && target.entry).toBe(entry);
+
+    // One open per call, of the record handed, under the editor posture of the session, with the request's own wait.
+    expect(openedEditor.map((open) => [open.connection, open.engine, open.context])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: true }],
+      [connection, legacyEngine, { allowExternalFileAccess: false }],
+      [packageConnection, packageEngine, { allowExternalFileAccess: false }],
+    ]);
+    expect(openedEditor[0]?.rest[0]).toBe(wait);
+    expect(openedEditor[1]?.rest).toEqual([undefined]);
+    expect(openedEditor[2]?.rest[0]).toBe(wait);
+  });
+
+  test("a catalog handed with a provider package's session is a host defect, raised by name before any run", async () => {
+    editorEntry = sessionEntry().entry;
+    openedEditor.length = 0;
+
+    await expect(editorTarget(session("user"), packageConnection, packageEngine, "shop")).rejects.toThrow(
+      "A provider package's session was handed a catalog, which the query route refuses before any open for an engine whose record offers none: a host defect.",
+    );
+    expect(openedEditor).toHaveLength(1);
   });
 });
 
