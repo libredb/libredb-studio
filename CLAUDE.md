@@ -11,7 +11,7 @@ It runs **two ways**, as a standalone Next.js app and as a published npm package
 
 ## Branching & PRs
 
-> **Trunk-based: feature branch → `main` → tag.** Open every PR with `gh pr create --base main`; there is no `dev` branch and no long-lived `release/*` branches. `main` is protected: PRs required, and `Lint, Typecheck and Build`, `Unit & Integration Tests` and `Secret Scan` must pass (SonarCloud runs but is not required — fork PRs cannot produce it).
+> **Trunk-based: feature branch → `main` → tag.** Open every PR with `gh pr create --base main`; there is no `dev` branch and no long-lived `release/*` branches. `main` is protected: PRs required, and `Lint, Typecheck and Build`, `Unit & Integration Tests`, `Secret Scan`, `Engine Smoke - Build Payload` and `Out-of-tree Provider Acceptance` must pass (SonarCloud runs but is not required — fork PRs cannot produce it).
 >
 > **Tag namespace.** Product releases are bare semver tags on `main` — **no `v` prefix**; the `v`-prefixed tags below 0.9.28 are frozen history, and chart releases use a separate `libredb-studio-<chart version>` namespace, and the VS Code extension `vscode-extension-<version>` ([`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md), "VS Code extension (Marketplace)"). So `git tag | tail` is not "the latest release". Cutting one is the user-invoked `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)) — ask for it, never improvise.
 >

@@ -1266,7 +1266,7 @@ jobs:
   # temporary directory, outside the checkout, because the script's step 7
   # asserts that the checkout is unchanged. After bun install nothing reaches
   # a registry: the SDK's dependencies are packed from this checkout's install
-  # and npm installs offline. Not yet a required check.
+  # and npm installs offline. A required check on main.
   out-of-tree-acceptance:
     name: Out-of-tree Provider Acceptance
     needs: [engine-payload]
