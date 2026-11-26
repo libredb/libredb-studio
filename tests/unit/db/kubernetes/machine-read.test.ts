@@ -28,6 +28,8 @@ import {
 } from "../../../helpers/kubernetes-console";
 import { jsonAnswer, type KubernetesAnswerFn } from "../../../helpers/kubernetes-transport";
 import { errorKind } from "@/lib/db/error-record";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 
 const BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 262_144 };
 
@@ -399,5 +401,13 @@ describe("logs on the agent path", () => {
     expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 250 rows > 200 allowed");
     expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(logQueries(transport).map((query) => query.container)).toEqual(["a"]);
+  });
+});
+
+describe("the read-only and MCP records", () => {
+  test("Kubernetes is enforced read-only, exposed over MCP and offers the MCP statement read", () => {
+    expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
+    expect(MCP_EXPOSABLE.kubernetes).toBe(true);
+    expect(MCP_STATEMENT_READ.kubernetes).toBe(true);
   });
 });

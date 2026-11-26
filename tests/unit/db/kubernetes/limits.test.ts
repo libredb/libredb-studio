@@ -7,6 +7,7 @@ import {
   KUBERNETES_MAX_STATEMENT_ROWS,
   KUBERNETES_PAGE_SIZE,
 } from "@/lib/languages/kubectl/constants";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 
 describe("kubernetes limits", () => {
   test("every cap of the provider's limits table and the kubectl family's constants, by value", () => {
@@ -71,5 +72,11 @@ describe("kubernetes limits", () => {
     expect(String(limits.KUBERNETES_TYPE)).toBe("kubernetes");
     expect(limits.KUBERNETES_DEFAULT_PORT).toBe(6443);
     expect(limits.KUBERNETES_MAX_IN_FLIGHT).toBe(4);
+  });
+});
+
+describe("the default port", () => {
+  test("the connection dialog's default port is KUBERNETES_DEFAULT_PORT", () => {
+    expect(DB_UI_CONFIG.kubernetes.defaultPort).toBe(String(limits.KUBERNETES_DEFAULT_PORT));
   });
 });
