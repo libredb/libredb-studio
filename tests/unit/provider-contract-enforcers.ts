@@ -1974,7 +1974,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers",
         "query/cancel with a token already cancelled calls nothing",
       ],
-      "tests/isolated/factory-package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "two concurrent first opens open one session",
         "a caller whose wait ends stops waiting, and an open no caller waits for is admitted once",
         "a removal or a cache clear closes an open it overtook, once, and caches nothing",
@@ -2002,7 +2002,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed",
         "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed",
       ],
-      "tests/isolated/factory-package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "teardown cuts a close that never settles at the deadline",
         "teardown cuts a close that never settles at the deadline, in a child with its own heap and timeout",
       ],
@@ -2780,7 +2780,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-109": {
     tests: {
-      "tests/isolated/factory-package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
         "each open check refuses before the package's open is called and before any file is read",
         "a refinement the host refuses fails the open as the package's defect, and Test Connection's one open is never cached",
@@ -2808,7 +2808,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
         "the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged",
       ],
-      "tests/isolated/factory-package-sessions.test.ts": [
+      "tests/isolated/editor-cache-package-engines.test.ts": [
         "a call the package does not offer is refused before the call",
         "a console execute on a package session answers the package's rows through the host core",
       ],

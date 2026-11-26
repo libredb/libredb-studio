@@ -75,7 +75,7 @@ const MAIN = "acmepsmain";
 const BARE = "acmepsbare";
 const ROWS = "acmepsrows";
 const SCOPE = "acmepsscope";
-const providers = scratchDirectory("studio-package-sessions-");
+const providers = scratchDirectory("studio-editor-cache-package-engines-");
 let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
