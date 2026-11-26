@@ -6,7 +6,8 @@
  * `catalogConflicts(admitted)` reads the rules across the whole set that admitting each package on its own cannot see,
  * over Studio's bundled catalog and every admitted declaration at once, and answers every admitted claimant of each
  * rule, so the answer is the same for every order of the packages:
- * - `engine-id`: an engine id the bundled catalog serves or states as a fence alias, or another admitted package serves;
+ * - `engine-id`: an engine id the legacy adapter serves (`LEGACY_ENGINES`) or the bundled catalog states as a fence
+ *   alias, or another admitted package serves;
  * - `fence-alias`: a fence alias that is a bundled alias or engine id, another admitted package's alias, or another
  *   admitted package's engine id, the package serving that engine a claimant too;
  * - `query-dialect`, `tab-type` and `editor-language`: a query dialect row, a tab type's editor language or an editor
@@ -14,16 +15,22 @@
  *   does not state refuses every admitted claimant of it unless they all state it alike.
  * A conflict carries the package's name, version and rule, never an alias, dialect, language or id.
  *
- * `composeServerCatalog(admitted, refused)` projects the admitted declarations with the same projections Studio's
+ * `composeServerCatalog(admitted, refused)` starts from the legacy adapter's records
+ * (src/lib/provider-host/legacy-adapter/records.ts), every one by identity, and adds one record per admitted engine
+ * (`EngineRecord` in ./server-catalog): it projects the admitted declarations with the same projections Studio's
  * generator projects its own declarations with (./engine-catalog/projection), composes each engine's field rules
  * (`packageFieldRules` in ./connection-form), grants each claim through Studio's grant reader against Studio's record
- * (`grantPackageClaims` in ./claim-grants), which holds no row for an engine Studio does not ship, so each claim is granted
- * at its restrictive value, and maps each engine a refused package's lock entry names, but a bundled one, to the codes
- * it was refused with. Every table keyed by engine id is transposed into each engine's own frozen record and the
- * engines are kept in Maps, so no engine-keyed plain object is read by a client's value.
+ * (`grantPackageClaims` in ./claim-grants), which holds no row for an engine Studio does not ship, so each claim is
+ * granted at its restrictive value, and gives each the package's source, with the session its declaration states, and
+ * the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). It maps each engine a refused
+ * package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is
+ * transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is
+ * read by a client's value.
  */
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
-import { grantPackageClaims } from "./claim-grants";
+import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
+import { engineGrantsOf, grantPackageClaims } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
 import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
@@ -39,16 +46,22 @@ import {
   BUNDLED_EDITOR_LANGUAGES,
   BUNDLED_QUERY_DIALECTS,
 } from "./engine-catalog/query-editor.generated";
-import {
-  CATALOG_CONFLICT_RULES,
-  type CatalogConflictRule,
-  type PackageEngine,
-  type PackageEngineId,
-  type PackageGrants,
-  type ServerCatalog,
-  type ServingPackage,
-} from "./server-catalog";
-import { isDatabaseType } from "./type-id";
+import type { EngineId, EngineOffers, EngineRecord, ServerCatalog, ServingPackage } from "./server-catalog";
+
+/** What every engine an admitted package serves offers: nothing beyond the provider contract's own calls. */
+export const PACKAGE_OFFERS: EngineOffers = Object.freeze({
+  legacyProvider: false,
+  explain: false,
+  database: false,
+  catalog: false,
+  unboundedPage: false,
+  consoleTextBound: false,
+  queryEventText: false,
+  sshTunnel: false,
+  hostFiles: false,
+  testCautions: false,
+  ownWords: "code-only",
+});
 
 /** An admitted package as boot hands it to the composer. */
 export type AdmittedForCatalog = ServingPackage;
@@ -144,10 +157,10 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
   };
   for (const { pkg, engine } of claims) {
     // A bundled fence alias is refused as an engine id too, so no fence tag names a bundled engine and a package's.
-    const bundledId = isDatabaseType(engine.id) || Object.hasOwn(BUNDLED_FENCE_ALIASES, engine.id);
+    const bundledId = LEGACY_ENGINES.has(engine.id) || Object.hasOwn(BUNDLED_FENCE_ALIASES, engine.id);
     if (bundledId || another(ids.get(engine.id), pkg)) refuse(pkg, "engine-id");
     for (const alias of engine.editor.fenceAliases) {
-      const bundled = Object.hasOwn(BUNDLED_FENCE_ALIASES, alias) || isDatabaseType(alias);
+      const bundled = Object.hasOwn(BUNDLED_FENCE_ALIASES, alias) || LEGACY_ENGINES.has(alias);
       const servedElsewhere = ids.get(alias);
       if (bundled || another(aliases.get(alias), pkg) || another(servedElsewhere, pkg)) refuse(pkg, "fence-alias");
       for (const other of servedElsewhere ?? []) if (other !== pkg) refuse(other, "fence-alias");
@@ -197,21 +210,33 @@ export function composeServerCatalog(
   const tables = projectConnectionTables(declarations);
   const forms = projectConnectionForms(declarations);
   const grants = grantPackageClaims(projectClaimRequests(declarations), tables.seedOnly);
-  const members = Object.keys(grants) as (keyof PackageGrants)[];
-  const packages = new Map<string, PackageEngine>();
+  const engines = new Map<string, EngineRecord>(LEGACY_ENGINES);
   for (const { pkg, engine } of claims) {
     const { id } = engine;
     const fields = tables.fields[id];
-    packages.set(
+    engines.set(
       id,
       Object.freeze({
-        id: id as PackageEngineId,
-        package: Object.freeze({
+        id: id as EngineId,
+        source: Object.freeze({
           name: pkg.name,
           version: pkg.version,
-          directory: pkg.directory,
-          manifest: pkg.manifest as ProviderManifest,
-          record: pkg.record,
+          package: Object.freeze({
+            name: pkg.name,
+            version: pkg.version,
+            directory: pkg.directory,
+            manifest: pkg.manifest as ProviderManifest,
+            record: pkg.record,
+            // What the host core checks each call of the engine's sessions against (src/lib/db/package-sessions.ts).
+            session: Object.freeze({
+              calls: pkg.manifest.calls,
+              maintenance: Object.freeze({
+                maintenance: engine.facets.maintenance,
+                maintenanceSpecs: engine.facets.maintenanceSpecs,
+              }),
+              panels: engine.facets.monitoring,
+            }),
+          }),
         }),
         catalog: catalog[id],
         connection: Object.freeze({
@@ -226,27 +251,19 @@ export function composeServerCatalog(
           dialogOffersUri: tables.dialogOffersUri[id],
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
-        grants: Object.freeze(Object.fromEntries(members.map((member) => [member, grants[member][id]]))),
-        // What the host core checks each call of the engine's sessions against (src/lib/db/package-sessions.ts).
-        session: Object.freeze({
-          calls: pkg.manifest.calls,
-          maintenance: Object.freeze({
-            maintenance: engine.facets.maintenance,
-            maintenanceSpecs: engine.facets.maintenanceSpecs,
-          }),
-          panels: engine.facets.monitoring,
-        }),
+        grants: engineGrantsOf(grants, id),
         // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
         // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),
-      }) as PackageEngine,
+        offers: PACKAGE_OFFERS,
+      }) as EngineRecord,
     );
   }
   const unavailable = new Map<string, Set<string>>();
   for (const pkg of refused) {
     for (const id of pkg.engines) {
-      if (isDatabaseType(id)) continue;
-      if (packages.has(id)) {
+      if (LEGACY_ENGINES.has(id)) continue;
+      if (engines.has(id)) {
         throw new Error(
           "composeServerCatalog: an engine of an admitted package is also named by a refused package's lock entry, which the lock refuses as a shared engine",
         );
@@ -257,7 +274,7 @@ export function composeServerCatalog(
     }
   }
   return Object.freeze({
-    packages,
+    engines,
     unavailable: new Map([...unavailable].map(([id, codes]) => [id, Object.freeze([...codes].sort(byText))])),
   });
 }

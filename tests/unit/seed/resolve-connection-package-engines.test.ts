@@ -18,7 +18,7 @@ import { resetCache } from "@/lib/seed";
 import { type ConnectionBody, resolveConnection } from "@/lib/seed/resolve-connection";
 import * as vaultClient from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest, withLegacyProviderOffers } from "../../helpers/package-catalog";
 
 function vaultReference(): string {
   return "${vault:secret/data/x#y}";
@@ -105,13 +105,15 @@ describe("a package engine on a connection route", () => {
     );
     expect(resolved).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
     const engine = serverEngine(resolved.type);
-    if (engine.kind !== "package") throw new Error(`resolved ${engine.kind}`);
-    expect(engine.engine.package.name).toBe("acme-served");
+    if (engine.kind !== "served") throw new Error(`resolved ${engine.kind}`);
+    expect(engine.engine.source.name).toBe("acme-served");
 
     // The seed schema is keyed by Studio's bundled engines, so a seed of a package's engine keeps only the fields every
     // seed has; it resolves as the package's engine all the same.
     const seed = await resolveConnection({ connectionId: "seed:served" }, ADMIN, undefined, "bundled-and-package");
-    expect([seed.id, seed.type, serverEngine(seed.type).kind]).toEqual(["seed:served", "acmeserved", "package"]);
+    const seedEngine = serverEngine(seed.type);
+    if (seedEngine.kind !== "served") throw new Error(`resolved ${seedEngine.kind}`);
+    expect([seed.id, seed.type, seedEngine.engine.source.name]).toEqual(["seed:served", "acmeserved", "acme-served"]);
 
     const bundled = await resolveConnection(
       { connection: inline("postgres") },
@@ -119,6 +121,31 @@ describe("a package engine on a connection route", () => {
       undefined,
       "bundled-and-package",
     );
-    expect([bundled.type, serverEngine(bundled.type).kind]).toEqual(["postgres", "bundled"]);
+    const bundledEngine = serverEngine(bundled.type);
+    if (bundledEngine.kind !== "served") throw new Error(`resolved ${bundledEngine.kind}`);
+    expect([bundled.type, bundledEngine.engine.source.name]).toEqual(["postgres", "@libredb/studio"]);
+  });
+
+  test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", async () => {
+    // A crafted catalog: a legacy engine's record that offers no legacy provider, and a package's record that offers one.
+    // A route that serves bundled engines alone follows the offer, never whether the id is one of Studio's.
+    forgetServerCatalog();
+    installServerCatalog(
+      withLegacyProviderOffers(composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], []), {
+        postgres: false,
+        acmeserved: true,
+      }),
+    );
+    const refusal = await resolveConnection({ connection: inline("postgres") }, ADMIN).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
+    expect([
+      (refusal as PackageEngineUnsupportedError).code,
+      (refusal as PackageEngineUnsupportedError).typeId,
+    ]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "postgres"]);
+    expect((refusal as Error).message).toBe(
+      "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
+    );
+    const resolved = await resolveConnection({ connection: inline("acmeserved") }, ADMIN);
+    expect(resolved).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
   });
 });

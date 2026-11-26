@@ -805,7 +805,7 @@ describe("the claims of an admitted provider package's engine", () => {
     });
     installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], []));
     const answer = serverEngine("acmeloose");
-    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
+    if (answer.kind !== "served") throw new Error(`answered ${answer.kind}`);
 
     // Studio's record holds no row for an engine it does not ship, so each claim is granted at its restrictive value.
     expect(answer.engine.grants).toEqual({

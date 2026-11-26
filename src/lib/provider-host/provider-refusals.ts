@@ -14,8 +14,22 @@
  */
 import { DEFINITION_REFUSAL_RULES } from "@libredb/provider-sdk/calls";
 import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
-import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
+
+/**
+ * The rules across the whole set of admitted packages and Studio's bundled catalog (`catalogConflicts` in
+ * src/lib/db/server-catalog-compose.ts), each the rule of a `PROVIDER_CATALOG_CONFLICT` refusal. Kept here with the
+ * other closed rule lists, so a module that refuses a package reaches no record of the server's engine catalog.
+ */
+export const CATALOG_CONFLICT_RULES = Object.freeze([
+  "engine-id",
+  "fence-alias",
+  "query-dialect",
+  "tab-type",
+  "editor-language",
+] as const);
+
+export type CatalogConflictRule = (typeof CATALOG_CONFLICT_RULES)[number];
 
 /** Every code a provider package or its lock is refused with. */
 export const PROVIDER_REFUSAL_CODES = Object.freeze([

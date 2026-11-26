@@ -59,15 +59,15 @@ const { installHostCore } = await import("@/lib/provider-host/instance");
 const { runPackageEditorQuery } = await import("@/lib/api/package-editor-query");
 const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
 const { encodeValue } = await import("@libredb/provider-sdk/values");
-type PackageEngine = import("@/lib/db/server-catalog").PackageEngine;
-type PackageConnection = import("@/lib/db/server-catalog").PackageConnection;
+type EngineRecord = import("@/lib/db/server-catalog").EngineRecord;
+type EngineConnection = import("@/lib/db/server-catalog").EngineConnection;
 
 const MAIN = "acmepsmain";
 const BARE = "acmepsbare";
 const ROWS = "acmepsrows";
 const SCOPE = "acmepsscope";
 const providers = scratchDirectory("studio-package-sessions-");
-let engines: Map<string, PackageEngine>;
+let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
   engines = await admitSessionPackages(providers, [
@@ -84,12 +84,12 @@ afterAll(async () => {
 });
 
 /** The engine `id` as the catalog holds it. */
-function engineOf(id: string): PackageEngine {
-  return engines.get(id) as PackageEngine;
+function engineOf(id: string): EngineRecord {
+  return engines.get(id) as EngineRecord;
 }
 
 /** A connection of `id`'s engine with a generated secret and `fields`. */
-function connectionOf(id: string, fields: Record<string, unknown> = {}): PackageConnection {
+function connectionOf(id: string, fields: Record<string, unknown> = {}): EngineConnection {
   return {
     id: `conn-${randomUUID()}`,
     name: "PS",
@@ -97,7 +97,7 @@ function connectionOf(id: string, fields: Record<string, unknown> = {}): Package
     host: "db.local",
     password: randomUUID(),
     ...fields,
-  } as unknown as PackageConnection;
+  } as unknown as EngineConnection;
 }
 
 /** An admin's execution context: full file access, no owner. */
@@ -464,7 +464,7 @@ describe("the sessions of a provider package's engine", () => {
 
   test("a removal or a cache clear closes an open it overtook, once, and caches nothing", async () => {
     for (const overtake of [
-      (connection: PackageConnection) => factory.removeProvider(connection.id),
+      (connection: EngineConnection) => factory.removeProvider(connection.id),
       () => factory.clearProviderCache(),
     ]) {
       const hooks = record(MAIN, { hold: true });
@@ -564,7 +564,7 @@ describe("the sessions of a provider package's engine", () => {
       },
     });
     const main = engineOf(MAIN);
-    const brief = { ...main, catalog: { ...main.catalog, connectBudgetMs: 50 } } as PackageEngine;
+    const brief = { ...main, catalog: { ...main.catalog, connectBudgetMs: 50 } } as EngineRecord;
     const error = await rejection(sessions.getOrCreatePackageSession(connectionOf(MAIN), brief, ADMIN));
     expect(error).toBeInstanceOf(StudioTimeoutRefusal);
     expect((error as Error).message).toBe(openDeadlineSentence(50));
@@ -583,7 +583,7 @@ describe("the sessions of a provider package's engine", () => {
     class NotPlain {
       readonly id = "c";
     }
-    const cases: [PackageConnection, PackageEngine, Record<string, unknown>, string][] = [
+    const cases: [EngineConnection, EngineRecord, Record<string, unknown>, string][] = [
       [connectionOf(MAIN, { readOnly: "yes" }), main, ADMIN, "readOnly must be true or false."],
       [
         connectionOf(MAIN, { readOnly: true }),
@@ -593,12 +593,12 @@ describe("the sessions of a provider package's engine", () => {
       ],
       [
         connectionOf(MAIN),
-        { ...main, grants: { ...main.grants, ungrantedRefusals: "Refused by its grants." } } as PackageEngine,
+        { ...main, grants: { ...main.grants, ungrantedRefusals: "Refused by its grants." } } as EngineRecord,
         ADMIN,
         "Refused by its grants.",
       ],
       [
-        new NotPlain() as unknown as PackageConnection,
+        new NotPlain() as unknown as EngineConnection,
         main,
         ADMIN,
         "A connection must be a plain object of data fields; no provider was built.",
@@ -620,7 +620,7 @@ describe("the sessions of a provider package's engine", () => {
       ],
       [
         connectionOf(MAIN, { clientCertificatePath: "/etc/x.pem" }),
-        { ...main, grants: { ...main.grants, hostPathFields: ["clientCertificatePath"] } } as PackageEngine,
+        { ...main, grants: { ...main.grants, hostPathFields: ["clientCertificatePath"] } } as EngineRecord,
         ADMIN,
         "This LibreDB Studio admits no host file for an engine of a provider package, so it does not hand on clientCertificatePath.",
       ],
@@ -629,7 +629,7 @@ describe("the sessions of a provider package's engine", () => {
         {
           ...main,
           connection: { ...main.connection, refused: { database: "This engine takes no database." } },
-        } as PackageEngine,
+        } as EngineRecord,
         ADMIN,
         "This engine takes no database.",
       ],
@@ -641,7 +641,7 @@ describe("the sessions of a provider package's engine", () => {
             connectionFields: ["password"],
             fieldRules: { password: { required: "Enter the password. Nothing was sent." } },
           },
-        } as PackageEngine,
+        } as EngineRecord,
         ADMIN,
         "Enter the password. Nothing was sent.",
       ],

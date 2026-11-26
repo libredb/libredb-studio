@@ -13,7 +13,7 @@ import { DEFAULT_CONNECT_BUDGET_MS, UndeclaredEnvironmentError } from "@libredb/
 import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
-import type { PackageConnection, PackageEngine } from "@/lib/db/server-catalog";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { DEFAULT_POOL_CONFIG } from "@/lib/db/types";
 import { packageConnectBudget, packageEnvironment, packageOpenContext } from "@/lib/provider-host/open-context";
@@ -21,9 +21,9 @@ import { LITERAL_SEED_FILE } from "@/lib/types";
 import { admittedFor, admittedManifest, type EditableEngine } from "../../../helpers/package-catalog";
 
 /** The engine of `id` composed from the minimal manifest changed by `edit`, as the server catalog holds it. */
-function engineOf(id: string, edit: (engine: EditableEngine) => void = () => undefined): PackageEngine {
+function engineOf(id: string, edit: (engine: EditableEngine) => void = () => undefined): EngineRecord {
   const catalog = composeServerCatalog([admittedFor(`acme-${id}`, admittedManifest(id, edit))], []);
-  return catalog.packages.get(id) as PackageEngine;
+  return catalog.engines.get(id) as EngineRecord;
 }
 
 /** Fields `host` and `password` only, a budget of 90 s, and the TLS modes `require` and `verify-full`. */
@@ -38,8 +38,8 @@ const narrow = engineOf("acmeocnarrow", narrowFields);
 const plain = engineOf("acmeocplain");
 
 /** A connection of `engine` with `fields`. */
-function connectionOf(engine: PackageEngine, fields: Record<string, unknown> = {}): PackageConnection {
-  return { id: "conn-oc", name: "OC", type: engine.id, ...fields } as unknown as PackageConnection;
+function connectionOf(engine: EngineRecord, fields: Record<string, unknown> = {}): EngineConnection {
+  return { id: "conn-oc", name: "OC", type: engine.id, ...fields } as unknown as EngineConnection;
 }
 
 /** The refusal `build` throws. */
@@ -117,7 +117,7 @@ describe("the open context of a provider package's engine", () => {
       connection: {
         ...connectionOf(plain, { managed: true }),
         [LITERAL_SEED_FILE]: true,
-      } as PackageConnection,
+      } as EngineConnection,
       engine: plain,
       execution: { allowExternalFileAccess: true },
       deadline,

@@ -1,13 +1,16 @@
 /**
  * The server's engine catalog (src/lib/db/server-catalog.ts) and its composition (src/lib/db/server-catalog-compose.ts):
- * Studio's bundled catalog plus the engines of the admitted provider packages, composed once at boot, read through one
- * accessor keyed by Maps, with the set rules over the whole set refusing every admitted claimant whatever the order.
+ * one engine record for every engine, the legacy adapter's records of Studio's bundled engines beside the records of
+ * the admitted provider packages' engines, composed once at boot, read through one accessor keyed by one Map, with the
+ * set rules over the whole set refusing every admitted claimant whatever the order.
  *
  * Every package here is built in memory (tests/helpers/package-catalog.ts): no file is written and nothing is imported,
  * so each case installs a catalog of its own and forgets it after.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
@@ -18,10 +21,13 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import {
-  assertBundledEngine,
+  assertLegacyProvider,
+  type EngineRecord,
   forgetServerCatalog,
   installServerCatalog,
+  legacyProviderRefusal,
   serverCatalogInstalled,
+  servedPackage,
   serverEngine,
 } from "@/lib/db/server-catalog";
 import {
@@ -35,7 +41,64 @@ import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection } from "@/lib/types";
 import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
-import { admittedFor, admittedManifest, type EditableEngine, withFieldRules } from "../../../helpers/package-catalog";
+import ts from "typescript";
+import {
+  admittedFor,
+  admittedManifest,
+  type EditableEngine,
+  withFieldRules,
+  withLegacyProviderOffers,
+} from "../../../helpers/package-catalog";
+
+const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
+
+/** Every member of an engine record, legacy or package. */
+const RECORD_KEYS = ["catalog", "connection", "fieldRules", "grants", "id", "offers", "source", "statementGrammar"];
+
+/** Every offer of an engine record. */
+const OFFER_KEYS = [
+  "catalog",
+  "consoleTextBound",
+  "database",
+  "explain",
+  "hostFiles",
+  "legacyProvider",
+  "ownWords",
+  "queryEventText",
+  "sshTunnel",
+  "testCautions",
+  "unboundedPage",
+];
+
+/** The ids of Studio's committed declarations, read from their files. */
+function declaredIds(): string[] {
+  return readdirSync(path.join(ROOT, "src/lib/db/engine-declarations"))
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length))
+    .sort();
+}
+
+/** The root package.json's version, read from the file. */
+function rootVersion(): string {
+  return (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+}
+
+/** The names `module` (repository-relative) imports by value from `specifier`, read with the TypeScript compiler. */
+function valueNamesImported(module: string, specifier: string): string[] {
+  const file = path.join(ROOT, module);
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const names: string[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (statement.moduleSpecifier.text !== specifier) continue;
+    const clause = statement.importClause;
+    if (clause === undefined || clause.isTypeOnly) continue;
+    const bindings = clause.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) throw new Error(`${module} imports ${specifier} whole`);
+    for (const element of bindings.elements) if (!element.isTypeOnly) names.push(element.name.text);
+  }
+  return names.sort();
+}
 
 afterEach(() => {
   forgetServerCatalog();
@@ -60,19 +123,25 @@ function thrown(run: () => unknown): unknown {
   throw new Error("nothing was thrown");
 }
 
+/** The record `serverEngine` answers for `id`, which must be served. */
+function servedRecord(id: string): EngineRecord {
+  const answer = serverEngine(id);
+  if (answer.kind !== "served") throw new Error(`answered ${answer.kind}`);
+  return answer.engine;
+}
+
 describe("the accessor", () => {
   test("an admitted engine is a known type to the server and its connection fields come from its declaration", () => {
     const manifest = admittedManifest("acmeserved", withFieldRules);
     const pkg = admittedFor("acme-served", manifest);
     installServerCatalog(composeServerCatalog([pkg], []));
 
-    const answer = serverEngine("acmeserved");
-    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
-    const { engine } = answer;
+    const engine = servedRecord("acmeserved");
     expect<string>(engine.id).toBe("acmeserved");
-    expect(engine.package).toMatchObject({ name: "acme-served", version: "1.0.0", directory: pkg.directory });
-    expect(engine.package.manifest).toBe(manifest);
-    expect(engine.package.record).toBe(pkg.record);
+    expect([engine.source.name, engine.source.version]).toEqual(["acme-served", "1.0.0"]);
+    expect(servedPackage(engine)).toMatchObject({ name: "acme-served", version: "1.0.0", directory: pkg.directory });
+    expect(servedPackage(engine).manifest).toBe(manifest);
+    expect(servedPackage(engine).record).toBe(pkg.record);
     expect(engine.catalog).toEqual({ location: "external", connectBudgetMs: null });
     expect(engine.connection.fields).toEqual(["host", "port", "user", "password", "database"]);
     // The field rules are the declaration's, in its field order, each pattern compiled once.
@@ -89,13 +158,14 @@ describe("the accessor", () => {
     // A user other than reader hides the database, so its rule is not read.
     expect(refuse({ host: "db.local", user: "writer" })).toBeUndefined();
     expect(refuse({ host: "db.local", user: "reader", database: "d" })).toBeUndefined();
-    // The engine is no bundled type: the server-side check refuses it on a route that does not serve it, by name.
-    const route = thrown(() => assertBundledEngine("acmeserved", "route"));
+    // The engine's record offers no legacy provider: the server-side check refuses it on a route that does not serve it,
+    // by name.
+    const route = thrown(() => assertLegacyProvider("acmeserved", "route"));
     expect(route).toBeInstanceOf(PackageEngineUnsupportedError);
     expect((route as Error).message).toBe(
       "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
     );
-    const open = thrown(() => assertBundledEngine("acmeserved", "open"));
+    const open = thrown(() => assertLegacyProvider("acmeserved", "open"));
     expect((open as Error).message).toBe(
       "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
@@ -119,7 +189,7 @@ describe("the accessor", () => {
     for (const value of [undefined, null, "", 7, ["postgres"], "acmenone", "Postgres", " postgres"]) {
       const expected = thrown(() => assertDatabaseType(value)) as UnknownProviderError;
       for (const need of ["route", "open"] as const) {
-        const actual = thrown(() => assertBundledEngine(value, need)) as UnknownProviderError;
+        const actual = thrown(() => assertLegacyProvider(value, need)) as UnknownProviderError;
         expect(actual).toBeInstanceOf(UnknownProviderError);
         expect([actual.name, actual.message, actual.code, actual.reason, actual.typeId]).toEqual([
           expected.name,
@@ -131,8 +201,8 @@ describe("the accessor", () => {
       }
     }
     for (const id of SHIPPED_DATABASE_TYPES) {
-      expect<unknown>(serverEngine(id)).toEqual({ kind: "bundled", id });
-      expect(() => assertBundledEngine(id, "open")).not.toThrow();
+      expect(servedRecord(id).id as string).toBe(id);
+      expect(() => assertLegacyProvider(id, "open")).not.toThrow();
     }
   });
 
@@ -155,10 +225,10 @@ describe("the accessor", () => {
       id: "acmelost",
       codes: ["PROVIDER_LOAD_FAILED"],
     });
-    expect<unknown>(serverEngine(bundled)).toEqual({ kind: "bundled", id: bundled });
+    expect(servedRecord(bundled).source.package).toBeNull();
     expect<unknown>(serverEngine("acmeunnamed")).toEqual({ kind: "refused", refusal: typeIdRefusal("acmeunnamed") });
 
-    const error = thrown(() => assertBundledEngine("acmegone", "route")) as ProviderUnavailableError;
+    const error = thrown(() => assertLegacyProvider("acmegone", "route")) as ProviderUnavailableError;
     expect(error).toBeInstanceOf(ProviderUnavailableError);
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect([error.code, error.typeId, error.codes]).toEqual([
@@ -182,7 +252,7 @@ describe("the accessor", () => {
     );
     for (const key of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
       expect<unknown>(serverEngine(key)).toEqual({ kind: "refused", refusal: typeIdRefusal(key) });
-      expect(thrown(() => assertBundledEngine(key, "route"))).toBeInstanceOf(UnknownProviderError);
+      expect(thrown(() => assertLegacyProvider(key, "route"))).toBeInstanceOf(UnknownProviderError);
     }
   });
 
@@ -195,29 +265,128 @@ describe("the accessor", () => {
     expect(() => installServerCatalog(composeServerCatalog([], []))).toThrow(
       "The server's engine catalog is already installed in this process: boot composes it once.",
     );
-    expect<unknown>(serverEngine("acmeonce").kind).toBe("package");
+    expect<unknown>(serverEngine("acmeonce").kind).toBe("served");
     forgetServerCatalog();
     expect(serverCatalogInstalled()).toBe(false);
     expect<unknown>(serverEngine("acmeonce").kind).toBe("refused");
   });
 });
 
+describe("one engine record for every engine", () => {
+  test("with nothing installed, serverEngine answers a served record for each of the 43 declared ids, each with the legacy identity @libredb/studio at the root package.json's version", () => {
+    expect(serverCatalogInstalled()).toBe(false);
+    const ids = declaredIds();
+    expect(ids).toHaveLength(43);
+    const version = rootVersion();
+    for (const id of ids) {
+      const engine = servedRecord(id);
+      expect(engine.id as string).toBe(id);
+      expect(engine.source).toEqual({ name: "@libredb/studio", version, package: null });
+    }
+  });
+
+  test("a legacy engine and an admitted package's engine answer the same record shape, told apart by no kind", () => {
+    installServerCatalog(composeServerCatalog([admittedFor("acme-shape", admittedManifest("acmeshape"))], []));
+    const legacy = serverEngine(SHIPPED_DATABASE_TYPES[0]);
+    const packaged = serverEngine("acmeshape");
+    expect([legacy.kind, packaged.kind]).toEqual(["served", "served"]);
+    if (legacy.kind !== "served" || packaged.kind !== "served") throw new Error("not served");
+    expect(Object.keys(legacy.engine).sort()).toEqual(RECORD_KEYS);
+    expect(Object.keys(packaged.engine).sort()).toEqual(RECORD_KEYS);
+    expect(Object.keys(legacy.engine.offers).sort()).toEqual(OFFER_KEYS);
+    expect(Object.keys(packaged.engine.offers).sort()).toEqual(OFFER_KEYS);
+    expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
+  });
+
+  test("serverEngine reads no isDatabaseType: an id outside the catalog's map is refused with typeIdRefusal's answer, unchanged", () => {
+    expect(valueNamesImported("src/lib/db/server-catalog.ts", "./type-id")).toEqual(["quoteTypeId", "typeIdRefusal"]);
+    const values: unknown[] = [undefined, null, "", 5, ["postgres"], "constructor", "__proto__", "acmenosuch"];
+    for (const value of values) {
+      expect<unknown>(serverEngine(value)).toEqual({ kind: "refused", refusal: typeIdRefusal(value) });
+    }
+    // The check reads the record's offer, never the id's membership: a crafted catalog whose legacy record offers no
+    // legacy provider is refused as a package's engine is, and a package record that offers one passes.
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    installServerCatalog(
+      withLegacyProviderOffers(composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], []), {
+        [legacyId]: false,
+        acmeoffer: true,
+      }),
+    );
+    const refused = thrown(() => assertLegacyProvider(legacyId, "open")) as PackageEngineUnsupportedError;
+    expect(refused).toBeInstanceOf(PackageEngineUnsupportedError);
+    expect([refused.code, refused.typeId]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", legacyId]);
+    expect(refused.message).toBe(
+      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
+    );
+    expect(legacyProviderRefusal("acmeoffer", "route")).toBeNull();
+  });
+
+  test("a legacy record offers the legacy provider surface, explain, database, catalog and unbounded pages, and a package record offers none of them", () => {
+    installServerCatalog(composeServerCatalog([admittedFor("acme-offers", admittedManifest("acmeoffers"))], []));
+    const surface = (engine: EngineRecord) => {
+      const { legacyProvider, explain, database, catalog, unboundedPage } = engine.offers;
+      return { legacyProvider, explain, database, catalog, unboundedPage };
+    };
+    for (const id of SHIPPED_DATABASE_TYPES) {
+      expect(surface(servedRecord(id))).toEqual({
+        legacyProvider: true,
+        explain: true,
+        database: true,
+        catalog: true,
+        unboundedPage: true,
+      });
+    }
+    expect(surface(servedRecord("acmeoffers"))).toEqual({
+      legacyProvider: false,
+      explain: false,
+      database: false,
+      catalog: false,
+      unboundedPage: false,
+    });
+  });
+
+  test("the composed catalog holds every legacy record by identity, then the admitted engines", () => {
+    const pkg = admittedFor("acme-order", admittedManifest("acmeorder"));
+    const composed = composeServerCatalog([pkg], []);
+    const nothingInstalled = SHIPPED_DATABASE_TYPES.map((id) => servedRecord(id));
+    expect([...composed.engines.keys()]).toEqual([...SHIPPED_DATABASE_TYPES, "acmeorder"]);
+    SHIPPED_DATABASE_TYPES.forEach((id, index) => {
+      expect(composed.engines.get(id)).toBe(nothingInstalled[index] as EngineRecord);
+    });
+    installServerCatalog(composed);
+    for (const id of SHIPPED_DATABASE_TYPES) expect(servedRecord(id)).toBe(composed.engines.get(id) as EngineRecord);
+  });
+
+  test("installing a catalog that lacks a legacy engine's record is a host defect, named", () => {
+    const composed = composeServerCatalog([], []);
+    const missing = SHIPPED_DATABASE_TYPES[1] as string;
+    const engines = new Map(composed.engines);
+    engines.delete(missing);
+    expect(() => installServerCatalog({ engines, unavailable: composed.unavailable })).toThrow(
+      `The server's engine catalog holds no record of the legacy engine ${JSON.stringify(missing)}: every composed catalog holds every legacy record.`,
+    );
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("servedPackage answers a package record's package with its declared session, and a legacy record's is a host defect", () => {
+    const manifest = admittedManifest("acmesession");
+    installServerCatalog(composeServerCatalog([admittedFor("acme-session", manifest)], []));
+    const served = servedPackage(servedRecord("acmesession"));
+    expect(served.session.calls).toBe(manifest.calls);
+    expect(served.session.panels).toBe(manifest.engines[0]?.facets.monitoring as never);
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    expect(() => servedPackage(servedRecord(legacyId))).toThrow(
+      `The engine ${JSON.stringify(legacyId)} is served by LibreDB Studio's legacy adapter, which serves no provider package: a caller that reads a package of it is a host defect.`,
+    );
+  });
+});
+
 describe("what the catalog composes", () => {
   test("the composed catalog holds no engine knowledge the declaration did not state: no SQL writing, connection form, connection string, grammar, migration DDL or generator row", () => {
     installServerCatalog(composeServerCatalog([admittedFor("acme-keys", admittedManifest("acmekeys"))], []));
-    const answer = serverEngine("acmekeys");
-    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
-    const { engine } = answer;
-    expect(Object.keys(engine).sort()).toEqual([
-      "catalog",
-      "connection",
-      "fieldRules",
-      "grants",
-      "id",
-      "package",
-      "session",
-      "statementGrammar",
-    ]);
+    const engine = servedRecord("acmekeys");
+    expect(Object.keys(engine).sort()).toEqual(RECORD_KEYS);
     expect(Object.keys(engine.fieldRules).sort()).toEqual(["connectionFields"]);
     expect(Object.keys(engine.connection).sort()).toEqual([
       "connectionStringAccepted",
@@ -229,8 +398,19 @@ describe("what the catalog composes", () => {
       "seedOnly",
       "tlsModes",
     ]);
-    expect(Object.keys(engine.package).sort()).toEqual(["directory", "manifest", "name", "record", "version"]);
-    for (const value of [engine, engine.package, engine.catalog, engine.connection, engine.fieldRules, engine.grants]) {
+    expect(Object.keys(engine.source).sort()).toEqual(["name", "package", "version"]);
+    const served = servedPackage(engine);
+    expect(Object.keys(served).sort()).toEqual(["directory", "manifest", "name", "record", "session", "version"]);
+    for (const value of [
+      engine,
+      engine.source,
+      served,
+      engine.catalog,
+      engine.connection,
+      engine.fieldRules,
+      engine.grants,
+      engine.offers,
+    ]) {
       expect(Object.isFrozen(value)).toBe(true);
     }
   });
@@ -243,9 +423,7 @@ describe("what the catalog composes", () => {
       grammar.dollarTags = false;
     });
     installServerCatalog(composeServerCatalog([admittedFor("acme-grammar", manifest)], []));
-    const answer = serverEngine("acmegrammar");
-    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
-    const { statementGrammar } = answer.engine;
+    const { statementGrammar } = servedRecord("acmegrammar");
     const declared = (manifest.engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar;
     // The same record Studio composes its own engines' grammars with, from the package's facts as declared: the gate
     // drops the exempt forms when it reads them (packageStatementAsks), so the record keeps them as data.
@@ -257,9 +435,7 @@ describe("what the catalog composes", () => {
     const [clause] = statementGrammar.trailingLimitClauses ?? [];
     expect(clause).toBeInstanceOf(RegExp);
     expect([clause?.source, clause?.flags]).toEqual(["\\s+FORMAT\\s+\\w+\\s*$", "i"]);
-    const again = serverEngine("acmegrammar");
-    if (again.kind !== "package") throw new Error(`answered ${again.kind}`);
-    expect(again.engine.statementGrammar.trailingLimitClauses?.[0]).toBe(clause as RegExp);
+    expect(servedRecord("acmegrammar").statementGrammar.trailingLimitClauses?.[0]).toBe(clause as RegExp);
   });
 
   test("composing a set that still conflicts, or an engine both served and unavailable, is a host defect", () => {
@@ -280,9 +456,7 @@ describe("what the catalog composes", () => {
     installServerCatalog(
       composeServerCatalog([admittedFor("acme-check", admittedManifest("acmecheck", withFieldRules))], []),
     );
-    const answer = serverEngine("acmecheck");
-    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
-    const rules = answer.engine.fieldRules;
+    const rules = servedRecord("acmecheck").fieldRules;
     const base = { host: "db.local", user: "writer" };
     expect(connectionFieldRefusal(rules, connectionOf("acmecheck", { ...base, password: randomUUID() }))).toBe(
       unboundCheck("password"),

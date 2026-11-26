@@ -1,6 +1,6 @@
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { GRANTED_DENIED_FILE_ACCESS_REFUSAL } from "@/lib/db/claim-grants";
-import { bundledEngineRefusal } from "@/lib/db/server-catalog";
+import { legacyProviderRefusal } from "@/lib/db/server-catalog";
 import type { ManagedConnection } from "@/lib/seed";
 import type { McpCaller } from "./context";
 
@@ -14,7 +14,7 @@ import type { McpCaller } from "./context";
  * and the open agree. It builds no provider and reads no Vault reference.
  *
  * A connection whose type is not a type id has no row to read: it answers the server's engine catalog's refusal
- * (`bundledEngineRefusal` in src/lib/db/server-catalog.ts) before any table or posture is read, the type id refusal's
+ * (`legacyProviderRefusal` in src/lib/db/server-catalog.ts) before any table or posture is read, the type id refusal's
  * own sentence for a type that names no provider this Studio has (FND-1), the sentence naming the refusal codes for an
  * engine only refused provider packages name, and the open's sentence for an admitted package's engine (C-107).
  * Otherwise the engine's row is read first, so only an engine that refuses a denied handle asks for a posture. That
@@ -35,7 +35,7 @@ export function mcpConnectionUnavailable(
   connection: ManagedConnection,
   refuses: Readonly<Record<ManagedConnection["type"], string | null>> = GRANTED_DENIED_FILE_ACCESS_REFUSAL,
 ): string | null {
-  const refusal = bundledEngineRefusal(connection.type, "open");
+  const refusal = legacyProviderRefusal(connection.type, "open");
   if (refusal !== null) return refusal.message;
   if (refuses[connection.type] === null) return null;
   return editorExecutionContext(caller, connection).allowExternalFileAccess ? null : MCP_CONNECTION_UNAVAILABLE_TEXT;

@@ -137,6 +137,12 @@ function spyLogs() {
 /** The boot line `message` begins every package line with: its code, name and version. */
 const named = (code: string, pkg: Written) => `${code}: ${pkg.name} 1.0.0: `;
 
+/** The name the engine `id` is served under, or the kind `serverEngine` answers for an engine it does not serve. */
+function servedBy(id: string): string {
+  const answer = serverEngine(id);
+  return answer.kind === "served" ? answer.engine.source.name : answer.kind;
+}
+
 describe("boot admission", () => {
   test("a refused package leaves Studio running without its engines, named once by code", async () => {
     const providers = freshProviders();
@@ -162,7 +168,7 @@ describe("boot admission", () => {
     } finally {
       logs.restore();
     }
-    expect(serverEngine(good.id).kind).toBe("package");
+    expect(servedBy(good.id)).toBe(good.name);
     expect<unknown>(serverEngine(tampered.id)).toEqual({
       kind: "unavailable",
       id: tampered.id,
@@ -237,7 +243,7 @@ describe("boot admission", () => {
         logs.restore();
       }
       expect(serverCatalogInstalled()).toBe(true);
-      expect(serverEngine("postgres").kind).toBe("bundled");
+      expect(servedBy("postgres")).toBe("@libredb/studio");
     }
   });
 
@@ -324,7 +330,7 @@ describe("boot admission", () => {
         codes: ["PROVIDER_CATALOG_CONFLICT"],
       });
     }
-    expect(serverEngine(quiet.id).kind).toBe("package");
+    expect(servedBy(quiet.id)).toBe(quiet.name);
   });
 
   test("a package a set rule refuses is absent from the loader's registry, which names exactly the packages the catalog serves", async () => {
@@ -425,7 +431,7 @@ describe("boot admission", () => {
       read.mockRestore();
       logs.restore();
     }
-    expect(serverEngine(only.id).kind).toBe("package");
+    expect(servedBy(only.id)).toBe(only.name);
   });
 
   test("each package is admitted under the 10 s import deadline, in lock order, one after another", async () => {

@@ -6,7 +6,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { testConnection, testPackageConnection } from "@/lib/api/test-connection";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { type PackageConnection, serverEngine } from "@/lib/db/server-catalog";
+import { type EngineConnection, serverEngine } from "@/lib/db/server-catalog";
 import type { DatabaseConnection } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
@@ -36,8 +36,8 @@ export async function POST(req: NextRequest) {
       "bundled-and-package",
     );
     const served = serverEngine(resolved.type);
-    if (served.kind === "package") {
-      const packaged = resolved as PackageConnection;
+    if (served.kind === "served" && !served.engine.offers.legacyProvider) {
+      const packaged = resolved as EngineConnection;
       return NextResponse.json(
         await testPackageConnection(
           packaged,

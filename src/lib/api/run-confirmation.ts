@@ -144,7 +144,7 @@ function readConfirmationField(value: unknown): ConfirmationField | null {
 
 /**
  * A run request on a connection of an engine a provider package serves, with the grammar its declaration states, as the
- * server catalog's record of the engine holds it (`PackageEngine.statementGrammar`).
+ * server catalog's record of the engine holds it (`EngineRecord.statementGrammar`).
  */
 export interface PackageRunGateRequest extends Omit<RunGateRequest, "connection"> {
   readonly connection: EngineConnection;

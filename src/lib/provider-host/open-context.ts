@@ -39,15 +39,15 @@ import {
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, markNotSent } from "@/lib/db/errors";
-import type { PackageConnection, PackageEngine } from "@/lib/db/server-catalog";
+import { type EngineConnection, type EngineRecord, servedPackage } from "@/lib/db/server-catalog";
 import { trustMaterial } from "@/lib/db/trust-material";
 import { DEFAULT_POOL_CONFIG, type EditorExecutionContext } from "@/lib/db/types";
 import { LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
 
 /** What `packageOpenContext` builds an open context from. */
 export interface PackageOpenRequest {
-  readonly connection: PackageConnection & WithLiteralSeedFile;
-  readonly engine: PackageEngine;
+  readonly connection: EngineConnection & WithLiteralSeedFile;
+  readonly engine: EngineRecord;
   /** The caller's file-access posture and, under governance, the owner and the owner's pool size. */
   readonly execution: EditorExecutionContext;
   /** When the open must have answered: its start plus `packageConnectBudget(engine)`. */
@@ -56,7 +56,7 @@ export interface PackageOpenRequest {
 }
 
 /** How long the host waits for an open of `engine`: the budget its declaration states, or the host's default. */
-export function packageConnectBudget(engine: PackageEngine): number {
+export function packageConnectBudget(engine: EngineRecord): number {
   return engine.catalog.connectBudgetMs ?? DEFAULT_CONNECT_BUDGET_MS;
 }
 
@@ -87,7 +87,7 @@ function isFieldValue(value: unknown): value is ConnectionFieldValue {
  *
  * @throws {DatabaseConfigError} Not-sent, naming the field, for a value outside the contract's value forms.
  */
-function declaredValues(connection: PackageConnection, engine: PackageEngine): ConnectionFieldValues {
+function declaredValues(connection: EngineConnection, engine: EngineRecord): ConnectionFieldValues {
   const values: Record<string, ConnectionFieldValue> = {};
   const record = connection as unknown as Readonly<Record<string, unknown>>;
   for (const field of engine.connection.fields) {
@@ -117,7 +117,7 @@ const TLS_MEMBERS = Object.freeze({
  * @throws {DatabaseConfigError} Not-sent, for an `ssl` whose mode the declaration does not list or whose member is not
  * of its type.
  */
-function tlsOf(connection: PackageConnection, engine: PackageEngine): TlsSettings | undefined {
+function tlsOf(connection: EngineConnection, engine: EngineRecord): TlsSettings | undefined {
   const ssl: unknown = connection.ssl;
   if (ssl === undefined || ssl === null) return undefined;
   const settings = ssl as Readonly<Record<string, unknown>>;
@@ -171,6 +171,6 @@ export function packageOpenContext(request: PackageOpenRequest): OpenContext {
         : { ...DEFAULT_POOL_CONFIG, min: 0, max: execution.ownerPoolMax as number },
     deadline: request.deadline,
     signal: request.signal,
-    env: packageEnvironment(engine.package.manifest),
+    env: packageEnvironment(servedPackage(engine).manifest),
   };
 }

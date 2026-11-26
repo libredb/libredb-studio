@@ -13,7 +13,7 @@
  */
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
-import { installServerCatalog, type PackageEngine, serverEngine } from "@/lib/db/server-catalog";
+import { type EngineRecord, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { type EditableEngine, rawManifest } from "./package-catalog";
 import { FIXTURE_ENTRY, lockEntryOf, writeArtifact, writeLock } from "./provider-artifacts";
@@ -116,7 +116,7 @@ function entryOf(pkg: SessionPackage, manifest: Record<string, unknown>): string
 export async function admitSessionPackages(
   providers: string,
   packages: readonly SessionPackage[],
-): Promise<Map<string, PackageEngine>> {
+): Promise<Map<string, EngineRecord>> {
   const entries = packages.map((pkg) => {
     const manifest = manifestOf(pkg);
     const fixture = {
@@ -138,10 +138,10 @@ export async function admitSessionPackages(
     throw new Error(`fixture packages refused: ${answer.refused.map((pkg) => `${pkg.name} ${pkg.code}`).join(", ")}`);
   }
   installServerCatalog(composeServerCatalog(answer.admitted, answer.refused));
-  const engines = new Map<string, PackageEngine>();
+  const engines = new Map<string, EngineRecord>();
   for (const pkg of packages) {
     const engine = serverEngine(pkg.engine);
-    if (engine.kind !== "package") throw new Error(`the engine ${pkg.engine} is not served: ${engine.kind}`);
+    if (engine.kind !== "served") throw new Error(`the engine ${pkg.engine} is not served: ${engine.kind}`);
     engines.set(pkg.engine, engine.engine);
   }
   return engines;

@@ -61,7 +61,7 @@ import { requiredSecretRefusal } from "./connection-field-rules";
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
 import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
-import { assertBundledEngine } from "./server-catalog";
+import { assertLegacyProvider } from "./server-catalog";
 import { closePackageSessions, removePackageSessions } from "./package-sessions";
 import { typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
@@ -136,7 +136,7 @@ import * as path from "path";
  *   reads that variable or file either. A caller's `egress` or `trust` is never handed on.
  * @returns Promise<DatabaseProvider> instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
- *   checked, logged or built (FND-1; see `assertBundledEngine` in ./server-catalog, which refuses an engine only a
+ *   checked, logged or built (FND-1; see `assertLegacyProvider` in ./server-catalog, which refuses an engine only a
  *   provider package serves as `ProviderUnavailableError` or `PackageEngineUnsupportedError` in the same place)
  * @throws DatabaseConfigError if connection type is left out of a set
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
@@ -238,7 +238,7 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * type outside the `DatabaseType` union is refused by name with `UnknownProviderError`, never read as an
  * engine that does not enforce the mode.
  *
- * WHERE IT RUNS. Right after the type check (`assertBundledEngine`, FND-1), which is the first statement of
+ * WHERE IT RUNS. Right after the type check (`assertLegacyProvider`, FND-1), which is the first statement of
  * `createDatabaseProvider` and `withOneShotTunnel`, and of
  * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
  * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, so a refusal
@@ -447,7 +447,7 @@ async function buildProvider(
 ): Promise<DatabaseProvider> {
   // First, before every other check, the log line and the switch below: a type that names no provider is refused by
   // name, and no other refusal or default speaks for it (FND-1).
-  assertBundledEngine(connection.type, "open");
+  assertLegacyProvider(connection.type, "open");
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertClaimsGranted(connection);
@@ -515,7 +515,7 @@ async function buildProvider(
     options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
   }
 
-  // No `default`: `assertBundledEngine` above refused every value that is not a type id, and the compiler holds this
+  // No `default`: `assertLegacyProvider` above refused every value that is not a type id, and the compiler holds this
   // switch exhaustive over the `DatabaseType` union, so a type id without a case fails the typecheck (TS2366) rather
   // than reaching the end of the function at run time.
   switch (connection.type) {
@@ -972,7 +972,7 @@ export async function withOneShotTunnel<T>(
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
   // First, before the tunnel is dialled: a type that names no provider is refused by name (FND-1).
-  assertBundledEngine(connection.type, "open");
+  assertLegacyProvider(connection.type, "open");
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertClaimsGranted(connection);
@@ -1788,7 +1788,7 @@ async function openWritable(
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539). The type
   // check comes before both: the key frames the type too, and a type that names no provider is refused by name (FND-1).
-  assertBundledEngine(connection.type, "open");
+  assertLegacyProvider(connection.type, "open");
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
@@ -2295,7 +2295,7 @@ export async function acquireExecutionProfileProvider(
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539). The type check
   // comes before both, as in getOrCreateProvider (FND-1).
-  assertBundledEngine(connection.type, "open");
+  assertLegacyProvider(connection.type, "open");
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
