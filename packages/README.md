@@ -1,6 +1,7 @@
 # Workspace packages
 
 This directory holds Studio's bun workspace packages: code staged as separate packages inside this repository before it moves to a repository of its own.
+The grant register, `packages/grant-register/`, `@libredb/grant-register`, is the exception: it holds LibreDB's review of each engine's grants and stays in Studio's repository (`docs/providers/CONTRACT.md`, M-84), unlike the packages staged for a repository of their own.
 The root `package.json` declares them with `"workspaces": ["packages/*"]`.
 The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator under `/manifest`, the value codec under `/values`, the error record's contract under `/errors`, the call surface a provider package implements under `/calls`, the SQL grammar facts under `/sql`, and the memory test transport its tests and the kit call a provider through under `/testing` (`docs/providers/CONTRACT.md`).
 

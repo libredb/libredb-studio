@@ -72,8 +72,8 @@ describe("workspacePackageDirectories", () => {
     expect(() => workspacePackageDirectories(scratch)).toThrow("packages/linked is a symbolic link or junction");
   });
 
-  test("the repository lists the provider SDK, its first package", () => {
-    expect(workspacePackageDirectories(repositoryRoot)).toEqual(["packages/provider-sdk"]);
+  test("the repository lists its workspace packages: the provider SDK and the grant register", () => {
+    expect(workspacePackageDirectories(repositoryRoot)).toEqual(["packages/grant-register", "packages/provider-sdk"]);
   });
 });
 
@@ -107,8 +107,8 @@ describe("workspacePackageNames", () => {
     expect(workspacePackageManifests(scratch)).toEqual([{ directory: "packages/planted", manifest }]);
   });
 
-  test("the repository names the provider SDK, its first package", () => {
-    expect(workspacePackageNames(repositoryRoot)).toEqual(["@libredb/provider-sdk"]);
+  test("the repository names its workspace packages: the provider SDK and the grant register", () => {
+    expect(workspacePackageNames(repositoryRoot)).toEqual(["@libredb/grant-register", "@libredb/provider-sdk"]);
   });
 });
 

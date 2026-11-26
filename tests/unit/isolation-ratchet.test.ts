@@ -17,6 +17,7 @@ import {
   EXCEPTIONS,
   type Exception,
   GATE_COUNTERS,
+  GRANT_REGISTER_DIRECTORY,
   type Io,
   main,
   type Measurement,
@@ -400,6 +401,69 @@ describe("non-engine packages", () => {
   });
 });
 
+describe("the grant register", () => {
+  const REGISTER_LINES = "grantRegister.linesNamingAnEngine";
+  const REGISTER_IDS = "grantRegister.engineIdsNamed";
+
+  test("a line naming an engine in the register package's source counts toward the register counter and toward no other", () => {
+    const before = gate({});
+    const measured = measureFiles({
+      "packages/grant-register/src/register.json": '[\n  { "engine": "kafka" },\n  { "engine": "postgres" }\n]\n',
+      "packages/grant-register/src/index.ts": "export const LEGACY_KEY = 1;\n",
+    }).baseline;
+
+    expect(GRANT_REGISTER_DIRECTORY).toBe("grant-register");
+    expect(before[REGISTER_LINES]).toBe(0);
+    expect(measured.counters[REGISTER_LINES]).toBe(2);
+    expect(measured.ids[REGISTER_IDS]).toEqual(["kafka", "postgres"]);
+    expect(measured.ids["nonEnginePackages.engineIdsNamed"]).toEqual([]);
+    const others: Record<string, number> = { ...measured.counters, [REGISTER_LINES]: 0 };
+    expect(others).toEqual(before);
+  });
+
+  test("a file under the register's tests/ does not count, and a JSON file of the register counts like a source file", () => {
+    expect(gate({ "packages/grant-register/tests/x.test.ts": 'x = "kafka";\n' })[REGISTER_LINES]).toBe(0);
+    expect(gate({ "packages/grant-register/src/tests/x.ts": 'x = "kafka";\n' })[REGISTER_LINES]).toBe(1);
+    expect(gate({ "packages/grant-register/src/register.schema.json": '"enum": ["kafka"]\n' })[REGISTER_LINES]).toBe(1);
+    expect(
+      gate({ "packages/grant-register/package.json": '{ "description": "the `kafka` engine" }\n' })[REGISTER_LINES],
+    ).toBe(1);
+  });
+
+  test("an engine id newly named in the register is refused at an unchanged line count", () => {
+    const file = "packages/grant-register/src/register.json";
+    const before = measureFiles({ [file]: '"engine": "kafka",\n' }).baseline;
+    const after = measureFiles({ [file]: '"engine": "postgres",\n' }).baseline;
+
+    expect(after.counters[REGISTER_LINES]).toBe(before.counters[REGISTER_LINES]);
+    expect(compareWithBaseline(before, after)).toEqual([
+      {
+        kind: "worse",
+        message: `${REGISTER_IDS}: postgres is named in the grant register and the baseline does not list it`,
+      },
+      { kind: "better", message: `${REGISTER_IDS}: kafka is no longer named in the grant register; ${REGENERATE}` },
+    ]);
+  });
+
+  test("a packages/ directory that is neither an engine package, a non-engine package nor the register is refused by name", () => {
+    const measured = measureFiles({
+      "packages/registry/src/index.ts": 'x = "kafka";\n',
+      "packages/registry/package.json": "{}\n",
+      "packages/kit/package.json": "{}\n",
+      "packages/README.md": "# Packages\n",
+      "packages/provider-kafka/src/index.ts": "",
+      "packages/grant-register/package.json": "{}\n",
+    });
+
+    expect(measured.unclassified).toEqual([
+      "packages/kit/ is neither an engine package (provider-<id>), a NON_ENGINE_PACKAGES entry nor the grant register, so no counter counts it",
+      "packages/registry/ is neither an engine package (provider-<id>), a NON_ENGINE_PACKAGES entry nor the grant register, so no counter counts it",
+    ]);
+    expect(measured.stale).toEqual([]);
+    expect(measureFiles({}).unclassified).toEqual([]);
+  });
+});
+
 describe("direction and messages", () => {
   const worse: Record<string, Files> = {
     "coreHandwritten.distinctEngineIds": { "src/lib/core.ts": 'export const DEFAULT = ["postgres", "kafka"];\n' },
@@ -415,6 +479,7 @@ describe("direction and messages", () => {
     inwardImportPairs: {},
     engineKeyedTypePositions: { "src/lib/k.ts": "type K = Record<DatabaseType, 1>;\n" },
     "nonEnginePackages.linesNamingAnEngine": { "packages/provider-sdk/src/x.ts": 'x = "postgres";\n' },
+    "grantRegister.linesNamingAnEngine": { "packages/grant-register/src/x.ts": 'x = "postgres";\n' },
   };
 
   test.each(GATE_COUNTERS.filter((counter) => counter.direction === "falls").map((counter) => counter.name))(
@@ -592,6 +657,7 @@ describe("the baseline file", () => {
       "coreHandwritten.engineIdsNamed",
       "enginesInPackages.ids",
       "nonEnginePackages.engineIdsNamed",
+      "grantRegister.engineIdsNamed",
     ]);
     for (const name of REPORT_COUNTERS) expect(JSON.stringify(parsed)).not.toContain(`"${name}"`);
     expect(renderBaseline(measured.baseline).endsWith("}\n")).toBe(true);
@@ -635,6 +701,12 @@ describe("the baseline file", () => {
     );
     expect(refusal(variant((copy) => delete copy.ids["nonEnginePackages.engineIdsNamed"]))).toBe(
       `${BASELINE_FILE}: id list nonEnginePackages.engineIdsNamed is missing${suffix}`,
+    );
+    expect(refusal(variant((copy) => delete copy.counters["grantRegister.linesNamingAnEngine"]))).toBe(
+      `${BASELINE_FILE}: counter grantRegister.linesNamingAnEngine is missing${suffix}`,
+    );
+    expect(refusal(variant((copy) => delete copy.ids["grantRegister.engineIdsNamed"]))).toBe(
+      `${BASELINE_FILE}: id list grantRegister.engineIdsNamed is missing${suffix}`,
     );
     expect(refusal(variant((copy) => Object.assign(copy.ids, { "enginesInPackages.ids": [1] })))).toBe(
       `${BASELINE_FILE}: id list enginesInPackages.ids is not a list of strings${suffix}`,
@@ -704,6 +776,18 @@ describe("the command line", () => {
       "The baseline is not rewritten: --write never raises a counter.",
     ]);
     for (const line of out.error) expect(line).not.toContain("isolation:baseline");
+  });
+
+  test("--write refuses an unclassified packages/ directory and writes nothing", () => {
+    const files = { ...withExceptionLines(), "packages/registry/package.json": "{}\n" };
+    const { io, out } = fakeIo(files, null);
+
+    expect(main(["--write"], io)).toBe(1);
+    expect(out.written).toEqual([]);
+    expect(out.error).toEqual([
+      "packages/registry/ is neither an engine package (provider-<id>), a NON_ENGINE_PACKAGES entry nor the grant register, so no counter counts it",
+      "The baseline is not rewritten: classify each packages/ directory above.",
+    ]);
   });
 
   test("--write refuses a stale exception and writes nothing", () => {
@@ -788,6 +872,7 @@ describe("the working tree", () => {
     for (const name of REPORT_COUNTERS) console.log(`report ${name}: ${measured.report[name]}`);
 
     expect(measured.stale).toEqual([]);
+    expect(measured.unclassified).toEqual([]);
     expect(compareWithBaseline(committed, measured.baseline)).toEqual([]);
     expect(committedText === renderBaseline(measured.baseline) ? "exact" : `not exact: ${REGENERATE}`).toBe("exact");
   }, 10_000);

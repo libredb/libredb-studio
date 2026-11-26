@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommend
 COPY src/lib/provider-loader/ ./src/lib/provider-loader/
 COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
+COPY packages/grant-register/package.json ./packages/grant-register/
 COPY packages/provider-sdk/package.json ./packages/provider-sdk/
 RUN bun install --frozen-lockfile
 

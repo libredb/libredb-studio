@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
- * The isolation ratchet: counters of provider knowledge in Studio's core and in its non-engine packages that may only
- * fall, and of engines in packages that may only rise (issue #2514).
+ * The isolation ratchet: counters of provider knowledge in Studio's core, in its non-engine packages and in the grant
+ * register that may only fall, and of engines in packages that may only rise (issue #2514). Every `packages/`
+ * directory is classified, so none holds engine knowledge no counter counts.
  * `tests/unit/isolation-ratchet.test.ts` measures the working tree and holds it to the committed baseline
  * `tests/unit/isolation-ratchet.baseline.json`, so a change that adds engine knowledge to core fails, and a change
  * that removes some fails too until it regenerates the baseline, so an improvement can never be undone silently.
@@ -9,8 +10,8 @@
  * Run: bun scripts/isolation-ratchet.ts [--write]
  * With no argument it prints every counter, gate and report-only, one per line.
  * `--write` (as `bun run isolation:baseline`) writes the baseline, and refuses, writing nothing, when an exception or
- * a non-engine package entry is stale or when any counter is worse than the committed baseline: the command never
- * raises a counter. It writes when no baseline exists yet.
+ * a non-engine package entry is stale, when a `packages/` directory is unclassified, or when any counter is worse than
+ * the committed baseline: the command never raises a counter. It writes when no baseline exists yet.
  * A baseline that does not parse is refused by `--write` too, so a change that adds or removes a counter deletes the
  * file and regenerates it, which review sees as a whole-file rewrite.
  *
@@ -33,6 +34,11 @@
  * - Generated: a core source file whose base name holds `.generated.`. It counts toward generated lines only.
  * - Non-engine package files: every file, of any extension, under `packages/<directory>/` for each
  *   `NON_ENGINE_PACKAGES` entry, except those under that directory's `tests/`. No exception applies to them.
+ * - Grant register files: every file, of any extension, under `packages/grant-register/`
+ *   (`GRANT_REGISTER_DIRECTORY`), except those under its `tests/`. No exception applies to them.
+ * - Unclassified: a directory `packages/<directory>/` holding a file that is neither an engine package
+ *   (`provider-<id>`), a `NON_ENGINE_PACKAGES` entry nor the grant register, so no counter would count it. A file
+ *   directly under `packages/`, such as its README, is no directory and is passed over.
  * - Lines of a file: the number of newlines, plus one when the text is non-empty and does not end with one.
  * - Exceptions: `EXCEPTIONS`, a closed list of reviewed lines that name an id but carry no engine knowledge, each with
  *   its file, its ids, the exact trimmed text of the line and the reason. Only two kinds exist: a `STORAGE_PROVIDER`
@@ -59,9 +65,13 @@
  *   whose first type argument is `DatabaseType`, and every mapped type `[K in DatabaseType]`, either optionally inside
  *   `Exclude<` or `Extract<`, across line breaks. A list such as `readonly DatabaseType[]` is not a key.
  * - `nonEnginePackages.linesNamingAnEngine`: lines naming an engine in non-engine package files.
- * The baseline also lists the ids behind three id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`
- * and `nonEnginePackages.engineIdsNamed`: an id named in core or in a non-engine package that the baseline does not
- * list is refused even when the count is unchanged, and a packaged id that is gone is refused.
+ * - `grantRegister.linesNamingAnEngine`: lines naming an engine in grant register files. A row of the register names
+ *   its engine, so the counter holds the legacy rows' engine-naming lines. A legacy row leaves when its engine moves
+ *   into a package, and the engine's package row is counted the same way, so a move by itself does not lower it.
+ * The baseline also lists the ids behind four id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`,
+ * `nonEnginePackages.engineIdsNamed` and `grantRegister.engineIdsNamed`: an id named in core, in a non-engine package
+ * or in the grant register that the baseline does not list is refused even when the count is unchanged, and a packaged
+ * id that is gone is refused.
  *
  * Report counters, printed and never compared: the engine id count, generated core files, lines of the legacy
  * provider, agent language and languages files and of the declarations, and over test code (`tests/`, `e2e/`,
@@ -110,6 +120,7 @@ export const GATE_COUNTERS: readonly GateCounter[] = [
   { name: "inwardImportPairs", direction: "falls" },
   { name: "engineKeyedTypePositions", direction: "falls" },
   { name: "nonEnginePackages.linesNamingAnEngine", direction: "falls" },
+  { name: "grantRegister.linesNamingAnEngine", direction: "falls" },
 ];
 
 /** The report counters, printed and never compared. */
@@ -134,6 +145,7 @@ const ID_LISTS = [
   "coreHandwritten.engineIdsNamed",
   "enginesInPackages.ids",
   "nonEnginePackages.engineIdsNamed",
+  "grantRegister.engineIdsNamed",
 ] as const;
 
 type IdList = (typeof ID_LISTS)[number];
@@ -144,11 +156,15 @@ export interface Baseline {
   readonly ids: Readonly<Record<IdList, readonly string[]>>;
 }
 
-/** One measurement of a tree. `stale` names each exception or non-engine package entry that matches nothing. */
+/**
+ * One measurement of a tree. `stale` names each exception or non-engine package entry that matches nothing, and
+ * `unclassified` each `packages/<directory>/` no counter counts.
+ */
 export interface Measurement {
   readonly baseline: Baseline;
   readonly report: Readonly<Record<ReportCounter, number>>;
   readonly stale: readonly string[];
+  readonly unclassified: readonly string[];
 }
 
 /** A reviewed line that names an engine id and carries no engine knowledge. */
@@ -178,6 +194,9 @@ export interface Tree {
   readonly files: readonly string[];
   readonly read: (file: string) => string;
 }
+
+/** The directory under `packages/` of the grant register, `@libredb/grant-register`, counted on its own. */
+export const GRANT_REGISTER_DIRECTORY = "grant-register";
 
 export const NON_ENGINE_PACKAGES: readonly NonEnginePackage[] = [
   { directory: "provider-sdk", reason: "the contract SDK that providers build against, not an engine" },
@@ -386,6 +405,7 @@ const PATH_TEST_ROOTS = ["tests/", "e2e/"];
 const LEGACY_PROVIDERS = "src/lib/db/providers/";
 const DECLARATION = /^src\/lib\/db\/engine-declarations\/([^/]+)\.json$/;
 const PACKAGE = /^packages\/provider-([^/]+)\//;
+const PACKAGE_DIRECTORY = /^packages\/([^/]+)\//;
 const AGENT_LANGUAGE_DIR_FILE = /^src\/lib\/agent\/languages\/[^/]+\/./;
 const LANGUAGES = "src/lib/languages/";
 const PROVIDER_DOC = /^docs\/providers\/([^/]+)\.md$/;
@@ -408,7 +428,7 @@ function escapeRegExp(text: string): string {
 }
 
 /** The naming pattern over `ids`: group 2 holds an id in a quoted literal, group 3 an id as an object key. */
-function namingPattern(ids: readonly string[]): RegExp {
+export function namingPattern(ids: readonly string[]): RegExp {
   const alternatives = [...ids]
     .sort((a, b) => b.length - a.length || a.localeCompare(b))
     .map(escapeRegExp)
@@ -503,6 +523,23 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     ),
   );
   const nonEngineNaming = scanNaming(tree, nonEngineFiles, pattern, [], new Set());
+  const registerRoot = `packages/${GRANT_REGISTER_DIRECTORY}/`;
+  const registerFiles = files.filter(
+    (file) => file.startsWith(registerRoot) && !file.startsWith(`${registerRoot}tests/`),
+  );
+  const registerNaming = scanNaming(tree, registerFiles, pattern, [], new Set());
+  const unclassified = [...new Set(files.map((file) => PACKAGE_DIRECTORY.exec(file)?.[1]))]
+    .filter(
+      (directory): directory is string =>
+        directory !== undefined &&
+        !directory.startsWith("provider-") &&
+        !nonEngine.has(directory) &&
+        directory !== GRANT_REGISTER_DIRECTORY,
+    )
+    .map(
+      (directory) =>
+        `packages/${directory}/ is neither an engine package (provider-<id>), a NON_ENGINE_PACKAGES entry nor the grant register, so no counter counts it`,
+    );
   for (const entry of lists.exceptions) {
     if (!used.has(entry)) {
       stale.push(
@@ -535,6 +572,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     inwardImportPairs: lists.inward.reduce((sum, entry) => sum + entry.modules.length, 0),
     engineKeyedTypePositions: keyed,
     "nonEnginePackages.linesNamingAnEngine": nonEngineNaming.lines,
+    "grantRegister.linesNamingAnEngine": registerNaming.lines,
   };
   return {
     baseline: {
@@ -543,6 +581,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
         "coreHandwritten.engineIdsNamed": [...naming.ids].sort(),
         "enginesInPackages.ids": [...packaged].sort(),
         "nonEnginePackages.engineIdsNamed": [...nonEngineNaming.ids].sort(),
+        "grantRegister.engineIdsNamed": [...registerNaming.ids].sort(),
       },
     },
     report: {
@@ -559,6 +598,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
       "coreSource.filesWithEngineInPath": core.filter(inPath).length,
     },
     stale,
+    unclassified,
   };
 }
 
@@ -604,6 +644,7 @@ export function compareWithBaseline(baseline: Baseline, current: Baseline): Find
     }
   }
   findings.push(...namedIdFindings(baseline, current, "nonEnginePackages.engineIdsNamed", "a non-engine package"));
+  findings.push(...namedIdFindings(baseline, current, "grantRegister.engineIdsNamed", "the grant register"));
   return findings;
 }
 
@@ -731,6 +772,11 @@ export function main(argv: readonly string[], io: Io): number {
   if (measured.stale.length > 0) {
     for (const line of measured.stale) io.error(line);
     io.error("The baseline is not rewritten: remove or correct each stale entry above.");
+    return 1;
+  }
+  if (measured.unclassified.length > 0) {
+    for (const line of measured.unclassified) io.error(line);
+    io.error("The baseline is not rewritten: classify each packages/ directory above.");
     return 1;
   }
   const committed = io.readBaseline();
