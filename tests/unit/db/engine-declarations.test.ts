@@ -176,7 +176,9 @@ import type { ConsentDeadline, ExecutionUiSpec } from "@/lib/db/execution-ui/typ
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
-import { refusedFieldRefusal } from "@/lib/db/provider-connection";
+import { assertOpenable } from "@/lib/db/open-check";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
@@ -1847,16 +1849,27 @@ describe("the census", () => {
         type,
         ...Object.fromEntries(fields.map((field) => [field, crypto.randomUUID()])),
       }) as DatabaseConnection;
+    // The record's open check is the oracle: every required secret its field rules declare is set to a generated value,
+    // so only the refused field step can refuse.
+    const refusedBy = (type: DatabaseType, fields: readonly string[]): string | undefined => {
+      const engine = LEGACY_ENGINES.get(type) as EngineRecord;
+      const secrets = Object.entries(engine.fieldRules.fieldRules ?? {})
+        .filter(([field, rule]) => rule?.required !== undefined && FIELD_CLASSES[field as ConnectionField] === "secret")
+        .map(([field]) => [field, crypto.randomUUID()]);
+      try {
+        assertOpenable(engine, { ...Object.fromEntries(secrets), ...connection(type, fields) }, {}, "connect");
+        return undefined;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
     const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
       const { refused } = d.connection;
       const fields = refused.map((entry) => entry.field);
       return (
-        refused.every(
-          ({ field, refusal }) =>
-            typeof refusal === "string" && refusedFieldRefusal(connection(type, [field])) === refusal,
-        ) &&
-        refusedFieldRefusal(connection(type, fields)) === refused[0]?.refusal &&
-        refusedFieldRefusal(connection(type, [])) === undefined
+        refused.every(({ field, refusal }) => typeof refusal === "string" && refusedBy(type, [field]) === refusal) &&
+        refusedBy(type, fields) === refused[0]?.refusal &&
+        refusedBy(type, []) === undefined
       );
     };
 

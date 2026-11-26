@@ -10,7 +10,7 @@ import type {
 } from "@/lib/types";
 import { GRANTED_SSH_TUNNEL_REFUSAL } from "./claim-grants";
 import { CONNECTION_STRING_ACCEPTED } from "./compatibility";
-import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
+import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
 import { offersSslPanel } from "./connection-form";
 import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
@@ -54,8 +54,8 @@ export const PROVIDER_CORE_FIELDS = Object.freeze([
  *    receives is a tunnel's endpoint;
  * 6. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
  * Each field once, in that order. The answer is frozen. A field its engine refuses by name (`REFUSED_CONNECTION_FIELDS`)
- * is in none of those rows, so no provider receives one: core refuses a connection to be built to connect that sets one
- * (`refusedFieldRefusal`), and drops it otherwise.
+ * is in none of those rows, so no provider receives one: the open check refuses a connection to be built to connect that
+ * sets one (`assertOpenable` in ./open-check, which reads the record's `connection.refused`), and drops it otherwise.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
@@ -69,26 +69,6 @@ export function providerFields(type: DatabaseType): readonly (keyof DatabaseConn
     ...PROVIDER_CORE_FIELDS,
   ];
   return Object.freeze([...new Set(fields)]);
-}
-
-/**
- * The sentence a connection is refused with for setting a field its engine refuses by name (FND-2 slice 6c,
- * docs/SECURITY.md control 3.41): of the engine's `REFUSED_CONNECTION_FIELDS` row, read through `typeIdRow` so it names
- * no type id, the sentence of the first field in row order that the connection sets, or undefined when it sets none.
- * A field is set when the record holds it as its own property with a value other than `undefined`, `null` and `""`,
- * whatever its type: the engine takes the field in no form, so any value in it is a mistake the operator should see by
- * name. The sentence names the field and never its value. Pure: it reads its argument and writes nothing.
- *
- * @throws {UnknownProviderError} When the record's type names no provider (`typeIdRow`).
- */
-export function refusedFieldRefusal(connection: DatabaseConnection): string | undefined {
-  const row: Readonly<Record<string, string>> = typeIdRow(REFUSED_CONNECTION_FIELDS, connection.type);
-  for (const [field, sentence] of Object.entries(row)) {
-    if (!Object.hasOwn(connection, field)) continue;
-    const value: unknown = Reflect.get(connection, field);
-    if (value !== undefined && value !== null && value !== "") return sentence;
-  }
-  return undefined;
 }
 
 /**

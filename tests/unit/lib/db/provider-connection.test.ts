@@ -7,15 +7,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { DatabaseConfigError, UnknownProviderError } from "@/lib/db/errors";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import {
-  assertTunnelRecordIsPlainData,
-  providerConnection,
-  providerFields,
-  refusedFieldRefusal,
-} from "@/lib/db/provider-connection";
-import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
+import { assertTunnelRecordIsPlainData, providerConnection, providerFields } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
 import {
   ADMITTED_FILE,
@@ -427,40 +421,4 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
       expect(await connectionFingerprint(given)).not.toBe(await connectionFingerprint(provider.config));
     },
   );
-});
-
-describe("refusedFieldRefusal, the sentence a connection that sets a field its engine refuses is refused with (FND-2 slice 6c)", () => {
-  const rabbitmq = REFUSED_CONNECTION_FIELDS.rabbitmq;
-  const record = (fields: Record<string, unknown>): DatabaseConnection =>
-    ({ id: "s6c", name: "s6c", type: "rabbitmq", ...fields }) as unknown as DatabaseConnection;
-
-  test("the first set field in the row's order answers its sentence", () => {
-    expect(refusedFieldRefusal(record({ tlsServerName: "a", database: "b" }))).toBe(rabbitmq.database);
-    expect(refusedFieldRefusal(record({ tlsServerName: "a", namespaces: "b" }))).toBe(rabbitmq.namespaces);
-    expect(refusedFieldRefusal(record({ tlsServerName: "a" }))).toBe(rabbitmq.tlsServerName);
-  });
-
-  test("undefined, null and empty text are not set", () => {
-    for (const value of [undefined, null, ""]) {
-      expect(refusedFieldRefusal(record({ database: value, namespaces: value, tlsServerName: value }))).toBeUndefined();
-    }
-    expect(refusedFieldRefusal(record({}))).toBeUndefined();
-  });
-
-  test("whitespace, zero, false and an object are set", () => {
-    for (const value of [" ", 0, false, {}])
-      expect(refusedFieldRefusal(record({ database: value }))).toBe(rabbitmq.database);
-  });
-
-  test("an engine whose row is empty answers undefined, whatever the connection holds", () => {
-    expect(Object.keys(REFUSED_CONNECTION_FIELDS.postgres)).toEqual([]);
-    expect(
-      refusedFieldRefusal({ ...record({ user: "u", database: "d", apiKeyId: "k" }), type: "postgres" }),
-    ).toBeUndefined();
-  });
-
-  test("a type that names no provider is refused by name", () => {
-    expect(() => refusedFieldRefusal({ ...record({}), type: "not-an-engine" as never })).toThrow(UnknownProviderError);
-    expect(() => refusedFieldRefusal({ ...record({}), type: "constructor" as never })).toThrow(UnknownProviderError);
-  });
 });

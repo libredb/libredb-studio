@@ -102,26 +102,14 @@ export function fieldRuleRefusal(type: DatabaseType, connection: DatabaseConnect
 }
 
 /**
- * The sentence of the first required secret the engine's form entry declares that `connection` shows and leaves blank,
- * or `undefined` when there is none: a `fieldRules` entry with `required` on a field the storage classification calls
- * `secret`, shown by `connectionFieldShown` (an absent controlling field read as its `fieldDefaults` value), and blank
- * as `connectionFieldRefusal` reads it, not text or only whitespace. The fields are read in `connectionFields` order,
- * and only these: every other rule is the dialog's and the provider's. It is `requiredSecretOf` over the entry, the
- * reading the open check takes over the engine's record before it builds a provider to connect (`assertOpenable` in
- * ./open-check). The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union is refused
- * by name.
- *
- * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
- */
-export function requiredSecretRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
-  return requiredSecretOf(typeIdRow(CONNECTION_FORM, type), connection);
-}
-
-/**
- * `requiredSecretRefusal`'s reading over `config`, a bundled engine's form entry or the field rules of a provider
- * package's engine (`packageFieldRules` in ./connection-form): the sentence of the first required secret it declares
- * that `values`, a connection's fields, shows and leaves blank, or `undefined`. The one ordered open check reads it
- * over every engine's record (`assertOpenable` in ./open-check).
+ * The sentence of the first required secret `config` declares that `values`, a connection's fields, shows and leaves
+ * blank, or `undefined` when there is none. `config` is an engine record's field rules (`fieldRules`), a bundled
+ * engine's form entry or a provider package's engine's (`packageFieldRules` in ./connection-form). A required secret is
+ * a `fieldRules` entry with `required` on a field the storage classification calls `secret`, shown by
+ * `connectionFieldShown` (an absent controlling field read as its `fieldDefaults` value), and blank as
+ * `connectionFieldRefusal` reads it, not text or only whitespace. The fields are read in `connectionFields` order, and
+ * only these: every other rule is the dialog's and the provider's. The one ordered open check reads it over every
+ * engine's record before an open that may connect (`assertOpenable` in ./open-check).
  */
 export function requiredSecretOf(
   config: FieldRuleSpec,

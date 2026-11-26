@@ -36,7 +36,9 @@ import {
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
-import { requiredSecretRefusal } from "@/lib/db/connection-field-rules";
+import { requiredSecretOf } from "@/lib/db/connection-field-rules";
+import type { EngineRecord } from "@/lib/db/server-catalog";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
@@ -87,6 +89,11 @@ import {
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
+
+/** The legacy adapter's record of `type`, whose field rules the open check reads a required secret from. */
+function recordOf(type: DatabaseType): EngineRecord {
+  return LEGACY_ENGINES.get(type) as EngineRecord;
+}
 
 const ALL_TYPES: DatabaseType[] = [
   "postgres",
@@ -1989,26 +1996,34 @@ describe("the Snowflake entry", () => {
     for (const authMethod of signIns) {
       for (const secret of secrets) {
         const record = connection({ authMethod, privateKey: secret, password: secret });
-        expect(connectionFieldRefusal(snowflake, record)).toBe(requiredSecretRefusal("snowflake", record));
+        expect(connectionFieldRefusal(snowflake, record)).toBe(
+          requiredSecretOf(recordOf("snowflake").fieldRules, record),
+        );
       }
     }
-    expect(requiredSecretRefusal("snowflake", connection({ privateKey: "  " }))).toBe(
+    expect(requiredSecretOf(recordOf("snowflake").fieldRules, connection({ privateKey: "  " }))).toBe(
       SNOWFLAKE_FIELD_SENTENCES.keyEmpty,
     );
-    expect(requiredSecretRefusal("snowflake", connection({ authMethod: "pat", password: null }))).toBe(
+    expect(requiredSecretOf(recordOf("snowflake").fieldRules, connection({ authMethod: "pat", password: null }))).toBe(
       SNOWFLAKE_FIELD_SENTENCES.tokenEmpty,
     );
     // Core reads only the required secrets: a blank user or role is the provider's to refuse at connect.
-    expect(requiredSecretRefusal("snowflake", connection({ user: "", role: undefined }))).toBeUndefined();
+    expect(
+      requiredSecretOf(recordOf("snowflake").fieldRules, connection({ user: "", role: undefined })),
+    ).toBeUndefined();
   });
 
-  test("core's reading answers nothing for an engine that declares no required secret, and refuses an unknown type by name", () => {
+  test("core's reading answers nothing for an engine that declares no required secret", () => {
     for (const type of ALL_TYPES.filter((candidate) => candidate !== "snowflake")) {
       expect(
-        requiredSecretRefusal(type, { id: type, name: type, type, createdAt: new Date(0) } as DatabaseConnection),
+        requiredSecretOf(recordOf(type).fieldRules, {
+          id: type,
+          name: type,
+          type,
+          createdAt: new Date(0),
+        } as DatabaseConnection),
       ).toBeUndefined();
     }
-    expect(() => requiredSecretRefusal("nope" as DatabaseType, connection({}))).toThrow(UnknownProviderError);
   });
 
   test("derives the host it connects to for the Account hint, and declares the account placeholder", () => {
