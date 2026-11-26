@@ -3095,7 +3095,7 @@
       "pattern": "^[A-Za-z][A-Za-z0-9_]*\\(\\*\\)$"
     },
     "policyClaims": {
-      "description": "What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description.",
+      "description": "What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as the engine's row of Studio's grant register allows, a row keyed by the package's name, version and digest, and reads a claim where no row exists at its restrictive value, named at the end of each member's description.",
       "type": "object",
       "properties": {
         "writeReach": {
@@ -3168,7 +3168,7 @@
       "enum": ["none", "guarded", "open"]
     },
     "mcpClaims": {
-      "description": "What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states.",
+      "description": "What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as the engine's row of Studio's grant register allows, a row keyed by the package's name, version and digest, and reads a claim where no row exists at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states.",
       "type": "object",
       "properties": {
         "exposable": {

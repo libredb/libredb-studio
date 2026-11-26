@@ -49,7 +49,7 @@ mock.module("@/lib/db/claim-grants", () => ({
   }),
 }));
 
-const { STUDIO_CLAIM_RECORDS } = realGrants;
+const { legacyAgentCredentialTable, legacyRegisterTable } = await import("../helpers/legacy-register");
 const { decideTunnel } = await import("@/lib/db/tunnel-decision");
 const { LEGACY_ENGINES } = await import("@/lib/provider-host/legacy-adapter/records");
 const { offersSshTunnel } = await import("@/lib/db-ui-config");
@@ -66,14 +66,14 @@ const createdAt = new Date("2026-11-25T00:00:00.000Z");
 describe("the connection gates", () => {
   test("each connection gate answers Studio's grant of its claim, not the record", () => {
     // The records hold the rows the planted grants differ from.
-    expect(STUDIO_CLAIM_RECORDS.sshTunnel.postgres).toBeNull();
-    expect(STUDIO_CLAIM_RECORDS.sshTunnel.opcua).toBeNull();
-    expect(STUDIO_CLAIM_RECORDS.opensLocalFile.sqlite).toBe(true);
-    expect(STUDIO_CLAIM_RECORDS.hostPathFields.postgres).toEqual([]);
-    expect(STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase.mysql).toBe(false);
-    expect(STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase.postgres).toBe(true);
-    expect(STUDIO_CLAIM_RECORDS.agentCredential.postgres).not.toBeNull();
-    expect(STUDIO_CLAIM_RECORDS.agentCredential.mysql?.supersededBy).toEqual([]);
+    expect(legacyRegisterTable("sshTunnel").postgres).toBeNull();
+    expect(legacyRegisterTable("sshTunnel").opcua).toBeNull();
+    expect(legacyRegisterTable("opensLocalFile").sqlite).toBe(true);
+    expect(legacyRegisterTable("hostPathFields").postgres).toEqual([]);
+    expect(legacyRegisterTable("serverLevelWithoutDatabase").mysql).toBe(false);
+    expect(legacyRegisterTable("serverLevelWithoutDatabase").postgres).toBe(true);
+    expect(legacyAgentCredentialTable().postgres).not.toBeNull();
+    expect(legacyAgentCredentialTable().mysql?.supersededBy).toEqual([]);
 
     // Core's tunnel decision refuses the tunnel with the sentence of the record's grant, and the dialog, which reads
     // the granted table, offers none.

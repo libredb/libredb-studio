@@ -26,6 +26,7 @@ import {
   forgetServerCatalog,
   installServerCatalog,
 } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type {
   QueryEventConnection,
@@ -170,7 +171,11 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
  * offers changed by the edit named for its engine: what the builder reads an event's engine from.
  */
 function installEngines(edits: Readonly<Record<string, Partial<EngineOffers>>> = {}): void {
-  const composed = composeServerCatalog([admittedFor("acmeevents-package", admittedManifest("acmeevents"))], []);
+  const composed = composeServerCatalog(
+    [admittedFor("acmeevents-package", admittedManifest("acmeevents"))],
+    [],
+    STUDIO_GRANT_REGISTER,
+  );
   const engines = new Map(composed.engines);
   for (const [id, edit] of Object.entries(edits)) {
     const engine = engines.get(id) as EngineRecord;

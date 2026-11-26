@@ -110,9 +110,9 @@ function testDeadlineSentence(budgetMs: number): string {
   return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
 }
 
-/** The sentence of a health read that failed, by how the engine's own words reach the client (`ownWords`). */
+/** The sentence of a health read that failed, by how the engine's own words reach the client (`grants.ownWords`). */
 function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: ProviderTextScrub, route: string): string {
-  if (engine.offers.ownWords === "scrubbed") {
+  if (engine.grants.ownWords === "scrubbed") {
     const withheld = withheldProviderError(scrub, error);
     return withheld?.message ?? (error instanceof Error ? error.message : String(error));
   }
@@ -147,7 +147,7 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *   tunnel opens: a legacy provider built and not connected, which this connects, or a provider package's connected
  *   session;
  * - the connect warnings and test-only cautions, where the record offers them (`offers.testCautions`);
- * - the words of a failure (`offers.ownWords`): `"scrubbed"`, a provider's own error and its health failure's
+ * - the words of a failure (`grants.ownWords`): `"scrubbed"`, a provider's own error and its health failure's
  *   sentence pass core's scrub of `connection`; `"code-only"`, a package's open or health failure is logged once as
  *   the package's and answered with Studio's sentence naming its code (`packageCallError` and `logPackageFailure` in
  *   ./package-errors), while Studio's own failure, a `DatabaseError` or a host defect of Studio's, is raised as itself.
@@ -252,7 +252,7 @@ export async function testConnection(
         } catch (error) {
           // The deadline is the test's answer; a stop it caused is no failure of the engine's.
           if (deadline.aborted) throw expired();
-          throw engine.offers.ownWords === "code-only" ? packageCallError("open", error, scrub, route) : error;
+          throw engine.grants.ownWords === "code-only" ? packageCallError("open", error, scrub, route) : error;
         }
         own = held;
         // A deadline that passed meanwhile gets no connect started, and what was opened is closed below.

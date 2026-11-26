@@ -2,22 +2,27 @@
  * Studio's grant of each policy, MCP, connection and agent mode claim (docs/providers/CONTRACT.md, clauses M-54, M-82
  * and M-83): the more restrictive of an engine's request and Studio's review of the claim for the engine, which
  * src/lib/db/claim-grants.ts states, the claim's restrictive value where no review row exists, by one rule per claim
- * shape. `grantClaims` is read here with hand-made requests and records, each built from the shipped ones with one
- * engine changed or for an id no shipped engine uses, and the bundled grant tables are read against Studio's records
- * for every shipped engine. `legacyGrantRows`, which reads the grant register's legacy rows the policy, MCP,
- * connection and statement language records are composed from, is read against a register of two rows of the
- * committed one, and `legacyAgentCredentials`, which narrows each row's agent credential to the text fields a
- * connection form draws, against committed rows and rows changed by hand.
+ * shape. `grantEngineClaims`, the one per-engine call of the grant reader, is read here with hand-made requests and
+ * register rows, each a shipped engine's legacy row with members changed, or no row for an id no shipped engine uses,
+ * and the bundled grant tables are read against the register's legacy rows for every shipped engine.
+ * `legacyGrantRows`, which reads the grant register's legacy rows the legacy engines are granted from, is read against
+ * a register of two rows of the committed one, and `legacyAgentCredentials`, which narrows a row's agent credential to
+ * the text fields a connection form draws, against committed rows and rows changed by hand.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { LEGACY_KEY, parseGrantRegister, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
+import {
+  LEGACY_KEY,
+  parseGrantRegister,
+  type RegisterGrants,
+  type RegisterRow,
+  readGrantRegister,
+} from "@libredb/grant-register";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_READING_NAMES,
-  type ClaimRecords,
   GRANTED_AGENT_CREDENTIAL_FORM,
   GRANTED_AGENT_EXECUTION_ENGINES,
   GRANTED_AGENT_READINGS,
@@ -39,14 +44,15 @@ import {
   GRANTED_SINGLE_WRITER_FILE,
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
-  grantClaims,
+  grantEngineClaims,
   HOST_PATH_FIELD_NAMES,
   legacyAgentCredentials,
+  legacyEngineGrants,
   legacyGrantRows,
   READ_ONLY_ENFORCED,
   STATEMENT_LANGUAGE_NAMES,
+  STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
-  STUDIO_CLAIM_RECORDS,
   UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
@@ -60,12 +66,21 @@ import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/d
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
+import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
 import { ENGINE_TABLE_INVENTORY, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
 
-/** An id no shipped engine uses, for a request no record row covers. */
+/** An id no shipped engine uses, for a request no register row covers. */
 const UNRECORDED = "acmefoo";
+
+/** Every shipped engine's legacy row of the committed register, read once for the file. */
+const LEGACY_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+
+/** The legacy row of shipped engine `engine`, from `LEGACY_ROWS`. */
+function legacyRow(engine: string): RegisterRow {
+  if (!Object.hasOwn(LEGACY_ROWS, engine)) throw new Error(`${engine} has no legacy row`);
+  return LEGACY_ROWS[engine];
+}
 
 /** postgres's requests, the base every hand-made request changes one claim of. */
 const BASE: ClaimRequestEntry = BUNDLED_CLAIM_REQUESTS.postgres;
@@ -87,31 +102,34 @@ function request(
   };
 }
 
-/** The seed-only fields `grantClaims` reads the restrictive host path fields from: the shipped ones by default. */
-type SeedOnlyRows = Parameters<typeof grantClaims>[2];
+/** The seed-only fields `grantEngineClaims` reads the restrictive host path fields from: the shipped ones by default. */
+type SeedOnlyRows = Parameters<typeof grantEngineClaims>[3];
 
-/** Studio's records with one row of each named record set for `engine`, every other row as shipped. */
-function records(engine: string, rows: { readonly [K in keyof ClaimRecords]?: ClaimRecords[K][string] }): ClaimRecords {
-  const changed: Record<string, unknown> = { ...STUDIO_CLAIM_RECORDS };
-  for (const [member, row] of Object.entries(rows)) {
-    changed[member] = { ...STUDIO_CLAIM_RECORDS[member as keyof ClaimRecords], [engine]: row };
-  }
-  return changed as unknown as ClaimRecords;
+/** The legacy row of `engine`, or null for an id with none. */
+function shippedRow(engine: string): RegisterRow | null {
+  return Object.hasOwn(LEGACY_ROWS, engine) ? legacyRow(engine) : null;
 }
 
 /**
- * The grants of one engine `engine` requesting `requested` against `against`, with `seedOnly` as its seed-only rows.
+ * A legacy-keyed register row for `engine`: its legacy row, or postgres's for an id with none, keyed to `engine`, with
+ * the grants `changes` names changed.
+ */
+function rowWith(engine: string, changes: Partial<RegisterGrants> = {}): RegisterRow {
+  const base = Object.hasOwn(LEGACY_ROWS, engine) ? legacyRow(engine) : legacyRow("postgres");
+  return { legacy: LEGACY_KEY, engine, grants: { ...base.grants, ...changes } };
+}
+
+/**
+ * The grants of one engine `engine` requesting `requested` against the register row `row`, its legacy row by default
+ * and none for an id with none, with `seedOnly` as its seed-only rows.
  */
 function grantOf(
   engine: string,
   requested: ClaimRequestEntry,
-  against: ClaimRecords = STUDIO_CLAIM_RECORDS,
+  row: RegisterRow | null = shippedRow(engine),
   seedOnly: SeedOnlyRows = { ...SEED_ONLY_FIELDS, [UNRECORDED]: null },
 ) {
-  const grants = grantClaims({ [engine]: requested }, against, seedOnly);
-  return Object.fromEntries(Object.entries(grants).map(([table, rows]) => [table, rows[engine]])) as {
-    readonly [K in keyof typeof grants]: (typeof grants)[K][string];
-  };
+  return grantEngineClaims(engine, requested, row, seedOnly);
 }
 
 describe("Studio's grant of each policy and MCP claim", () => {
@@ -119,17 +137,17 @@ describe("Studio's grant of each policy and MCP claim", () => {
     const differing = (granted: Readonly<Record<string, unknown>>, record: Readonly<Record<string, unknown>>) =>
       SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
     const tables = [
-      [GRANTED_WRITE_REACH, STUDIO_CLAIM_RECORDS.writeReach],
-      [GRANTED_READS_FILE_ACCESS_POSTURE, STUDIO_CLAIM_RECORDS.readsFileAccessPosture],
-      [GRANTED_DENIED_FILE_ACCESS_REFUSAL, STUDIO_CLAIM_RECORDS.deniedFileAccessRefusal],
-      [GRANTED_SINGLE_WRITER_FILE, STUDIO_CLAIM_RECORDS.singleWriterFile],
-      [GRANTED_READ_ROOTS_REQUIRED, STUDIO_CLAIM_RECORDS.readRootsRequired],
-      [GRANTED_AGENT_CREDENTIAL_FORM, STUDIO_CLAIM_RECORDS.agentCredentialForm],
-      [GRANTED_MASKING_EXEMPT_COLUMNS, STUDIO_CLAIM_RECORDS.maskingExemptColumns],
-      [GRANTED_MCP_EXPOSABLE, STUDIO_CLAIM_RECORDS.exposable],
-      [GRANTED_MCP_STATEMENT_READ, STUDIO_CLAIM_RECORDS.statementRead],
-      [GRANTED_MCP_METADATA_READ_CHANGES_STATE, STUDIO_CLAIM_RECORDS.metadataReadChangesState],
-      [GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED, STUDIO_CLAIM_RECORDS.agentCredentialRequired],
+      [GRANTED_WRITE_REACH, legacyRegisterTable("writeReach")],
+      [GRANTED_READS_FILE_ACCESS_POSTURE, legacyRegisterTable("readsFileAccessPosture")],
+      [GRANTED_DENIED_FILE_ACCESS_REFUSAL, legacyRegisterTable("deniedFileAccessRefusal")],
+      [GRANTED_SINGLE_WRITER_FILE, legacyRegisterTable("singleWriterFile")],
+      [GRANTED_READ_ROOTS_REQUIRED, legacyRegisterTable("readRootsRequired")],
+      [GRANTED_AGENT_CREDENTIAL_FORM, legacyRegisterTable("agentCredentialForm")],
+      [GRANTED_MASKING_EXEMPT_COLUMNS, legacyRegisterTable("maskingExemptColumns")],
+      [GRANTED_MCP_EXPOSABLE, legacyRegisterTable("exposable")],
+      [GRANTED_MCP_STATEMENT_READ, legacyRegisterTable("statementRead")],
+      [GRANTED_MCP_METADATA_READ_CHANGES_STATE, legacyRegisterTable("metadataReadChangesState")],
+      [GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED, legacyRegisterTable("agentCredentialRequired")],
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
@@ -145,14 +163,14 @@ describe("Studio's grant of each policy and MCP claim", () => {
     const etcd = (writeReach: PolicyClaims["writeReach"]) => grantOf("etcd", request({ writeReach }));
     const modbus = (writeReach: PolicyClaims["writeReach"]) => grantOf("modbus", request({ writeReach }));
 
-    expect(STUDIO_CLAIM_RECORDS.writeReach.etcd).toBe("guarded");
-    expect(STUDIO_CLAIM_RECORDS.writeReach.modbus).toBe("none");
-    expect(STUDIO_CLAIM_RECORDS.writeReach.postgres).toBe("open");
+    expect(legacyRegisterTable("writeReach").etcd).toBe("guarded");
+    expect(legacyRegisterTable("writeReach").modbus).toBe("none");
+    expect(legacyRegisterTable("writeReach").postgres).toBe("open");
     expect(etcd("none").writeReach).toBe("guarded");
     expect(etcd("guarded").writeReach).toBe("guarded");
     expect(etcd("open").writeReach).toBe("open");
     expect(
-      grantOf("postgres", request({ writeReach: "open" }), records("postgres", { writeReach: "none" })).writeReach,
+      grantOf("postgres", request({ writeReach: "open" }), rowWith("postgres", { writeReach: "none" })).writeReach,
     ).toBe("open");
     expect(modbus("none").writeReach).toBe("none");
     expect(modbus("guarded").writeReach).toBe("guarded");
@@ -184,7 +202,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
     (claim, segment, requested, row, granted) => {
       const engine = row === undefined ? UNRECORDED : "postgres";
       const asked = segment === "policy" ? request({ [claim]: requested }) : request({}, { [claim]: requested });
-      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { [claim]: row });
+      const against = row === undefined ? null : rowWith(engine, { [claim]: row });
 
       expect(grantOf(engine, asked, against)[claim]).toBe(granted);
     },
@@ -205,7 +223,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
     "a claim whose restrictive value is false is granted true only where both the request and the record are: %s, request %p, record %p",
     (claim, requested, row, granted) => {
       const engine = row === undefined ? UNRECORDED : "postgres";
-      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { [claim]: row });
+      const against = row === undefined ? null : rowWith(engine, { [claim]: row });
 
       expect(grantOf(engine, request({}, { [claim]: requested }), against)[claim]).toBe(granted);
     },
@@ -213,7 +231,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
 
   test("a denied file access refusal requested keeps its own sentence, one offered against a record's refusal takes the record's, and one offered where no record exists takes core's own", () => {
     const own = "Connections of this engine refuse a denied file access for a reason of their own.";
-    const sqlite = STUDIO_CLAIM_RECORDS.deniedFileAccessRefusal.sqlite;
+    const sqlite = legacyRegisterTable("deniedFileAccessRefusal").sqlite;
     const refusalOf = (engine: string, deniedFileAccessRefusal: string | null) =>
       grantOf(engine, request({ deniedFileAccessRefusal })).deniedFileAccessRefusal;
 
@@ -232,7 +250,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
   test("a single-writer file request equal to its grant is read as granted, and any other request leaves the engine refused at every open, by name", () => {
     const of = (engine: string, singleWriterFile: boolean) => grantOf(engine, request({ singleWriterFile }));
 
-    expect(STUDIO_CLAIM_RECORDS.singleWriterFile.duckdb).toBe(true);
+    expect(legacyRegisterTable("singleWriterFile").duckdb).toBe(true);
     expect(of("duckdb", true)).toMatchObject({ singleWriterFile: true, ungrantedRefusals: null });
     expect(of("postgres", false)).toMatchObject({ singleWriterFile: false, ungrantedRefusals: null });
     expect(of(UNRECORDED, false)).toMatchObject({ singleWriterFile: false, ungrantedRefusals: null });
@@ -255,8 +273,8 @@ describe("Studio's grant of each policy and MCP claim", () => {
     const of = (engine: string, agentCredentialForm: PolicyClaims["agentCredentialForm"]) =>
       grantOf(engine, request({ agentCredentialForm })).agentCredentialForm;
 
-    expect(STUDIO_CLAIM_RECORDS.agentCredentialForm.postgres).toBeNull();
-    expect(STUDIO_CLAIM_RECORDS.agentCredentialForm.s3).toBe("dedicated-user");
+    expect(legacyRegisterTable("agentCredentialForm").postgres).toBeNull();
+    expect(legacyRegisterTable("agentCredentialForm").s3).toBe("dedicated-user");
     expect(of("postgres", "pair")).toBeNull();
     expect(of("s3", "dedicated-user")).toBe("dedicated-user");
     expect(of("libredb", "none")).toBe("none");
@@ -268,7 +286,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
   });
 
   test("a masking exemption request equal to the record's row is granted, and any other, or one with no record, is read as null", () => {
-    const row = STUDIO_CLAIM_RECORDS.maskingExemptColumns.modbus;
+    const row = legacyRegisterTable("maskingExemptColumns").modbus;
     if (row === null) throw new Error("modbus exempts no column in Studio's record");
     const of = (engine: string, maskingExemptColumns: PolicyClaims["maskingExemptColumns"]) =>
       grantOf(engine, request({ maskingExemptColumns })).maskingExemptColumns;
@@ -287,22 +305,22 @@ describe("Studio's grant of each policy and MCP claim", () => {
 
     // s3 requires an agent credential and its seeds take one, so it stays exposed.
     const s3 = BUNDLED_CLAIM_REQUESTS.s3;
-    expect(STUDIO_CLAIM_RECORDS.agentCredential.s3).not.toBeNull();
+    expect(legacyAgentCredentialTable().s3).not.toBeNull();
     expect(grantOf("s3", { ...s3, mcp: { ...s3.mcp, exposable: true, agentCredentialRequired: true } })).toMatchObject({
       exposable: true,
       agentCredentialRequired: true,
     });
     // postgres's seeds take one too; read as required, it stays exposed.
-    expect(grantOf("postgres", open, records("postgres", { agentCredentialRequired: true }))).toMatchObject({
+    expect(grantOf("postgres", open, rowWith("postgres", { agentCredentialRequired: true }))).toMatchObject({
       exposable: true,
       agentCredentialRequired: true,
     });
     // Seeds that take none: closed, whatever the request and the exposure record.
     expect(
-      grantOf("postgres", open, records("postgres", { agentCredentialRequired: true, agentCredential: null })),
+      grantOf("postgres", open, rowWith("postgres", { agentCredentialRequired: true, agentCredential: null })),
     ).toMatchObject({ exposable: false, agentCredentialRequired: true });
-    expect(STUDIO_CLAIM_RECORDS.agentCredential.libredb).toBeNull();
-    expect(grantOf("libredb", open, records("libredb", { exposable: true }))).toMatchObject({
+    expect(legacyAgentCredentialTable().libredb).toBeNull();
+    expect(grantOf("libredb", open, rowWith("libredb", { exposable: true }))).toMatchObject({
       exposable: false,
       agentCredentialRequired: true,
     });
@@ -376,24 +394,22 @@ describe("Studio's grant of each policy and MCP claim", () => {
       expect(frozen(table)).toBe(true);
       expect(Object.keys(table)).toEqual([...SHIPPED_DATABASE_TYPES]);
     }
-    // A hand-made record's row is copied and frozen, never handed out.
+    // A hand-made row's value is copied and frozen, never handed out.
     const row = { column: "^a$", reason: "Holds no protected value." };
     const granted = grantOf(
       "postgres",
       request({ maskingExemptColumns: { ...row } }),
-      records("postgres", {
+      rowWith("postgres", {
         maskingExemptColumns: row,
       }),
     );
     expect(granted.maskingExemptColumns).toEqual(row);
     expect(granted.maskingExemptColumns).not.toBe(row);
     expect(Object.isFrozen(granted.maskingExemptColumns)).toBe(true);
-    // A record row on the prototype chain is no row: the claim is read as having none.
-    const inherited = Object.create({ [UNRECORDED]: "none" }) as Record<string, "none">;
-    expect(
-      grantOf(UNRECORDED, request({ writeReach: "none" }), { ...STUDIO_CLAIM_RECORDS, writeReach: inherited })
-        .writeReach,
-    ).toBe("open");
+    // Each engine's grants are frozen to their leaves, with a row and with none.
+    expect(frozen(grantOf("opcua", BUNDLED_CLAIM_REQUESTS.opcua))).toBe(true);
+    expect(frozen(grantOf("elasticsearch", BUNDLED_CLAIM_REQUESTS.elasticsearch))).toBe(true);
+    expect(frozen(grantOf(UNRECORDED, request()))).toBe(true);
   });
 });
 
@@ -413,18 +429,19 @@ describe("Studio's grant of each connection claim", () => {
     const differing = (granted: Readonly<Record<string, unknown>>, record: Readonly<Record<string, unknown>>) =>
       SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
     const tables = [
-      [GRANTED_OPENS_LOCAL_FILE, STUDIO_CLAIM_RECORDS.opensLocalFile],
-      [GRANTED_HOST_PATH_FIELDS, STUDIO_CLAIM_RECORDS.hostPathFields],
-      [GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION, STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase],
-      [GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE, STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase],
-      [GRANTED_SSH_TUNNEL_REFUSAL, STUDIO_CLAIM_RECORDS.sshTunnel],
-      [GRANTED_SEED_AGENT_CREDENTIAL, STUDIO_CLAIM_RECORDS.agentCredential],
+      [GRANTED_OPENS_LOCAL_FILE, legacyRegisterTable("opensLocalFile")],
+      [GRANTED_HOST_PATH_FIELDS, legacyRegisterTable("hostPathFields")],
+      [GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION, legacyRegisterTable("serverLevelWithoutDatabase")],
+      [GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE, legacyRegisterTable("serverLevelWithoutDatabase")],
+      [GRANTED_SSH_TUNNEL_REFUSAL, legacyRegisterTable("sshTunnel")],
+      [GRANTED_SEED_AGENT_CREDENTIAL, legacyAgentCredentialTable()],
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    // The granted rows are the record's own: the host path fields and the seed agent credential are its objects.
-    expect(GRANTED_HOST_PATH_FIELDS.opcua).toBe(STUDIO_CLAIM_RECORDS.hostPathFields.opcua);
-    expect(GRANTED_SEED_AGENT_CREDENTIAL.elasticsearch).toBe(STUDIO_CLAIM_RECORDS.agentCredential.elasticsearch);
+    // The granted tables are cut from each legacy engine's grants: the host path fields and the seed agent credential
+    // are its objects.
+    expect(GRANTED_HOST_PATH_FIELDS.opcua).toBe(legacyEngineGrants("opcua").hostPathFields);
+    expect(GRANTED_SEED_AGENT_CREDENTIAL.elasticsearch).toBe(legacyEngineGrants("elasticsearch").agentCredential);
     // Vacuity: each record holds rows that differ from its claim's restrictive value.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_LOCAL_FILE[type])).toEqual([
       "duckdb",
@@ -437,7 +454,7 @@ describe("Studio's grant of each connection claim", () => {
     ]);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SSH_TUNNEL_REFUSAL[type] === null).length).toBe(32);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SEED_AGENT_CREDENTIAL[type] === null).length).toBe(11);
-    expect(GRANTED_MCP_EXPOSABLE).toEqual(STUDIO_CLAIM_RECORDS.exposable);
+    expect(GRANTED_MCP_EXPOSABLE).toEqual(legacyRegisterTable("exposable"));
   });
 
   const LOCAL_FILE_CASES = [
@@ -452,23 +469,26 @@ describe("Studio's grant of each connection claim", () => {
     "a local file request is granted true where the request or the record is, or no record exists: request %p, record %p",
     (requested, row, granted) => {
       const engine = row === undefined ? UNRECORDED : "postgres";
-      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { opensLocalFile: row });
+      const against = row === undefined ? null : rowWith(engine, { opensLocalFile: row });
 
       expect(grantOf(engine, request({}, {}, { opensLocalFile: requested }), against).opensLocalFile).toBe(granted);
     },
   );
 
   test("the host path fields granted are the union of the request and the record, and every host path field among the seed-only fields where no record exists", () => {
-    const of = (engine: string, hostPathFields: ConnectionClaims["hostPathFields"], against = STUDIO_CLAIM_RECORDS) =>
-      grantOf(engine, request({}, {}, { hostPathFields }), against).hostPathFields;
-    const row = STUDIO_CLAIM_RECORDS.hostPathFields.opcua;
+    const of = (
+      engine: string,
+      hostPathFields: ConnectionClaims["hostPathFields"],
+      against: RegisterRow | null = shippedRow(engine),
+    ) => grantOf(engine, request({}, {}, { hostPathFields }), against).hostPathFields;
+    const row = legacyRow("opcua").grants.hostPathFields;
 
     expect(row).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
     // A request adding nothing to the record is the record's own row.
     expect(of("opcua", [])).toBe(row);
     expect(of("opcua", ["clientPrivateKeyPath"])).toBe(row);
     // A request naming a field the record does not: the record's fields first, then the request's others.
-    const certificate = records("postgres", { hostPathFields: ["clientCertificatePath"] });
+    const certificate = rowWith("postgres", { hostPathFields: ["clientCertificatePath"] });
     expect(of("postgres", ["clientPrivateKeyPath"], certificate)).toEqual([
       "clientCertificatePath",
       "clientPrivateKeyPath",
@@ -480,9 +500,10 @@ describe("Studio's grant of each connection claim", () => {
     expect(of("postgres", [])).toEqual([]);
     // No record: every host path field among the engine's seed-only fields, OPC UA's two, or none.
     const opcuaSeedOnly = { ...SEED_ONLY_FIELDS, [UNRECORDED]: SEED_ONLY_FIELDS.opcua };
-    expect(
-      grantOf(UNRECORDED, request({}, {}, { hostPathFields: [] }), STUDIO_CLAIM_RECORDS, opcuaSeedOnly).hostPathFields,
-    ).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(grantOf(UNRECORDED, request({}, {}, { hostPathFields: [] }), null, opcuaSeedOnly).hostPathFields).toEqual([
+      "clientCertificatePath",
+      "clientPrivateKeyPath",
+    ]);
     expect(of(UNRECORDED, [])).toEqual([]);
     expect(of(UNRECORDED, ["clientPrivateKeyPath"])).toEqual(["clientPrivateKeyPath"]);
     // Every answer frozen.
@@ -508,7 +529,7 @@ describe("Studio's grant of each connection claim", () => {
     "a server level request is read per gate: true at governance admission where either is or no record exists, true at the choice of database only where both are: request %p, record %p",
     (requested, row, atAdmission, atCatalogChoice) => {
       const engine = row === undefined ? UNRECORDED : "postgres";
-      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { serverLevelWithoutDatabase: row });
+      const against = row === undefined ? null : rowWith(engine, { serverLevelWithoutDatabase: row });
       const granted = grantOf(engine, request({}, {}, { serverLevelWithoutDatabase: requested }), against);
 
       expect([granted.serverLevelAtAdmission, granted.serverLevelAtCatalogChoice]).toEqual([
@@ -520,12 +541,12 @@ describe("Studio's grant of each connection claim", () => {
 
   test("a refused tunnel request keeps its own sentence, one offered against a refusing record takes the record's, and one offered where no record exists takes core's own", () => {
     const own = "This engine does not run through an SSH tunnel for a reason of its own. Turn the tunnel off.";
-    const sqlite = STUDIO_CLAIM_RECORDS.sshTunnel.sqlite;
+    const sqlite = legacyRegisterTable("sshTunnel").sqlite;
     const of = (engine: string, sshTunnel: ConnectionClaims["sshTunnel"]) =>
       grantOf(engine, request({}, {}, { sshTunnel })).sshTunnel;
 
     expect(sqlite).toEqual(expect.any(String));
-    expect(STUDIO_CLAIM_RECORDS.sshTunnel.postgres).toBeNull();
+    expect(legacyRegisterTable("sshTunnel").postgres).toBeNull();
     expect(of("postgres", { offered: false, refusal: own })).toBe(own);
     expect(of("sqlite", { offered: false, refusal: own })).toBe(own);
     expect(of(UNRECORDED, { offered: false, refusal: own })).toBe(own);
@@ -538,7 +559,7 @@ describe("Studio's grant of each connection claim", () => {
   });
 
   test("a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null", () => {
-    const elasticsearch = STUDIO_CLAIM_RECORDS.agentCredential.elasticsearch;
+    const elasticsearch = legacyAgentCredentialTable().elasticsearch;
     if (elasticsearch === null || elasticsearch === undefined)
       throw new Error("elasticsearch takes no agent credential");
     const of = (engine: string, agentCredential: ConnectionClaims["agentCredential"]) =>
@@ -546,13 +567,15 @@ describe("Studio's grant of each connection claim", () => {
     const pair = { form: "pair" as const, supersededBy: [] };
 
     expect(elasticsearch.supersededBy).toEqual(["apiKeyId", "apiKeySecret"]);
-    expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeyId", "apiKeySecret"] })).toBe(elasticsearch);
-    expect(of("postgres", pair)).toBe(STUDIO_CLAIM_RECORDS.agentCredential.postgres);
+    expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeyId", "apiKeySecret"] })).toEqual(elasticsearch);
+    expect(of("postgres", pair)).toEqual(legacyAgentCredentialTable().postgres);
     expect(of("postgres", { form: "secret", supersededBy: [] })).toBeNull();
     expect(of("elasticsearch", pair)).toBeNull();
     expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeySecret", "apiKeyId"] })).toBeNull();
     expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeyId"] })).toBeNull();
     expect(of("postgres", { form: "pair", supersededBy: ["apiKeyId"] })).toBeNull();
+    // A field no row's narrowed credential may hold, a connection field the form draws but never as text, reads null.
+    expect(of("postgres", { form: "pair", supersededBy: ["connectionString"] })).toBeNull();
     expect(of("postgres", null)).toBeNull();
     expect(of("sqlite", pair)).toBeNull();
     expect(of(UNRECORDED, pair)).toBeNull();
@@ -562,7 +585,7 @@ describe("Studio's grant of each connection claim", () => {
   test("an engine read as requiring an agent credential whose granted credential is null, or whose granted form is none, is closed to MCP", () => {
     const open = (policy: Partial<PolicyClaims> = {}, connection: Partial<ConnectionClaims> = {}) =>
       request(policy, { exposable: true, agentCredentialRequired: true }, connection);
-    const required = records("postgres", { agentCredentialRequired: true });
+    const required = rowWith("postgres", { agentCredentialRequired: true });
 
     // Both granted: exposed as before.
     expect(grantOf("postgres", open(), required)).toMatchObject({ exposable: true, agentCredentialRequired: true });
@@ -578,7 +601,7 @@ describe("Studio's grant of each connection claim", () => {
       grantOf(
         "postgres",
         open({ agentCredentialForm: "none" }),
-        records("postgres", {
+        rowWith("postgres", {
           agentCredentialRequired: true,
           agentCredentialForm: "dedicated-user",
         }),
@@ -616,16 +639,21 @@ describe("Studio's grant of each connection claim", () => {
       "connection.agentCredential",
       '{"form":"pair","supersededBy":[1]}',
     );
+    refused(
+      { agentCredential: wrong({ form: "pair", supersededBy: ["apiKeyId", null] }) },
+      "connection.agentCredential",
+      '{"form":"pair","supersededBy":["apiKeyId",null]}',
+    );
   });
 
   test("a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request", () => {
     const wrong = (value: unknown) => value as never;
 
-    expect(() => grantOf("postgres", request(), records("postgres", { writeReach: wrong("partial") }))).toThrow(
+    expect(() => grantOf("postgres", request(), rowWith("postgres", { writeReach: wrong("partial") }))).toThrow(
       'Studio\'s record of policy.writeReach holds "partial" for postgres, which is not a value of the claim',
     );
     expect(() =>
-      grantOf("postgres", request(), records("postgres", { hostPathFields: wrong(["caCertPath"]) })),
+      grantOf("postgres", request(), rowWith("postgres", { hostPathFields: wrong(["caCertPath"]) })),
     ).toThrow(
       'Studio\'s record of connection.hostPathFields holds ["caCertPath"] for postgres, which is not a value of the claim',
     );
@@ -636,12 +664,12 @@ describe("Studio's grant of each connection claim", () => {
   });
 
   test("an engine whose seed-only row is missing is refused by name", () => {
-    expect(() => grantOf(UNRECORDED, request(), STUDIO_CLAIM_RECORDS, SEED_ONLY_FIELDS)).toThrow(
+    expect(() => grantOf(UNRECORDED, request(), null, SEED_ONLY_FIELDS)).toThrow(
       `${UNRECORDED} has no seed-only row, so Studio cannot grant its host path fields`,
     );
     // A row on the prototype chain is no row.
     const inherited = Object.create({ [UNRECORDED]: null }) as SeedOnlyRows;
-    expect(() => grantOf(UNRECORDED, request(), STUDIO_CLAIM_RECORDS, inherited)).toThrow(
+    expect(() => grantOf(UNRECORDED, request(), null, inherited)).toThrow(
       `${UNRECORDED} has no seed-only row, so Studio cannot grant its host path fields`,
     );
   });
@@ -666,10 +694,10 @@ describe("Studio's grant of each agent mode claim", () => {
   test("for every shipped engine, each granted agent mode claim is its record's row", () => {
     expect(
       SHIPPED_DATABASE_TYPES.filter(
-        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== STUDIO_CLAIM_RECORDS.statementLanguage[type],
+        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== legacyRegisterTable("statementLanguage")[type],
       ),
     ).toEqual([]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(STUDIO_CLAIM_RECORDS.statementLanguage);
+    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(legacyRegisterTable("statementLanguage"));
     // Vacuity: the record holds languages and nulls.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] === null)).toEqual([
       "bigquery",
@@ -708,7 +736,7 @@ describe("Studio's grant of each agent mode claim", () => {
   test.each(STATEMENT_LANGUAGE_CASES)(
     "a statement language request equal to the record's row is granted as that row, and any other, or one with no record, is read as null: %s, request %p, record %p",
     (engine, requested, row, granted) => {
-      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { statementLanguage: row });
+      const against = row === undefined ? null : rowWith(engine, { statementLanguage: row });
 
       expect(
         grantOf(engine, request({}, {}, {}, {}, { statementLanguage: requested }), against).statementLanguage,
@@ -717,17 +745,17 @@ describe("Studio's grant of each agent mode claim", () => {
   );
 
   test("the agent readings granted are the intersection of the request and the engine's register row, in the row's order, and empty where no row exists", () => {
-    const of = (engine: string, agentReadings: FacetClaims["agentReadings"], against = STUDIO_CLAIM_RECORDS) =>
-      grantOf(engine, request({}, {}, {}, { agentReadings }), against).agentReadings;
-    const row = ["storage", "health"] as const;
-    const two = records("postgres", { agentReadings: row });
+    const of = (engine: string, agentReadings: FacetClaims["agentReadings"], row = shippedRow(engine)) =>
+      grantOf(engine, request({}, {}, {}, { agentReadings }), row).agentReadings;
+    const readings = ["storage", "health"] as const;
+    const two = rowWith("postgres", { agentReadings: readings });
 
     // The row's order, whatever the request's.
     expect(of("postgres", ["health", "storage"], two)).toEqual(["storage", "health"]);
     // A request holding every reading of the row reads a copy of the row, frozen, never the row's own list.
     const all = of("postgres", [...CURATED_OPERATION_KINDS], two);
     expect(all).toEqual(["storage", "health"]);
-    expect(all).not.toBe(row);
+    expect(all).not.toBe(readings);
     expect(Object.isFrozen(all)).toBe(true);
     // A reading the row lacks is never gained, and one the request drops is never kept.
     expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
@@ -738,9 +766,8 @@ describe("Studio's grant of each agent mode claim", () => {
     // No row: the empty list, whatever the request.
     expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
     expect(Object.isFrozen(of(UNRECORDED, ["health"]))).toBe(true);
-    // A row on the prototype chain is no row.
-    const inherited = Object.create({ postgres: row }) as ClaimRecords["agentReadings"];
-    expect(of("postgres", ["health"], { ...STUDIO_CLAIM_RECORDS, agentReadings: inherited })).toEqual([]);
+    // No register row: the empty list, even for an engine whose legacy row offers readings.
+    expect(of("postgres", ["health"], null)).toEqual([]);
   });
 
   test("the statement language and agent reading vocabularies are the schema's statementLanguage and agentReading enums, and the readings are CURATED_OPERATION_KINDS", () => {
@@ -805,12 +832,31 @@ describe("the register's legacy rows the grant reader reads", () => {
     const rows = legacyGrantRows(register, ["mysql", "postgres"]);
 
     expect(Object.keys(rows)).toEqual(["mysql", "postgres"]);
-    expect(rows.mysql).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "mysql" })?.grants as never);
-    expect(rows.postgres).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "postgres" })?.grants as never);
+    expect(rows.mysql).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "mysql" }) as never);
+    expect(rows.postgres).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "postgres" }) as never);
     expect(Object.isFrozen(rows)).toBe(true);
     expect(Object.isFrozen(rows.postgres)).toBe(true);
     // Vacuity: the rows read are the committed register's, not empty grants.
-    expect(rows.postgres?.writeReach).toBe(GRANTED_WRITE_REACH.postgres);
+    expect(rows.postgres?.grants.writeReach).toBe(GRANTED_WRITE_REACH.postgres);
+  });
+
+  test("grantEngineClaims refuses by name a register row of another engine", () => {
+    expect(() => grantOf("mysql", request(), rowWith("postgres"))).toThrow(
+      "grantEngineClaims was handed the register row of postgres for mysql",
+    );
+    // Vacuity: the same row keyed to the engine it is handed for is read.
+    expect(grantOf("mysql", request(), rowWith("mysql")).writeReach).toBe(legacyRegisterTable("writeReach").mysql);
+  });
+
+  test("legacyEngineGrants refuses by name an id the legacy adapter does not serve", () => {
+    expect(() => legacyEngineGrants(UNRECORDED)).toThrow(
+      `the grant reader holds no legacy grants for ${UNRECORDED}: the legacy adapter serves no engine of that id`,
+    );
+    expect(() => legacyEngineGrants("toString")).toThrow(
+      "the grant reader holds no legacy grants for toString: the legacy adapter serves no engine of that id",
+    );
+    // Vacuity: a served engine's grants are its legacy row's, granted against its request.
+    expect(legacyEngineGrants("etcd")).toEqual(grantOf("etcd", BUNDLED_CLAIM_REQUESTS.etcd));
   });
 
   test("legacyGrantRows refuses an engine the register holds no legacy row for, naming it", () => {
@@ -821,7 +867,10 @@ describe("the register's legacy rows the grant reader reads", () => {
 
   test("legacyAgentCredentials answers each engine's agent credential of its legacy row, each superseding field found among the fields it is handed, frozen", () => {
     const rows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), ["elasticsearch", "postgres", "sqlite"]);
-    const credentials = legacyAgentCredentials(rows, BODY_CONNECTION_FIELDS);
+    const credentials = legacyAgentCredentials(
+      Object.fromEntries(Object.entries(rows).map(([engine, row]) => [engine, row.grants])),
+      BODY_CONNECTION_FIELDS,
+    );
 
     expect(Object.keys(credentials)).toEqual(["elasticsearch", "postgres", "sqlite"]);
     expect(credentials.elasticsearch).toEqual({ form: "pair", supersededBy: ["apiKeyId", "apiKeySecret"] });
@@ -836,7 +885,7 @@ describe("the register's legacy rows the grant reader reads", () => {
   /** `engine`'s committed grants with its agent credential superseded by `field`. */
   function supersededBy(engine: "elasticsearch" | "postgres", field: string): RegisterGrants {
     const committed = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), ["elasticsearch", "postgres"]);
-    return { ...(committed[engine] as RegisterGrants), agentCredential: { form: "pair", supersededBy: [field] } };
+    return { ...(committed[engine] as RegisterRow).grants, agentCredential: { form: "pair", supersededBy: [field] } };
   }
 
   test("legacyAgentCredentials reads no engine's connection row: a drawn text field of another engine narrows, which the agent credential census refuses", () => {
@@ -851,19 +900,19 @@ describe("the register's legacy rows the grant reader reads", () => {
     expect(() =>
       legacyAgentCredentials({ elasticsearch: supersededBy("elasticsearch", "notAField") }, BODY_CONNECTION_FIELDS),
     ).toThrow(
-      'the grant register\'s legacy row for elasticsearch names "notAField" among the fields superseding its agent credential, which is not a text field a connection form draws',
+      'the grant register\'s row for elasticsearch names "notAField" among the fields superseding its agent credential, which is not a text field a connection form draws',
     );
     // A connection field the dialog's own layout draws, never a text field the renderer saves.
     expect(() =>
       legacyAgentCredentials({ elasticsearch: supersededBy("elasticsearch", "host") }, BODY_CONNECTION_FIELDS),
     ).toThrow(
-      'the grant register\'s legacy row for elasticsearch names "host" among the fields superseding its agent credential, which is not a text field a connection form draws',
+      'the grant register\'s row for elasticsearch names "host" among the fields superseding its agent credential, which is not a text field a connection form draws',
     );
   });
 
   test("GRANTED_AGENT_EXECUTION_ENGINES and GRANTED_ONE_SESSION_ENGINES are the engines whose legacy rows grant agent execution and name a one-session reason, in catalog order, frozen", () => {
     const rows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
-    const grantsOf = (engine: string) => rows[engine] as RegisterGrants;
+    const grantsOf = (engine: string) => (rows[engine] as RegisterRow).grants;
 
     expect(GRANTED_AGENT_EXECUTION_ENGINES).toEqual(
       SHIPPED_DATABASE_TYPES.filter((engine) => grantsOf(engine).agentExecution),
@@ -883,48 +932,12 @@ describe("the register's legacy rows the grant reader reads", () => {
 
 describe("the claims of an admitted provider package's engine", () => {
   test("an admitted package with no grant record reads every claim at its restrictive value", () => {
-    const postgres = JSON.parse(
-      readFileSync(path.join(import.meta.dir, "../../../src/lib/db/engine-declarations/postgres.json"), "utf8"),
-    ) as { agent: unknown; facets: Record<string, unknown> };
-    // The loosest request of every claim the SDK's validator admits for this engine: each opposite its restrictive value.
-    const manifest = admittedManifest("acmeloose", (engine) => {
-      engine.policy = {
-        writeReach: "none",
-        readsFileAccessPosture: false,
-        deniedFileAccessRefusal: null,
-        singleWriterFile: true,
-        readRootsRequired: false,
-        agentCredentialForm: "pair",
-        maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
-      };
-      // Write reach is the summary of the write paths, so a request of none states every path absent.
-      const absent = { reach: "absent", proof: { module: "src/read-only.ts", symbol: "readOnly" } };
-      engine.safeguards = {
-        ...engine.safeguards,
-        writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
-      };
-      engine.mcp = {
-        exposable: true,
-        statementRead: true,
-        metadataReadChangesState: false,
-        agentCredentialRequired: false,
-      };
-      engine.connection.sshTunnel = { offered: true };
-      engine.connection.opensLocalFile = false;
-      engine.connection.serverLevelWithoutDatabase = true;
-      engine.connection.agentCredential = { form: "pair", supersededBy: [] };
-      engine.facets = {
-        ...engine.facets,
-        monitoring: postgres.facets.monitoring,
-        agentReadings: ["sessions", "health"],
-      };
-      (engine as Record<string, unknown>).agent = postgres.agent;
-    });
-    installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], []));
+    const manifest = admittedManifest("acmeloose", withLoosestClaims);
+    installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], [], STUDIO_GRANT_REGISTER));
     const answer = serverEngine("acmeloose");
     if (answer.kind !== "served") throw new Error(`answered ${answer.kind}`);
 
-    // Studio's record holds no row for an engine it does not ship, so each claim is granted at its restrictive value.
+    // Studio's register holds no row for the package, so each claim is granted at its restrictive value.
     expect(answer.engine.grants).toEqual({
       writeReach: "open",
       readsFileAccessPosture: true,
@@ -947,6 +960,9 @@ describe("the claims of an admitted provider package's engine", () => {
       agentCredential: null,
       statementLanguage: null,
       agentReadings: [],
+      ownWords: "code-only",
+      servesOneSession: null,
+      agentExecution: false,
     });
     expect(Object.isFrozen(answer.engine.grants)).toBe(true);
     forgetServerCatalog();

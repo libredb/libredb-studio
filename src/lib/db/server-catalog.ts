@@ -21,16 +21,19 @@
  * An engine record holds:
  * - `id`, an `EngineId`, a type brand with no value at run time: server code that holds an engine's id from the
  *   catalog holds one, never a `DatabaseType`;
- * - `source`: the name and version the engine is served under, and for a package's engine the admitted package
- *   (`ServedPackage`, its directory, validated manifest, Studio's record of it and the session its declaration states),
- *   null for a legacy engine, whose name is `@libredb/studio` at the root package.json's version
- *   (src/lib/provider-host/legacy-adapter/identity.ts); `servedPackage` reads the package and raises a host defect for
- *   a legacy record;
- * - `catalog`, `connection`, `fieldRules`, `grants` and `statementGrammar`: the engine's catalog entry, its data-only
- *   connection tables, its field rules, Studio's grant of each claim and the grammar its statements are confirmed
- *   under, composed for a package from its declaration with the projections Studio's generator projects its own
- *   declarations with, and for a legacy engine from Studio's committed tables, never from a declaration read at run
- *   time;
+ * - `source`: the name and version the engine is served under, and for a package's engine the digest its lock entry
+ *   pins and the admitted package (`ServedPackage`, its digest, directory, validated manifest, Studio's record of it
+ *   and the session its declaration states), both null for a legacy engine, whose name is `@libredb/studio` at the
+ *   root package.json's version (src/lib/provider-host/legacy-adapter/identity.ts); `servedPackage` reads the package
+ *   and raises a host defect for a legacy record;
+ * - `catalog`, `connection`, `fieldRules` and `statementGrammar`: the engine's catalog entry, its data-only connection
+ *   tables, its field rules and the grammar its statements are confirmed under, composed for a package from its
+ *   declaration with the projections Studio's generator projects its own declarations with, and for a legacy engine
+ *   from Studio's committed tables, never from a declaration read at run time;
+ * - `grants`: Studio's grant of each claim and of the three host facts no declaration requests, `grantEngineClaims`
+ *   (./claim-grants) against the engine's row of the grant register: a legacy engine's legacy row, a package engine's
+ *   row keyed by its package's name, version and digest, or, where the register holds none, each claim at its
+ *   restrictive value;
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *
@@ -108,10 +111,15 @@ export interface EngineConnectionTables {
   readonly dialogOffersUri: boolean;
 }
 
-/** The admitted package that serves an engine: its name, version and directory, and Studio's frozen record of it. */
+/**
+ * The admitted package that serves an engine: its name, version, digest and directory, and Studio's frozen record of
+ * it.
+ */
 export interface ServingPackage {
   readonly name: string;
   readonly version: string;
+  /** The digest its providers lock entry pins, which the lock's read verified against its files. */
+  readonly digest: string;
   /** The real path of its directory in the providers directory. */
   readonly directory: string;
   /** The manifest admission validated and froze. */
@@ -126,17 +134,21 @@ export interface ServedPackage extends ServingPackage {
   readonly session: DeclaredSession;
 }
 
-/** Who serves an engine: the name and version it is served under, and the package, null for a legacy engine. */
+/**
+ * Who serves an engine: the name, version and digest it is served under, and the package; the digest and the package
+ * are null for a legacy engine.
+ */
 export interface EngineSource {
   readonly name: string;
   readonly version: string;
+  readonly digest: string | null;
   readonly package: ServedPackage | null;
 }
 
 /**
  * What an engine offers the server paths that tell a legacy engine from a package's engine today, one member per
- * difference, each true (and `ownWords` `"scrubbed"`) for a legacy engine, served by a legacy `DatabaseProvider`, and
- * false (and `"code-only"`) for a package's engine, served through the provider contract.
+ * difference, each true for a legacy engine, served by a legacy `DatabaseProvider`, and false for a package's engine,
+ * served through the provider contract.
  */
 export interface EngineOffers {
   /**
@@ -172,11 +184,6 @@ export interface EngineOffers {
   readonly hostFiles: boolean;
   /** Test Connection's connect warnings and test-only cautions. */
   readonly testCautions: boolean;
-  /**
-   * How the engine's own words reach the client: through core's scrub (`"scrubbed"`), or only as Studio's sentence
-   * naming their code (`"code-only"`, src/lib/api/package-errors.ts).
-   */
-  readonly ownWords: "scrubbed" | "code-only";
 }
 
 /**

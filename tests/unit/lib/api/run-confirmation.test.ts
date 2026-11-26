@@ -22,6 +22,7 @@ import {
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
 import { type EngineConnection, type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { DatabaseConnection } from "@/lib/types";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
@@ -59,7 +60,11 @@ function request(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
 
 /** The record the server catalog composes for a package serving engine `id`, its minimal manifest changed by `edit`. */
 function packageEngine(id: string, edit: (engine: EditableEngine) => void = () => undefined): EngineRecord {
-  const engine = composeServerCatalog([admittedFor(`${id}-package`, admittedManifest(id, edit))], []).engines.get(id);
+  const engine = composeServerCatalog(
+    [admittedFor(`${id}-package`, admittedManifest(id, edit))],
+    [],
+    STUDIO_GRANT_REGISTER,
+  ).engines.get(id);
   if (engine === undefined) throw new Error(`the composed catalog holds no record of ${id}`);
   return engine;
 }

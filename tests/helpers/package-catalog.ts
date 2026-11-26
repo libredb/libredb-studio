@@ -4,12 +4,17 @@
  * and never copied, with its engine id replaced and any member a case changes, admitted by the SDK's validator and
  * deep-frozen as admission freezes it. No file is written and no package is imported.
  *
- * Engine ids here are fixture ids of the form `acme<case>`, never one the bundled catalog serves.
+ * Engine ids here are fixture ids of the form `acme<case>`, never one the bundled catalog serves. A package's digest is
+ * generated at run time unless a case names one, and a register row a case grants it is built by `packageRow`, every
+ * member it does not name at its claim's restrictive value.
  */
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { RegisterGrants, RegisterRow } from "@libredb/grant-register";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
+import { UNGRANTED_DENIED_FILE_ACCESS_SENTENCE, UNGRANTED_SSH_TUNNEL_SENTENCE } from "@/lib/db/claim-grants";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
 import type { EngineRecord, ServerCatalog } from "@/lib/db/server-catalog";
 import type { AdmittedForCatalog } from "@/lib/db/server-catalog-compose";
@@ -65,15 +70,114 @@ export function admittedManifest(
   return deepFrozen(verdict.manifest);
 }
 
-/** An admitted package named `name` serving `manifest`'s engines, as boot hands it to the composer. */
-export function admittedFor(name: string, manifest: ProviderManifest): AdmittedForCatalog {
+/** A digest of a package's files in the lock's form, `sha256:` and 64 hex characters, generated at run time. */
+export function generatedDigest(): string {
+  return `sha256:${createHash("sha256").update(randomUUID()).digest("hex")}`;
+}
+
+/**
+ * An admitted package named `name` serving `manifest`'s engines, as boot hands it to the composer: version 1.0.0 and a
+ * digest generated at run time unless `options` names them.
+ */
+export function admittedFor(
+  name: string,
+  manifest: ProviderManifest,
+  options: { readonly version?: string; readonly digest?: string } = {},
+): AdmittedForCatalog {
   return Object.freeze({
     name,
-    version: "1.0.0",
+    version: options.version ?? "1.0.0",
+    digest: options.digest ?? generatedDigest(),
     directory: path.join(REPOSITORY_ROOT, "never-read", name),
     manifest,
     record: Object.freeze({ contract: "0.1", manifest, impl: Object.freeze({}) as ProviderImpl<unknown> }),
   });
+}
+
+/**
+ * Every member of a register row's grants at its claim's restrictive value, and the three host members at the value an
+ * engine with no row reads: `serverLevelWithoutDatabase` false, the restrictive value at the choice of database, since
+ * its two gates read it at opposite values.
+ */
+const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
+  writeReach: "open",
+  readsFileAccessPosture: true,
+  deniedFileAccessRefusal: UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+  singleWriterFile: false,
+  readRootsRequired: true,
+  agentCredentialForm: "none",
+  maskingExemptColumns: null,
+  exposable: false,
+  statementRead: false,
+  metadataReadChangesState: true,
+  agentCredentialRequired: true,
+  opensLocalFile: true,
+  hostPathFields: Object.freeze([]),
+  serverLevelWithoutDatabase: false,
+  sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
+  agentCredential: null,
+  statementLanguage: null,
+  agentReadings: Object.freeze([]),
+  servesOneSession: null,
+  agentExecution: false,
+  ownWords: "code-only",
+});
+
+/**
+ * A register row for engine `engine` of package `pkg`, keyed by its name, version and digest, granting `grants` and
+ * every other member at `RESTRICTIVE_ROW`'s value.
+ */
+export function packageRow(
+  pkg: Pick<AdmittedForCatalog, "name" | "version" | "digest">,
+  engine: string,
+  grants: Partial<RegisterGrants> = {},
+): RegisterRow {
+  return {
+    package: { name: pkg.name, version: pkg.version, digest: pkg.digest },
+    engine,
+    grants: { ...RESTRICTIVE_ROW, ...grants },
+  };
+}
+
+/**
+ * The loosest request of every claim the SDK's validator admits for an engine, each opposite its restrictive value:
+ * postgres's agent segment and monitoring panels, read from its declaration, so its statement language is `sql`.
+ */
+export function withLoosestClaims(engine: EditableEngine): void {
+  const postgres = JSON.parse(
+    readFileSync(path.join(REPOSITORY_ROOT, "src/lib/db/engine-declarations/postgres.json"), "utf8"),
+  ) as { agent: unknown; facets: Record<string, unknown> };
+  engine.policy = {
+    writeReach: "none",
+    readsFileAccessPosture: false,
+    deniedFileAccessRefusal: null,
+    singleWriterFile: true,
+    readRootsRequired: false,
+    agentCredentialForm: "pair",
+    maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
+  };
+  // Write reach is the summary of the write paths, so a request of none states every path absent.
+  const absent = { reach: "absent", proof: { module: "src/read-only.ts", symbol: "readOnly" } };
+  engine.safeguards = {
+    ...engine.safeguards,
+    writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
+  };
+  engine.mcp = {
+    exposable: true,
+    statementRead: true,
+    metadataReadChangesState: false,
+    agentCredentialRequired: false,
+  };
+  engine.connection.sshTunnel = { offered: true };
+  engine.connection.opensLocalFile = false;
+  engine.connection.serverLevelWithoutDatabase = true;
+  engine.connection.agentCredential = { form: "pair", supersededBy: [] };
+  engine.facets = {
+    ...engine.facets,
+    monitoring: postgres.facets.monitoring,
+    agentReadings: ["sessions", "health"],
+  };
+  (engine as Record<string, unknown>).agent = postgres.agent;
 }
 
 /**

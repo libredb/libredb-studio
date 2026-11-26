@@ -22,7 +22,7 @@ mock.module("@/lib/db/claim-grants", () => ({
   }),
 }));
 
-const { STUDIO_CLAIM_RECORDS } = realGrants;
+const { legacyRegisterTable } = await import("../helpers/legacy-register");
 const { agentPosture } = await import("@/lib/agent/posture");
 const { operationsWorkflowOpens, workflowAvailability } = await import("@/lib/agent/agent-manifest");
 const { agentReadingsOf } = await import("@/lib/agent/tools");
@@ -34,7 +34,7 @@ const { agentEnginePack } = await import("@/lib/agent/languages/engines");
 describe("the agent mode gates", () => {
   test("each agent mode gate answers Studio's grant of its claim, not the record", () => {
     // The record holds the row the planted grant differs from.
-    expect(STUDIO_CLAIM_RECORDS.statementLanguage.postgres).toBe("sql");
+    expect(legacyRegisterTable("statementLanguage").postgres).toBe("sql");
     // Vacuity: mysql, whose grant is its record's row, still speaks sql at every gate.
     expect(workflowAvailability("agent", "data-analysis", "mysql")).toMatchObject({ open: true });
 
@@ -59,8 +59,8 @@ describe("the agent mode gates", () => {
     expect(agentEnginePack("mysql").id).toBe("sql");
 
     // The records hold the readings the planted grants take away.
-    expect(STUDIO_CLAIM_RECORDS.agentReadings.mongodb?.length).toBeGreaterThan(0);
-    expect(STUDIO_CLAIM_RECORDS.agentReadings.kafka).toEqual(["health"]);
+    expect(legacyRegisterTable("agentReadings").mongodb?.length).toBeGreaterThan(0);
+    expect(legacyRegisterTable("agentReadings").kafka).toEqual(["health"]);
     // The operations workflow does not open on an engine granted no reading, and refuses with the requirement's
     // sentence; one granted its readings still opens.
     expect(operationsWorkflowOpens("mongodb")).toBe(false);

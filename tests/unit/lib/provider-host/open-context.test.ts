@@ -14,6 +14,7 @@ import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { DEFAULT_POOL_CONFIG } from "@/lib/db/types";
 import { packageConnectBudget, packageEnvironment, packageOpenContext } from "@/lib/provider-host/open-context";
@@ -22,7 +23,11 @@ import { admittedFor, admittedManifest, type EditableEngine } from "../../../hel
 
 /** The engine of `id` composed from the minimal manifest changed by `edit`, as the server catalog holds it. */
 function engineOf(id: string, edit: (engine: EditableEngine) => void = () => undefined): EngineRecord {
-  const catalog = composeServerCatalog([admittedFor(`acme-${id}`, admittedManifest(id, edit))], []);
+  const catalog = composeServerCatalog(
+    [admittedFor(`acme-${id}`, admittedManifest(id, edit))],
+    [],
+    STUDIO_GRANT_REGISTER,
+  );
   return catalog.engines.get(id) as EngineRecord;
 }
 

@@ -15,6 +15,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { GrantRegister } from "@libredb/grant-register";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import type { AdmittedForCatalog, RefusedForCatalog } from "@/lib/db/server-catalog-compose";
 import type { DatabaseConnection } from "@/lib/types";
 import { admittedFor, admittedManifest, withFieldRules } from "../../../helpers/package-catalog";
@@ -30,7 +32,11 @@ type EngineAnswer = {
 
 /** What the boot bundle exports: the composition, the install and its own copy of the errors. */
 interface BootBundle {
-  composeServerCatalog(admitted: readonly AdmittedForCatalog[], refused: readonly RefusedForCatalog[]): object;
+  composeServerCatalog(
+    admitted: readonly AdmittedForCatalog[],
+    refused: readonly RefusedForCatalog[],
+    register: GrantRegister,
+  ): object;
   installServerCatalog(catalog: object): void;
   forgetServerCatalog(): void;
   ProviderUnavailableError: new (...args: never[]) => Error;
@@ -115,6 +121,7 @@ describe("one server engine catalog across two bundles", () => {
       boot.composeServerCatalog(
         [admittedFor("acme-cross-served", admittedManifest("acmecrossserved", withFieldRules))],
         [{ name: "acme-cross-gone", version: "1.0.0", engines: ["acmecrossgone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
 
@@ -145,7 +152,7 @@ describe("one server engine catalog across two bundles", () => {
   });
 
   test("a legacy record installed by the boot bundle answers the route bundle as the route's own tables do", () => {
-    boot.installServerCatalog(boot.composeServerCatalog([], []));
+    boot.installServerCatalog(boot.composeServerCatalog([], [], STUDIO_GRANT_REGISTER));
     // Snowflake's Account rule binds Studio's own check, a closure the boot bundle composed.
     const answer = route.serverEngine("snowflake");
     if (answer.kind !== "served" || answer.engine === undefined) throw new Error(`answered ${answer.kind}`);

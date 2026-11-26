@@ -6,7 +6,7 @@
  * claim that loosens the gate uncounted; the session opens once per key through the package; the run answers the
  * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
  * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; a package's own
- * words never reach the client; and each run records one editor event naming its engine by its id, whose record decides
+ * words reach the client only where its register row grants them, and then through core's scrub; and each run records one editor event naming its engine by its id, whose record decides
  * what the event keeps of its text.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
@@ -24,6 +24,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -105,25 +106,31 @@ const { clearProviderCache } = await import("@/lib/db/factory");
 const MAIN = "acmeqmain";
 const BARE = "acmeqbare";
 const LOOSE = "acmeqloose";
+const WORDS = "acmeqwords";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
 
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
-  engines = await admitSessionPackages(providers, [
-    { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
-    { name: "acme-q-bare", engine: BARE },
-    {
-      name: "acme-q-loose",
-      engine: LOOSE,
-      // Two claims that would loosen the gate, which Studio's review record lists for no engine it does not ship.
-      edit: (engine) => {
-        const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
-        sqlText.readsSqlText = false;
-        sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+  engines = await admitSessionPackages(
+    providers,
+    [
+      { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
+      { name: "acme-q-bare", engine: BARE },
+      {
+        name: "acme-q-loose",
+        engine: LOOSE,
+        // Two claims that would loosen the gate, which Studio's review record lists for no engine it does not ship.
+        edit: (engine) => {
+          const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
+          sqlText.readsSqlText = false;
+          sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+        },
       },
-    },
-  ]);
+      { name: "acme-q-words", engine: WORDS },
+    ],
+    { [WORDS]: { ownWords: "scrubbed" } },
+  );
 });
 afterAll(async () => {
   await clearProviderCache();
@@ -526,6 +533,108 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const words = `no such key ${randomUUID()}`;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      expect([engines.get(WORDS)?.grants.ownWords, engines.get(MAIN)?.grants.ownWords]).toEqual([
+        "scrubbed",
+        "code-only",
+      ]);
+      // Granted: the error's own words reach the client, through core's scrub of the connection.
+      hooksFor(WORDS, { execute: () => Promise.reject(new Error(words)) });
+      const own = await post({ connection, sql: "SELECT 1" });
+      expect([own.status, own.body.code, own.body.error]).toEqual([500, "INTERNAL_ERROR", words]);
+      // Words holding the connection's password are withheld whole.
+      hooksFor(WORDS, { execute: () => Promise.reject(new Error(`${words}, as ${secret} said`)) });
+      const withheld = await post({ connection, sql: "SELECT 1" });
+      expect([withheld.status, withheld.body.code]).toEqual([500, "INTERNAL_ERROR"]);
+      expect(JSON.stringify(withheld.body)).not.toContain(secret);
+      expect(JSON.stringify(withheld.body)).not.toContain(words);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+
+      // No row: Studio's sentence naming the code, the words in the log only.
+      hooksFor(MAIN, { execute: () => Promise.reject(new Error(words)) });
+      const coded = await post({ connection: connectionOf(MAIN), sql: "SELECT 1" });
+      expect([coded.status, coded.body.code, coded.body.error]).toEqual([
+        500,
+        "INTERNAL_ERROR",
+        "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+      ]);
+    } finally {
+      error.mockRestore();
+      hooksFor(WORDS);
+      hooksFor(MAIN);
+    }
+  });
+
+  test("a package engine whose register row grants its own words answers its warnings through core's scrub", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const words = `words the package wrote ${randomUUID()}`;
+    hooksFor(WORDS, {
+      execute: () =>
+        Promise.resolve({
+          results: [source([["alpha", 1]])],
+          warnings: [
+            { message: `deprecated, as ${secret} said`, code: "W01", severity: "WARNING" },
+            { message: words },
+          ],
+          executionTimeMs: 1,
+          pageApplied: false,
+        }),
+    });
+    try {
+      const answered = await post({ connection, sql: "SELECT 1" });
+      expect(answered.status).toBe(200);
+      const warnings = answered.body.warnings as { message: string; code?: string; severity?: string }[];
+      expect(warnings).toHaveLength(2);
+      // The words as the package wrote them; the warning holding the password withheld by core's scrub.
+      expect(warnings[1]).toEqual({ message: words });
+      expect(warnings[0]?.code).toBe("W01");
+      expect(JSON.stringify(answered.body)).not.toContain(secret);
+    } finally {
+      hooksFor(WORDS);
+    }
+  });
+
+  test("a package engine whose register row grants its own words has a warning outside the contract's shape refused as the package's defect, its members never answered", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const warning of [
+        { message: "ok", detail: `driver said: ${secret}` },
+        { message: 7, code: secret },
+        { message: "ok", code: true },
+        { message: "ok", severity: 1 },
+        Object.defineProperty({}, "message", { enumerable: true, get: () => secret }),
+        null,
+      ]) {
+        hooksFor(WORDS, {
+          execute: () =>
+            Promise.resolve({
+              results: [source([["alpha", 1]])],
+              warnings: [warning],
+              executionTimeMs: 1,
+              pageApplied: false,
+            }),
+        });
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect([answered.status, answered.body.code]).toEqual([500, "INTERNAL_ERROR"]);
+        expect(answered.body.error).toBe(
+          "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.",
+        );
+        expect(JSON.stringify(answered.body)).not.toContain(secret);
+      }
+    } finally {
+      error.mockRestore();
+      hooksFor(WORDS);
+    }
+  });
+
   test("the query route records one editor event per run, naming the engine by its id and the text submitted, and the engine's record decides what the event keeps", async () => {
     const connection = connectionOf(MAIN);
     const secret = connection.password as string;
@@ -634,6 +743,172 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read", async () => {
+    const connection = connectionOf(MAIN);
+    const secret = connection.password as string;
+    let getterRuns = 0;
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      hooksFor(MAIN, {
+        execute: () =>
+          Promise.resolve({
+            results: [source([["alpha", 1]])],
+            warnings: [
+              { message: `deprecated, as ${secret} said`, code: "W01", severity: "WARNING" },
+              { message: "ok", detail: `driver said: ${secret}` },
+              { message: 7, code: secret },
+              { message: "ok", code: true },
+              { message: "ok", severity: 1 },
+              Object.defineProperty({}, "message", {
+                enumerable: true,
+                get: () => {
+                  getterRuns += 1;
+                  return secret;
+                },
+              }),
+              { message: "ok", [Symbol("detail")]: secret },
+              null,
+            ],
+            executionTimeMs: 1,
+            pageApplied: false,
+          }),
+      });
+      const answered = await post({ connection, sql: "SELECT 1" });
+      expect(answered.status).toBe(200);
+      expect(answered.body.warnings).toEqual([
+        { message: "The provider package returned 8 warnings; the server's log holds their words." },
+      ]);
+
+      const lines = warn.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
+      expect(lines.map(([message]) => message)).toEqual([
+        "A provider package's execute returned a warning",
+        ...Array.from(
+          { length: 7 },
+          () =>
+            "A provider package's execute returned a warning that is not a message with an optional code and severity; this is its defect.",
+        ),
+      ]);
+      expect(lines[0]?.[1]).toMatchObject({ warning: { code: "W01", severity: "WARNING" } });
+      expect(lines.slice(1).map(([, fields]) => fields)).toEqual(
+        Array.from({ length: 7 }, () => ({ route: "api/db/query" })),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+      expect(getterRuns).toBe(0);
+    } finally {
+      warn.mockRestore();
+      hooksFor(MAIN);
+    }
+  });
+
+  test("warnings that are not a list are refused as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const engine of [MAIN, WORDS]) {
+        const connection = connectionOf(engine);
+        const secret = connection.password as string;
+        let walked = 0;
+        // An iterable that is not an array, whose length is text.
+        const iterable = {
+          length: `pw ${secret}`,
+          *[Symbol.iterator]() {
+            walked += 1;
+            yield { message: secret };
+          },
+        };
+        // An array whose length trap answers text: Array.isArray holds for it.
+        const proxied = new Proxy([], {
+          get: (target, key) => (key === "length" ? `pw ${secret}` : Reflect.get(target, key)),
+        });
+        const answering = (warnings: unknown) =>
+          hooksFor(engine, {
+            execute: () =>
+              Promise.resolve({ results: [source([["alpha", 1]])], warnings, executionTimeMs: 1, pageApplied: false }),
+          });
+
+        answering(iterable);
+        const refused = await post({ connection, sql: "SELECT 1" });
+        expect([refused.status, refused.body.code, refused.body.error]).toEqual([
+          500,
+          "INTERNAL_ERROR",
+          engine === WORDS
+            ? "The provider package answered warnings that are not a list; this is its defect."
+            : "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+        ]);
+        expect(walked).toBe(0);
+        expect(JSON.stringify(refused.body)).not.toContain(secret);
+
+        answering(proxied);
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect(answered.status).toBe(200);
+        // Studio walked no warning, so the client is told of none.
+        expect(answered.body.warnings).toBeUndefined();
+        expect(JSON.stringify(answered.body)).not.toContain(secret);
+        expect(JSON.stringify([warn.mock.calls, error.mock.calls])).not.toContain(secret);
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      hooksFor(MAIN);
+      hooksFor(WORDS);
+    }
+  });
+
+  test("an execution time or a row count outside the contract's types is refused as the package's defect, on both paths", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const engine of [MAIN, WORDS]) {
+        const connection = connectionOf(engine);
+        const secret = connection.password as string;
+        const answering = (executionTimeMs: unknown, rowCount?: unknown) =>
+          hooksFor(engine, {
+            execute: () =>
+              Promise.resolve({
+                results: [{ ...source([["alpha", 1]]), ...(rowCount === undefined ? {} : { rowCount }) }],
+                warnings: [],
+                executionTimeMs,
+                pageApplied: false,
+              }),
+          });
+        const refusedWith = async (sentence: string) => {
+          const refused = await post({ connection, sql: "SELECT 1" });
+          expect([refused.status, refused.body.code, refused.body.error]).toEqual([
+            500,
+            "INTERNAL_ERROR",
+            engine === WORDS
+              ? sentence
+              : "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+          ]);
+          expect(JSON.stringify(refused.body)).not.toContain(secret);
+        };
+
+        for (const executionTimeMs of [`pw ${secret}`, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+          answering(executionTimeMs);
+          await refusedWith(
+            "The provider package answered an execution time that is not a finite non-negative number; this is its defect.",
+          );
+        }
+        for (const rowCount of [`pw ${secret}`, 1.5, -1, Number.NaN]) {
+          answering(1, rowCount);
+          await refusedWith(
+            "The provider package answered a row count that is not a non-negative whole number; this is its defect.",
+          );
+        }
+        // Vacuity: a zero execution time and a row count of the package's own are answered as they are.
+        answering(0, 7);
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect([answered.status, answered.body.executionTime, answered.body.rowCount]).toEqual([200, 0, 7]);
+        expect(JSON.stringify([warn.mock.calls, error.mock.calls])).not.toContain(secret);
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      hooksFor(MAIN);
+      hooksFor(WORDS);
+    }
+  });
+
   test("the session is opened once per key and reused by the next query", async () => {
     const seen = hooksFor(BARE);
     const connection = connectionOf(BARE);
@@ -646,7 +921,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
   test("a refused package's engine and an unknown type answer as the server catalog answers them", async () => {
     forgetServerCatalog();
     installServerCatalog({
-      engines: new Map([...composeServerCatalog([], []).engines, ...engines]),
+      engines: new Map([...composeServerCatalog([], [], STUDIO_GRANT_REGISTER).engines, ...engines]),
       unavailable: new Map([["acmeqgone", Object.freeze(["PROVIDER_LOAD_FAILED"])]]),
     });
     const gone = await post({ connection: connectionOf("acmeqgone"), sql: "SELECT 1" });

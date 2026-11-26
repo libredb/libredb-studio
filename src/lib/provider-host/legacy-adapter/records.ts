@@ -10,9 +10,9 @@
  *   generated table holds no row) and its declared TLS modes (`BUNDLED_CONNECTION_FORMS`);
  * - `fieldRules`: the four members the field rule readers read of its composed form entry (`CONNECTION_FORM`), each
  *   only where the entry states it, so a named check is the function Studio's own source holds for the engine;
- * - `grants`: its row of each of Studio's grant tables (`bundledEngineGrants`);
+ * - `grants`: Studio's grant of its claims against its legacy row of the grant register (`legacyEngineGrants`);
  * - `statementGrammar`: its row of Studio's grammar table (`sqlGrammarFor`);
- * - `source`: the legacy identity (./identity), with no package;
+ * - `source`: the legacy identity (./identity), with no digest and no package;
  * - `offers`: `LEGACY_OFFERS`, every offer a legacy provider makes today.
  * The records are kept in one `Map`, typed read-only and keyed in the engine catalog's order, each record and every
  * plain object and array it holds frozen; a compiled pattern and a bound check are Studio's shared objects, held by
@@ -20,7 +20,7 @@
  * function (`openEngine` in ../open-engine) calls.
  */
 import type { CredentialWarning } from "@libredb/provider-sdk/manifest";
-import { bundledEngineGrants } from "@/lib/db/claim-grants";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { CONNECTION_FORM, type FieldRuleSpec } from "@/lib/db/connection-form";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
 import {
@@ -53,14 +53,18 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: true,
   hostFiles: true,
   testCautions: true,
-  ownWords: "scrubbed",
 });
 
 /** Each engine's credential warnings, read by id as text: the generated table holds a row only for an engine with one. */
 const CREDENTIAL_WARNINGS: Readonly<Record<string, readonly CredentialWarning[]>> = BUNDLED_CREDENTIAL_WARNINGS;
 
 /** The legacy identity every legacy engine is served under. */
-const LEGACY_SOURCE = Object.freeze({ name: LEGACY_SOURCE_NAME, version: LEGACY_SOURCE_VERSION, package: null });
+const LEGACY_SOURCE = Object.freeze({
+  name: LEGACY_SOURCE_NAME,
+  version: LEGACY_SOURCE_VERSION,
+  digest: null,
+  package: null,
+});
 
 /** The members of engine `id`'s form entry the field rule readers read, each only where the entry states it. */
 function fieldRulesOf(id: DatabaseType): FieldRuleSpec {
@@ -90,7 +94,7 @@ function legacyRecord(id: DatabaseType): EngineRecord {
       dialogOffersUri: BUNDLED_DIALOG_OFFERS_URI[id],
     }),
     fieldRules: fieldRulesOf(id),
-    grants: bundledEngineGrants(id),
+    grants: legacyEngineGrants(id),
     statementGrammar: sqlGrammarFor(id).grammar,
     offers: LEGACY_OFFERS,
   });

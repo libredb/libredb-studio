@@ -11,6 +11,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { parseGrantRegister, type RegisterGrants, type RegisterRow } from "@libredb/grant-register";
+import {
+  type EngineGrants,
+  STUDIO_GRANT_REGISTER,
+  UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+  UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
+  UNGRANTED_SSH_TUNNEL_SENTENCE,
+} from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
@@ -43,6 +51,7 @@ import {
   type RefusedForCatalog,
 } from "@/lib/db/server-catalog-compose";
 import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection } from "@/lib/types";
 import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
@@ -52,8 +61,11 @@ import {
   admittedFor,
   admittedManifest,
   type EditableEngine,
+  generatedDigest,
+  packageRow,
   withFieldRules,
   withLegacyProviderOffers,
+  withLoosestClaims,
 } from "../../../helpers/package-catalog";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
@@ -69,7 +81,6 @@ const OFFER_KEYS = [
   "explain",
   "hostFiles",
   "legacyProvider",
-  "ownWords",
   "queryEventText",
   "sshTunnel",
   "statementVocabulary",
@@ -141,7 +152,7 @@ describe("the accessor", () => {
   test("an admitted engine is a known type to the server and its connection fields come from its declaration", () => {
     const manifest = admittedManifest("acmeserved", withFieldRules);
     const pkg = admittedFor("acme-served", manifest);
-    installServerCatalog(composeServerCatalog([pkg], []));
+    installServerCatalog(composeServerCatalog([pkg], [], STUDIO_GRANT_REGISTER));
 
     const engine = servedRecord("acmeserved");
     expect<string>(engine.id).toBe("acmeserved");
@@ -182,7 +193,9 @@ describe("the accessor", () => {
   });
 
   test("the library's DatabaseType guard is unchanged", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-guard", admittedManifest("acmeguard"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-guard", admittedManifest("acmeguard"))], [], STUDIO_GRANT_REGISTER),
+    );
     expect(isDatabaseType("acmeguard")).toBe(false);
     expect(typeIdRefusal("acmeguard")).toEqual({
       reason: "unknown",
@@ -220,7 +233,7 @@ describe("the accessor", () => {
       { name: "acme-one", version: "1.0.0", engines: ["acmegone", bundled], code: "PROVIDER_DIGEST_MISMATCH" },
       { name: "acme-three", version: "1.0.0", engines: ["acmegone"], code: "PROVIDER_LOAD_FAILED" },
     ];
-    installServerCatalog(composeServerCatalog([], refused));
+    installServerCatalog(composeServerCatalog([], refused, STUDIO_GRANT_REGISTER));
 
     expect<unknown>(serverEngine("acmegone")).toEqual({
       kind: "unavailable",
@@ -255,6 +268,7 @@ describe("the accessor", () => {
       composeServerCatalog(
         [admittedFor("acme-proto", admittedManifest("acmeproto"))],
         [{ name: "acme-gone", version: "1.0.0", engines: ["acmegoneproto"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
     for (const key of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
@@ -266,10 +280,14 @@ describe("the accessor", () => {
   test("the catalog composes once: a second install is refused by name, and nothing installed answers the bundled catalog", () => {
     expect(serverCatalogInstalled()).toBe(false);
     expect<unknown>(serverEngine("acmeonce")).toEqual({ kind: "refused", refusal: typeIdRefusal("acmeonce") });
-    const first = composeServerCatalog([admittedFor("acme-once", admittedManifest("acmeonce"))], []);
+    const first = composeServerCatalog(
+      [admittedFor("acme-once", admittedManifest("acmeonce"))],
+      [],
+      STUDIO_GRANT_REGISTER,
+    );
     installServerCatalog(first);
     expect(serverCatalogInstalled()).toBe(true);
-    expect(() => installServerCatalog(composeServerCatalog([], []))).toThrow(
+    expect(() => installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER))).toThrow(
       "The server's engine catalog is already installed in this process: boot composes it once.",
     );
     expect<unknown>(serverEngine("acmeonce").kind).toBe("served");
@@ -288,12 +306,14 @@ describe("one engine record for every engine", () => {
     for (const id of ids) {
       const engine = servedRecord(id);
       expect(engine.id as string).toBe(id);
-      expect(engine.source).toEqual({ name: "@libredb/studio", version, package: null });
+      expect(engine.source).toEqual({ name: "@libredb/studio", version, digest: null, package: null });
     }
   });
 
   test("a legacy engine and an admitted package's engine answer the same record shape, told apart by no kind", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-shape", admittedManifest("acmeshape"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-shape", admittedManifest("acmeshape"))], [], STUDIO_GRANT_REGISTER),
+    );
     const legacy = serverEngine(SHIPPED_DATABASE_TYPES[0]);
     const packaged = serverEngine("acmeshape");
     expect([legacy.kind, packaged.kind]).toEqual(["served", "served"]);
@@ -319,7 +339,9 @@ describe("one engine record for every engine", () => {
     // The check reads the record's offer, which the install holds to the id: a package's record offers no legacy
     // provider and is refused, and a legacy record offers one and passes.
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
-    installServerCatalog(composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], [], STUDIO_GRANT_REGISTER),
+    );
     const refused = thrown(() => assertLegacyProvider("acmeoffer", "open")) as PackageEngineUnsupportedError;
     expect(refused).toBeInstanceOf(PackageEngineUnsupportedError);
     expect([refused.code, refused.typeId]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeoffer"]);
@@ -330,7 +352,9 @@ describe("one engine record for every engine", () => {
   });
 
   test("a legacy record offers the legacy provider surface, explain, database, catalog and unbounded pages, and a package record offers none of them", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-offers", admittedManifest("acmeoffers"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-offers", admittedManifest("acmeoffers"))], [], STUDIO_GRANT_REGISTER),
+    );
     const surface = (engine: EngineRecord) => {
       const { legacyProvider, explain, database, catalog, unboundedPage } = engine.offers;
       return { legacyProvider, explain, database, catalog, unboundedPage };
@@ -355,7 +379,7 @@ describe("one engine record for every engine", () => {
 
   test("the composed catalog holds every legacy record by identity, then the admitted engines", () => {
     const pkg = admittedFor("acme-order", admittedManifest("acmeorder"));
-    const composed = composeServerCatalog([pkg], []);
+    const composed = composeServerCatalog([pkg], [], STUDIO_GRANT_REGISTER);
     const nothingInstalled = SHIPPED_DATABASE_TYPES.map((id) => servedRecord(id));
     expect([...composed.engines.keys()]).toEqual([...SHIPPED_DATABASE_TYPES, "acmeorder"]);
     SHIPPED_DATABASE_TYPES.forEach((id, index) => {
@@ -366,7 +390,7 @@ describe("one engine record for every engine", () => {
   });
 
   test("installing a catalog that lacks a legacy engine's record is a host defect, named", () => {
-    const composed = composeServerCatalog([], []);
+    const composed = composeServerCatalog([], [], STUDIO_GRANT_REGISTER);
     const missing = SHIPPED_DATABASE_TYPES[1] as string;
     const engines = new Map(composed.engines);
     engines.delete(missing);
@@ -379,7 +403,11 @@ describe("one engine record for every engine", () => {
   test("installing a catalog whose record offers a legacy provider for an id the legacy adapter does not serve, or none for one it serves, is a host defect, named", () => {
     // `assertLegacyProvider` narrows a type to `DatabaseType` from the record's offer, so the install holds the offer to
     // the id: a record offers a legacy provider exactly when its id is a legacy engine's.
-    const composed = composeServerCatalog([admittedFor("acme-claim", admittedManifest("acmeclaim"))], []);
+    const composed = composeServerCatalog(
+      [admittedFor("acme-claim", admittedManifest("acmeclaim"))],
+      [],
+      STUDIO_GRANT_REGISTER,
+    );
     expect(() => installServerCatalog(withLegacyProviderOffers(composed, { acmeclaim: true }))).toThrow(
       `The server's engine catalog's record of ${JSON.stringify("acmeclaim")} offers a legacy provider, and the legacy adapter serves no engine of that id: a record offers a legacy provider exactly when its engine is a legacy engine.`,
     );
@@ -395,7 +423,7 @@ describe("one engine record for every engine", () => {
 
   test("servedPackage answers a package record's package with its declared session, and a legacy record's is a host defect", () => {
     const manifest = admittedManifest("acmesession");
-    installServerCatalog(composeServerCatalog([admittedFor("acme-session", manifest)], []));
+    installServerCatalog(composeServerCatalog([admittedFor("acme-session", manifest)], [], STUDIO_GRANT_REGISTER));
     const served = servedPackage(servedRecord("acmesession"));
     expect(served.session.calls).toBe(manifest.calls);
     expect(served.session.panels).toBe(manifest.engines[0]?.facets.monitoring as never);
@@ -408,7 +436,9 @@ describe("one engine record for every engine", () => {
   test("legacyProviderEngine answers the record of an engine whose record offers a legacy provider, and refuses every other value as assertLegacyProvider does", () => {
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
     expect(legacyProviderEngine(legacyId, "open")).toBe(servedRecord(legacyId));
-    installServerCatalog(composeServerCatalog([admittedFor("acme-lpe", admittedManifest("acmelpe"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-lpe", admittedManifest("acmelpe"))], [], STUDIO_GRANT_REGISTER),
+    );
     expect(legacyProviderEngine(legacyId, "route")).toBe(servedRecord(legacyId));
     const values: unknown[] = [undefined, null, "", 5, "constructor", "acmenosuch", "acmelpe"];
     for (const value of values) {
@@ -426,6 +456,7 @@ describe("one engine record for every engine", () => {
       composeServerCatalog(
         [admittedFor("acme-ser", admittedManifest("acmeser"))],
         [{ name: "acme-sergone", version: "1.0.0", engines: ["acmesergone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
@@ -440,7 +471,9 @@ describe("one engine record for every engine", () => {
   });
 
   test("legacyConnection answers a legacy record's connection as itself, and a package record's is a host defect", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-lc", admittedManifest("acmelc"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-lc", admittedManifest("acmelc"))], [], STUDIO_GRANT_REGISTER),
+    );
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
     const legacy: EngineConnection = { id: "c", name: "C", type: legacyId, createdAt: new Date() };
     expect(offersLegacyProvider(servedRecord(legacyId), legacy)).toBe(true);
@@ -453,7 +486,9 @@ describe("one engine record for every engine", () => {
   });
 
   test("legacyProviderType answers a legacy record's id and nothing for a package record's", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-lpt", admittedManifest("acmelpt"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-lpt", admittedManifest("acmelpt"))], [], STUDIO_GRANT_REGISTER),
+    );
     for (const id of SHIPPED_DATABASE_TYPES) expect(legacyProviderType(servedRecord(id))).toBe(id);
     expect(legacyProviderType(servedRecord("acmelpt"))).toBeUndefined();
   });
@@ -461,7 +496,9 @@ describe("one engine record for every engine", () => {
 
 describe("what the catalog composes", () => {
   test("the composed catalog holds no engine knowledge the declaration did not state: no SQL writing, connection form, connection string, grammar, migration DDL or generator row", () => {
-    installServerCatalog(composeServerCatalog([admittedFor("acme-keys", admittedManifest("acmekeys"))], []));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-keys", admittedManifest("acmekeys"))], [], STUDIO_GRANT_REGISTER),
+    );
     const engine = servedRecord("acmekeys");
     expect(Object.keys(engine).sort()).toEqual(RECORD_KEYS);
     expect(Object.keys(engine.fieldRules).sort()).toEqual(["connectionFields"]);
@@ -475,9 +512,17 @@ describe("what the catalog composes", () => {
       "seedOnly",
       "tlsModes",
     ]);
-    expect(Object.keys(engine.source).sort()).toEqual(["name", "package", "version"]);
+    expect(Object.keys(engine.source).sort()).toEqual(["digest", "name", "package", "version"]);
     const served = servedPackage(engine);
-    expect(Object.keys(served).sort()).toEqual(["directory", "manifest", "name", "record", "session", "version"]);
+    expect(Object.keys(served).sort()).toEqual([
+      "digest",
+      "directory",
+      "manifest",
+      "name",
+      "record",
+      "session",
+      "version",
+    ]);
     for (const value of [
       engine,
       engine.source,
@@ -499,7 +544,7 @@ describe("what the catalog composes", () => {
       grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
       grammar.dollarTags = false;
     });
-    installServerCatalog(composeServerCatalog([admittedFor("acme-grammar", manifest)], []));
+    installServerCatalog(composeServerCatalog([admittedFor("acme-grammar", manifest)], [], STUDIO_GRANT_REGISTER));
     const { statementGrammar } = servedRecord("acmegrammar");
     const declared = (manifest.engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar;
     // The same record Studio composes its own engines' grammars with, from the package's facts as declared: the gate
@@ -518,20 +563,25 @@ describe("what the catalog composes", () => {
   test("composing a set that still conflicts, or an engine both served and unavailable, is a host defect", () => {
     const one = admittedFor("acme-dup-a", admittedManifest("acmedup"));
     const two = admittedFor("acme-dup-b", admittedManifest("acmedup"));
-    expect(() => composeServerCatalog([one, two], [])).toThrow(
+    expect(() => composeServerCatalog([one, two], [], STUDIO_GRANT_REGISTER)).toThrow(
       "composeServerCatalog: the admitted packages still conflict (acme-dup-a 1.0.0 engine-id, acme-dup-b 1.0.0 engine-id): boot refuses every claimant before it composes",
     );
     expect(() =>
       composeServerCatalog(
         [one],
         [{ name: "acme-x", version: "1.0.0", engines: ["acmedup"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     ).toThrow("composeServerCatalog: an engine of an admitted package is also named by a refused package's lock entry");
   });
 
   test("a field rule naming a check refuses a value with core's sentence naming the field, and passes an empty field", () => {
     installServerCatalog(
-      composeServerCatalog([admittedFor("acme-check", admittedManifest("acmecheck", withFieldRules))], []),
+      composeServerCatalog(
+        [admittedFor("acme-check", admittedManifest("acmecheck", withFieldRules))],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
     );
     const rules = servedRecord("acmecheck").fieldRules;
     const base = { host: "db.local", user: "writer" };
@@ -620,7 +670,9 @@ describe("the set rules", () => {
     for (const alias of aliases) {
       const claimant = admittedFor("acme-alias-id", admittedManifest(alias));
       expect(named([claimant, quiet])).toEqual(["acme-alias-id 1.0.0 engine-id"]);
-      expect(() => composeServerCatalog([claimant], [])).toThrow("the admitted packages still conflict");
+      expect(() => composeServerCatalog([claimant], [], STUDIO_GRANT_REGISTER)).toThrow(
+        "the admitted packages still conflict",
+      );
     }
   });
 
@@ -709,6 +761,150 @@ describe("the set rules", () => {
       for (const value of [marker, 'acmemarked"', "border-hue-red", 'acmemarkedother"']) {
         expect(text).not.toContain(value);
       }
+    }
+  });
+});
+
+describe("a package engine's register row", () => {
+  /** A register of `rows`, read as Studio reads its own. */
+  const registerOf = (...rows: RegisterRow[]) => parseGrantRegister(rows, LEGACY_ENGINE_IDS);
+
+  /** The grants of `id` in a catalog composed of `admitted` against `register`, installed and forgotten here. */
+  function grantsOf(admitted: readonly AdmittedForCatalog[], register: ReturnType<typeof registerOf>, id: string) {
+    installServerCatalog(composeServerCatalog(admitted, [], register));
+    const grants = servedRecord(id).grants;
+    forgetServerCatalog();
+    return grants;
+  }
+
+  /** The grants of a package engine requesting the loosest claims with no register row. */
+  const NO_ROW_GRANTS: EngineGrants = {
+    writeReach: "open",
+    readsFileAccessPosture: true,
+    deniedFileAccessRefusal: UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+    singleWriterFile: false,
+    readRootsRequired: true,
+    agentCredentialForm: "none",
+    maskingExemptColumns: null,
+    exposable: false,
+    statementRead: false,
+    metadataReadChangesState: true,
+    agentCredentialRequired: true,
+    readOnlyEnforced: false,
+    ungrantedRefusals: UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
+    opensLocalFile: true,
+    hostPathFields: [],
+    serverLevelAtAdmission: true,
+    serverLevelAtCatalogChoice: false,
+    sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
+    agentCredential: null,
+    statementLanguage: null,
+    agentReadings: [],
+    ownWords: "code-only",
+    servesOneSession: null,
+    agentExecution: false,
+  };
+
+  /** A row granting each claim its loosest value, and the three host members granted. */
+  const LOOSEST_ROW = {
+    writeReach: "none",
+    readsFileAccessPosture: false,
+    deniedFileAccessRefusal: null,
+    singleWriterFile: true,
+    readRootsRequired: false,
+    agentCredentialForm: null,
+    maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
+    exposable: true,
+    statementRead: true,
+    metadataReadChangesState: false,
+    agentCredentialRequired: false,
+    opensLocalFile: false,
+    hostPathFields: [],
+    serverLevelWithoutDatabase: true,
+    sshTunnel: null,
+    agentCredential: { form: "pair", supersededBy: [] },
+    statementLanguage: "sql",
+    agentReadings: ["health", "storage", "sessions"],
+    servesOneSession: "The engine serves its object tree from the editor's session in this test.",
+    agentExecution: true,
+    ownWords: "scrubbed",
+  } as const satisfies RegisterGrants;
+
+  test("a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists", () => {
+    const loose = admittedFor("acme-row", admittedManifest("acmerow", withLoosestClaims));
+    const tight = admittedFor("acme-tight", admittedManifest("acmetight"));
+
+    // The loosest request against the loosest row: every claim is the row's value.
+    const granted = grantsOf([loose], registerOf(packageRow(loose, "acmerow", LOOSEST_ROW)), "acmerow");
+    expect(granted).toEqual({
+      writeReach: "none",
+      readsFileAccessPosture: false,
+      deniedFileAccessRefusal: null,
+      singleWriterFile: true,
+      readRootsRequired: false,
+      agentCredentialForm: null,
+      maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
+      exposable: true,
+      statementRead: true,
+      metadataReadChangesState: false,
+      agentCredentialRequired: false,
+      readOnlyEnforced: true,
+      ungrantedRefusals: null,
+      opensLocalFile: false,
+      hostPathFields: [],
+      serverLevelAtAdmission: true,
+      serverLevelAtCatalogChoice: true,
+      sshTunnel: null,
+      agentCredential: { form: "pair", supersededBy: [] },
+      statementLanguage: "sql",
+      // The request's readings the row holds, in the row's order.
+      agentReadings: ["health", "sessions"],
+      ownWords: "scrubbed",
+      servesOneSession: LOOSEST_ROW.servesOneSession,
+      agentExecution: true,
+    });
+    expect(Object.isFrozen(granted)).toBe(true);
+
+    // A row more restrictive than the request on two claims: those two are the row's.
+    const capped = grantsOf(
+      [loose],
+      registerOf(packageRow(loose, "acmerow", { ...LOOSEST_ROW, writeReach: "guarded", exposable: false })),
+      "acmerow",
+    );
+    expect(capped).toEqual({ ...granted, writeReach: "guarded", exposable: false });
+
+    // A request at the restrictive value of a claim against the loosest row: the request's (M-54).
+    expect(grantsOf([tight], registerOf(packageRow(tight, "acmetight", LOOSEST_ROW)), "acmetight")).toMatchObject({
+      writeReach: "open",
+      readOnlyEnforced: false,
+      exposable: false,
+      statementRead: false,
+      agentCredential: null,
+      statementLanguage: null,
+      ownWords: "scrubbed",
+    });
+
+    // No row in the register: every claim at its restrictive value, and the three host members at no row's value.
+    expect(grantsOf([loose], registerOf(packageRow(tight, "acmetight", LOOSEST_ROW)), "acmerow")).toEqual(
+      NO_ROW_GRANTS,
+    );
+    expect(grantsOf([loose], STUDIO_GRANT_REGISTER, "acmerow")).toEqual(NO_ROW_GRANTS);
+  });
+
+  test("a register row for another version or digest of the same package grants nothing", () => {
+    const loose = admittedFor("acme-key", admittedManifest("acmekey", withLoosestClaims), { version: "1.2.0" });
+    const rowOf = (key: Pick<AdmittedForCatalog, "name" | "version" | "digest">, engine = "acmekey") =>
+      registerOf(packageRow(key, engine, LOOSEST_ROW));
+
+    // Vacuity: the row keyed exactly as the admitted package grants the engine.
+    expect(grantsOf([loose], rowOf(loose), "acmekey").ownWords).toBe("scrubbed");
+    for (const register of [
+      rowOf({ ...loose, version: "1.2.1" }),
+      rowOf({ ...loose, digest: generatedDigest() }),
+      rowOf({ ...loose, name: "acme-key-other" }),
+      rowOf(loose, "acmekeyother"),
+    ]) {
+      expect(grantsOf([loose], register, "acmekey")).toEqual(NO_ROW_GRANTS);
     }
   });
 });

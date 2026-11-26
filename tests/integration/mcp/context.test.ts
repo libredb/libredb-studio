@@ -20,6 +20,7 @@ import {
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { getOrCreateProvider } from "@/lib/db/factory";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
@@ -822,6 +823,7 @@ describe("a connection of an engine a provider package serves or a refused packa
       composeServerCatalog(
         [admittedFor("acme-mcp-served", admittedManifest("acmemcpserved"))],
         [{ name: "acme-mcp-gone", version: "1.0.0", engines: ["acmemcpgone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
       ),
     );
   });

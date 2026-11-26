@@ -642,7 +642,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine agent mode does not execute on is not served, whatever its rows say",
       ],
       "tests/unit/db/claim-record-readers.test.ts": [
-        "every policy, MCP, connection and agent mode claim record is read only by the grant reader",
+        "the grant reader imports no claim record whose rows moved to the grant register",
       ],
       "tests/unit/db/write-reach-capability.test.ts": [
         "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries",
@@ -733,6 +733,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null",
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
         "an admitted package with no grant record reads every claim at its restrictive value",
+      ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
       ],
       "tests/unit/lib/db/claim-grant-refusal.test.ts": [
         "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none",
@@ -992,6 +995,31 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
     schema: ["/$defs/agentReading"],
+  },
+  "M-84": {
+    tests: {
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
+        "a register row for another version or digest of the same package grants nothing",
+      ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a package engine whose register row grants its own words answers its warnings through core's scrub",
+      ],
+      "tests/api/db/test-connection-package-engine.test.ts": [
+        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a package engine whose register row grants its write reach opens a read-only connection, and one without a row is refused before the open",
+      ],
+      "tests/unit/lib/provider-host/boot.test.ts": [
+        "an admitted package's engine record carries its lock entry's verified digest",
+      ],
+      "packages/grant-register/tests/reader.test.ts": [
+        "a package row is answered only for its exact name, version, digest and engine",
+      ],
+      "tests/unit/db/claim-record-readers.test.ts": [
+        "only the grant reader imports the grant register, and the scan finds each way a module could import it",
+      ],
+    },
   },
   "V-1": {
     tests: {
@@ -2612,6 +2640,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted",
         "admission refuses no claim request and grants none",
       ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
+      ],
     },
   },
   "C-98": {
@@ -2736,6 +2767,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines",
         "an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both",
         "a set rule refusal carries the package's name, version and rule and no value of its declaration",
+        "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
       ],
       "tests/unit/lib/db/server-catalog-cross-bundle.test.ts": [
         "a catalog installed by the boot bundle is the one a route bundle reads",
@@ -2833,8 +2865,14 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
         "a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub",
+        "a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read",
+        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a package engine whose register row grants its own words answers its warnings through core's scrub",
+        "warnings that are not a list are refused as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
+        "an execution time or a row count outside the contract's types is refused as the package's defect, on both paths",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
+        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
         "a health failure answers the degraded success with Studio's sentence naming its code, and the session is still closed",
         "an open that fails answers Studio's sentence naming its code, not-sent, and a close that fails does not change the answer",
         "a host defect during a package engine's test is logged as Studio's, and the package's own error as the package's",
@@ -2844,6 +2882,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
+        "refuses warnings that are not a list as the package's defect, none of them walked",
+        "names the count of the warnings it walked, never the length the package answers",
       ],
     },
   },

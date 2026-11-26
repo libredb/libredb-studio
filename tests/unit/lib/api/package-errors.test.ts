@@ -133,4 +133,49 @@ describe("packageWarnings", () => {
       ["A provider package's execute returned a warning", { route: ROUTE, warning: { message: words, code: 7 } }],
     ]);
   });
+
+  test("logs a warning outside the contract's members as the package's defect, under the route alone", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    spies.push(warn);
+    const words = `words the package wrote ${randomUUID()}`;
+    expect(packageWarnings("execute", [{ message: "ok", detail: words }], scrub, ROUTE)).toEqual([
+      { message: "The provider package returned 1 warning; the server's log holds their words." },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "A provider package's execute returned a warning that is not a message with an optional code and severity; this is its defect.",
+        { route: ROUTE },
+      ],
+    ]);
+  });
+
+  test("refuses warnings that are not a list as the package's defect, none of them walked", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    spies.push(warn);
+    const secret = randomUUID();
+    let walked = 0;
+    const iterable = {
+      length: `pw ${secret}`,
+      *[Symbol.iterator]() {
+        walked += 1;
+        yield { message: secret };
+      },
+    };
+    expect(() => packageWarnings("execute", iterable, scrub, ROUTE)).toThrow(
+      "The provider package answered warnings that are not a list; this is its defect.",
+    );
+    expect(walked).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("names the count of the warnings it walked, never the length the package answers", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    spies.push(warn);
+    const secret = randomUUID();
+    const proxied = new Proxy([], {
+      get: (target, key) => (key === "length" ? `pw ${secret}` : Reflect.get(target, key)),
+    });
+    expect(packageWarnings("execute", proxied, scrub, ROUTE)).toEqual([]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+  });
 });

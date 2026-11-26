@@ -53,8 +53,8 @@
  * No step before the import runs any of the package's code. A package refused after its import has run its top level,
  * is never registered and serves no engine. The entry module is read by the runtime's loader, not by admission, so a
  * change to it after the lock's read is not seen; the providers directory must be writable only by the operator
- * (C-93). Admission grants no claim: a package carries no grant in this contract, so every claim of its engines is read
- * as a claim with neither a review record nor a grant, at its restrictive value, whatever the manifest requests. It binds
+ * (C-93). Admission grants no claim: every claim of its engines is read at its restrictive value where no register row
+ * grants it (C-97, M-84), whatever the manifest requests, and the server catalog's composer reads that row. It binds
  * no named function through any of Studio's function tables and reads no table keyed by engine id: a function name is
  * read for its form by the schema only.
  *
