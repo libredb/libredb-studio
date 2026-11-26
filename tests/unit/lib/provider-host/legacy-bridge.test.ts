@@ -1225,7 +1225,7 @@ function deepFrozen(value: unknown): boolean {
   return Object.isFrozen(value) && Object.values(value).every((member) => deepFrozen(member));
 }
 
-/** Each spec of the PostgreSQL-shaped declaration in the declaration's form, as `buildMaintenanceSpecs` writes it. */
+/** Each spec of the PostgreSQL-shaped declaration in the declaration's form, as a declaration states it. */
 const POSTGRES_SPECS = {
   vacuum: {
     operation: "vacuum",

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { AGENT_READING_PANELS } from "@libredb/provider-sdk/calls";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS, engineFacetsFor } from "@/lib/db/engine-facets";
-import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
+import { type EngineFacets, MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS, type CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { MonitoringData } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
@@ -201,6 +204,29 @@ const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOpe
 const offeredBy = (id: DatabaseType): MonitoringPanel[] =>
   MONITORING_PANELS.filter((panel) => ENGINE_FACETS[id].monitoring[panel] === "offered");
 
+/** The engine's committed declaration file, whose `facets` members are authored there. */
+function committedDeclaration(id: DatabaseType): EngineDeclaration {
+  const file = path.join(import.meta.dir, "../../../../src/lib/db/engine-declarations", `${id}.json`);
+  return JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+}
+
+/**
+ * Where a provider's facet row and its engine's declaration disagree: `<id> monitoring` unless the declaration states
+ * every panel, in `MONITORING_PANELS` order, as the row states it, and `<id> maintenance` unless the declaration lists
+ * the row's maintenance operations in the row's order.
+ */
+function facetRowDifferences(
+  id: DatabaseType,
+  row: Pick<EngineFacets, "monitoring" | "maintenance">,
+  facets: EngineDeclaration["facets"],
+): string[] {
+  const monitoring = MONITORING_PANELS.map((panel) => [panel, row.monitoring[panel]]);
+  return [
+    ...(JSON.stringify(Object.entries(facets.monitoring)) === JSON.stringify(monitoring) ? [] : [`${id} monitoring`]),
+    ...(JSON.stringify(facets.maintenance) === JSON.stringify(row.maintenance) ? [] : [`${id} maintenance`]),
+  ];
+}
+
 /** Compile-time: every panel is a key of the payload. */
 type PanelsMissingFromPayload = Exclude<MonitoringPanel, keyof MonitoringData>;
 const NO_PANEL_MISSING: PanelsMissingFromPayload[] = [];
@@ -254,6 +280,26 @@ describe("engine facets registry census", () => {
       return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
     });
     expect(misordered).toEqual([]);
+  });
+
+  test("each provider's facet row equals its declaration's authored facets, for every engine the catalog serves", () => {
+    expect([...SHIPPED_DATABASE_TYPES].sort()).toEqual([...ALL].sort());
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((id) =>
+        facetRowDifferences(id, ENGINE_FACETS[id], committedDeclaration(id).facets),
+      ),
+    ).toEqual([]);
+    // Vacuity: a row with one panel flipped, and one with an operation dropped, each fails by name.
+    const postgres = ENGINE_FACETS.postgres;
+    const flipped = { ...postgres, monitoring: { ...postgres.monitoring, performance: "not-offered" as const } };
+    const dropped = { ...postgres, maintenance: postgres.maintenance.filter((operation) => operation !== "kill") };
+    const declaration = committedDeclaration("postgres").facets;
+    expect(facetRowDifferences("postgres", flipped, declaration)).toEqual(["postgres monitoring"]);
+    expect(facetRowDifferences("postgres", dropped, declaration)).toEqual(["postgres maintenance"]);
+    // A declaration stating every panel but out of `MONITORING_PANELS` order differs too.
+    const { overview, ...rest } = declaration.monitoring;
+    const reordered = { ...declaration, monitoring: { ...rest, overview } };
+    expect(facetRowDifferences("postgres", postgres, reordered)).toEqual(["postgres monitoring"]);
   });
 
   test("no row lists a maintenance operation twice", () => {

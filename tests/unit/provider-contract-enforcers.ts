@@ -858,7 +858,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "facets.maintenanceSpecs is its provider's own maintenance specs, one for each operation its facet lists, in the facet's order",
         "maintenanceControl and declaredEntityOperations answer from each declaration what they answer from its provider, for every operation, placement and kind",
         "each declaration's maintenance specs hold exactly Studio's spec members and the operation they name",
-        "a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name, by the generator and by the census",
+        "a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name by the census",
       ],
       "tests/api/db/maintenance.test.ts": ["non-admin user returns 403"],
       "tests/components/admin/OperationsTab.test.tsx": [

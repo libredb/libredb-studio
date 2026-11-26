@@ -211,6 +211,9 @@ export const AUTHORED_MEMBERS = [
   "connection.opensLocalFile",
   "connection.serverLevelWithoutDatabase",
   "connection.agentCredential",
+  "facets.monitoring",
+  "facets.maintenance",
+  "facets.maintenanceSpecs",
   "facets.agentReadings",
   "agent.statementLanguage",
   "editor.commitKeyword",
@@ -235,8 +238,11 @@ type ConnectionStringOffer = Connection["connectionString"];
 type Editor = EngineDeclaration["editor"];
 type SqlText = EngineDeclaration["sqlText"];
 
-/** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
-export type AuthoredMembers = AuthoredDeclaration;
+/**
+ * One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them: the
+ * members the projections read, and the whole `facets` segment, which the declaration generator writes back as authored.
+ */
+export type AuthoredMembers = AuthoredDeclaration & { readonly facets: EngineDeclaration["facets"] };
 
 /** Whether `value` is an object, not an array, holding `member` as an own property. */
 function holds(value: unknown, member: string): value is Record<string, unknown> {
@@ -296,6 +302,9 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
     },
     facets: {
+      monitoring: read("facets.monitoring") as EngineDeclaration["facets"]["monitoring"],
+      maintenance: read("facets.maintenance") as EngineDeclaration["facets"]["maintenance"],
+      maintenanceSpecs: read("facets.maintenanceSpecs") as EngineDeclaration["facets"]["maintenanceSpecs"],
       agentReadings: read("facets.agentReadings") as EngineDeclaration["facets"]["agentReadings"],
     },
     agent: {
