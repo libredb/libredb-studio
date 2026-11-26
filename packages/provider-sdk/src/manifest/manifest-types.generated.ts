@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "31d26afbff122da23e0be62136cd8bd14919e9a41dc8080606ce5dd90d9adbab";
+export const MANIFEST_SCHEMA_SHA256 = "a34e97848918f43c491ae2ed3cd9ac5549c94a97a32c2c6bd7455a874de042e4";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -593,7 +593,7 @@ export type CatalogRead = {
   /** The function that folds a selector's schema to the name a policy target declares, named by its slot, declaredSchema; null where the name is declared as written. */
   readonly declaredSchema: FunctionName | null;
   readonly retry: CatalogRetry;
-  /** Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as Studio's review record of it, the engine's server overlay in Studio's agent overlay registry. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does. */
+  /** Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as the engine's row of Studio's grant register allows, and read at its restrictive value where no row exists. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does. */
   readonly commandShaped: boolean;
   /** The function that turns the rows of one kind as the engine answered them into the catalog rows that kind reads as, named by its slot, mapRows; null where the composed statement answers the catalog rows itself. */
   readonly mapRows: FunctionName | null;

@@ -714,6 +714,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/agent/composed-catalog-admission-drive.test.ts": [
         "an overlay that does not declare its catalog read a command gets the ordinary refusal",
+        "an overlay that claims a command-shaped catalog read on an engine whose register row does not grant it gets the ordinary refusal",
       ],
     },
   },
@@ -737,6 +738,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
         "an admitted package with no grant record reads every claim at its restrictive value",
         "a SQL text claim is granted from the engine's register row only for the grammar that row reviewed, and at its restrictive value otherwise",
+        "the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
@@ -775,6 +777,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
+        "every claim of a declaration is read through a named grant",
       ],
     },
   },
@@ -967,12 +970,17 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/agent/composed-catalog-admission-drive.test.ts": [
         "the identical command written by the model is refused before it is sent, as it always was",
+        "an overlay that claims a command-shaped catalog read on an engine whose register row does not grant it gets the ordinary refusal",
       ],
       "tests/unit/lib/agent/elasticsearch-catalog-read.test.ts": [
         "each composed command is admitted by identity, and refused as model text",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
+      ],
+      "tests/unit/db/claim-grants.test.ts": [
+        "the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name",
+        "for every shipped engine, the granted command-shaped catalog read is its server overlay's request, and its register row grants it exactly where the overlay requests it",
       ],
     },
   },

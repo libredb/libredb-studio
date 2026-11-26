@@ -112,6 +112,7 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { grantedCatalogReadCommand } from "@/lib/db/claim-grants";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { typeIdRow } from "@/lib/db/type-id";
 import {
@@ -657,8 +658,9 @@ export interface AgentOperationRequest {
    */
   readonly mapRows?: (rows: readonly Record<string, unknown>[]) => AgentCatalogRows;
   /**
-   * The admission of the one statement the catalog read composed, for an engine whose catalog statement is a command
-   * (`AgentCatalogRead.commandShaped`): the fence admits that statement, word for word, past its read-keyword allowlist.
+   * The admission of the one statement the catalog read composed, for an engine whose overlay claims its catalog
+   * statement a command (`AgentCatalogRead.commandShaped`) and whose register row grants that claim
+   * (`grantedCatalogReadCommand`): the fence admits that statement, word for word, past its read-keyword allowlist.
    * Only the catalog read sets it, and a statement other than the one it was minted for meets the fence unchanged.
    */
   readonly composed?: ComposedStatementAdmission;
@@ -3273,10 +3275,7 @@ export async function readStatisticsForGrounding(
   // The estimates are the dialect's catalog read, so they carry the admission `readCatalog` gives that read; the probe
   // is validated plain, as `readStatementForGrounding` sends it. Supplied: `readSchemaStatistics` asks only where the
   // composer serves this dialect.
-  const admission =
-    statement === "estimates"
-      ? catalogReadAdmission((engineServerDialect(dialect).catalogRead as AgentCatalogRead).commandShaped, sql)
-      : {};
+  const admission = statement === "estimates" ? catalogReadAdmission(dialect, sql) : {};
   return runAuditedAgentCall(context, {
     operationId: "db.schema.read",
     fingerprintSource: `statistics:${statement}:${context.connection.id}`,
@@ -3338,15 +3337,24 @@ function availabilityProbe(dialect: DatabaseConnection["type"]): string {
 }
 
 /**
- * The admission a composed catalog read carries: minted here, right after composing, and only where the overlay
- * declares its catalog statement a command. The fence then admits this one statement by identity, and a retry's
- * rewrite, which is another statement, meets the fence unchanged.
+ * The admission a composed catalog read of an engine of type `type` carries: minted here, right after composing, and
+ * only where Studio grants the overlay's claim that its catalog statement is a command, `grantedCatalogReadCommand`,
+ * the request read from the engine's server overlay and the register row's review from the connection's engine record.
+ * The fence then admits this one statement by identity, and a retry's rewrite, which is another statement, meets the
+ * fence unchanged.
+ *
+ * @throws {UnknownProviderError | ProviderUnavailableError} For a type the server catalog does not serve, as
+ * `servedEngineRecord` raises it.
  */
 function catalogReadAdmission(
-  commandShaped: boolean | undefined,
+  type: DatabaseConnection["type"],
   sql: string,
 ): { readonly composed?: ComposedStatementAdmission } {
-  return commandShaped === true ? { composed: admitComposedStatement(sql) } : {};
+  const read = engineServerDialect(type).catalogRead;
+  const requested = read !== "unsupported" && read.commandShaped === true;
+  return grantedCatalogReadCommand(type, requested, servedEngineRecord(type).grants)
+    ? { composed: admitComposedStatement(sql) }
+    : {};
 }
 
 async function readCatalog(
@@ -3365,8 +3373,7 @@ async function readCatalog(
     return composedSqlOutcome(error);
   }
   // Supplied: `composeCatalogRead` refuses an engine whose catalog read is unsupported.
-  const { declaredSchema, retry, commandShaped } = engineServerDialect(context.connection.type)
-    .catalogRead as AgentCatalogRead;
+  const { declaredSchema, retry } = engineServerDialect(context.connection.type).catalogRead as AgentCatalogRead;
   const mapRows = catalogRowMapper(context.connection.type, selector.kind ?? "columns");
   const request: AgentOperationRequest = {
     operationId: "sql.query.read",
@@ -3374,8 +3381,9 @@ async function readCatalog(
     grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     ...(mapRows === undefined ? {} : { mapRows }),
-    // Minted right after composing, where the overlay declares its catalog statement a command (`catalogReadAdmission`).
-    ...catalogReadAdmission(commandShaped, sql),
+    // Minted right after composing, where Studio grants the overlay's claim that its catalog statement is a command
+    // (`catalogReadAdmission`).
+    ...catalogReadAdmission(context.connection.type, sql),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.

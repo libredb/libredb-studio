@@ -1477,7 +1477,7 @@ export const MANIFEST_SCHEMA_TEXT = [
   '          "$ref": "#/$defs/catalogRetry"',
   "        },",
   '        "commandShaped": {',
-  "          \"description\": \"Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as Studio's review record of it, the engine's server overlay in Studio's agent overlay registry. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does.\",",
+  "          \"description\": \"Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as the engine's row of Studio's grant register allows, and read at its restrictive value where no row exists. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does.\",",
   '          "type": "boolean"',
   "        },",
   '        "mapRows": {',

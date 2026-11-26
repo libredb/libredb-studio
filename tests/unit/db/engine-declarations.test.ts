@@ -93,7 +93,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
-import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
+import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
@@ -111,6 +111,7 @@ import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
+import * as claimGrants from "@/lib/db/claim-grants";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   CONNECTION_FORM_URI_MODE,
@@ -1810,6 +1811,66 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
     record: (type) => catalogReadCommandShapedRow[type],
   },
 };
+
+/**
+ * Where Studio's grant of each claim a declaration makes is read, by the dotted member that requests it: the members of
+ * an engine's grants that hold the grant, or, for a claim whose request the grants do not hold, the export of the grant
+ * reader that grants it (docs/providers/CONTRACT.md, clause M-54).
+ */
+const CLAIM_GRANTS: Readonly<Record<string, readonly string[]>> = {
+  "policy.writeReach": ["writeReach", "readOnlyEnforced"],
+  "policy.readsFileAccessPosture": ["readsFileAccessPosture"],
+  "policy.deniedFileAccessRefusal": ["deniedFileAccessRefusal"],
+  "policy.singleWriterFile": ["singleWriterFile", "ungrantedRefusals"],
+  "policy.readRootsRequired": ["readRootsRequired"],
+  "policy.agentCredentialForm": ["agentCredentialForm"],
+  "policy.maskingExemptColumns": ["maskingExemptColumns"],
+  "mcp.exposable": ["exposable"],
+  "mcp.statementRead": ["statementRead"],
+  "mcp.metadataReadChangesState": ["metadataReadChangesState"],
+  "mcp.agentCredentialRequired": ["agentCredentialRequired"],
+  "connection.opensLocalFile": ["opensLocalFile"],
+  "connection.hostPathFields": ["hostPathFields"],
+  "connection.serverLevelWithoutDatabase": ["serverLevelAtAdmission", "serverLevelAtCatalogChoice"],
+  "connection.sshTunnel": ["sshTunnel"],
+  "connection.agentCredential": ["agentCredential"],
+  "agent.statementLanguage": ["statementLanguage"],
+  "facets.agentReadings": ["agentReadings"],
+  "sqlText.redaction": ["redaction"],
+  "agent.overlay.dialect.catalogRead.commandShaped": ["grantedCatalogReadCommand"],
+  "sqlText.readsSqlText": ["readsSqlText"],
+  "sqlText.grammar.confirmExemptForms": ["confirmExemptForms"],
+};
+
+/** The members of an engine's grants that hold no grant of a declaration's claim, each with why. */
+const UNCLAIMED_GRANT_MEMBERS: Readonly<Record<string, string>> = {
+  ownWords: "a host fact no declaration requests, read from the engine's register row alone",
+  servesOneSession: "a host fact no declaration requests, read from the engine's register row alone",
+  agentExecution: "a host fact no declaration requests, read from the engine's register row alone",
+  decidesAlone: "a host fact no declaration requests, a statement vocabulary row's own flag being its request",
+  reviewedGrammar: "no grant: whether the row reviewed the grammar the request carries the digest of",
+  catalogReadCommandShaped:
+    "the register row's review of the agent overlay's claim, which only grantedCatalogReadCommand reads with the request",
+};
+
+/**
+ * What is wrong with `grants`, a map from each claim of `claims` to where its grant is read: a claim with no entry, or
+ * an entry naming something that is neither a member of an engine's grants, `members`, nor a function the grant reader
+ * exports, `exports`.
+ */
+function ungrantedClaims(
+  claims: readonly string[],
+  grants: Readonly<Record<string, readonly string[]>>,
+  members: readonly string[],
+  exports: Readonly<Record<string, unknown>>,
+): string[] {
+  return claims.flatMap((claim) => {
+    if (!Object.hasOwn(grants, claim)) return [`${claim}: no grant named`];
+    return grants[claim]
+      .filter((name) => !members.includes(name) && typeof exports[name] !== "function")
+      .map((name) => `${claim}: ${name} is neither a member of an engine's grants nor a function of the grant reader`);
+  });
+}
 
 /** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
 function declaredRecord<Value>(read: (declaration: EngineDeclaration) => Value): Readonly<Record<DatabaseType, Value>> {
@@ -4023,6 +4084,42 @@ describe("the census", () => {
     expect(isMember("agent.overlay.dialect.planEstimate.unknown")).toBe(false);
     expect(isMember("agent.overlay.grounding")).toBe(true);
     expect(isMember("agent.overlay.dialect.catalogRead.declaredSchema")).toBe(true);
+  });
+
+  test("every claim of a declaration is read through a named grant", () => {
+    const claims = [
+      ...Object.keys(SCHEMA.$defs.policyClaims?.properties ?? {}).map((member) => `policy.${member}`),
+      ...Object.keys(SCHEMA.$defs.mcpClaims?.properties ?? {}).map((member) => `mcp.${member}`),
+      ...SEGMENT_CLAIMS,
+      ...CONFIRMATION_GATE_CLAIMS,
+    ];
+    const members = Object.keys(legacyEngineGrants("postgres"));
+    const named = Object.values(CLAIM_GRANTS).flat();
+
+    expect(ungrantedClaims(claims, CLAIM_GRANTS, members, claimGrants)).toEqual([]);
+    expect(claims).toHaveLength(22);
+    expect(Object.keys(CLAIM_GRANTS).sort()).toEqual([...claims].sort());
+    // Every member of an engine's grants holds the grant of a claim or is listed as holding none, never both.
+    expect(
+      members.filter((member) => !named.includes(member) && !Object.hasOwn(UNCLAIMED_GRANT_MEMBERS, member)),
+    ).toEqual([]);
+    expect(Object.keys(UNCLAIMED_GRANT_MEMBERS).filter((member) => named.includes(member))).toEqual([]);
+    expect(Object.keys(UNCLAIMED_GRANT_MEMBERS).filter((member) => !members.includes(member))).toEqual([]);
+    // Vacuity: a claim with no entry, and an entry naming a function the grant reader does not export, are named.
+    expect(ungrantedClaims([...claims, "agent.unclaimed"], CLAIM_GRANTS, members, claimGrants)).toEqual([
+      "agent.unclaimed: no grant named",
+    ]);
+    const misnamed = { ...CLAIM_GRANTS, "mcp.exposable": ["grantedExposure"] };
+    expect(ungrantedClaims(claims, misnamed, members, claimGrants)).toEqual([
+      "mcp.exposable: grantedExposure is neither a member of an engine's grants nor a function of the grant reader",
+    ]);
+    // A member removed from both lists is one neither names.
+    const withoutOwnWords = Object.fromEntries(
+      Object.entries(UNCLAIMED_GRANT_MEMBERS).filter(([member]) => member !== "ownWords"),
+    );
+    expect(members.filter((member) => !named.includes(member) && !Object.hasOwn(withoutOwnWords, member))).toEqual([
+      "ownWords",
+    ]);
   });
 
   test("each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open", () => {

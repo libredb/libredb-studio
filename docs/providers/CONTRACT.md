@@ -426,7 +426,7 @@ A statistics reading or a capture is stated only beside a catalog read.
 
 Every statement a dialect composes is checked as a statement the model wrote: the catalog read and its statistics as a bounded read, the estimating plan and the profile as a bounded read that refuses plan execution, and the statistics probe as a plain read.
 So a dialect widens what agent mode composes on an engine it already runs on, never where it runs or what the fence admits.
-The one exception is a catalog read whose statement is a command, claimed as `commandShaped` (M-53): the fence admits that one statement by identity, still refusing a comment or a word with a side effect.
+The one exception is a catalog read whose statement is a command, claimed as `commandShaped` (M-53) and granted by the engine's register row (M-54, M-84): the fence admits that one statement by identity, still refusing a comment or a word with a side effect.
 
 ### M-73 (normative): An engine's TLS modes are data of its declaration
 

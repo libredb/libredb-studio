@@ -23,6 +23,7 @@ import {
 } from "@libredb/grant-register";
 import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import {
   AGENT_READING_NAMES,
   type EngineGrants,
@@ -32,6 +33,7 @@ import {
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantEngineClaims,
+  grantedCatalogReadCommand,
   HOST_PATH_FIELD_NAMES,
   legacyAgentCredentials,
   legacyEngineGrants,
@@ -1144,6 +1146,63 @@ describe("Studio's grant of each SQL text claim", () => {
   });
 });
 
+describe("Studio's grant of the agent overlay's command-shaped catalog read", () => {
+  /** The claim's dotted member, as a refusal names it. */
+  const CLAIM = "agent.overlay.dialect.catalogRead.commandShaped";
+
+  /** Whether `type`'s server overlay requests its catalog read as a command: the request the fence hands the grant. */
+  const requested = (type: DatabaseType): boolean => {
+    const read = engineServerDialect(type).catalogRead;
+    return read !== "unsupported" && read.commandShaped === true;
+  };
+
+  test("the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name", () => {
+    const granting = grantOf("postgres", request(), rowWith("postgres", { catalogReadCommandShaped: true }));
+    const refusing = grantOf("postgres", request(), rowWith("postgres", { catalogReadCommandShaped: false }));
+    const rowless = grantOf(UNRECORDED, request(), null);
+
+    // The grants carry the row's review of the claim, false where no row exists.
+    expect([granting, refusing, rowless].map((grants) => grants.catalogReadCommandShaped)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    const cases = [
+      [true, granting, true],
+      [false, granting, false],
+      [true, refusing, false],
+      [false, refusing, false],
+      [true, rowless, false],
+      [false, rowless, false],
+    ] as const;
+    for (const [asked, grants, granted] of cases) {
+      expect({
+        asked,
+        row: grants.catalogReadCommandShaped,
+        granted: grantedCatalogReadCommand("postgres", asked, grants),
+      }).toEqual({ asked, row: grants.catalogReadCommandShaped, granted });
+    }
+    for (const value of [undefined, "yes", 1, null]) {
+      expect(() => grantedCatalogReadCommand("postgres", value, granting)).toThrow(
+        `postgres requests ${CLAIM} ${JSON.stringify(value)}, which is not a value of the claim`,
+      );
+    }
+  });
+
+  test("for every shipped engine, the granted command-shaped catalog read is its server overlay's request, and its register row grants it exactly where the overlay requests it", () => {
+    const granted = SHIPPED_DATABASE_TYPES.filter((type) =>
+      grantedCatalogReadCommand(type, requested(type), legacyEngineGrants(type)),
+    );
+    const asked = SHIPPED_DATABASE_TYPES.filter(requested);
+
+    expect(granted).toEqual(asked);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).catalogReadCommandShaped)).toEqual(asked);
+    // Vacuity: the claim is granted on some shipped engines and not on others.
+    expect(granted).toEqual(["elasticsearch", "opensearch"]);
+    expect(requested("postgres")).toBe(false);
+  });
+});
+
 describe("the claims of an admitted provider package's engine", () => {
   test("an admitted package with no grant record reads every claim at its restrictive value", () => {
     const manifest = admittedManifest("acmeloose", withLoosestClaims);
@@ -1177,6 +1236,7 @@ describe("the claims of an admitted provider package's engine", () => {
       ownWords: "code-only",
       servesOneSession: null,
       agentExecution: false,
+      catalogReadCommandShaped: false,
       redaction: { kind: "none" },
       readsSqlText: true,
       confirmExemptForms: [],

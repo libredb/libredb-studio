@@ -127,6 +127,7 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   ownWords: legacyRegisterTable("ownWords"),
   servesOneSession: legacyRegisterTable("servesOneSession"),
   agentExecution: legacyRegisterTable("agentExecution"),
+  catalogReadCommandShaped: legacyRegisterTable("catalogReadCommandShaped"),
   // A legacy engine's SQL text request carries its row's redaction and grammar digest and its declaration's
   // readsSqlText and exempt forms, which equal its row's (tests/unit/db/engine-declarations.test.ts), so each grant is
   // the row.

@@ -23,6 +23,13 @@
  * types are passed over. A file whose text does not hold the name is not parsed. The capabilities member of the same
  * name, `ProviderCapabilities.agentReadings`, which no module reads, is refused by the same rule, until the closed list
  * of that claim's readers decides it.
+ *
+ * The agent overlay's claim that its catalog read is a command is held by member the same way, its request and its
+ * review apart, until the change that projects the agent overlays from the admitted declarations: no module but the
+ * catalog read's admission in src/lib/agent/tools.ts reads a member named `commandShaped`, the engine's server
+ * overlay's request, and no module but the grant reader reads a member named `catalogReadCommandShaped`, the register
+ * row's review of the claim, which an engine's grants carry and which is no grant until `grantedCatalogReadCommand`
+ * reads it with the request.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -103,9 +110,27 @@ const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
     "reads the engine record's grant, `servedEngineRecord(...).grants.agentReadings`, which the grant reader answers",
 };
 
-/** Each read `file` makes of a member named `agentReadings`, as `<file> reads agentReadings`, once per file. */
-function agentReadingsReads(file: SourceText): string[] {
-  if (!file.text.includes(AGENT_READINGS)) return [];
+/** The member of an engine's server overlay catalog read that is its request to be read as a command. */
+const COMMAND_SHAPED = "commandShaped";
+
+/** The modules that may read a member named `commandShaped`, each with why. */
+const COMMAND_SHAPED_READERS: Readonly<Record<string, string>> = {
+  "src/lib/agent/tools.ts":
+    "the catalog read's admission, `catalogReadAdmission`, which reads the overlay's request and hands it to the grant reader's `grantedCatalogReadCommand`",
+};
+
+/** The member of a register row and of an engine's grants that is the row's review of the overlay's claim. */
+const CATALOG_READ_COMMAND_SHAPED = "catalogReadCommandShaped";
+
+/** The modules that may read a member named `catalogReadCommandShaped`, each with why. */
+const CATALOG_READ_COMMAND_SHAPED_READERS: Readonly<Record<string, string>> = {
+  [GRANT_READER]:
+    "the grant reader, which carries the row's review into an engine's grants and grants the claim in `grantedCatalogReadCommand`",
+};
+
+/** Each read `file` makes of a member named `member`, as `<file> reads <member>`, once per file. */
+function memberReads(file: SourceText, member: string): string[] {
+  if (!file.text.includes(member)) return [];
   const source = ts.createSourceFile(
     file.path,
     file.text,
@@ -115,26 +140,35 @@ function agentReadingsReads(file: SourceText): string[] {
   );
   let reads = false;
   const visit = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node) && node.name.text === AGENT_READINGS) reads = true;
+    if (ts.isPropertyAccessExpression(node) && node.name.text === member) reads = true;
     else if (
       ts.isElementAccessExpression(node) &&
       ts.isStringLiteralLike(node.argumentExpression) &&
-      node.argumentExpression.text === AGENT_READINGS
+      node.argumentExpression.text === member
     )
       reads = true;
     else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
       const key = node.propertyName ?? node.name;
-      if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === AGENT_READINGS) reads = true;
+      if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === member) reads = true;
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return reads ? [`${file.path} reads ${AGENT_READINGS}`] : [];
+  return reads ? [`${file.path} reads ${member}`] : [];
+}
+
+/** Each read of a member named `member` in `files` that no module of `readers` makes. */
+function memberReaders(
+  files: readonly SourceText[],
+  member: string,
+  readers: Readonly<Record<string, string>>,
+): string[] {
+  return files.filter((file) => !Object.hasOwn(readers, file.path)).flatMap((file) => memberReads(file, member));
 }
 
 /** Each read of a member named `agentReadings` in `files` that no module of `AGENT_READINGS_READERS` makes. */
 function agentReadingsReaders(files: readonly SourceText[]): string[] {
-  return files.filter((file) => !Object.hasOwn(AGENT_READINGS_READERS, file.path)).flatMap(agentReadingsReads);
+  return memberReaders(files, AGENT_READINGS, AGENT_READINGS_READERS);
 }
 
 /**
@@ -332,7 +366,7 @@ describe("the claim record readers", () => {
     for (const reader of Object.keys(AGENT_READINGS_READERS)) {
       const file = files.find((candidate) => candidate.path === reader);
       if (file === undefined) throw new Error(`${reader} is not in the source read`);
-      expect(agentReadingsReads(file)).toEqual([`${reader} reads ${AGENT_READINGS}`]);
+      expect(memberReads(file, AGENT_READINGS)).toEqual([`${reader} reads ${AGENT_READINGS}`]);
     }
     expect(
       files
@@ -372,5 +406,59 @@ describe("the claim record readers", () => {
     // A file that does not hold the name is not read at all, and a listed reader is passed over.
     expect(planted("row.maintenance;")).toEqual([]);
     expect(agentReadingsReaders([{ path: GRANT_READER, text: `row.${AGENT_READINGS};` }])).toEqual([]);
+  }, 60_000);
+
+  test("the overlay's command-shaped catalog read request is read only by the catalog read's admission, and its register row's review only by the grant reader, and the scan finds each way a module could read either", () => {
+    const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
+    const scans = [
+      [COMMAND_SHAPED, COMMAND_SHAPED_READERS],
+      [CATALOG_READ_COMMAND_SHAPED, CATALOG_READ_COMMAND_SHAPED_READERS],
+    ] as const;
+
+    for (const [member, readers] of scans) {
+      expect(memberReaders(files, member, readers)).toEqual([]);
+      // Vacuity: each listed reader reads the member.
+      for (const reader of Object.keys(readers)) {
+        const file = files.find((candidate) => candidate.path === reader);
+        if (file === undefined) throw new Error(`${reader} is not in the source read`);
+        expect(memberReads(file, member)).toEqual([`${reader} reads ${member}`]);
+      }
+    }
+    // Vacuity: the two overlays that request the claim are in the source read.
+    expect(
+      files
+        .filter((file) => file.path.endsWith(".ts") && file.text.includes(`${COMMAND_SHAPED}: true`))
+        .map((file) => file.path),
+    ).toEqual([
+      "src/lib/agent/languages/sql/engines/elasticsearch.ts",
+      "src/lib/agent/languages/sql/engines/opensearch.ts",
+    ]);
+
+    for (const [member, readers] of scans) {
+      const planted = (text: string) =>
+        memberReaders([{ path: "src/lib/agent/composed-sql.ts", text }], member, readers);
+      const read = [`src/lib/agent/composed-sql.ts reads ${member}`];
+      // A property access, optional or not, a string element access and a binding pattern key are reads.
+      expect(planted(`dialect.catalogRead.${member} === true;`)).toEqual(read);
+      expect(planted(`servedEngineRecord(type).grants?.${member};`)).toEqual(read);
+      expect(planted(`read["${member}"];`)).toEqual(read);
+      expect(planted(`const { ${member} } = read;`)).toEqual(read);
+      expect(planted(`const { ${member}: command } = read;`)).toEqual(read);
+      // Not reads: an object literal key, a type member key, a string, a comment and another member.
+      expect(
+        planted(
+          [
+            `const read = { ${member}: true };`,
+            `interface Read { readonly ${member}?: boolean }`,
+            `const claim = "agent.overlay.dialect.catalogRead.${member}";`,
+            `// read.${member}`,
+            "read.declaredSchema;",
+          ].join("\n"),
+        ),
+      ).toEqual([]);
+      // A listed reader is passed over.
+      const [listed] = Object.keys(readers);
+      expect(memberReaders([{ path: listed, text: `read.${member};` }], member, readers)).toEqual([]);
+    }
   }, 60_000);
 });
