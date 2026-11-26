@@ -1240,6 +1240,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name",
         "a package's loosening claims are not counted: text-not-SQL and an exempt form still ask",
         "a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares",
+        "gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with every loosening claim uncounted",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "the statement is read under the package's declared grammar, and a write asks for a confirmation",

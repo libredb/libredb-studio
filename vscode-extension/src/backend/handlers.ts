@@ -265,6 +265,7 @@ export function createHandlers(
       route: RUN_ROUTE,
       issuer,
       connection: record.connection,
+      engine: servedEngineRecord(record.connection.type),
       catalog,
       sql,
       params: undefined,

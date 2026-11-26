@@ -9,19 +9,12 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
-import {
-  checkEditorQuery,
-  openWithinBudget,
-  openWithinCall,
-  queryTimeoutError,
-  runEditorQuery,
-} from "@/lib/api/editor-query";
+import { checkEditorQuery, openWithinBudget, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { packageCallError } from "@/lib/api/package-errors";
 import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
-import { pageOptionError } from "@/lib/api/page-probe";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import { getOrCreateEditorSession } from "@/lib/db/factory";
-import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
+import type { EngineConnection, EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
@@ -32,7 +25,7 @@ import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
-import { gatePackageRun, gateRun } from "@/lib/api/run-confirmation";
+import { gateRun } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
@@ -76,22 +69,25 @@ function readExplainRequest(value: unknown): ExplainRequestResult {
 }
 
 /**
- * The request fields a query on an engine of a provider package does not serve yet, by the name the answer gives each,
- * or null when it sets none: a plan (`explain`), whose statement is built by the connected provider's strategy, keyed by
+ * The first request field a query sets that the engine's record does not offer, by the name the answer gives it, or
+ * null when it sets none: a plan (`explain`), whose statement is built by the connected provider's strategy, keyed by
  * a legacy plan format; a key-space `database`, read from a legacy provider's declarations; a server-level `catalog`,
- * a legacy catalog session; and an unbounded page (`options.unlimited`), since the host always pumps a bounded one
- * (clause C-16). Each malformed field keeps its 400, read before this.
+ * a legacy catalog session; and an unbounded page (`options.unlimited`), since the provider contract always pumps a
+ * bounded one (clause C-16). Each malformed field keeps its 400, read before this: the caller reads `explain` and
+ * `database`, and a `catalog` is read here first where the record does not offer catalogs, so a malformed one answers
+ * its 400 before any field is refused, and where the record offers them it is read where the gate reads it.
+ *
+ * @throws {DatabaseConfigError} For a malformed `catalog`, on an engine whose record does not offer catalogs.
  */
-function unservedPackageField(fields: {
-  explain: boolean;
-  database: number | undefined;
-  catalog: string | undefined;
-  unlimited: boolean;
-}): string | null {
-  if (fields.explain) return "explain";
-  if (fields.database !== undefined) return "database";
-  if (fields.catalog !== undefined) return "catalog";
-  return fields.unlimited ? "options.unlimited" : null;
+function unofferedField(
+  offers: EngineOffers,
+  request: { body: Record<string, unknown>; explain: boolean; database: number | undefined; unlimited: boolean },
+): string | null {
+  const catalog = offers.catalog ? undefined : requestCatalog(request.body);
+  if (request.explain && !offers.explain) return "explain";
+  if (request.database !== undefined && !offers.database) return "database";
+  if (catalog !== undefined) return "catalog";
+  return request.unlimited && !offers.unboundedPage ? "options.unlimited" : null;
 }
 
 export async function POST(req: NextRequest) {
@@ -124,8 +120,8 @@ export async function POST(req: NextRequest) {
     submitted = typeof sql === "string" ? sql : null;
 
     // An engine of an admitted provider package is served too (src/lib/api/package-editor-query.ts): its connection
-    // resolves with every guard of every route, with the server catalog's record of its engine, and it runs on the
-    // package's session below.
+    // resolves with every guard of every route, with the server catalog's record of its engine, whose offers decide each
+    // step below that differs between engines, and it runs on the package's session below.
     const { connection: named, engine } = await resolveServedConnection(body, guard.session);
     // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
     // by its type, so a package's connection is read as any other.
@@ -145,68 +141,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    if (!engine.offers.legacyProvider) {
-      // THE QUERY ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the page bounds and the statement
-      // timeout as for any engine, no console text bound (a row of Studio's keyed by engine, which a package has none
-      // of); the fields it does not serve refused by name; the gate over the package's declared grammar; then the
-      // package's session, cached per key, and the run through the host core.
-      const packaged = named;
-      const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);
-      if (bounds !== null) return NextResponse.json({ error: bounds }, { status: 400 });
-      const bound = readBoundParams(body.params);
-      if (!bound.valid) return NextResponse.json({ error: bound.message }, { status: 400 });
-      const explain = readExplainRequest(body.explain);
-      if (!explain.valid) return NextResponse.json({ error: explain.message }, { status: 400 });
-      let database: number | undefined;
-      try {
-        database = optionalDatabase(body, "database");
-      } catch (error) {
-        if (!(error instanceof ObjectRouteError)) throw error;
-        return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
-      }
-      const unserved = unservedPackageField({
-        explain: explain.explain !== undefined,
-        database,
-        catalog: requestCatalog(body),
-        unlimited: options.unlimited === true,
-      });
-      if (unserved !== null) {
-        throw new PackageEngineUnsupportedError(
-          `This LibreDB Studio does not serve ${unserved} in a query on an engine of a provider package yet.`,
-          engine.id,
-        );
-      }
-      const gate = await gatePackageRun({
-        route: "query",
-        issuer: runConfirmationIssuerForSession(guard.session),
-        connection: packaged,
-        catalog: undefined,
-        sql,
-        params: bound.params,
-        confirmation: body.confirmation,
-        explain: false,
-        grammar: engine.statementGrammar,
-      });
-      if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
-
-      stage = "admission";
-      admitQueryExecution();
-      stage = "execution";
-      const answered = await runOnPackageSession(req, guard.session, packaged, engine, {
-        statement: sql,
-        options,
-        params: bound.params,
-        queryId,
-      });
-      recordExecutedUnit(events, { connection, statement: submitted, started, ended: { rowCount: answered.rowCount } });
-      return NextResponse.json({ ...answered, ...(gate.unconfirmed && { confirmation: "unconfirmed" }) });
-    }
-
-    // The page bounds, the connection's statement timeout and the console text bound, before any provider resolves
-    // (`src/lib/api/editor-query.ts`).
+    // The page bounds, the connection's statement timeout and the console text bound where the engine's record offers
+    // one, before any provider resolves (`src/lib/api/editor-query.ts`).
     const refusal = checkEditorQuery({
       statement: sql,
-      type: connection.type,
+      type: engine.offers.consoleTextBound ? connection.type : undefined,
       options,
       queryTimeout: connection.queryTimeout,
     });
@@ -243,17 +182,19 @@ export async function POST(req: NextRequest) {
     // not on CockroachDB, so the code after it is a second statement to one. Only SQL text
     // is counted: an engine whose text is not SQL enforces one statement in its own
     // parser (Firestore's provider refuses a second statement), and the SQL counter
-    // would read a `;` in its comment as a boundary.
-    const explainGrammar = resolveSqlGrammar(connection.type);
-    if (
-      explain.explain &&
-      typeof sql === "string" &&
-      readsSqlText(connection.type) &&
-      (countCodeStatements(sql, explainGrammar) > 1 ||
-        hasUnterminatedSpan(sql, explainGrammar) ||
-        hasLoneCarriageReturnInLineComment(sql, explainGrammar))
-    ) {
-      return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
+    // would read a `;` in its comment as a boundary. Read only where the engine's record offers a plan: any other
+    // engine's explain is refused by name below.
+    if (explain.explain && engine.offers.explain) {
+      const explainGrammar = resolveSqlGrammar(connection.type);
+      if (
+        typeof sql === "string" &&
+        readsSqlText(connection.type) &&
+        (countCodeStatements(sql, explainGrammar) > 1 ||
+          hasUnterminatedSpan(sql, explainGrammar) ||
+          hasLoneCarriageReturnInLineComment(sql, explainGrammar))
+      ) {
+        return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
+      }
     }
 
     // The database one RUN should reach. A key lives in exactly one numbered database and
@@ -272,6 +213,21 @@ export async function POST(req: NextRequest) {
       // The SAME body shape and status `handleObjectRequest` renders for it, so a caller cannot tell
       // which of the two routes refused the field.
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
+    }
+
+    // A field the engine's record does not offer is refused by name, after every malformed field's 400 and before
+    // the gate, so nothing is classified, opened or run for it.
+    const unoffered = unofferedField(engine.offers, {
+      body,
+      explain: explain.explain !== undefined,
+      database,
+      unlimited: options.unlimited === true,
+    });
+    if (unoffered !== null) {
+      throw new PackageEngineUnsupportedError(
+        `This LibreDB Studio does not serve ${unoffered} in a query on an engine of a provider package yet.`,
+        engine.id,
+      );
     }
 
     if (database !== undefined) {
@@ -333,13 +289,15 @@ export async function POST(req: NextRequest) {
       connection = { ...connection, database: String(database) };
     }
 
-    // The server's confirmation gate: after every field check and
-    // after the database override, so a token binds the connection that runs, and before the admission gate and any
-    // provider, so a request it answers opens nothing, runs nothing and records no query event.
+    // The server's confirmation gate, one for every engine, reading the statement with the reader the engine's record
+    // offers: after every field check and after the database override, so a token binds the connection that runs, and
+    // before the admission gate and any provider, so a request it answers opens nothing, runs nothing and records no
+    // query event.
     const gate = await gateRun({
       route: "query",
       issuer: runConfirmationIssuerForSession(guard.session),
       connection,
+      engine,
       catalog: requestCatalog(body),
       sql,
       params: bound.params,
@@ -352,6 +310,19 @@ export async function POST(req: NextRequest) {
     stage = "admission";
     admitQueryExecution();
     stage = "execution";
+
+    if (!engine.offers.legacyProvider) {
+      // THE RUN ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the package's session, cached per key, and
+      // the run through the host core.
+      const answered = await runOnPackageSession(req, guard.session, named, engine, {
+        statement: sql,
+        options,
+        params: bound.params,
+        queryId,
+      });
+      recordExecutedUnit(events, { connection, statement: submitted, started, ended: { rowCount: answered.rowCount } });
+      return NextResponse.json({ ...answered, ...(gate.unconfirmed && { confirmation: "unconfirmed" }) });
+    }
 
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so

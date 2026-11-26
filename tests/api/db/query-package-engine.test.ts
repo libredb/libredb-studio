@@ -15,6 +15,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
@@ -302,6 +304,93 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       expect((await post({ connection, sql: "SELECT 1", ...fields })).status).toBe(400);
     }
     expect(names(seen)).toEqual([]);
+  });
+
+  test("a field the record does not offer is refused by name with today's 501, after the malformed-field 400s", async () => {
+    const seen = hooksFor(MAIN);
+    const connection = connectionOf(MAIN);
+    const answer = async (fields: Record<string, unknown>, onto: Record<string, unknown> = connection) => {
+      const { status, body } = await post({ connection: onto, sql: "SELECT 1", ...fields });
+      return { status, body };
+    };
+    // The package's record offers none of the four, each refused by the name the answer gives it.
+    for (const [fields, field] of [
+      [{ explain: { mode: "estimate" } }, "explain"],
+      [{ database: 2 }, "database"],
+      [{ catalog: "other" }, "catalog"],
+      [{ options: { unlimited: true } }, "options.unlimited"],
+    ] as const) {
+      const { status, body } = await answer(fields);
+      expect([field, status, body.code, body.error]).toEqual([
+        field,
+        501,
+        "PACKAGE_ENGINE_UNSUPPORTED",
+        `This LibreDB Studio does not serve ${field} in a query on an engine of a provider package yet.`,
+      ]);
+    }
+    // Each malformed field answers its own 400 before any 501, alone and beside a field the record does not offer.
+    const explain400 = { error: 'explain must be { "mode": "estimate" } or { "mode": "analyze" }' };
+    const database400 = { error: '"database" must be a non-negative integer' };
+    const catalog400 = {
+      error: '"catalog" must be a non-empty string naming a database',
+      code: "CONFIG_ERROR",
+      statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
+    };
+    for (const [fields, body] of [
+      [{ explain: { mode: "plan" } }, explain400],
+      [{ explain: { mode: "plan" }, database: 2 }, explain400],
+      [{ database: -1 }, database400],
+      [{ explain: { mode: "estimate" }, database: -1 }, database400],
+      [{ catalog: "" }, catalog400],
+      [{ explain: { mode: "estimate" }, catalog: "" }, catalog400],
+      [{ options: { limit: -1 } }, { error: "options.limit must be a non-negative integer" }],
+    ] as const) {
+      expect([fields, await answer(fields)]).toEqual([fields, { status: 400, body }]);
+    }
+    expect(names(seen)).toEqual([]);
+
+    // The package's record offers no console text bound: a text over the smallest bound a shipped engine declares runs.
+    const bounds = EXTERNAL_DATABASE_TYPES.map((type) => consoleTextByteLimit(type)).filter(
+      (bound): bound is number => bound !== undefined,
+    );
+    const over = `SELECT 1 -- ${"x".repeat(Math.min(...bounds))}`;
+    expect((await post({ connection, sql: over })).status).toBe(200);
+    expect(names(seen)).toEqual(["open", "execute"]);
+
+    // A legacy engine's record offers all four, so none is refused by name: each answers as the engine answers it.
+    const sqlite = { id: `conn-${randomUUID()}`, name: "Local", type: "sqlite", database: ":memory:" };
+    const legacy = async (fields: Record<string, unknown>) => answer(fields, sqlite);
+    expect(await legacy({ options: { unlimited: true } })).toMatchObject({
+      status: 200,
+      body: { rows: [{ "1": 1 }], pagination: { limit: 100_000, hasMore: false } },
+    });
+    expect(await legacy({ database: 2 })).toEqual({
+      status: 400,
+      body: {
+        error:
+          'sqlite declares no key-space walk: "database" names the database a key was walked in, and only an engine that needs such a name accepts it',
+      },
+    });
+    expect(await legacy({ catalog: "other" })).toEqual({
+      status: 400,
+      body: {
+        error: 'This sqlite connection runs every request in its own database and cannot run one in "other"',
+        code: "CONFIG_ERROR",
+        statusCode: 400,
+        kind: "config",
+        outcome: "unknown",
+      },
+    });
+    expect(await legacy({ explain: { mode: "estimate" } })).toMatchObject({
+      status: 200,
+      body: {
+        rows: [{ id: 1, parent: 0, notused: 0, detail: "SCAN CONSTANT ROW" }],
+        fields: ["id", "parent", "notused", "detail"],
+        explainFormat: "sqlite-queryplan",
+      },
+    });
   });
 
   test("a package's error answers Studio's sentence naming its code, and its words go to the log only", async () => {

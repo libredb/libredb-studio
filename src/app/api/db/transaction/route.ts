@@ -15,6 +15,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { cachedEditorProvider, editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
@@ -443,6 +444,7 @@ export async function POST(req: NextRequest) {
         route: "transaction",
         issuer: runConfirmationIssuerForSession(guard.session),
         connection,
+        engine: servedEngineRecord(connection.type),
         catalog,
         sql,
         params: bound.params,

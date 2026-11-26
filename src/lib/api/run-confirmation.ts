@@ -3,9 +3,14 @@
  *
  * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` (its `query` action) call `gateRun`
  * after their own field checks and before the admission gate and any provider, and so does the VS Code extension's
- * backend child on every `query/run` (route `vscode/query/run`, docs/VSCODE_EXTENSION.md). It classifies the submitted statement
- * with `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take, and
- * decides what the request gets, by the request's `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
+ * backend child on every `query/run` (route `vscode/query/run`, docs/VSCODE_EXTENSION.md), each handing it the server
+ * catalog's record of the connection's engine. It classifies the submitted statement with the reader that record
+ * offers: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`),
+ * `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take; for any other
+ * engine, `packageConfirmationVerdict`, the statement read under the grammar the record holds
+ * (`EngineRecord.statementGrammar`, the one a package's declaration states), with every claim that loosens the gate
+ * uncounted (docs/providers/CONTRACT.md, clause S-8). It then decides what the request gets, by the request's
+ * `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |
  * |---|---|---|---|---|
@@ -26,12 +31,9 @@
  *
  * A reader that throws is the gate asking: the verdict is `confirm` with `classificationFailed`, asking for the
  * connection's name on a production connection (refused where it has none), and one error line names the route, the
- * connection type and the error's name, never the statement.
- *
- * `gatePackageRun` is the same gate for a connection of an engine a provider package serves (docs/providers/CONTRACT.md,
- * clause S-8): its verdict is `packageConfirmationVerdict`, the statement read under the grammar the package's
- * declaration states, with every claim that loosens the gate uncounted, and the token binds the connection by its
- * fields, as it binds any connection.
+ * connection type and the error's name, never the statement. A record that offers the vocabulary rows and no legacy
+ * provider is a host defect, raised before any reading (`legacyConnection`), never read as a classification failure.
+ * The token binds the connection by its fields, whichever reader read the statement.
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
@@ -43,8 +45,7 @@ import {
   verifyRunConfirmation,
 } from "@/lib/api/run-confirmation-token";
 import { runConfirmationMode } from "@/lib/config/run-confirmation";
-import type { SqlGrammar } from "@libredb/provider-sdk/sql";
-import type { EngineConnection } from "@/lib/db/server-catalog";
+import { type EngineConnection, type EngineRecord, legacyConnection } from "@/lib/db/server-catalog";
 import {
   type ConfirmationVerdict,
   confirmationVerdict,
@@ -55,7 +56,6 @@ import {
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
 import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
-import type { DatabaseConnection } from "@/lib/types";
 
 /** The refusal of a `confirmation` field of any other shape, before anything is classified. */
 export const CONFIRMATION_FIELD_MESSAGE = 'confirmation must be "ask" or { "token": string, "typed"?: string }';
@@ -104,7 +104,9 @@ export interface RunGateRequest {
   /** Who mints and checks the token: the route's signed-in session, or the VS Code backend child's own process. */
   readonly issuer: RunConfirmationIssuer;
   /** The connection the request resolved, after any override the route applies to it. */
-  readonly connection: DatabaseConnection;
+  readonly connection: EngineConnection;
+  /** The server catalog's record of the connection's engine, whose offers say which reader reads the statement. */
+  readonly engine: EngineRecord;
   /** The request's catalog (`requestCatalog`). */
   readonly catalog: string | undefined;
   /** The submitted statement, never a statement the route builds from it. */
@@ -142,18 +144,8 @@ function readConfirmationField(value: unknown): ConfirmationField | null {
   return { kind: "token", token, typed: typed as string | undefined };
 }
 
-/**
- * A run request on a connection of an engine a provider package serves, with the grammar its declaration states, as the
- * server catalog's record of the engine holds it (`EngineRecord.statementGrammar`).
- */
-export interface PackageRunGateRequest extends Omit<RunGateRequest, "connection"> {
-  readonly connection: EngineConnection;
-  readonly grammar: SqlGrammar;
-}
-
-/** What the gate reads: a request of either kind, and the reader of its verdict. */
-interface GateRequest extends Omit<RunGateRequest, "connection"> {
-  readonly connection: EngineConnection;
+/** What the gate reads: the request, and the reader of its verdict the record offers. */
+interface GateRequest extends RunGateRequest {
   readonly verdict: () => ConfirmationVerdict;
 }
 
@@ -178,29 +170,27 @@ function classify(request: GateRequest): RunVerdict | { readonly decision: "refu
   }
 }
 
-/** Decides what a run request gets; throws the mode's `DatabaseConfigError` when the setting cannot be read. */
-export function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
-  const { type, name, environment } = request.connection;
-  return gate({ ...request, verdict: () => confirmationVerdict(request.sql, type, name, environment) }, clock);
-}
-
 /**
- * Decides what a run request on an engine a provider package serves gets, as `gateRun` decides it, with the statement
- * read under the package's declared grammar (`packageConfirmationVerdict`); throws the mode's `DatabaseConfigError` when
- * the setting cannot be read.
+ * Decides what a run request gets, its statement read by the reader its engine's record offers; throws the mode's
+ * `DatabaseConfigError` when the setting cannot be read.
+ *
+ * @throws {Error} A host defect: when the record offers Studio's statement vocabulary rows and no legacy provider.
  */
-export function gatePackageRun(
-  request: PackageRunGateRequest,
-  clock: () => number = Date.now,
-): Promise<RunGateDecision> {
-  const { name, environment } = request.connection;
-  return gate(
-    { ...request, verdict: () => packageConfirmationVerdict(request.sql, request.grammar, name, environment) },
-    clock,
-  );
+export async function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
+  const { engine, connection, sql } = request;
+  const { name, environment } = connection;
+  let verdict: () => ConfirmationVerdict;
+  if (engine.offers.statementVocabulary) {
+    // Read before the gate, outside the reader: a record that disagrees with itself is raised, not asked about.
+    const { type } = legacyConnection(engine, connection);
+    verdict = () => confirmationVerdict(sql, type, name, environment);
+  } else {
+    verdict = () => packageConfirmationVerdict(sql, engine.statementGrammar, name, environment);
+  }
+  return gate({ ...request, verdict }, clock);
 }
 
-/** The gate of both: what `request` gets, by its field, the mode and its verdict. */
+/** The gate: what `request` gets, by its field, the mode and its verdict. */
 async function gate(request: GateRequest, clock: () => number): Promise<RunGateDecision> {
   const field = readConfirmationField(request.confirmation);
   if (field === null) return { kind: "answer", status: 400, body: { error: CONFIRMATION_FIELD_MESSAGE } };

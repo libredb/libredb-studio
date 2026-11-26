@@ -57,14 +57,18 @@ import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
  */
 
 /**
- * What `checkEditorQuery` reads: the statement as sent, the connection's type and statement timeout, and the page
- * bounds as sent. The statement is `unknown` because the route hands over its body field unchecked; the caller still
- * owns the `sql` and `queryId` field checks. The statement timeout is the connection's own `queryTimeout`, which an
- * inline connection carries unchecked.
+ * What `checkEditorQuery` reads: the statement as sent, the type whose console text bound applies, the connection's
+ * statement timeout, and the page bounds as sent. The statement is `unknown` because the route hands over its body
+ * field unchecked; the caller still owns the `sql` and `queryId` field checks. The statement timeout is the
+ * connection's own `queryTimeout`, which an inline connection carries unchecked.
  */
 export interface EditorQueryRequest {
   statement: unknown;
-  type: DatabaseType;
+  /**
+   * The type whose console text bound applies, undefined for a connection whose engine's record offers none
+   * (`EngineOffers.consoleTextBound`): a package's engine, which has no row of Studio's keyed by its id.
+   */
+  type: DatabaseType | undefined;
   options: unknown;
   queryTimeout: unknown;
 }
@@ -101,10 +105,11 @@ export function queryTimeoutError(value: unknown): string | null {
 
 /**
  * Why this request is refused, or null when no check refuses it: the page bounds first, then the connection's
- * statement timeout, then the console text bound of a connection type that declares one. Null does not mean the
- * request can run: only a type with a text bound has its statement held to a string here, so a new caller checks that
- * the statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks that `sql` is
- * present and is a string, and that `queryId` is a string, before it calls this.
+ * statement timeout, then the console text bound of a connection type that declares one (none where `type` is
+ * undefined). Null does not mean the request can run: only a type with a text bound has its statement held to a string
+ * here, so a new caller checks that the statement and the `queryId` are strings itself before it calls
+ * `runEditorQuery`. The route checks that `sql` is present and is a string, and that `queryId` is a string, before it
+ * calls this.
  */
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);
