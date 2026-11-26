@@ -38,8 +38,10 @@ import { type SparkFakeAnswer, type SparkFakeServer, startSparkFake } from "../.
 import { columnsStream, int64Batch } from "../../../helpers/spark-ipc";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
-import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
 
 const CURRENT = columnsStream([
   { name: "catalog", kind: "utf8", values: ["spark_catalog"] },
@@ -3458,7 +3460,7 @@ describe("the capabilities, the import refusal and the grammar", () => {
 
   test("Explain is spark-text, MCP is exposed and no foreign keys are declared", () => {
     expect(capabilities.explainFormat).toBe("spark-text");
-    expect(MCP_EXPOSABLE.spark).toBe(true);
+    expect(exposable.spark).toBe(true);
     expect(capabilities.declaresForeignKeys).toBe(false);
   });
 

@@ -1,20 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { AGENT_CREDENTIAL_FORM, CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import type { AgentCredentialForm } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const agentCredentialForm = legacyRegisterTable("agentCredentialForm");
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
 /**
- * `AGENT_CREDENTIAL_FORM` (src/lib/db/connection-fields.ts), Studio's review record of the agent credential form,
- * against `ProviderCapabilities.agentCredential` across every shipped provider.
+ * The agent credential form of every shipped engine's legacy row in the grant register, Studio's review of
+ * `policy.agentCredentialForm`, against `ProviderCapabilities.agentCredential` across every shipped provider.
  *
- * `acquireExecutionProfileProvider` reads the form from the record, never from the provider it builds, and decides from
+ * `acquireExecutionProfileProvider` reads the granted form, never the provider it builds, and decides from
  * it which agent credential is complete. A row naming a form by mistake would change what its agent signs in as: the
  * token form would turn a SQL engine's half-configured credential, refused today, into an agent that logs in as the
  * connection's user with another password, and `"none"` would refuse a credential the engine needs. A row losing its
@@ -27,17 +30,12 @@ const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor, the reading
  * `CENSUS_CONNECTION` documents.
  */
-describe("AGENT_CREDENTIAL_FORM against each provider's own declaration", () => {
-  test("AGENT_CREDENTIAL_FORM answers for every shipped type-id and for nothing else, and is frozen", () => {
-    expect(Object.keys(AGENT_CREDENTIAL_FORM).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(Object.isFrozen(AGENT_CREDENTIAL_FORM)).toBe(true);
-  });
-
+describe("the legacy rows' agent credential form against each provider's own declaration", () => {
   test.each([...SHIPPED_DATABASE_TYPES])(
-    "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none",
+    "%s: the legacy row's agent credential form is the form its provider declares, null where it declares none",
     async (type) => {
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-      expect(AGENT_CREDENTIAL_FORM[type]).toBe(provider.getCapabilities().agentCredential ?? null);
+      expect(agentCredentialForm[type]).toBe(provider.getCapabilities().agentCredential ?? null);
     },
   );
 });

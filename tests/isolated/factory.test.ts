@@ -74,7 +74,7 @@ import {
 } from "@/lib/db/errors";
 import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { MASKING_EXEMPT_COLUMNS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -100,6 +100,9 @@ import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outsid
 import { markersReachableFrom } from "../helpers/reachable-markers";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { sealVersionOne } from "../helpers/storage-envelope-v1";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
@@ -5225,8 +5228,8 @@ describe("acquireExecutionProfileProvider", () => {
   /**
    * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
    * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
-   * `"dedicated-user"`, which S3 declares. The factory reads each form from Studio's record, `AGENT_CREDENTIAL_FORM`,
-   * never from the provider it builds. Every refusal lands before the provider connects, which each test holds by
+   * `"dedicated-user"`, which S3 declares. The factory reads each form from Studio's grant of
+   * `policy.agentCredentialForm`, never from the provider it builds. Every refusal lands before the provider connects, which each test holds by
    * stubbing `connect` and asserting it never ran.
    */
   describe("agent credential forms", () => {
@@ -6090,7 +6093,7 @@ describe("single-writer file reuse", () => {
 
   /*
    * The file identity is built with a template literal, so a value outside the union whose string form is
-   * `libredb` matches the open LibreDB handle's identity and reaches the engine's `READS_FILE_ACCESS_POSTURE` row.
+   * `libredb` matches the open LibreDB handle's identity and reaches the engine's granted file-access posture.
    * That row is read through the type-id check (FND-1), so the caller is refused by name instead of being lent the
    * handle. The rows of `OUTSIDE_THE_UNION` cannot stand in here: its malformed values spell mysql, mongodb and redis,
    * so they never match a LibreDB file and never reach the row.
@@ -6996,7 +6999,7 @@ describe("the masking exemption a client is handed", () => {
     try {
       const declarations = await readProviderDeclarations(conn);
 
-      expect(declarations.capabilities.maskingExemptColumns).toEqual(MASKING_EXEMPT_COLUMNS.modbus!);
+      expect(declarations.capabilities.maskingExemptColumns).toEqual(maskingExemptColumns.modbus!);
     } finally {
       capabilities.mockRestore();
     }

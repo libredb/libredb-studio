@@ -27,7 +27,6 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
@@ -40,6 +39,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -7394,8 +7396,8 @@ describe("MCP run_read_query on an Oracle connection", () => {
     await clearProviderCache();
   });
 
-  test("MCP_STATEMENT_READ opens Oracle", () => {
-    expect(MCP_STATEMENT_READ.oracle).toBe(true);
+  test("the legacy row's `mcp.statementRead` opens Oracle", () => {
+    expect(statementRead.oracle).toBe(true);
   });
 
   test("reads rows under the agent profile after the check, paged one row past max_rows", async () => {

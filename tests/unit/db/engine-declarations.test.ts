@@ -117,24 +117,13 @@ import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
-  MASKING_EXEMPT_COLUMNS,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_METADATA_READ_CHANGES_STATE,
-  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
   READS_TRUST_MATERIAL,
-  REFUSES_DENIED_FILE_ACCESS,
   SHIPPED_DATABASE_TYPES,
-  SINGLE_WRITER_FILE,
   SSH_TUNNEL_REFUSAL,
-  WRITE_REACH,
 } from "@/lib/db/compatibility";
 import {
-  AGENT_CREDENTIAL_FORM,
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELDS,
   type ConnectionField,
@@ -256,6 +245,19 @@ import {
   slotNameAt,
   valueAt,
 } from "./engine-declarations/declared-slots";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
+const exposable = legacyRegisterTable("exposable");
+const metadataReadChangesState = legacyRegisterTable("metadataReadChangesState");
+const statementRead = legacyRegisterTable("statementRead");
+const readRootsRequired = legacyRegisterTable("readRootsRequired");
+const readsFileAccessPosture = legacyRegisterTable("readsFileAccessPosture");
+const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
+const singleWriterFile = legacyRegisterTable("singleWriterFile");
+const writeReach = legacyRegisterTable("writeReach");
+const agentCredentialForm = legacyRegisterTable("agentCredentialForm");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -1557,30 +1559,30 @@ describe("the committed declarations", () => {
 });
 
 /**
- * Studio's review record of each policy claim, by the member that requests it: the table of `src/lib/db/compatibility.ts`
- * every gate reads and each declaration's request is generated from (docs/providers/CONTRACT.md, clause M-52). Written
- * here apart from the generator, and typed by the schema's members, so a member the schema gains fails the typecheck
- * here until its record is named.
+ * Studio's review of each policy claim, by the member that requests it: that member of every engine's legacy row in the
+ * grant register, which the grant reader grants each request against and each declaration's request is generated from
+ * (docs/providers/CONTRACT.md, clause M-52). Written here apart from the generator, and typed by the schema's members,
+ * so a member the schema gains fails the typecheck here until its review rows are named.
  */
 const POLICY_CLAIM_RECORDS: { readonly [K in keyof PolicyClaims]: Readonly<Record<DatabaseType, PolicyClaims[K]>> } = {
-  writeReach: WRITE_REACH,
-  readsFileAccessPosture: READS_FILE_ACCESS_POSTURE,
-  deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS,
-  singleWriterFile: SINGLE_WRITER_FILE,
-  readRootsRequired: READ_ROOTS_REQUIRED,
-  // The record writes the pair, the form a user and a password take together, as null; a declaration names it `pair`.
+  writeReach,
+  readsFileAccessPosture,
+  deniedFileAccessRefusal,
+  singleWriterFile,
+  readRootsRequired,
+  // The register writes the pair, the form a user and a password take together, as null; a declaration names it `pair`.
   agentCredentialForm: Object.fromEntries(
-    SHIPPED_DATABASE_TYPES.map((type) => [type, AGENT_CREDENTIAL_FORM[type] ?? "pair"]),
+    SHIPPED_DATABASE_TYPES.map((type) => [type, agentCredentialForm[type] ?? "pair"]),
   ) as Record<DatabaseType, AgentCredentialFormClaim>,
-  maskingExemptColumns: MASKING_EXEMPT_COLUMNS,
+  maskingExemptColumns,
 };
 
-/** Studio's review record of each MCP claim, by the member that requests it, written as `POLICY_CLAIM_RECORDS` is. */
+/** Studio's review of each MCP claim, by the member that requests it, written as `POLICY_CLAIM_RECORDS` is. */
 const MCP_CLAIM_RECORDS: { readonly [K in keyof McpClaims]: Readonly<Record<DatabaseType, McpClaims[K]>> } = {
-  exposable: MCP_EXPOSABLE,
-  statementRead: MCP_STATEMENT_READ,
-  metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
-  agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+  exposable,
+  statementRead,
+  metadataReadChangesState,
+  agentCredentialRequired,
 };
 
 /** A provider's answer for one write path in the declaration's form: a proof or gate as its module and export. */
@@ -3791,7 +3793,7 @@ describe("the census", () => {
     expect(differing((_type, d) => stated.every((member) => Object.hasOwn(d.editor.language, member)))).toEqual([]);
   });
 
-  test("every claim of the policy and MCP segments is the row of Studio's review record of it", () => {
+  test("every claim of the policy and MCP segments is its member of the engine's legacy row in the grant register", () => {
     const policyMembers = Object.keys(POLICY_CLAIM_RECORDS) as (keyof PolicyClaims)[];
     const mcpMembers = Object.keys(MCP_CLAIM_RECORDS) as (keyof McpClaims)[];
     const readBack = [
@@ -3943,7 +3945,7 @@ describe("the census", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
   });
 
-  test("each declaration's policy and MCP segments hold exactly the claims Studio keeps a review record of", () => {
+  test("each declaration's policy and MCP segments hold exactly the claims the grant register's legacy rows review", () => {
     const policyMembers = sorted(Object.keys(POLICY_CLAIM_RECORDS));
     const mcpMembers = sorted(Object.keys(MCP_CLAIM_RECORDS));
 

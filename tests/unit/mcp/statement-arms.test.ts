@@ -15,7 +15,7 @@ import {
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { AGENT_STATEMENT_LANGUAGE, MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
@@ -44,6 +44,9 @@ import {
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
@@ -1406,7 +1409,7 @@ describe("the tool each engine is read with", () => {
   test("an engine of a served language whose own records keep it closed has no read tool", () => {
     const closed = SHIPPED_DATABASE_TYPES.filter((type) => {
       const language = AGENT_STATEMENT_LANGUAGE[type];
-      return language !== null && MCP_STATEMENT_ARMS[language] !== null && !MCP_STATEMENT_READ[type];
+      return language !== null && MCP_STATEMENT_ARMS[language] !== null && !statementRead[type];
     });
     expect(closed).not.toEqual([]);
     for (const type of closed) expect(mcpStatementToolFor(type)).toBeNull();

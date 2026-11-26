@@ -27,7 +27,6 @@ import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
 } from "@/lib/db/destructive-commands";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
-import { MASKING_EXEMPT_COLUMNS } from "@/lib/db/compatibility";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { generateTableQuery } from "@/lib/query-generators";
@@ -443,7 +442,12 @@ describe("connection/open", () => {
     const { handlers } = backend();
     const connection = { ...WIRE, type: "modbus", port: 502 };
     const { description } = await handlers.openConnection({ connection, posture: POSTURE });
-    assert.deepEqual(description.capabilities.maskingExemptColumns, MASKING_EXEMPT_COLUMNS.modbus);
+    assert.deepEqual(
+      description.capabilities.maskingExemptColumns,
+      servedEngineRecord("modbus").grants.maskingExemptColumns,
+    );
+    // Vacuity: the engine's grant is an exemption, not the null a provider declaring none would also answer.
+    assert.ok(description.capabilities.maskingExemptColumns);
   });
 
   it("answers the editor language of the provider it opened, read from its capabilities", async () => {

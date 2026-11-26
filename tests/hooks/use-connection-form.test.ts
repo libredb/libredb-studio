@@ -188,10 +188,13 @@ import {
   DATABEND_SSLMODE_NOTICES,
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { providerCacheKey } from "@/lib/db/provider-cache-key";
 import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import { BODY_CONNECTION_FIELDS, initialFieldValues } from "@/lib/db/connection-fields";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 // =============================================================================
 // useConnectionForm Tests
@@ -2645,7 +2648,7 @@ describe("useConnectionForm", () => {
 
   test("draws no read-only control on an engine whose reach is open", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
-    const open = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "open");
+    const open = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "open");
     // Vacuity, by name: an empty population would draw nothing and pass.
     expect(open).toContain("postgres");
     for (const type of open) {
@@ -2656,8 +2659,8 @@ describe("useConnectionForm", () => {
 
   test("draws the fixed Read-only label on every engine Studio has no write path on, and the toggle on every guarded one", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
-    const none = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "none");
-    const guarded = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "guarded");
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "none");
+    const guarded = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "guarded");
     expect(none).toContain("qdrant");
     expect(guarded).toContain("etcd");
     for (const type of none) {
@@ -2677,7 +2680,7 @@ describe("useConnectionForm", () => {
     const { result } = renderHook(() =>
       useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
     );
-    const none = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "none");
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "none");
     for (const type of none) {
       act(() => result.current.setType("etcd"));
       act(() => result.current.setReadOnly(true));

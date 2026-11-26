@@ -18,7 +18,6 @@
  * tables other than `home` and the hostile one, answered with `home`'s.
  */
 import { beforeEach, describe, expect, test, afterAll, beforeAll } from "bun:test";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -50,6 +49,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -514,9 +516,9 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     requests = [];
   });
 
-  test("MCP_STATEMENT_READ opens InfluxDB 3 and keeps InfluxDB 1.x and 2.x closed", () => {
-    expect(MCP_STATEMENT_READ.influxdb3).toBe(true);
-    expect(MCP_STATEMENT_READ.influxdb).toBe(false);
+  test("the legacy row's `mcp.statementRead` opens InfluxDB 3 and keeps InfluxDB 1.x and 2.x closed", () => {
+    expect(statementRead.influxdb3).toBe(true);
+    expect(statementRead.influxdb).toBe(false);
   });
 
   test("reads rows under the agent profile after the open's server check, paged one row past max_rows", async () => {

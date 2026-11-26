@@ -68,7 +68,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
-import { EXTERNAL_DATABASE_TYPES, MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds, findKind, relationKindIds } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
@@ -78,6 +78,9 @@ import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools";
 import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
 
 /**
  * The committed expectation, transcribed from the design's kind-declaration table, one entry
@@ -836,7 +839,7 @@ interface McpOffer {
 }
 
 const mcpOffer = (type: DatabaseType): McpOffer => ({
-  exposable: MCP_EXPOSABLE[type],
+  exposable: exposable[type],
   tools: Object.keys(MCP_TOOL_INPUT_SCHEMAS),
 });
 

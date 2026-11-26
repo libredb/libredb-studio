@@ -1,15 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { WRITE_PATHS } from "@/lib/db/write-reach";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 /**
  * `docs/DATABASE_PROVIDERS.md` carries one table under `## Write reach`, one row per shipped type-id,
- * `| <engine> | \`<type-id>\` | <value> | <paths> |`, and the row agrees with `WRITE_REACH`: the same value, and every
- * gate and proof symbol the provider declares named where the reach is not open.
+ * `| <engine> | \`<type-id>\` | <value> | <paths> |`, and the row agrees with the write reach of the engine's legacy row
+ * in the grant register: the same value, and every gate and proof symbol the provider declares named where the reach
+ * is not open.
  */
 const PROVIDERS_DOC = join(import.meta.dir, "..", "..", "..", "docs", "DATABASE_PROVIDERS.md");
 const TABLE_ROW = /^\| [^|]+ \| `([a-z0-9]+)` \| (none|guarded|open) \| (.+) \|$/;
@@ -41,12 +45,12 @@ describe("the Write reach table in docs/DATABASE_PROVIDERS.md", () => {
     expect(ids.toSorted()).toEqual([...SHIPPED_DATABASE_TYPES].toSorted());
   });
 
-  test.each([...SHIPPED_DATABASE_TYPES])("%s: its value is the record's", (type) => {
+  test.each([...SHIPPED_DATABASE_TYPES])("%s: its value is the legacy row's", (type) => {
     const row = tableRows().find((match) => match[1] === type);
-    expect(row?.[2]).toBe(WRITE_REACH[type]);
+    expect(row?.[2]).toBe(writeReach[type]);
   });
 
-  test.each(SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] !== "open"))(
+  test.each(SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] !== "open"))(
     "%s: names every gate and proof its provider declares",
     async (type) => {
       const declared = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities().writeReach;
@@ -104,7 +108,7 @@ describe("the engine tables of the READMEs and the Docker Hub listing", () => {
   test.each(LISTINGS)("%s: no Druid, Elasticsearch or OpenSearch row says read-only", (name) => {
     const lines = readFileSync(join(ROOT, name), "utf8").split("\n");
     for (const [type, label] of Object.entries(LABELS)) {
-      expect(WRITE_REACH[type as keyof typeof LABELS]).toBe("open");
+      expect(writeReach[type as keyof typeof LABELS]).toBe("open");
       // The first row of that engine is its row in the engine table; padded cells are allowed.
       const row = lines.find((line) => new RegExp(`^\\| \\*\\*${label}\\*\\* *\\|`).test(line));
       expect(row).toBeDefined();

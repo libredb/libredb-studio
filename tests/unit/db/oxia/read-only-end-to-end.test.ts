@@ -4,17 +4,19 @@
  * handle an execution profile opened, refused as every editor command is there; nothing is sent but the connect's
  * snapshot read.
  *
- * The dialog says the same before a connection exists: a fixed Read-only label and no box, since `WRITE_REACH.oxia` is
+ * The dialog says the same before a connection exists: a fixed Read-only label and no box, since the engine's granted write reach is
  * `none`, with the sentence every such engine shares.
  */
 import { describe, expect, test } from "bun:test";
 import { READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
-import { WRITE_REACH } from "@/lib/db/compatibility";
 import { QueryError } from "@/lib/db/errors";
 import { writeCommandSentence } from "@/lib/languages/oxiacli/commands";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { createFakeOxiaClient } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 const READ_ONLY_SENTENCE =
   "put writes, and this connection is read-only. Studio's Oxia support also reads only in this version, so turning the mode off would not run it: write with the oxia CLI.";
@@ -69,7 +71,7 @@ describe("a write through query", () => {
 
 describe("the dialog's read-only label", () => {
   test("says that an Oxia connection is read-only, with no box to tick (SB2-9.4)", () => {
-    expect(WRITE_REACH.oxia).toBe("none");
+    expect(writeReach.oxia).toBe("none");
     expect(READ_ONLY_FIXED_HINT).toBe(
       "Studio has no write path on this engine, so every connection to it is read-only.",
     );

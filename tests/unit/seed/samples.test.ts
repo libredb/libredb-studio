@@ -16,7 +16,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
 import { forgetStorageLocation, storageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import {
@@ -37,6 +36,9 @@ import {
   type SampleSpec,
 } from "@/lib/seed/samples";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
@@ -133,7 +135,7 @@ describe("the SAMPLES table", () => {
     for (const [type, spec] of SAMPLES) {
       expect({ type, roles: spec.roles }).toEqual({
         type,
-        roles: REFUSES_DENIED_FILE_ACCESS[type] === null ? ["*"] : ["admin"],
+        roles: deniedFileAccessRefusal[type] === null ? ["*"] : ["admin"],
       });
     }
   });

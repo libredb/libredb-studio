@@ -7,14 +7,17 @@ import { MotionGlobalConfig } from "framer-motion";
 import { ConnectionModal as AppConnectionModal } from "@/components/ConnectionModal";
 import { ConnectionModal as PackagedConnectionModal } from "@/exports/components";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 /**
  * The read-only control in the real dialog, through the real form hook and the real `DB_UI_CONFIG`, with nothing
  * mocked, once as the app imports the dialog and once as the package exports it: the standalone app and the embedded
  * library surface render different chrome around it, so each is drawn here. Which engine gets which control comes from
- * `WRITE_REACH`, never from a type-id list in this file.
+ * the engine's granted write reach, never from a type-id list in this file.
  */
 
 // The dialog's banners animate in; happy-dom cancels an animation still running when the test ends.
@@ -31,7 +34,7 @@ const SURFACES = [
   ["the packaged dialog", PackagedConnectionModal],
 ] as const;
 
-const byReach = (reach: string): DatabaseType[] => SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === reach);
+const byReach = (reach: string): DatabaseType[] => SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === reach);
 
 function choose(type: DatabaseType): void {
   fireEvent.click(screen.getByRole("button", { name: getDBConfig(type).label }));

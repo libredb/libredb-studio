@@ -78,7 +78,6 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
@@ -94,6 +93,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -3309,9 +3311,9 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
     acquired = [];
   });
 
-  test("MCP_STATEMENT_READ opens OpenSearch and Elasticsearch, and run_read_query names OpenSearch", () => {
-    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
-    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
+  test("the legacy row's `mcp.statementRead` opens OpenSearch and Elasticsearch, and run_read_query names OpenSearch", () => {
+    expect(statementRead.opensearch).toBe(true);
+    expect(statementRead.elasticsearch).toBe(true);
     expect(RUN_READ_QUERY_ENGINES).toContain("OpenSearch");
   });
 

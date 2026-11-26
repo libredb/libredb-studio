@@ -53,7 +53,6 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { errorKind } from "@/lib/db/error-record";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra/agent-boundary";
@@ -116,6 +115,9 @@ import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -4315,8 +4317,8 @@ describe("the agent read-only profile", () => {
       openReplies = {};
     });
 
-    test("MCP_STATEMENT_READ opens Cassandra", () => {
-      expect(MCP_STATEMENT_READ.cassandra).toBe(true);
+    test("the legacy row's `mcp.statementRead` opens Cassandra", () => {
+      expect(statementRead.cassandra).toBe(true);
     });
 
     test("reads rows under the agent profile, checked on the statement's own session, one row past max_rows", async () => {

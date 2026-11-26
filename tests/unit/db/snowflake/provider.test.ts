@@ -48,8 +48,10 @@ import {
   testDeps,
 } from "../../../helpers/snowflake-node-transport";
 import { CANCEL, roleAnswer, STATUS, SUBMIT, tick } from "../../../helpers/snowflake-statements";
-import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
 
 const KEY = rsaKey();
 const PEM = pkcs8Pem(KEY);
@@ -1122,7 +1124,7 @@ describe("the capabilities and the grammar", () => {
   test("Explain is snowflake-json, a run resumes billed compute, MCP is exposed and no foreign keys are declared", () => {
     expect(capabilities.explainFormat).toBe("snowflake-json");
     expect(capabilities.resumesBilledCompute).toBe(true);
-    expect(MCP_EXPOSABLE.snowflake).toBe(true);
+    expect(exposable.snowflake).toBe(true);
     expect(capabilities.declaresForeignKeys).toBe(false);
   });
 

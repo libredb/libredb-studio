@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -12,15 +12,19 @@ import type { DatabaseProvider, ProviderCapabilities, WritePath } from "@/lib/db
 import { summarizeWriteReach, WRITE_PATHS } from "@/lib/db/write-reach";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 /** A stand-in the census connection never holds, built so a secret scanner reads no literal assignment. */
 const OTHER_PASSWORD = ["not", "a", "real", "password"].join("-");
 
 /**
- * `WRITE_REACH` against what each provider declares, and each declaration against the capabilities it describes.
+ * The write reach of every shipped engine's legacy row in the grant register, Studio's review of `policy.writeReach`,
+ * against what each provider declares, and each declaration against the capabilities it describes.
  *
- * The record is static because its readers decide before any provider exists, so the failure that matters is the
- * record, the provider's `writeReach` and the provider's real write surface disagreeing: an engine called `none`
+ * The grant is static because its readers decide before any provider exists, so the failure that matters is the
+ * review row, the provider's `writeReach` and the provider's real write surface disagreeing: an engine called `none`
  * that offers an object edit, or a `guarded` one with a write path no gate refuses. This census builds every shipped
  * provider and holds the three equal.
  *
@@ -120,24 +124,19 @@ function presentPaths(type: DatabaseType, provider: DatabaseProvider): Record<Wr
   };
 }
 
-const ofReach = (reach: string) => SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === reach);
+const ofReach = (reach: string) => SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === reach);
 
-describe("WRITE_REACH against each provider's own declaration", () => {
-  test("answers for every shipped type-id and for nothing else, frozen", () => {
-    expect(Object.keys(WRITE_REACH).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(Object.isFrozen(WRITE_REACH)).toBe(true);
-  });
-
+describe("the legacy rows' write reach against each provider's own declaration", () => {
   test("READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries", () => {
     expect({ ...READ_ONLY_ENFORCED }).toEqual(READ_ONLY_ENFORCED_BEFORE);
     expect(Object.isFrozen(READ_ONLY_ENFORCED)).toBe(true);
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])(
-    "%s: the record answers the summary of its provider's declaration",
+    "%s: the legacy row answers the summary of its provider's declaration",
     async (type) => {
       const capabilities = await capabilitiesOf(type);
-      expect(WRITE_REACH[type]).toBe(summarizeWriteReach(capabilities.writeReach));
+      expect(writeReach[type]).toBe(summarizeWriteReach(capabilities.writeReach));
     },
   );
 
@@ -166,7 +165,7 @@ describe("WRITE_REACH against each provider's own declaration", () => {
     },
   );
 
-  test("the record reads 22 open, 2 guarded and 19 none", () => {
+  test("the legacy rows read 22 open, 2 guarded and 19 none", () => {
     expect(ofReach("open")).toHaveLength(22);
     expect(ofReach("guarded")).toEqual(["etcd", "milvus"]);
     expect(ofReach("none")).toHaveLength(19);
