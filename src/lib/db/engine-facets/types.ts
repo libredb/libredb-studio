@@ -3,13 +3,12 @@
  * by `ENGINE_FACETS` in `./index.ts`. `getMonitoringData`, the dashboard, the admin Operations page and fleet health
  * read a row before they call a provider member, so none of them calls a member the engine does not offer, the two
  * maintenance routes read it before they build a provider, so neither opens a connection for an operation the engine
- * does not offer, and Studio's grant reader reads its agent readings, whose grant decides which curated
- * `inspect_operations` readings a run is offered and whether the operations workflow opens in agent mode at all.
+ * does not offer. Studio grants the agent readings from the engine's legacy row in the grant register
+ * (src/lib/db/claim-grants.ts), never from a row here.
  *
  * This module loads nothing: a row module imports it only as types, and the one value here is the panel vocabulary.
  */
 
-import type { CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { MaintenanceOperation } from "@/lib/db/types";
 
 /**
@@ -51,13 +50,4 @@ export interface EngineFacets {
    * connected server may accept fewer (PostgreSQL and MySQL, through `narrowMaintenance`), never more.
    */
   readonly maintenance: readonly MaintenanceOperation[];
-  /**
-   * The curated `inspect_operations` kinds agent mode is offered on this engine, in `CURATED_OPERATION_KINDS` order:
-   * Studio's review record of the claim `facets.agentReadings`. Each is the kind of a panel the row offers whose read
-   * the agent handle answers, or `health` where the agent handle answers it. Studio grants the intersection of these
-   * and the declaration's request, `GRANTED_AGENT_READINGS`; `inspect_operations` offers only the granted kinds and
-   * refuses any other kind by name before a provider is acquired, and the operations workflow opens in agent mode only
-   * where the granted list is not empty.
-   */
-  readonly agentReadings: readonly CuratedOperationKind[];
 }

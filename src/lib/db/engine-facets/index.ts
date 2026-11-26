@@ -48,16 +48,9 @@ import type { EngineFacets } from "./types";
 /**
  * What each engine offers, one row per type id, each declared beside its provider (FND-4). A missing id is a compile
  * error here, and a row missing a panel or its maintenance list is a compile error in its own module, so a new engine
- * cannot ship without stating each monitoring panel as offered or not and the maintenance operations it offers.
- *
- * The rows' `agentReadings` are Studio's review record of the claim an engine declaration requests at
- * `facets.agentReadings`: the declaration states each shipped engine's request as its row, and the rows are never a
- * projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83). Only Studio's grant reader,
- * src/lib/db/claim-grants.ts, reads that member, and every gate reads its grant, `GRANTED_AGENT_READINGS`, the
- * intersection of the request and the row. The rows
- * stay in Studio's source: the change that moves a provider into a package, or first makes Studio read the claim from
- * a declaration, keeps the claim's row in a core record keyed by the engine, so a package never carries its own grant
- * (M-54).
+ * cannot ship without stating each monitoring panel as offered or not and the maintenance operations it offers. Each
+ * engine's declaration authors the same monitoring and maintenance, and tests/unit/db/engine-facets/census.test.ts
+ * holds each row equal to them.
  */
 export const ENGINE_FACETS: Readonly<Record<DatabaseType, EngineFacets>> = Object.freeze({
   bigquery: BIGQUERY_ENGINE_FACETS,

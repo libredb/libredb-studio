@@ -10,9 +10,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `etcd` offers `compact`, `defragment` and `disarm`, in its provider's declaration order.
- *
- * Agent readings: `storage` and `health`.
- * `table-stats` is withheld: the agent handle's `getTableStats` refuses with `KEY_NAMES_WITHHELD`.
  */
 export const ETCD_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -25,5 +22,4 @@ export const ETCD_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["compact", "defragment", "disarm"],
-  agentReadings: ["storage", "health"],
 };

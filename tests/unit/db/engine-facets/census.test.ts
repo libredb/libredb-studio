@@ -206,12 +206,6 @@ const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOpe
 /** Studio's review of each engine's agent readings claim: its legacy row's `agentReadings` in the grant register. */
 const REVIEWED_AGENT_READINGS = legacyRegisterTable("agentReadings");
 
-/** Each source of an engine's agent readings the census holds: the facet rows and the register's legacy rows. */
-const AGENT_READING_SOURCES: readonly (readonly [string, (id: DatabaseType) => readonly CuratedOperationKind[]])[] = [
-  ["facet row", (id) => ENGINE_FACETS[id].agentReadings],
-  ["legacy row", (id) => REVIEWED_AGENT_READINGS[id]],
-];
-
 const offeredBy = (id: DatabaseType): MonitoringPanel[] =>
   MONITORING_PANELS.filter((panel) => ENGINE_FACETS[id].monitoring[panel] === "offered");
 
@@ -255,6 +249,9 @@ describe("engine facets registry census", () => {
 
   test("every row states each of the seven monitoring panels as offered or not offered", () => {
     for (const id of ALL) {
+      // A row holds its monitoring panels and maintenance operations only: Studio's review of the agent readings is
+      // the engine's legacy row in the grant register.
+      expect(Object.keys(ENGINE_FACETS[id]), id).toEqual(["monitoring", "maintenance"]);
       const monitoring = ENGINE_FACETS[id].monitoring;
       expect(Object.keys(monitoring).sort(), id).toEqual([...MONITORING_PANELS].sort());
       for (const panel of MONITORING_PANELS) {
@@ -269,36 +266,27 @@ describe("engine facets registry census", () => {
   });
 
   test("each engine offers the agent readings measured on the agent handle", () => {
-    for (const [source, readingsOf] of AGENT_READING_SOURCES) {
-      const stated = Object.fromEntries(ALL.map((id) => [id, [...readingsOf(id)]]));
-      expect({ source, stated }).toEqual({
-        source,
-        stated: Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_AGENT_READINGS[id]]])),
-      });
-    }
+    const reviewed = Object.fromEntries(ALL.map((id) => [id, [...REVIEWED_AGENT_READINGS[id]]]));
+    expect(reviewed).toEqual(Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_AGENT_READINGS[id]]])));
   });
 
   test("every agent reading is the kind of a panel the row offers, or health", () => {
-    const stray = AGENT_READING_SOURCES.flatMap(([source, readingsOf]) =>
-      ALL.flatMap((id) =>
-        readingsOf(id)
-          .filter((kind) => {
-            const panel = AGENT_READING_PANELS[kind];
-            return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
-          })
-          .map((kind) => `${source} ${id} ${kind}`),
-      ),
+    const stray = ALL.flatMap((id) =>
+      REVIEWED_AGENT_READINGS[id]
+        .filter((kind) => {
+          const panel = AGENT_READING_PANELS[kind];
+          return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
+        })
+        .map((kind) => `${id} ${kind}`),
     );
     expect(stray).toEqual([]);
   });
 
   test("agent readings are listed once each, in CURATED_OPERATION_KINDS order", () => {
-    const misordered = AGENT_READING_SOURCES.flatMap(([source, readingsOf]) =>
-      ALL.filter((id) => {
-        const readings = readingsOf(id);
-        return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
-      }).map((id) => `${source} ${id}`),
-    );
+    const misordered = ALL.filter((id) => {
+      const readings = REVIEWED_AGENT_READINGS[id];
+      return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
+    });
     expect(misordered).toEqual([]);
   });
 

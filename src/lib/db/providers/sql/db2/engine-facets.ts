@@ -11,8 +11,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `db2` offers `analyze` and `optimize`, in its provider's declaration order.
- *
- * Agent readings: `table-stats` and `health`.
  */
 export const DB2_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -25,5 +23,4 @@ export const DB2_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: ["analyze", "optimize"],
-  agentReadings: ["table-stats", "health"],
 };

@@ -11,9 +11,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `kafka` offers no maintenance operation.
- *
- * Agent readings: `health`.
- * `storage` is withheld: the agent handle's `getStorageStats` refuses with `KAFKA_AGENT_WITHHELD.storage`.
  */
 export const KAFKA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -26,5 +23,4 @@ export const KAFKA_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: [],
-  agentReadings: ["health"],
 };

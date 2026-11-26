@@ -12,8 +12,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `influxdb3` offers no maintenance operation.
- *
- * Agent readings: `health`.
  */
 export const INFLUXDB3_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -26,5 +24,4 @@ export const INFLUXDB3_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["health"],
 };

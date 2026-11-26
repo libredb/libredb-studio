@@ -622,12 +622,6 @@ const CLAIM_DESTINATION =
   /^engine declaration: [\w.]+, the engine's request, which this table grants as Studio's review record of the claim$/;
 
 /**
- * The registry whose claims sit in rows beside each provider, M-54's case: each row is written in its provider's
- * directory and its index collects them, so the record is no single literal and this guard does not hold it.
- */
-const ROW_REGISTRIES: readonly CoreRecord[] = [{ module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS" }];
-
-/**
  * The confirmation gate's review record (docs/providers/CONTRACT.md, clause M-52): a list keyed by a claim's kind, its
  * engine and an exempt form's words rather than a table over the type ids, so the inventory does not list it, and this
  * guard holds it beside the inventory's claim records.
@@ -851,14 +845,6 @@ describe("engine declaration readers", () => {
       expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
     );
     expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
-    // The registry whose claims sit in rows beside providers is named in the claim's words, but not in its form.
-    for (const registry of ROW_REGISTRIES) {
-      const entry = ENGINE_TABLE_INVENTORY.find(
-        (candidate) => candidate.module === registry.module && candidate.name === registry.name,
-      );
-      expect(entry?.destination).toContain("which this table grants as Studio's review record of the claim");
-      expect(records).not.toContainEqual(entry);
-    }
 
     const planted: SourceText = {
       path: "src/lib/db/planted-claims.ts",

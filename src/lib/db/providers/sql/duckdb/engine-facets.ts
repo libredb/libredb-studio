@@ -9,8 +9,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `activeSessions`: `getActiveSessions` answers `[]` without asking the engine.
  *
  * Maintenance: `duckdb` offers `vacuum`, `analyze` and `optimize`, in its provider's declaration order.
- *
- * Agent readings: `table-stats`, `index-stats`, `storage` and `health`.
  */
 export const DUCKDB_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,5 +21,4 @@ export const DUCKDB_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["vacuum", "analyze", "optimize"],
-  agentReadings: ["table-stats", "index-stats", "storage", "health"],
 };

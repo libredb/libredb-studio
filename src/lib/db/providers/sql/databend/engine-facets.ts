@@ -7,8 +7,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `performance`: `getPerformanceMetrics` answers `{}` without asking the engine.
  *
  * Maintenance: `databend` offers `kill`, in its provider's declaration order.
- *
- * Agent readings: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage` and `health`.
  */
 export const DATABEND_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -21,5 +19,4 @@ export const DATABEND_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["kill"],
-  agentReadings: ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"],
 };

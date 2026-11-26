@@ -7,8 +7,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `bigquery` offers no maintenance operation.
- *
- * Agent readings: `sessions`, `slow-queries`, `table-stats`, `storage` and `health`.
  */
 export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -21,5 +19,4 @@ export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: [],
-  agentReadings: ["sessions", "slow-queries", "table-stats", "storage", "health"],
 };

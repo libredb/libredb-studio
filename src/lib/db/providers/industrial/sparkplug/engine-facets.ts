@@ -12,9 +12,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `sparkplug` offers no maintenance operation.
- *
- * Agent readings: none.
- * `health` is withheld: the agent handle's `getHealth` refuses with `SPARKPLUG_AGENT_WITHHELD.health`.
  */
 export const SPARKPLUG_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -27,5 +24,4 @@ export const SPARKPLUG_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: [],
 };

@@ -21,7 +21,6 @@ import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
@@ -661,9 +660,8 @@ describe("workflowAvailability", () => {
   );
 
   test("AGENT_REQUIREMENT_ENGINES['agent-readings'] is every engine whose row offers a reading", () => {
-    const offering = (Object.keys(ENGINE_FACETS) as DatabaseType[]).filter(
-      (type) => ENGINE_FACETS[type].agentReadings.length > 0,
-    );
+    const reviewed = legacyRegisterTable("agentReadings");
+    const offering = (Object.keys(reviewed) as DatabaseType[]).filter((type) => reviewed[type].length > 0);
     expect([...AGENT_REQUIREMENT_ENGINES["agent-readings"]]).toEqual(offering);
     expect(WITHOUT_READINGS.filter((type) => AGENT_REQUIREMENT_ENGINES["agent-readings"].includes(type))).toEqual([]);
   });
@@ -692,7 +690,8 @@ describe("workflowAvailability", () => {
   });
 
   test("no availability refusal on an engine without a reading says the operations workflow runs there", () => {
-    const withoutReadings = SHIPPED_DATABASE_TYPES.filter((type) => ENGINE_FACETS[type].agentReadings.length === 0);
+    const reviewed = legacyRegisterTable("agentReadings");
+    const withoutReadings = SHIPPED_DATABASE_TYPES.filter((type) => reviewed[type].length === 0);
     expect([...withoutReadings].sort()).toEqual([...WITHOUT_READINGS].sort());
     const claims: string[] = [];
     for (const type of withoutReadings) {

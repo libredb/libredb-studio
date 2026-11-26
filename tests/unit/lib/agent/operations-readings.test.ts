@@ -12,7 +12,7 @@ import {
   selectAgentTools,
 } from "@/lib/agent/tools";
 import type { AgentRunRecord } from "@/lib/agent/types";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { CURATED_OPERATION_KINDS, createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -22,11 +22,12 @@ import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
 /**
  * The curated readings agent mode is offered (FND-4 slice 3): `inspect_operations` offers each run exactly the kinds
- * its recorded engine's `ENGINE_FACETS` row declares, says nothing about every engine, and refuses any other kind by
- * name before it acquires a provider, charges the budget or makes a repair entry. No module is mocked here; a reading
+ * Studio grants its recorded engine, as its legacy row in the grant register reviews them, says nothing about every
+ * engine, and refuses any other kind by name before it acquires a provider, charges the budget or makes a repair entry. No module is mocked here; a reading
  * that is taken runs through the host core, which the file installs, on the bridged session of a provider of the
  * connection's type.
  */
@@ -92,8 +93,8 @@ describe("the inspect_operations definition a run is offered", () => {
   });
 
   test("no inspect_operations description claims every engine", () => {
-    const engines = Object.keys(ENGINE_FACETS) as DatabaseType[];
-    const offering = engines.filter((engine) => ENGINE_FACETS[engine].agentReadings.length > 0);
+    const reviewed = legacyRegisterTable("agentReadings");
+    const offering = SHIPPED_DATABASE_TYPES.filter((engine) => reviewed[engine].length > 0);
     const descriptions = [
       AGENT_TOOL_DEFINITIONS.inspect_operations.description,
       ...offering.map((engine) => inspectOperationsOf(operationsRun(engine)).description),

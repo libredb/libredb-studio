@@ -9,8 +9,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `druid` offers no maintenance operation.
- *
- * Agent readings: `sessions`, `table-stats`, `storage` and `health`.
  */
 export const DRUID_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,5 +21,4 @@ export const DRUID_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: [],
-  agentReadings: ["sessions", "table-stats", "storage", "health"],
 };
