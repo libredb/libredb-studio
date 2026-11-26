@@ -58,7 +58,10 @@
  * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
  * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
  * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
- * the server.
+ * the server. Studio's review of the two host facts no declaration requests, whether an engine's connections serve one
+ * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
+ * `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and `GRANTED_AGENT_EXECUTION_ENGINES`; no
+ * claim is granted from them.
  * Studio's review of every other claim stays a hand-written record, the facet rows of src/lib/db/engine-facets, which
  * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
  * source reads `STUDIO_CLAIM_RECORDS` or the facet rows' `agentReadings` by member, or loads the register, and
@@ -882,3 +885,64 @@ export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, Sta
  */
 export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly AgentReading[]>> =
   BUNDLED_GRANTS.agentReadings;
+
+/**
+ * Studio's grant of agent execution: the engines on which **agent mode** executes statements itself, Studio's review of
+ * the engines agent and MCP statements run on, in catalog order. It is each legacy row's `agentExecution` member of
+ * the grant register, a host fact no declaration requests, so no claim is granted from it and an engine with no
+ * legacy row is not on it.
+ *
+ * Every agent and MCP statement gate reads it at run time, and an engine it does not list is refused by name, whatever
+ * its provider implements: the start of a statement-sending agent run (`workflowAvailability`,
+ * `src/lib/agent/agent-manifest.ts`), the factory's `agent-read-only` and `agent-handover` acquisition and the core read
+ * path every agent, hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's statistics read
+ * under `agent-operations` does not), both through `assertStatementsReviewed` (`src/lib/db/statement-review.ts`,
+ * `PROFILE_ENGINE_NOT_REVIEWED`), and MCP's served set (`src/lib/mcp/tools/served-engines.ts`). A provider's read-only
+ * statement path is a second precondition, required and never enough: an engine on the list whose provider has no
+ * `queryReadOnly` is still refused `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
+ *
+ * The engines do not draw the boundary the same way, and the list deliberately says nothing about that: each listed
+ * engine's boundary is its legacy row's `reasons.agentExecution` note, where one is written, and each provider's own
+ * `queryReadOnly` argues its own case. `tests/unit/lib/agent/engine-support.test.ts` holds the first-party providers to
+ * these rows in both directions: it walks every id in the `DatabaseType` union and reads `queryReadOnly` off the real
+ * provider class the factory would construct, so a reviewed engine always has its protected read path, and a provider
+ * that gains one fails there until its review row is written.
+ *
+ * Two things it deliberately does NOT say, because user-facing copy that compresses them overclaims (docs/AGENT.md, the
+ * "Agent mode requires" paragraph that opens it):
+ * - **Plan mode opens on every engine and runs no statement of the model's anywhere.** Since #414 a plan run is
+ *   grounded, and this list reaches only that grounding: see below.
+ * - **The `operations` workflow opens without this list, in both modes**, because it composes no SQL: its
+ *   `agent-operations` acquisition sets `requiresReadOnlyStatements: false`. In agent mode it opens on every engine
+ *   whose `ENGINE_FACETS` row offers agent mode a curated reading.
+ *
+ * Both are grounded before their first turn, and on an engine whose catalog read is a composed statement (its
+ * overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes this list like any other
+ * statement. On such an engine off the list the acquisition is refused `PROFILE_ENGINE_NOT_REVIEWED` and plan mode and
+ * the operations workflow run ungrounded; it is not routed to `agent-operations` instead, because a composed statement
+ * is a statement.
+ *
+ * The browser reads it too, the unauthenticated login hero, the agent manifest and the agent posture, as it reads this
+ * module. Frozen, so no code widens it at run time.
+ */
+export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
+  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].agentExecution),
+);
+
+/**
+ * Studio's grant of one session: the engines whose connections serve their object tree from one session, the
+ * editor's, in catalog order (docs/providers/CONTRACT.md, clause C-66). It is each legacy row's `servesOneSession`
+ * member of the grant register, the reason Studio's census found or null where a tree read may run on a metadata
+ * session of the connection's own, a host fact no declaration requests and no manifest member states, since which
+ * session a tree read runs on is the host's measurement of the engine and not a claim the engine makes. So no claim is
+ * granted from it, and an engine with no legacy row is not on it.
+ *
+ * It is read only by `sessionCapacity` in src/lib/db/session-capacity.ts, which answers `one` for an engine on it, and
+ * for a connection whose database is in memory, and `several` otherwise. The class decides only which session a tree,
+ * monitoring or health read, or a kill, runs on, so an engine missing from the list opens one more session for those
+ * reads, an engine listed wrongly keeps today's sharing, and neither authorizes anything. Frozen, so no code widens it
+ * at run time.
+ */
+export const GRANTED_ONE_SESSION_ENGINES: readonly DatabaseType[] = Object.freeze(
+  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].servesOneSession !== null),
+);

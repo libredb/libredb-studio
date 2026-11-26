@@ -12,12 +12,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { LEGACY_KEY, parseGrantRegister, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_READING_NAMES,
   type ClaimRecords,
   GRANTED_AGENT_CREDENTIAL_FORM,
+  GRANTED_AGENT_EXECUTION_ENGINES,
   GRANTED_AGENT_READINGS,
   GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_DENIED_FILE_ACCESS_REFUSAL,
@@ -27,6 +29,7 @@ import {
   GRANTED_MCP_EXPOSABLE,
   GRANTED_MCP_METADATA_READ_CHANGES_STATE,
   GRANTED_MCP_STATEMENT_READ,
+  GRANTED_ONE_SESSION_ENGINES,
   GRANTED_OPENS_LOCAL_FILE,
   GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
   GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
@@ -56,7 +59,9 @@ import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
+import type { DatabaseType } from "@/lib/types";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { ENGINE_TABLE_INVENTORY, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
 
 /** An id no shipped engine uses, for a request no record row covers. */
 const UNRECORDED = "acmefoo";
@@ -855,6 +860,25 @@ describe("the register's legacy rows the grant reader reads", () => {
       'the grant register\'s legacy row for elasticsearch names "host" among the fields superseding its agent credential, which is not a text field a connection form draws',
     );
   });
+
+  test("GRANTED_AGENT_EXECUTION_ENGINES and GRANTED_ONE_SESSION_ENGINES are the engines whose legacy rows grant agent execution and name a one-session reason, in catalog order, frozen", () => {
+    const rows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+    const grantsOf = (engine: string) => rows[engine] as RegisterGrants;
+
+    expect(GRANTED_AGENT_EXECUTION_ENGINES).toEqual(
+      SHIPPED_DATABASE_TYPES.filter((engine) => grantsOf(engine).agentExecution),
+    );
+    expect(GRANTED_ONE_SESSION_ENGINES).toEqual(
+      SHIPPED_DATABASE_TYPES.filter((engine) => grantsOf(engine).servesOneSession !== null),
+    );
+    for (const list of [GRANTED_AGENT_EXECUTION_ENGINES, GRANTED_ONE_SESSION_ENGINES]) {
+      expect(Object.isFrozen(list)).toBe(true);
+      expect(() => (list as DatabaseType[]).push("postgres")).toThrow(TypeError);
+      // Vacuity: each list holds some shipped engines and leaves others out.
+      expect(list.length).toBeGreaterThan(0);
+      expect(list.length).toBeLessThan(SHIPPED_DATABASE_TYPES.length);
+    }
+  });
 });
 
 describe("the claims of an admitted provider package's engine", () => {
@@ -926,5 +950,157 @@ describe("the claims of an admitted provider package's engine", () => {
     });
     expect(Object.isFrozen(answer.engine.grants)).toBe(true);
     forgetServerCatalog();
+  });
+});
+
+describe("the grant reader's inputs", () => {
+  /** The grant reader, read by its repository path. */
+  const GRANT_READER = "src/lib/db/claim-grants.ts";
+
+  /**
+   * Every value the grant reader imports, `<name> from <specifier>`, with its role. The request and the register are
+   * its inputs; the served set and the field-name vocabulary name no grant of any engine; and the facet rows, the one
+   * module holding a claim table it still reads, are excepted by name until item 6 of M3 moves Studio's review of
+   * `facets.agentReadings`. A new value import fails until it is listed here with its role.
+   */
+  const GRANT_READER_INPUTS: Readonly<Record<string, string>> = {
+    "BUNDLED_CLAIM_REQUESTS from ./engine-catalog/claims.generated": "the request: every bundled engine's claims",
+    "SEED_ONLY_FIELDS from ./connection-fields":
+      "the request: each declaration's seed-only fields, read where no review row exists",
+    "LEGACY_KEY from @libredb/grant-register": "the register: the key of a legacy row",
+    "readGrantRegister from @libredb/grant-register": "the register: its reader",
+    "SHIPPED_DATABASE_TYPES from ./compatibility":
+      "the legacy adapter's served set: the engines the register's legacy rows are read for",
+    "BODY_CONNECTION_FIELDS from ./connection-fields":
+      "the field names a row's superseding fields are narrowed to, keyed by no engine",
+    "ENGINE_FACETS from ./engine-facets":
+      "excepted by name until item 6: the facet rows, Studio's agent readings review",
+  };
+
+  /** The one input from a module holding a claim table of the engine table inventory, excepted until item 6. */
+  const EXCEPTED_CLAIM_TABLE = "ENGINE_FACETS from ./engine-facets: ENGINE_FACETS";
+
+  interface Input {
+    /** `<name> from <specifier>`, or the call that loads a module at run time. */
+    readonly input: string;
+    /** The repository path, without extension, of the module it loads, or null for a package. */
+    readonly module: string | null;
+  }
+
+  /** `module`, a repository path, without its extension or a trailing `/index`. */
+  function moduleOf(module: string): string {
+    return module.replace(/\.(c|m)?(t|j)sx?$/, "").replace(/\/index$/, "");
+  }
+
+  /** The module `specifier` written in `file` resolves to, as `moduleOf` writes it, or null for a package. */
+  function resolved(file: string, specifier: string): string | null {
+    if (specifier.startsWith("@/")) return moduleOf(`src/${specifier.slice(2)}`);
+    if (specifier.startsWith("."))
+      return moduleOf(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
+    return null;
+  }
+
+  /**
+   * Every value input of `text`, the module at `file`: each name a non-type-only import or `export ... from`
+   * declaration binds, `*` for a namespace import or an `export *`, the bare specifier for a side-effect import, and
+   * every dynamic `import()` or `require()` call by its text. A type-only import or export loads nothing and is passed
+   * over.
+   */
+  function valueInputs(file: string, text: string): readonly Input[] {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const inputs: Input[] = [];
+    const add = (name: string, specifier: string) =>
+      inputs.push({ input: `${name} from ${specifier}`, module: resolved(file, specifier) });
+    for (const statement of source.statements) {
+      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+        const specifier = statement.moduleSpecifier.text;
+        const clause = statement.importClause;
+        if (clause === undefined) add("(side effect)", specifier);
+        else if (!clause.isTypeOnly) {
+          if (clause.name !== undefined) add("default", specifier);
+          const bindings = clause.namedBindings;
+          if (bindings !== undefined && ts.isNamespaceImport(bindings)) add("*", specifier);
+          if (bindings !== undefined && ts.isNamedImports(bindings)) {
+            for (const element of bindings.elements) {
+              if (!element.isTypeOnly) add((element.propertyName ?? element.name).text, specifier);
+            }
+          }
+        }
+      }
+      if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        statement.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        const specifier = statement.moduleSpecifier.text;
+        const clause = statement.exportClause;
+        if (clause === undefined || ts.isNamespaceExport(clause)) add("*", specifier);
+        else {
+          for (const element of clause.elements) {
+            if (!element.isTypeOnly) add((element.propertyName ?? element.name).text, specifier);
+          }
+        }
+      }
+    }
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+      ) {
+        const argument = node.arguments[0];
+        const specifier = argument !== undefined && ts.isStringLiteralLike(argument) ? argument.text : "";
+        inputs.push({ input: node.getText(source), module: resolved(file, specifier) });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return inputs;
+  }
+
+  /** Each input not on `GRANT_READER_INPUTS`, by name. */
+  function unlisted(inputs: readonly Input[]): readonly string[] {
+    return inputs.map(({ input }) => input).filter((input) => !Object.hasOwn(GRANT_READER_INPUTS, input));
+  }
+
+  /** Each input from a module holding a claim table of the engine table inventory, with the table's name. */
+  function claimTableInputs(inputs: readonly Input[]): readonly string[] {
+    const tables = ENGINE_TABLE_INVENTORY.filter((entry) => entry.destination.includes(REVIEW_RECORD_PHRASE));
+    return inputs.flatMap(({ input, module }) =>
+      tables.filter((table) => moduleOf(table.module) === module).map((table) => `${input}: ${table.name}`),
+    );
+  }
+
+  const readerText = () => readFileSync(path.join(import.meta.dir, "../../..", GRANT_READER), "utf8");
+
+  test("the grant reader's only inputs are the request and the register: it imports no module that exports an engine-keyed record", () => {
+    const inputs = valueInputs(GRANT_READER, readerText());
+
+    expect(unlisted(inputs)).toEqual([]);
+    expect(inputs.map(({ input }) => input).sort()).toEqual(Object.keys(GRANT_READER_INPUTS).sort());
+    expect(claimTableInputs(inputs)).toEqual([EXCEPTED_CLAIM_TABLE]);
+  });
+
+  test("the inputs scan finds a value import, a re-export and a dynamic import by name, and passes over a type-only import", () => {
+    const planted = (line: string) => valueInputs(GRANT_READER, `${line}\n${readerText()}`);
+    const redaction = "SQL_TEXT_REDACTION from ./sql-grammar/redaction";
+
+    const imported = planted('import { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
+    expect(unlisted(imported)).toEqual([redaction]);
+    expect(claimTableInputs(imported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`, EXCEPTED_CLAIM_TABLE]);
+
+    const reexported = planted('export { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
+    expect(unlisted(reexported)).toEqual([redaction]);
+    expect(claimTableInputs(reexported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`, EXCEPTED_CLAIM_TABLE]);
+
+    expect(unlisted(planted('import type { SqlTextRedaction } from "./sql-grammar/redaction";'))).toEqual([]);
+    expect(unlisted(planted('const r = await import("./confirmation-claim-review");'))).toEqual([
+      'import("./confirmation-claim-review")',
+    ]);
+    // Vacuity: the real module's parse holds the excepted input.
+    expect(valueInputs(GRANT_READER, readerText()).map(({ input }) => input)).toContain(
+      "ENGINE_FACETS from ./engine-facets",
+    );
   });
 });
