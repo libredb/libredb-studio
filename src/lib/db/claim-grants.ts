@@ -42,8 +42,7 @@
  * - `agent.statementLanguage`, unordered: the row where the request equals it, and null, agent mode sending the engine
  *   no statement, otherwise or where no row exists.
  * - `facets.agentReadings`, a set a gate offers: the intersection of the request and the row, in the row's order,
- *   always a fresh frozen list, and the empty list where no row exists. The record is the `agentReadings` member of
- *   each `ENGINE_FACETS` row, handed over whole.
+ *   always a fresh frozen list, and the empty list where no row exists.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
  * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine; an
@@ -51,27 +50,26 @@
  * `legacyAgentCredentials` when this module loads, naming the engine and the field; and every other row is Studio's own
  * typed table, read as it stands.
  *
- * Studio's review of each policy, MCP and connection claim and of the agent mode claim `agent.statementLanguage` for an
- * engine the legacy adapter serves is the engine's legacy row of the grant register, `@libredb/grant-register` (clause
- * M-54), keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads, with
- * `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine the
- * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
- * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
- * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
- * the server. Studio's review of the two host facts no declaration requests, whether an engine's connections serve one
- * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
- * `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and `GRANTED_AGENT_EXECUTION_ENGINES`; no
- * claim is granted from them.
- * Studio's review of every other claim stays a hand-written record, the facet rows of src/lib/db/engine-facets, which
- * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
- * source reads `STUDIO_CLAIM_RECORDS` or the facet rows' `agentReadings` by member, or loads the register, and
- * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
- * each request is its review row, so each granted table equals that row there.
+ * Studio's review of each policy, MCP and connection claim and of the agent mode claims `agent.statementLanguage` and
+ * `facets.agentReadings` for an engine the legacy adapter serves is the engine's legacy row of the grant register,
+ * `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id: the register is read once, when
+ * this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by
+ * name a served engine the register holds no legacy row for, so no served engine is read at a restrictive value by
+ * omission. A row's review notes say why it holds its value. The rows are hand-reviewed data, never a projection of the
+ * declarations (clauses M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load,
+ * in the browser as on the server. Studio's review of the two host facts no declaration requests, whether an engine's
+ * connections serve one session and whether agent mode executes statements on it, is the same legacy rows'
+ * `servesOneSession` and `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and
+ * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
+ * that no other module of Studio's source reads `STUDIO_CLAIM_RECORDS` or loads the register, and that none but the
+ * claim projection reads a member named `agentReadings`, and tests/unit/db/engine-declaration-readers.test.ts that no
+ * other module reads a request. For every engine Studio ships each request is its review row, so each granted table
+ * equals that row there.
  *
  * The tables are computed once, when this module loads, over the bundled declarations; the server catalog's composer
  * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals,
- * the facet rows, generated data and the register's rows only, and the register's reader compiles no code, so the
- * browser's readers, the read-only marker, the connection form and the agent rail, load it as they load the records.
+ * generated data and the register's rows only, and the register's reader compiles no code, so the browser's readers,
+ * the read-only marker, the connection form and the agent rail, load it as they load the records.
  */
 import type {
   AgentCredentialFormClaim,
@@ -86,7 +84,6 @@ import { SHIPPED_DATABASE_TYPES } from "./compatibility";
 import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
-import { ENGINE_FACETS } from "./engine-facets";
 import type { AgentCredentialForm, ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
@@ -125,8 +122,7 @@ export interface ClaimRecords {
   readonly sshTunnel: Rows<string | null>;
   readonly agentCredential: Rows<SeedAgentCredential | null>;
   readonly statementLanguage: Rows<StatementLanguage>;
-  /** The engine's facet row, whose `agentReadings` member is the record. */
-  readonly agentReadings: Rows<{ readonly agentReadings: readonly AgentReading[] }>;
+  readonly agentReadings: Rows<readonly AgentReading[]>;
 }
 
 /** An engine's seed-only fields as `grantClaims` reads them, or null where it has none. */
@@ -253,7 +249,7 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   sshTunnel: legacyMember("sshTunnel"),
   agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, BODY_CONNECTION_FIELDS),
   statementLanguage: legacyMember("statementLanguage"),
-  agentReadings: ENGINE_FACETS,
+  agentReadings: legacyMember("agentReadings"),
 });
 
 /**
@@ -565,7 +561,7 @@ function grantAgentMode(engine: string, facets: FacetClaims, agent: AgentClaims,
   return {
     statementLanguage:
       language !== null && language === rowOf(records.statementLanguage, engine, null) ? language : null,
-    agentReadings: Object.freeze((row?.agentReadings ?? []).filter((reading) => readings.includes(reading))),
+    agentReadings: Object.freeze((row ?? []).filter((reading) => readings.includes(reading))),
   } as const;
 }
 
@@ -879,7 +875,7 @@ export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, Sta
   BUNDLED_GRANTS.statementLanguage;
 
 /**
- * Studio's grant of `facets.agentReadings`: the curated readings agent mode is offered on the engine, in its facet
+ * Studio's grant of `facets.agentReadings`: the curated readings agent mode is offered on the engine, in its legacy
  * row's order. Whether the operations workflow opens in agent mode, the readings `inspect_operations` offers and
  * accepts, and the run ledger's reading check read it.
  */
@@ -914,7 +910,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  *   grounded, and this list reaches only that grounding: see below.
  * - **The `operations` workflow opens without this list, in both modes**, because it composes no SQL: its
  *   `agent-operations` acquisition sets `requiresReadOnlyStatements: false`. In agent mode it opens on every engine
- *   whose `ENGINE_FACETS` row offers agent mode a curated reading.
+ *   Studio grants a curated reading, `GRANTED_AGENT_READINGS`.
  *
  * Both are grounded before their first turn, and on an engine whose catalog read is a composed statement (its
  * overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes this list like any other

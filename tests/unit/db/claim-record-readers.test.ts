@@ -599,9 +599,9 @@ describe("the claim record readers", () => {
         MOVED_TO_REGISTER.filter((name) => exportsName(file, name)).map((name) => `${file.path} exports ${name}`),
       ),
     ).toEqual([]);
-    // Vacuity: the parse reads the grant reader's named imports, the facet rows it still imports among them, and each
+    // Vacuity: the parse reads the grant reader's named imports, the generated claim requests among them, and each
     // module's exported records.
-    expect(imported).toContain("ENGINE_FACETS");
+    expect(imported).toContain("BUNDLED_CLAIM_REQUESTS");
     expect(
       importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
     ).toEqual(["WRITE_REACH"]);

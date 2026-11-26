@@ -59,8 +59,8 @@ describe("the agent mode gates", () => {
     expect(agentEnginePack("mysql").id).toBe("sql");
 
     // The records hold the readings the planted grants take away.
-    expect(STUDIO_CLAIM_RECORDS.agentReadings.mongodb?.agentReadings.length).toBeGreaterThan(0);
-    expect(STUDIO_CLAIM_RECORDS.agentReadings.kafka?.agentReadings).toEqual(["health"]);
+    expect(STUDIO_CLAIM_RECORDS.agentReadings.mongodb?.length).toBeGreaterThan(0);
+    expect(STUDIO_CLAIM_RECORDS.agentReadings.kafka).toEqual(["health"]);
     // The operations workflow does not open on an engine granted no reading, and refuses with the requirement's
     // sentence; one granted its readings still opens.
     expect(operationsWorkflowOpens("mongodb")).toBe(false);

@@ -149,7 +149,6 @@ import {
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
 import { CONFIRMATION_CLAIM_REVIEW, isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MIGRATION_DDL, MIGRATION_DDL_FUNCTIONS, type MigrationDdlFunctions } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
@@ -257,6 +256,7 @@ const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDataba
 const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
 const statementLanguage = legacyRegisterTable("statementLanguage");
+const agentReadings = legacyRegisterTable("agentReadings");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -1729,8 +1729,9 @@ interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
   readonly request: (declaration: EngineDeclaration) => unknown;
   /**
-   * Studio's review row for `type`, written in the declaration's form: for a connection claim, that member of the
-   * engine's legacy row in the grant register; for every other claim, the row of Studio's review record.
+   * Studio's review row for `type`, written in the declaration's form: for a connection claim, the statement language
+   * and the agent readings, that member of the engine's legacy row in the grant register; for every other claim, the
+   * row of Studio's review record.
    */
   readonly record: (type: DatabaseType) => unknown;
 }
@@ -1738,9 +1739,9 @@ interface SegmentClaimRecord {
 /**
  * Studio's review of each claim of the connection, facets, agent and SQL text segments, by the dotted member that
  * requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the review the grant reader grants each request
- * against and each declaration's request is generated from. A connection claim's review is that member of every
- * engine's legacy row in the grant register, and every other claim's a record Studio still keeps in core. Written here
- * apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ * against and each declaration's request is generated from. The review of a connection claim, the statement language
+ * and the agent readings is that member of every engine's legacy row in the grant register, and every other claim's a
+ * record Studio still keeps in core. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
  */
 const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   "connection.opensLocalFile": {
@@ -1772,7 +1773,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "facets.agentReadings": {
     request: (d) => d.facets.agentReadings,
-    record: (type) => ENGINE_FACETS[type].agentReadings,
+    record: (type) => agentReadings[type],
   },
   "sqlText.redaction": {
     request: (d) => d.sqlText.redaction,
