@@ -71,7 +71,7 @@ export interface S3ConnectionOptions {
 
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-/** Every sentence this module throws, so the provider doc's test reads them back. */
+/** Every sentence this module throws. */
 export const S3_CONNECTION_SENTENCES = Object.freeze({
   wrongType: (field: string, expected: string): string =>
     `The connection's ${field} must be ${expected}; nothing was sent.`,

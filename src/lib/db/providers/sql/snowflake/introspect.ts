@@ -61,7 +61,7 @@ export const SNOWFLAKE_KIND_IDS = Object.freeze([
 
 export type SnowflakeKindId = (typeof SNOWFLAKE_KIND_IDS)[number];
 
-/** Every sentence this surface shows, so the provider doc can quote them and a test read them back. */
+/** Every sentence this surface shows. */
 export const SNOWFLAKE_INTROSPECT_SENTENCES = Object.freeze({
   treeCap: "Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.",
   countFloor: "Studio counts at most 10,000 objects here, so this is a floor.",

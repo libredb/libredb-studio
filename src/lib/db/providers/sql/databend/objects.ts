@@ -101,7 +101,7 @@ const BOUND_UNITS: Readonly<Record<DatabendTruncation["bound"], string>> = {
   bytes: "bytes of answer text",
 };
 
-/** Every sentence this surface shows, so the provider doc can quote them and a test read them back. */
+/** Every sentence this surface shows. */
 export const DATABEND_OBJECT_SENTENCES = Object.freeze({
   bound: (cut: DatabendTruncation) => `${cut.limit.toLocaleString("en-US")} ${BOUND_UNITS[cut.bound]}`,
   incomplete: (surface: string, cut: DatabendTruncation) =>

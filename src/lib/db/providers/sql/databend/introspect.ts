@@ -79,7 +79,7 @@ export const DATABEND_DEGRADE_CODES = Object.freeze([1003, 1025, 1063, 1112, 111
 /** A session id as `system.processes.id` spells it; anything else is refused before a statement is built. */
 const DATABEND_KILL_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
-/** Every sentence this module shows, so the provider doc can quote them and a test read them back. */
+/** Every sentence this module shows. */
 export const DATABEND_MONITORING_SENTENCES = Object.freeze({
   killNeedsId: "Stopping a statement needs its session id, which the Sessions panel lists.",
   killIdRefused: "A Databend session id is 1 to 64 letters, digits and hyphens, as the Sessions panel lists it.",

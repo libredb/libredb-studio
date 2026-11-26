@@ -144,7 +144,7 @@ const CLOSE_STEPS: Readonly<Record<DatabendCloseStep, string>> = {
   logout: "end its session (logout)",
 };
 
-/** Every sentence this file shows, so the provider doc can quote them and a test read them back. */
+/** Every sentence this file shows. */
 export const DATABEND_PROVIDER_SENTENCES = Object.freeze({
   params: "Databend's HTTP API takes no bound parameters from Studio; write the value in the statement.",
   resultCut: (cut: DatabendTruncation) =>

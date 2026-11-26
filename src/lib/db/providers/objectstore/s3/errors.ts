@@ -197,7 +197,7 @@ export const S3_VERBS: Readonly<Record<S3Operation, Verb>> = Object.freeze({
   },
 });
 
-/** Every sentence this mapping writes, frozen, so the provider doc's test reads them back. */
+/** Every sentence this mapping writes, frozen. */
 export const S3_ERROR_SENTENCES = Object.freeze({
   timeout: (endpoint: string, op: string, duration: string): string =>
     `The S3 server at ${endpoint} did not answer ${op} within ${duration}; nothing was retried.`,

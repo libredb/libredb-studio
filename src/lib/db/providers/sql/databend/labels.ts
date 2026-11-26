@@ -11,7 +11,7 @@
  */
 import type { MaintenanceOperationSpec, ProviderLabels } from "@/lib/db/types";
 
-/** Every label sentence, so the provider doc can quote them and a test read them back. */
+/** Every label sentence. */
 export const DATABEND_LABEL_SENTENCES = Object.freeze({
   analyzeGlobalDesc:
     "Databend refreshes table statistics with ANALYZE TABLE, which Studio does not send; run it in the editor.",

@@ -91,7 +91,7 @@ import {
 } from "./statements";
 import { createSnowflakeTransport, snowflakeProductionDeps, type SnowflakeTransportDeps } from "./transport";
 
-/** Every sentence this file shows, so the provider doc can quote them and a test read them back. */
+/** Every sentence this file shows. */
 export const SNOWFLAKE_PROVIDER_SENTENCES = Object.freeze({
   params: "Snowflake's SQL API takes no bound parameters from Studio; write the value in the statement.",
   maintenanceRefused: "Snowflake has no maintenance operations in Studio.",
