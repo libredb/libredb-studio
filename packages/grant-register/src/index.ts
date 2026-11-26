@@ -33,7 +33,10 @@ import { schemaRefusals, where } from "./schema-subset";
 /** The key of a legacy row: the source name of Studio's legacy adapter. */
 export const LEGACY_KEY = "@libredb/studio";
 
-/** A statement language agent mode may send an engine: the schema's `statementLanguage` enum but its null. */
+/**
+ * A statement language agent mode may send an engine: the schema's `statementLanguage` enum but its null, held equal
+ * to it by tests/types.test.ts.
+ */
 export type RegisterStatementLanguage =
   | "sql"
   | "kubectl"
@@ -60,7 +63,11 @@ export type RegisterStatementLanguage =
   | "mqttread"
   | "sparkplugread";
 
-/** What a row grants: the schema's `grants`, one member per claim. */
+/**
+ * What a row grants: the schema's `grants`, one member per claim. tests/types.test.ts holds every member and its
+ * vocabulary equal to the schema's, so a member added, removed or retyped on one side only fails the typecheck or that
+ * test.
+ */
 export interface RegisterGrants {
   readonly writeReach: "open" | "guarded" | "none";
   readonly readsFileAccessPosture: boolean;

@@ -211,8 +211,9 @@ describe("the legacy rows", () => {
 
   test("the grants computed from the legacy rows equal Studio's grant of every claim for every engine the legacy adapter serves", () => {
     const rows = legacyRows();
-    const record = <M extends Exclude<keyof ClaimRecords, "agentReadings">>(member: M) =>
-      Object.fromEntries(rows.map((row) => [row.engine, row.grants[member]])) as unknown as ClaimRecords[M];
+    // Typed by RegisterGrants, so the compiler holds each member's register type assignable to Studio's record.
+    const record = <M extends keyof RegisterGrants>(member: M): Readonly<Record<string, RegisterGrants[M]>> =>
+      Object.fromEntries(rows.map((row) => [row.engine, row.grants[member]]));
     const fromRows: ClaimRecords = {
       writeReach: record("writeReach"),
       readsFileAccessPosture: record("readsFileAccessPosture"),
@@ -229,7 +230,9 @@ describe("the legacy rows", () => {
       hostPathFields: record("hostPathFields"),
       serverLevelWithoutDatabase: record("serverLevelWithoutDatabase"),
       sshTunnel: record("sshTunnel"),
-      agentCredential: record("agentCredential"),
+      // The one narrowing: the register holds `supersededBy` as text, since the package imports nothing of Studio's,
+      // and Studio's record as connection field names; the first test holds every value equal to Studio's.
+      agentCredential: record("agentCredential") as ClaimRecords["agentCredential"],
       statementLanguage: record("statementLanguage"),
       agentReadings: ENGINE_FACETS,
     };
