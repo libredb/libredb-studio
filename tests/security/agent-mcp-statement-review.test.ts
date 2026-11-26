@@ -1,6 +1,6 @@
 /**
  * Every agent and MCP statement gate reads Studio's review record of the engines statements run on
- * (`AGENT_EXECUTION_ENGINES` in src/lib/db/compatibility.ts), at run time, and a provider's own read-only statement path
+ * (`GRANTED_AGENT_EXECUTION_ENGINES` in src/lib/db/claim-grants.ts), at run time, and a provider's own read-only statement path
  * never opens an engine the record does not list.
  *
  * The record is narrowed for this one process: SQLite is dropped from it, because its real provider implements
@@ -25,11 +25,11 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
 
-const shippedCompatibility = { ...(await import("@/lib/db/compatibility")) };
-const shipped: readonly DatabaseType[] = [...shippedCompatibility.AGENT_EXECUTION_ENGINES];
-mock.module("@/lib/db/compatibility", () => ({
-  ...shippedCompatibility,
-  AGENT_EXECUTION_ENGINES: Object.freeze(shipped.filter((type) => type !== "sqlite")),
+const shippedGrants = { ...(await import("@/lib/db/claim-grants")) };
+const shipped: readonly DatabaseType[] = [...shippedGrants.GRANTED_AGENT_EXECUTION_ENGINES];
+mock.module("@/lib/db/claim-grants", () => ({
+  ...shippedGrants,
+  GRANTED_AGENT_EXECUTION_ENGINES: Object.freeze(shipped.filter((type) => type !== "sqlite")),
 }));
 
 const { workflowAvailability } = await import("@/lib/agent/agent-manifest");
@@ -70,7 +70,7 @@ afterAll(async () => {
 });
 
 const notReviewed = (type: DatabaseType) =>
-  `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`;
+  `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`;
 
 const budget: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 10, maxResultBytes: 10_000 };
 
@@ -100,10 +100,10 @@ function expectNotReviewed(error: unknown, type: DatabaseType): void {
 
 describe("an engine the review record does not list, though its provider implements queryReadOnly", () => {
   test("the record this process reads is the shipped one without SQLite", async () => {
-    const { AGENT_EXECUTION_ENGINES } = await import("@/lib/db/compatibility");
+    const { GRANTED_AGENT_EXECUTION_ENGINES } = await import("@/lib/db/claim-grants");
     expect(shipped).toContain("sqlite");
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("sqlite");
-    expect(AGENT_EXECUTION_ENGINES).toContain("postgres");
+    expect(GRANTED_AGENT_EXECUTION_ENGINES).not.toContain("sqlite");
+    expect(GRANTED_AGENT_EXECUTION_ENGINES).toContain("postgres");
     expect(typeof SQLiteProvider.prototype.queryReadOnly).toBe("function");
   });
 

@@ -7,7 +7,7 @@
  * the single reading, in four levels, and it is the ONLY thing the safety strip renders.
  *
  * It states nothing new. Every claim here is a claim some other module enforces:
- * `AGENT_EXECUTION_ENGINES` is the review record the profile gate reads, the figures come from the
+ * `GRANTED_AGENT_EXECUTION_ENGINES` is the review record the profile gate reads, the figures come from the
  * workflow policy rows and from `AGENT_HANDOVER_BUDGET`, and the hand-over paragraph IS the
  * sentence the consent step shows - `autoExecuteTerms` below is that one source, exported so
  * the strip and the consent card cannot drift into two versions of a sentence a user agrees
@@ -19,17 +19,17 @@
  *    title and the body of its arms (`AgentPostureCopy` in `languages/pack.ts`) and cannot write a
  *    tone or a headline; the arm decides both, and the arm is read here from the review record and
  *    from the language's workflow variants, so no pack ranks its own claim.
- *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, Studio's grant
+ *  - **Client-safe imports only** - types, Studio's grants `GRANTED_AGENT_EXECUTION_ENGINES` and
  *    `GRANTED_AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
  *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig`, the type-id guard (`assertDatabaseType`) and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
- *    that must not have them, which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records.
+ *    that must not have them, which is the rule the review record's docblock in `src/lib/db/claim-grants.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
  *    and stayed while the answer became 11; the same trap is one edit away here, because
  *    each of these sentences names a set the server decides.
  *  - **The qualifier is visible, never folded into the popover.** A bare "executes nothing"
  *    overclaims: on the dialects with a `catalogCapture`, plan mode's grounding capture IS a
- *    catalog read, and the review record's docblock in `src/lib/db/compatibility.ts` says that copy compressing these
+ *    catalog read, and the review record's docblock in `src/lib/db/claim-grants.ts` says that copy compressing these
  *    facts overclaims. The strip therefore shows both halves on one line, and the popover
  *    carries the full claim rather than the missing half.
  */
@@ -40,8 +40,7 @@ import {
   operationsWorkflowOpens,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
-import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { GRANTED_AGENT_EXECUTION_ENGINES, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { languageClientPack } from "@/lib/agent/languages/client";
@@ -182,7 +181,7 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
     headline: `Cannot execute on ${engineLabel}`,
     qualifier: "plan mode drafts here, and the operations workflow still runs",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
-    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(GRANTED_AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
   };
 }
 
@@ -250,7 +249,7 @@ function unresolvedPosture(): AgentPosture {
     headline: "Cannot execute yet",
     qualifier: "no connection is resolved, so no engine has been established",
     title: "Agent mode has no connection to execute on",
-    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs on every engine that offers agent mode an operational reading, and plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(GRANTED_AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs on every engine that offers agent mode an operational reading, and plan mode drafts on every engine.`,
   };
 }
 
@@ -300,7 +299,7 @@ function readsPosture(language: AgentStatementLanguageId): AgentPosture {
  * reads and widened arms and nothing that ranks them.
  *
  * Whether the engine executes is `GRANTED_AGENT_STATEMENT_LANGUAGE`'s answer and then
- * `AGENT_EXECUTION_ENGINES`'s, in the order the start route refuses from them (`workflowAvailability`),
+ * `GRANTED_AGENT_EXECUTION_ENGINES`'s, in the order the start route refuses from them (`workflowAvailability`),
  * so the strip and the refusal cannot disagree about an engine. Both are read on every call,
  * not folded into a constant at module load, so the copy follows the lists in the process
  * that is running. The language is also what the executing arms speak
@@ -325,7 +324,7 @@ export function agentPosture(input: {
   if (input.mode === "planning") return planPosture(language);
   if (input.engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);
-  if (!AGENT_EXECUTION_ENGINES.includes(input.engine)) return notReviewedPosture(input.engineLabel);
+  if (!GRANTED_AGENT_EXECUTION_ENGINES.includes(input.engine)) return notReviewedPosture(input.engineLabel);
   if (typeof input.refusedHere === "string") {
     return refusedPosture(input.engine, input.engineLabel, input.refusedHere);
   }

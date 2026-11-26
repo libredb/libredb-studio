@@ -4,8 +4,7 @@ import { join } from "node:path";
 import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import * as grants from "@/lib/db/claim-grants";
-import * as compatibility from "@/lib/db/compatibility";
-import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -24,6 +23,7 @@ import {
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterEngines } from "../../../helpers/legacy-register";
 
 /**
  * The rail's one-axis reading of what the selected mode does to the database.
@@ -33,7 +33,7 @@ import type { DatabaseType } from "@/lib/types";
  *
  *  - the exact reviewed wording, because the strings were approved as written; and
  *  - that every engine name and every number in that wording is DERIVED - from
- *    `AGENT_EXECUTION_ENGINES`, from the engines' `catalogCapture` and from the policy rows - so a change
+ *    `GRANTED_AGENT_EXECUTION_ENGINES`, from the engines' `catalogCapture` and from the policy rows - so a change
  *    on the enforcing side cannot leave a stale claim behind. The last describe block is
  *    that guard: it substitutes a third engine and fails if the copy does not follow.
  */
@@ -46,7 +46,9 @@ import type { DatabaseType } from "@/lib/types";
 const labelsOf = (types: readonly string[]): string =>
   namedList(types.map((type) => getDBConfig(type as Parameters<typeof getDBConfig>[0]).label));
 
-const EXECUTION_ENGINE_NAMES = labelsOf(AGENT_EXECUTION_ENGINES);
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
+const EXECUTION_ENGINE_NAMES = labelsOf(AGENT_EXECUTION);
 const WORKFLOW_TYPES = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowType[];
 const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
@@ -55,7 +57,7 @@ const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
  * `catalogCapture` is supplied, in catalog order.
  *
  * The server dialect is server tier, so a posture module that imported it would stop being
- * client-safe - which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records. So the
+ * client-safe - which is the rule the review record's docblock in `src/lib/db/claim-grants.ts` records. So the
  * production module reads the client dialects, and this reads the real server one to keep
  * them honest: an engine that gains a `catalogCapture` fails this file until the copy names it.
  */
@@ -177,7 +179,7 @@ describe("agentPosture in agent mode, on an engine it can execute on", () => {
   });
 
   test("every executable engine reads the same, on the same tone", () => {
-    for (const engine of AGENT_EXECUTION_ENGINES) {
+    for (const engine of AGENT_EXECUTION) {
       const posture = agentPosture({
         mode: "agent",
         engine,
@@ -681,14 +683,14 @@ describe("what a language pack supplies to the posture", () => {
  * would otherwise be read by every test after it. It is restored at the end regardless.
  */
 describe("the engine names follow the enforcing list", () => {
-  test("an engine added to AGENT_EXECUTION_ENGINES changes the copy with no copy edit", async () => {
+  test("an engine added to the granted agent execution engines changes the copy with no copy edit", async () => {
     // Captured as a plain object before the substitution: the namespace itself follows the replacement, and every
-    // other record of the module is carried over so only the review record is swapped.
-    const real = { ...compatibility };
+    // other grant of the module is carried over so only the review list is swapped.
+    const real = { ...grants };
     try {
-      mock.module("@/lib/db/compatibility", () => ({
+      mock.module("@/lib/db/claim-grants", () => ({
         ...real,
-        AGENT_EXECUTION_ENGINES: ["postgres", "sqlite", "mysql"],
+        GRANTED_AGENT_EXECUTION_ENGINES: ["postgres", "sqlite", "mysql"],
       }));
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
@@ -701,7 +703,7 @@ describe("the engine names follow the enforcing list", () => {
       expect(blocked.body).toContain("boundary it declares: PostgreSQL, SQLite and MySQL.");
       expect(withThree({ mode: "agent", engine: "mysql", engineLabel: "MySQL", handover: false }).tone).toBe("reads");
     } finally {
-      mock.module("@/lib/db/compatibility", () => real);
+      mock.module("@/lib/db/claim-grants", () => real);
     }
   });
 
@@ -907,11 +909,12 @@ describe("core decides the tone and the headline from the arm and the review rec
   });
 
   test("an engine with a statement language that the review record does not list is blocked, in the start route's words", async () => {
-    const real = { ...compatibility };
+    // Captured as a plain object before the substitution: the namespace itself follows the replacement.
+    const real = { ...grants };
     try {
-      mock.module("@/lib/db/compatibility", () => ({
+      mock.module("@/lib/db/claim-grants", () => ({
         ...real,
-        AGENT_EXECUTION_ENGINES: real.AGENT_EXECUTION_ENGINES.filter((engine) => engine !== "mongodb"),
+        GRANTED_AGENT_EXECUTION_ENGINES: real.GRANTED_AGENT_EXECUTION_ENGINES.filter((engine) => engine !== "mongodb"),
       }));
       const { agentPosture: unreviewed } = await import("@/lib/agent/posture");
       for (const handover of [false, true]) {
@@ -935,7 +938,7 @@ describe("core decides the tone and the headline from the arm and the review rec
         "reads",
       );
     } finally {
-      mock.module("@/lib/db/compatibility", () => real);
+      mock.module("@/lib/db/claim-grants", () => real);
     }
   });
 });

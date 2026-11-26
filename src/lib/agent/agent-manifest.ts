@@ -4,9 +4,8 @@
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
  * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
- * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts` and Studio's grant reader
- * `@/lib/db/claim-grants.ts` (the records, the engine facet rows among them, the generated claim requests and the type
- * id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
+ * check `@/lib/db/type-id.ts` and Studio's grant reader `@/lib/db/claim-grants.ts` (the records, the engine facet rows
+ * among them, the generated claim requests and the type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
  * provider module or `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its
  * advice, its admission) is server code and lives in `languages/server.ts`.
  *
@@ -16,8 +15,11 @@
  * the grant register, and `tests/unit/lib/agent/agent-manifest.test.ts` holds that row to every provider: an engine has
  * a language exactly when its provider has `queryReadOnly`.
  */
-import { GRANTED_AGENT_READINGS, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import {
+  GRANTED_AGENT_EXECUTION_ENGINES,
+  GRANTED_AGENT_READINGS,
+  GRANTED_AGENT_STATEMENT_LANGUAGE,
+} from "@/lib/db/claim-grants";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
@@ -297,7 +299,7 @@ interface AgentAvailabilityTables {
     Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
   >;
   readonly requirementEngines: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>>;
-  /** Studio's review record of the engines agent statements run on (`AGENT_EXECUTION_ENGINES`). */
+  /** Studio's review record of the engines agent statements run on (`GRANTED_AGENT_EXECUTION_ENGINES`). */
   readonly reviewed: readonly DatabaseType[];
 }
 
@@ -305,7 +307,7 @@ const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
   languages: GRANTED_AGENT_STATEMENT_LANGUAGE,
   variants: AGENT_WORKFLOW_VARIANTS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
-  reviewed: AGENT_EXECUTION_ENGINES,
+  reviewed: GRANTED_AGENT_EXECUTION_ENGINES,
 });
 
 /**

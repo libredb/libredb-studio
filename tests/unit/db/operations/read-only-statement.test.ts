@@ -693,7 +693,7 @@ describe("Studio's own class for core's refusals of an answer", () => {
 
 describe("the review record", () => {
   const notReviewed = (type: string) =>
-    `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`;
+    `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`;
 
   test("refuses a statement on an engine the review record does not list by name, even when the provider implements queryReadOnly, and never calls or holds it", async () => {
     const queryReadOnly = mock(async () => answer([{ id: 1 }]));

@@ -112,7 +112,6 @@ import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
-  AGENT_EXECUTION_ENGINES,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   READS_TRUST_MATERIAL,
@@ -239,7 +238,7 @@ import {
   slotNameAt,
   valueAt,
 } from "./engine-declarations/declared-slots";
-import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
@@ -3968,7 +3967,7 @@ describe("the census", () => {
 
   test("MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it", () => {
     const exposure: McpExposure = {
-      executes: AGENT_EXECUTION_ENGINES,
+      executes: legacyRegisterEngines("agentExecution"),
       exposable: declaredRecord((d) => d.mcp.exposable),
       statementRead: declaredRecord((d) => d.mcp.statementRead),
       language: declaredRecord((d) => d.agent.statementLanguage) as unknown as McpExposure["language"],
@@ -3995,7 +3994,7 @@ describe("the census", () => {
         ...AGENT_REQUIREMENT_ENGINES,
         "agent-readings": SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.agentReadings.length > 0),
       },
-      reviewed: AGENT_EXECUTION_ENGINES,
+      reviewed: legacyRegisterEngines("agentExecution"),
     };
     // The SQL record is total over the workflows, so every workflow of every language is among its keys.
     const workflows = Object.keys(AGENT_WORKFLOW_VARIANTS.sql) as AgentRunWorkflowType[];

@@ -45,7 +45,7 @@ describe("the review record of agent and MCP statements", () => {
       expect(error).toBeInstanceOf(ExecutionProfileError);
       expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
       expect((error as ExecutionProfileError).message).toBe(
-        `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`,
+        `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`,
       );
     }
   });

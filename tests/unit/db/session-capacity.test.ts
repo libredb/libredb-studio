@@ -114,7 +114,7 @@ describe("sessionCapacity", () => {
   test("the class reads Studio's records and the connection, never a provider or a manifest", () => {
     const source = readFileSync(path.join(originalDirectory, "src/lib/db/session-capacity.ts"), "utf8");
     const imports = [...source.matchAll(/^import[^;]*?from\s+"([^"]+)";/gm)].map((match) => match[1]).sort();
-    expect(imports).toEqual(["./compatibility", "./provider-files", "./type-id", "@/lib/types"]);
+    expect(imports).toEqual(["./claim-grants", "./provider-files", "./type-id", "@/lib/types"]);
     // A connection whose type names no provider is refused by name before any record is read.
     expect(() => sessionCapacity(connection("postgres", { type: "nonesuch" as DatabaseType }))).toThrow("nonesuch");
   });

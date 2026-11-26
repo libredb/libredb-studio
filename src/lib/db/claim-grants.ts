@@ -922,8 +922,9 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * the operations workflow run ungrounded; it is not routed to `agent-operations` instead, because a composed statement
  * is a statement.
  *
- * The browser reads it too, the unauthenticated login hero, the agent manifest and the agent posture, as it reads this
- * module. Frozen, so no code widens it at run time.
+ * The browser reads it too, the unauthenticated login hero, the agent manifest and the agent posture, so no provider
+ * module may enter this module's imports: one would drag a database driver toward the login bundle. Frozen, so no code
+ * widens it at run time.
  */
 export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].agentExecution),

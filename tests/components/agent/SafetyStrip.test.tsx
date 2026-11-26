@@ -4,10 +4,10 @@ import React from "react";
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { SafetyStrip } from "@/components/agent/SafetyStrip";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { type AgentPosture, type AgentPostureTone, agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterEngines } from "../../helpers/legacy-register";
 
 /**
  * The standing safety strip: one always-visible row saying what the SELECTED MODE does
@@ -32,13 +32,16 @@ import type { DatabaseType } from "@/lib/types";
 
 afterEach(cleanup);
 
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
+
 /** An engine agent mode has no read-only statement path on, taken from the real gate. */
 const UNSUPPORTED_ENGINE: DatabaseType = (["mongodb", "spark", "oracle", "mssql", "mysql"] as DatabaseType[]).filter(
-  (type) => !AGENT_EXECUTION_ENGINES.includes(type),
+  (type) => !AGENT_EXECUTION.includes(type),
 )[0] as DatabaseType;
 
 /** An engine it does, so this file cannot pin a tone the gate no longer produces. */
-const SUPPORTED_ENGINE: DatabaseType = AGENT_EXECUTION_ENGINES[0] as DatabaseType;
+const SUPPORTED_ENGINE: DatabaseType = AGENT_EXECUTION[0] as DatabaseType;
 
 interface StripCase {
   readonly mode: "planning" | "agent";

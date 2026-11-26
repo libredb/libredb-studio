@@ -31,10 +31,11 @@ import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterEngines } from "../helpers/legacy-register";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -389,9 +390,12 @@ describe("the chart says the zero-config durable backend is single-instance", ()
   });
 });
 
+/** The engines whose legacy row of the grant register grants agent execution, in catalog order: the list. */
+const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
+
 /**
  * The provider file that implements each listed engine's `queryReadOnly`, which `docs/AGENT.md` links in its engine
- * paragraph. Keyed by the list, and a test holds its keys to it, so an engine added to `AGENT_EXECUTION_ENGINES`
+ * paragraph. Keyed by the list, and a test holds its keys to it, so an engine granted agent execution
  * fails until its provider is named here and linked there.
  */
 const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
@@ -510,7 +514,7 @@ const PRODUCT_ENGINES = EXTERNAL_DATABASE_TYPES.map((type) => getDBConfig(type).
 const engineClaimsIn = (text: string): string[] =>
   sentencesOf(text).filter(
     (sentence) =>
-      AGENT_EXECUTION_ENGINES.filter((type) => sentence.includes(getDBConfig(type).label)).length >= 3 &&
+      AGENT_EXECUTION.filter((type) => sentence.includes(getDBConfig(type).label)).length >= 3 &&
       AGENT_ENGINE_CLAIM.test(sentence) &&
       !MCP_CLAIM.test(sentence) &&
       !PRODUCT_ENGINES.every((label) => sentence.includes(label)),
@@ -530,19 +534,19 @@ const rancherSubmittedCopy = (): string => {
 
 describe("every agent-mode engine sentence is the one engine list (#246)", () => {
   /**
-   * AGENT_EXECUTION_ENGINES is the list, and every sentence that names the engines agent mode and
+   * GRANTED_AGENT_EXECUTION_ENGINES is the list, and every sentence that names the engines agent mode and
    * run_read_query execute on is derived from it. These three said PostgreSQL and SQLite long after
    * DuckDB and SQL Server joined, which no test could see. Every line break is joined away first,
    * with the comment marker that continues it, if any, and the indentation around it, so a
    * sentence may wrap where the file wraps: in a docblock, in a # comment, or in a block comment
    * whose lines carry no marker at all.
    */
-  const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+  const list = namedList(AGENT_EXECUTION.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
   test("the derived list is today's thirty-nine engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino",
+      "Apache Cassandra, ClickHouse, Couchbase, Db2 LUW, Apache Druid, DuckDB, Elasticsearch, etcd, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, LibreDB, libSQL, Milvus, Modbus, MongoDB, MQTT, SQL Server, MTConnect, MySQL, Neo4j, NETCONF, OPC UA, OpenSearch, Oracle, Oxia, PostgreSQL, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, SNMP, Sparkplug B, SQLite, Trino and Weaviate",
     );
   });
 
@@ -558,7 +562,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   });
 
   test("each engine on the list has its read-only provider file, and the map has no other key", () => {
-    expect(Object.keys(READ_ONLY_PROVIDER_FILES).sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
+    expect(Object.keys(READ_ONLY_PROVIDER_FILES).sort()).toEqual([...AGENT_EXECUTION].sort());
     for (const file of Object.values(READ_ONLY_PROVIDER_FILES)) expect(existsSync(path.join(ROOT, file))).toBe(true);
   });
 
@@ -613,7 +617,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     "every agent-mode engine sentence in %s names the list",
     (file) => {
       for (const claim of engineClaims(file)) {
-        for (const type of AGENT_EXECUTION_ENGINES) expect(claim).toContain(getDBConfig(type).label);
+        for (const type of AGENT_EXECUTION) expect(claim).toContain(getDBConfig(type).label);
       }
     },
   );
@@ -673,7 +677,7 @@ describe("docs/AGENT.md states agent execution on Kubernetes as the code decides
   test("the engine paragraph names every executing engine, links each one's provider and names Kubernetes' boundary", () => {
     const paragraph = AGENT_DOC.split("- **Agent mode requires ")[1]?.split(/\n\n/)[0] ?? "";
     expect(paragraph.length).toBeGreaterThan(0);
-    for (const type of AGENT_EXECUTION_ENGINES) {
+    for (const type of AGENT_EXECUTION) {
       expect(paragraph).toContain(getDBConfig(type).label);
       expect(paragraph).toContain(`(../${READ_ONLY_PROVIDER_FILES[type]})`);
     }
