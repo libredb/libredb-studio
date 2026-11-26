@@ -483,12 +483,17 @@ const {
   isSingleWriterFileOpen,
   getExecutionProfileCacheStats,
   withOneShotTunnel,
-  assertReadOnlyHonoured,
   editorCacheKey,
   findCachedProvider,
   readProviderDeclarations,
   logUnclaimedOpen,
 } = await import("@/lib/db/factory");
+const { assertReadOnlyHonoured: assertReadOnlyOf } = await import("@/lib/db/open-check");
+const { legacyProviderEngine } = await import("@/lib/db/server-catalog");
+/** `assertReadOnlyHonoured` of `connection`, read with its engine's record as the factory's entry points read it. */
+function assertReadOnlyHonoured(connection: DatabaseConnection): void {
+  assertReadOnlyOf(legacyProviderEngine(connection.type, "open"), connection);
+}
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
 function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>) {

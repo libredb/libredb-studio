@@ -383,7 +383,7 @@ describe("docs/SECURITY.md carries the read-only control, its note and its three
     expect(note).toContain("`READ_ONLY_ENFORCED`");
     // The provider sentences that follow the pointer to the Write reach table name the noun they belong to.
     expect(note).toContain("Of the providers that keep it, etcd's names where the mode was set in every refusal");
-    expect(read("src/lib/db/factory.ts")).toContain("export function assertReadOnlyHonoured");
+    expect(read("src/lib/db/open-check.ts")).toContain("export function assertReadOnlyHonoured");
   });
 
   test.each([

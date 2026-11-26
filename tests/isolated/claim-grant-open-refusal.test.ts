@@ -1,24 +1,32 @@
 /**
  * Each of the provider factory's four entry points refuses an engine whose claims leave a refusal no grant covers
- * (`UNGRANTED_CLAIM_REFUSALS` in src/lib/db/claim-grants.ts, docs/providers/CONTRACT.md clause M-54) before any cache
- * lookup, tunnel or build: `assertClaimsGranted` runs right after `assertReadOnlyHonoured` in each.
+ * (its record's `grants.ungrantedRefusals`, for a legacy engine its row of `UNGRANTED_CLAIM_REFUSALS` in
+ * src/lib/db/claim-grants.ts, docs/providers/CONTRACT.md clause M-54) before any cache lookup, tunnel or build:
+ * `assertClaimsGranted` runs right after `assertReadOnlyHonoured` in each (src/lib/db/open-check.ts).
  *
- * Under tests/isolated because it replaces `@/lib/db/claim-grants` and `@/lib/ssh/tunnel` with `mock.module()` before
- * it imports the factory, which holds only while this file is the first in its bun process to evaluate them. The grant
- * module is the real one with postgres's row of `UNGRANTED_CLAIM_REFUSALS` set to the single-writer sentence, so no
- * shipped engine's declaration needs to differ from its record for the refusal to be reached.
+ * Under tests/isolated because it replaces `@/lib/ssh/tunnel` with `mock.module()` before it imports the factory, which
+ * holds only while this file is the first in its bun process to evaluate it. The installed catalog holds postgres's
+ * record with its `ungrantedRefusals` set to the single-writer sentence, so no shipped engine's declaration needs to
+ * differ from its record for the refusal to be reached.
  */
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { UNGRANTED_SINGLE_WRITER_FILE_SENTENCE as REFUSAL } from "@/lib/db/claim-grants";
+import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { SSHTunnelConfig } from "@/lib/types";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { withEngineRecord } from "../helpers/package-catalog";
 
-const realGrants = { ...(await import("@/lib/db/claim-grants")) };
-const REFUSAL = realGrants.UNGRANTED_SINGLE_WRITER_FILE_SENTENCE;
-mock.module("@/lib/db/claim-grants", () => ({
-  ...realGrants,
-  UNGRANTED_CLAIM_REFUSALS: Object.freeze({ ...realGrants.UNGRANTED_CLAIM_REFUSALS, postgres: REFUSAL }),
-}));
+beforeAll(() => {
+  installServerCatalog(
+    withEngineRecord(composeServerCatalog([], []), "postgres", (engine) => ({
+      ...engine,
+      grants: Object.freeze({ ...engine.grants, ungrantedRefusals: REFUSAL }),
+    })),
+  );
+});
+afterAll(forgetServerCatalog);
 
 const mockCreateSSHTunnel = mock(async () => {
   throw new Error("no tunnel is dialled for a refused engine");

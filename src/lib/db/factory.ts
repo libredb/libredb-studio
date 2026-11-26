@@ -31,39 +31,28 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import {
-  assertConnectionIsPlainData,
-  assertExecutionContextIsPlainData,
-  providerConnection,
-  providerFields,
-  refusedFieldRefusal,
-} from "./provider-connection";
-import { assertProviderTunnel, decideTunnel } from "./tunnel-decision";
+import { assertConnectionIsPlainData, providerConnection, providerFields } from "./provider-connection";
+import { decideTunnel } from "./tunnel-decision";
 import { supportsQueryCancel } from "./query-cancel";
-import { storageLocation } from "@/lib/data-dir";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
 import { admittedFileConnection, admittedHostPathConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
 import { sessionCapacity } from "./session-capacity";
-import { READS_TRUST_MATERIAL } from "./compatibility";
-import {
-  GRANTED_AGENT_CREDENTIAL_FORM,
-  GRANTED_DENIED_FILE_ACCESS_REFUSAL,
-  GRANTED_READS_FILE_ACCESS_POSTURE,
-  GRANTED_SINGLE_WRITER_FILE,
-  READ_ONLY_ENFORCED,
-  UNGRANTED_CLAIM_REFUSALS,
-} from "./claim-grants";
 import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
-import { requiredSecretRefusal } from "./connection-field-rules";
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
-import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
-import { assertLegacyProvider } from "./server-catalog";
+import { type EngineRecord, legacyProviderEngine } from "./server-catalog";
+import {
+  assertClaimsGranted,
+  assertOpenable,
+  assertOwnerPoolHonoured,
+  assertProviderEnabled,
+  assertReadOnlyHonoured,
+  type OpenPurpose,
+} from "./open-check";
 import { closePackageSessions, removePackageSessions } from "./package-sessions";
-import { typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
@@ -121,7 +110,7 @@ import * as path from "path";
  *   `sendsStatements` is stated once, on `ProviderExecutionContext` (types.ts); DuckDB reads
  *   `allowExternalFileAccess` on its editor handle, and a SQLite connection is refused when it is
  *   `false`, a profiled handle included, here before the provider is built and before the file it names is read
- *   (see assertFileAccessPostureHonoured). On DuckDB, ABSENT MEANS DENY: called without a context, as an
+ *   (see `assertOpenable` in ./open-check). On DuckDB, ABSENT MEANS DENY: called without a context, as an
  *   embedder that predates the posture calls it, a DuckDB handle opens with
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
  *   `INSTALL` are refused outside its private temp directory and its database's own file
@@ -131,36 +120,34 @@ import * as path from "path";
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
  *   A provider that takes a context is handed a copy of this one with the process's egress decision added, as
  *   `ProviderBuildContext` (types.ts), so no provider reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` itself; an engine whose
- *   `READS_TRUST_MATERIAL` row (./compatibility) is true, Db2 today, is also handed the trust material core read from
+ *   record's `connection.readsTrustMaterial` is true, Db2 today, is also handed the trust material core read from
  *   the file `NODE_EXTRA_CA_CERTS` names (./trust-material), and every other engine `trust: undefined`, so no provider
  *   reads that variable or file either. A caller's `egress` or `trust` is never handed on.
  * @returns Promise<DatabaseProvider> instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
- *   checked, logged or built (FND-1; see `assertLegacyProvider` in ./server-catalog, which refuses an engine only a
+ *   checked, logged or built (FND-1; see `legacyProviderEngine` in ./server-catalog, which refuses an engine only a
  *   provider package serves as `ProviderUnavailableError` or `PackageEngineUnsupportedError` in the same place)
- * @throws DatabaseConfigError if connection type is left out of a set
- *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
- *   honoured (see assertReadOnlyHonoured), if an owner comes without a whole `ownerPoolMax`
- *   from 1 (see assertOwnerPoolHonoured), if the execution context is not plain data: a class instance, a getter,
- *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), if its engine
- *   refuses a denied file-access posture and `execution` denies it, before the file it names is read (see
- *   assertFileAccessPostureHonoured), or, for an engine
- *   whose `READS_TRUST_MATERIAL` row is true, if the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty,
+ * @throws DatabaseConfigError if the one ordered open check over the engine's record refuses the connection
+ *   (`assertOpenable` in ./open-check, whose docblock states the order): its type is left out of a set
+ *   `LIBREDB_ENABLED_PROVIDERS`, its `readOnly` cannot be honoured, an owner comes without a whole `ownerPoolMax`
+ *   from 1, the connection or the execution context is not plain data (a class instance, a getter, an inherited field
+ *   or a field that is not enumerable), its engine refuses a denied file-access posture and `execution` denies it,
+ *   before the file it names is read, its tunnel is refused, it sets a field its engine refuses by name, or the
+ *   engine's form entry declares a required secret the connection shows and leaves absent, not text or only
+ *   whitespace (Snowflake's private key under Key pair, an absent Sign-in read as Key pair, and its access token under
+ *   a programmatic access token), with the entry's sentence for it, which names the field; a provider constructed
+ *   directly refuses a blank required secret at `connect()`. Or, for an engine whose record's
+ *   `connection.readsTrustMaterial` is true, if the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty,
  *   holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed
- *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in
- *   ./trust-material): the first such build of a process with no boot hook reads the file and keeps the outcome, and an
- *   invalid file refuses every such build, before the log line, while every other engine is built as before
+ *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in ./trust-material): the first such build of a process
+ *   with no boot hook reads the file and keeps the outcome, and an invalid file refuses every such build, before the
+ *   log line, while every other engine is built as before
  * @throws DatabaseConfigError if a SQLite, DuckDB or LibreDB connection names one of Studio's own storage files, a
  *   path holding a NUL byte, a file name that is not text, a path the reserved check cannot read or, for SQLite, a
  *   connection string with no file after `file:`, before the provider is built (see admittedFileConnection),
  *   if an OPC UA connection's client certificate or private key path names one of Studio's own storage files, holds a
  *   NUL byte, is not text or cannot be checked, naming the field (see admittedHostPathConnection),
  *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
- * @throws DatabaseConfigError if the engine's form entry declares a required secret the connection shows and leaves
- *   absent, not text or only whitespace (Snowflake's private key under Key pair, an absent Sign-in read as Key pair,
- *   and its access token under a programmatic access token), with the entry's sentence for it, which names the field,
- *   before the provider is built (see assertRequiredSecretsPresent); a provider constructed directly refuses it at
- *   `connect()`
  *
  * Every error raised while the provider is built, each refusal above and a provider constructor's own, answers `outcome`
  * `not-sent` (`buildPhase` in ./errors): a build sends no statement.
@@ -224,104 +211,6 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
 }
 
 /**
- * Refuse a `readOnly` this connection's engine cannot keep, before anything is built or dialled (#1089).
- *
- * A read-only connection is a promise its provider keeps by refusing every write before any request,
- * so it is accepted only on an engine `READ_ONLY_ENFORCED` names. Anywhere else the connection would
- * open able to write under a mode that says it cannot, which is refused rather than ignored. A value
- * that is not a boolean is refused on every engine, because a string read as true on one path and as
- * absent on another is two modes. The message names the field and never echoes the value.
- *
- * It reads the static map rather than `getCapabilities()` because it runs before a provider exists,
- * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every
- * provider's `writeReach`. The map's row is read through `typeIdRow` (FND-1), so a `readOnly: true` on a
- * type outside the `DatabaseType` union is refused by name with `UnknownProviderError`, never read as an
- * engine that does not enforce the mode.
- *
- * WHERE IT RUNS. Right after the type check (`assertLegacyProvider`, FND-1), which is the first statement of
- * `createDatabaseProvider` and `withOneShotTunnel`, and of
- * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
- * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, so a refusal
- * raised only inside the factory would dial the bastion for a connection it then refuses, and the fresh
- * tunnel would only be released again afterwards (`releaseTunnelOfUnopenedProvider`). Ahead of the lookup
- * too, because a mode that is not a boolean keys as `read-write` (`providerCacheKey`), so the lookup
- * would hand it the connection's cached read-write provider without refusing it. `assertProviderEnabled`
- * stands beside it in all four places for the same reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out
- * must never reach a cache lookup or dial a bastion.
- * Exported for the tests; the published factory's three entry points raise it (`src/exports/providers.ts`).
- */
-export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
-  const readOnly: unknown = connection.readOnly;
-  if (readOnly === undefined) return;
-  if (typeof readOnly !== "boolean") {
-    throw new DatabaseConfigError("readOnly must be true or false.", connection.type);
-  }
-  if (readOnly && typeIdRow(READ_ONLY_ENFORCED, connection.type) !== true) {
-    throw new DatabaseConfigError(
-      `readOnly: true is refused for ${sanitize(connection.type)}: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
-      connection.type,
-    );
-  }
-}
-
-/**
- * Refuse every open of an engine whose claims leave a refusal no grant covers (docs/providers/CONTRACT.md, clause
- * M-54), with the sentence `UNGRANTED_CLAIM_REFUSALS` in ./claim-grants holds for it: an engine whose single-writer
- * file request is not Studio's grant, whose second read-write handle on one file could lose committed rows.
- *
- * It runs right after `assertReadOnlyHonoured`, in all four places that function runs and for the reason it gives, so
- * a refused engine opens no cache entry, tunnel or provider. The row is read through `typeIdRow` (FND-1), so a type
- * outside the `DatabaseType` union is refused by name. No engine Studio ships is refused here, since each of its
- * requests is its record's row; the table is a parameter so the tests can refuse one.
- * Exported for the tests, as `assertReadOnlyHonoured` is.
- */
-export function assertClaimsGranted(
-  connection: DatabaseConnection,
-  refusals: Readonly<Record<DatabaseType, string | null>> = UNGRANTED_CLAIM_REFUSALS,
-): void {
-  const refusal = typeIdRow(refusals, connection.type);
-  if (refusal === null) return;
-  throw new DatabaseConfigError(refusal, connection.type);
-}
-
-/**
- * Refuse an owner without a pool size its provider can open with (docs/GOVERNANCE.md#per-user-providers), before
- * anything is built or dialled.
- *
- * An owned provider opens its pool with `min: 0` and `max: ownerPoolMax`, so the size must be a whole number from 1.
- * pg would refuse nothing else: it opens its default of 10 for 0, NaN or no size at all, and a pool with a negative
- * size never hands out a connection, so the owner's share would be lifted, or the provider wedged, without a word.
- * It runs where `assertReadOnlyHonoured` runs and for the reason that function gives: `getOrCreateProvider` and
- * `acquireExecutionProfileProvider` open the SSH tunnel before they build the provider. `editorExecutionContext`
- * always sets the owner and the size together, so the refusal reaches only a context built elsewhere.
- */
-function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
-  if (execution.owner === undefined) return;
-  const max: unknown = execution.ownerPoolMax;
-  if (typeof max !== "number" || !Number.isInteger(max) || max < 1) {
-    throw new DatabaseConfigError(
-      "ownerPoolMax must be a whole number from 1 when an owner is given: it is the most connections the owner's provider may open.",
-      connection.type,
-    );
-  }
-}
-
-/**
- * Refuse a connection whose engine refuses a handle when its file-access posture is denied
- * (`REFUSES_DENIED_FILE_ACCESS`) and whose execution context denies it (`allowExternalFileAccess: false`, the
- * provider's own condition), with the sentence and the error the provider's `connect()` raises for it, before the
- * storage location, the connection's file or the provider is touched: a connection the posture denies file access is
- * refused before Studio reads the path it names (FND-2 slice 3, docs/SECURITY.md "Embedded file connection
- * boundaries"). The row is read through `typeIdRow` and names no type id. An absent posture is not a denied one, as the
- * provider reads it.
- */
-function assertFileAccessPostureHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
-  const refusal = typeIdRow(GRANTED_DENIED_FILE_ACCESS_REFUSAL, connection.type);
-  if (refusal === null || execution.allowExternalFileAccess !== false) return;
-  throw new DatabaseConfigError(refusal, connection.type);
-}
-
-/**
  * Take the process's egress decision (`./egress-decision`) before anything is cached, dialled or built, refusing an
  * invalid `DB_HTTP_BLOCK_PRIVATE_HOSTS` with its `DatabaseConfigError`, on every call.
  *
@@ -330,7 +219,8 @@ function assertFileAccessPostureHonoured(connection: DatabaseConnection, executi
  * LD9). On a standalone server the boot preflight took it already, so this reads the kept outcome. It runs in
  * `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` beside
  * `assertTunnelRecordIsPlainData`, so `getOrCreateProvider` never dials a bastion for a server whose setting it then
- * refuses; `createDatabaseProvider` takes the decision itself at the same point, since it hands it to the provider.
+ * refuses; `createDatabaseProvider` takes the decision in its open check (`assertOpenable` in ./open-check) and reads
+ * the kept decision after it, since it hands it to the provider.
  */
 function assertEgressDecided(): void {
   egressDecision();
@@ -342,23 +232,6 @@ function assertEgressDecided(): void {
 
 // Read in ./enabled-providers, which the SQLite sample shares; the VS Code backend takes it from this factory surface.
 export { enabledProviderTypes };
-
-/**
- * Refuse a connection whose type `LIBREDB_ENABLED_PROVIDERS` leaves out, before anything is built, loaded or dialled.
- *
- * It is set membership inside the provider layer and names no type id, so `tests/unit/lib/no-engine-branches.test.ts`
- * needs no entry for it. It runs before the `switch` of `createDatabaseProvider`, so the provider module of a refused
- * type, and its driver, is never imported. Unset or blank returns at once; a value that names something other than a
- * type id raises the reader's `DatabaseConfigError`, so every connection fails with that entry named.
- */
-function assertProviderEnabled(connection: DatabaseConnection): void {
-  const enabled = enabledProviderTypes();
-  if (enabled === null || enabled.includes(connection.type)) return;
-  throw new DatabaseConfigError(
-    `The ${sanitize(connection.type)} provider is not available in this distribution of LibreDB Studio.`,
-    connection.type,
-  );
-}
 
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
@@ -386,11 +259,12 @@ export interface ProviderDeclarations {
  *
  * It runs every check `createDatabaseProvider` runs, so a connection that one refuses for its type, its read-only
  * mode, its execution context or its tunnel (a malformed tunnel, an engine that takes none, a tunnel with nothing to
- * forward to) is refused here by the same sentence, except two: a tunnel that is on and was not opened, and a required
- * secret its engine declares left blank (`assertRequiredSecretsPresent`), since reading what a connection declares
- * never signs in. It builds the provider from such a connection, reads it and lets it go, so the provider, whose
- * `host` and `port` are the database's own, is never handed out and can never be connected past the tunnel. It is not exported from the
- * package (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
+ * forward to) is refused here by the same sentence, except three: a tunnel that is on and was not opened, a field its
+ * engine refuses by name, and a required secret its engine declares left blank (the open check's `"declarations"`
+ * purpose, `assertOpenable` in ./open-check), since reading what a connection declares never signs in. It builds the
+ * provider from such a connection, reads it and lets it go, so the provider, whose `host` and `port` are the
+ * database's own, is never handed out and can never be connected past the tunnel. It is not exported from the package
+ * (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
  *
  * Its capabilities are the provider's as `clientCapabilities` (./client-capabilities) answers them: the masking
  * exemption is `GRANTED_MASKING_EXEMPT_COLUMNS`'s row for the connection's type, never the provider's own.
@@ -408,83 +282,35 @@ export async function readProviderDeclarations(
 }
 
 /**
- * Refuse a connection to be built to connect when its engine's form entry declares a required secret that it shows and
- * leaves blank (`requiredSecretRefusal` in ./connection-field-rules), with the entry's own sentence, which names the field as
- * the dialog labels it. Read on the copy the provider would receive, so an agent credential core substituted is the
- * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as every
- * refusal raised while a provider is built does (`buildPhase` in ./errors).
- */
-function assertRequiredSecretsPresent(connection: DatabaseConnection): void {
-  const refusal = requiredSecretRefusal(connection.type, connection);
-  if (refusal === undefined) return;
-  throw new DatabaseConfigError(refusal, connection.type);
-}
-
-/**
- * Refuse a connection to be built to connect when it sets a field its engine refuses by name, with the sentence the
- * engine's `REFUSED_CONNECTION_FIELDS` row declares for that field (`refusedFieldRefusal` in ./provider-connection),
- * which names the field and never its value. It names no type id: the declaration is the row's.
- */
-function assertNoRefusedField(connection: DatabaseConnection): void {
-  const refusal = refusedFieldRefusal(connection);
-  if (refusal === undefined) return;
-  throw new DatabaseConfigError(refusal, connection.type);
-}
-
-/**
- * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Three rules
- * differ by `purpose`: a tunnel that is on must have been opened (see `assertProviderTunnel` in ./tunnel-decision),
- * a connection must not set a field its engine refuses (`assertNoRefusedField`), and a required secret the engine
- * declares must not be blank (`assertRequiredSecretsPresent`), each only for `"connect"`, the build of a provider that
- * may be connected. Both callers run it inside `buildPhase` (./errors), so
- * every error it raises, a provider constructor's included, answers `outcome` `not-sent`: a build sends no statement.
+ * The build `createDatabaseProvider` and `readProviderDeclarations` share: the engine's record (`legacyProviderEngine`
+ * in ./server-catalog), the one ordered open check over it (`assertOpenable` in ./open-check), then the provider. The
+ * check differs by `purpose`: a tunnel that is on must have been opened, a connection must not set a field its engine
+ * refuses and a required secret the engine declares must not be blank, each only for `"connect"`, the build of a
+ * provider that may be connected. Both callers run it inside `buildPhase` (./errors), so every error it raises, a
+ * provider constructor's included, answers `outcome` `not-sent`: a build sends no statement.
  */
 async function buildProvider(
   connection: DatabaseConnection,
   options: ProviderOptions,
   execution: ProviderExecutionContext,
-  purpose: "connect" | "declarations",
+  purpose: OpenPurpose,
 ): Promise<DatabaseProvider> {
   // First, before every other check, the log line and the switch below: a type that names no provider is refused by
-  // name, and no other refusal or default speaks for it (FND-1).
-  assertLegacyProvider(connection.type, "open");
-  assertProviderEnabled(connection);
-  assertReadOnlyHonoured(connection);
-  assertClaimsGranted(connection);
-  // The provider is handed a copy of the context (below), so only plain data is taken: a copy of anything else could
-  // answer differently from the object core reads here.
-  assertExecutionContextIsPlainData(execution);
-  assertOwnerPoolHonoured(connection, execution);
-  // Before the storage location and the file admission below, which read the host filesystem: a connection whose
-  // engine refuses a denied file-access posture, under a context that denies it, reads nothing.
-  assertFileAccessPostureHonoured(connection, execution);
-  // Core's decision about the tunnel (./tunnel-decision), before anything is built: a tunnel that is on is built only
-  // when core opened it, so no provider can reach its server past the tunnel the connection asked for.
-  assertProviderTunnel(connection, purpose === "connect");
+  // name, and no other refusal or default speaks for it (FND-1). Every later read of the engine is its record's.
+  const engine = legacyProviderEngine(connection.type, "open");
+  // The one ordered open check (./open-check): enabled, read-only, claims, the connection and the context as plain
+  // data, the owner's pool, the file-access posture, core's decision about the tunnel, the process's egress decision
+  // and Studio's storage location, and, to connect, a refused field and a required secret, each read from the record.
+  assertOpenable(engine, connection, execution, purpose);
+  // The decision the check took, read again to hand to the provider: the process keeps it.
   const egress = egressDecision();
-  // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
-  // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
-  // 3.45). On a standalone server the boot took it already, so this reads the kept location.
-  storageLocation();
   // Every provider is built from the connection `providerConnection` answers: a copy holding only the fields its engine
   // declares and core's markers, the tunnel's route under `TUNNEL_ROUTE` for a record that carries a tunnel, so no
   // provider receives the tunnel or its password, private key or passphrase, the agent credential or a field its engine
   // does not declare (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
   // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
   // refused above, except for readProviderDeclarations, which never hands its provider out.
-  const record = connection;
   connection = providerConnection(connection);
-  if (purpose === "connect") {
-    // A provider built to connect is never built from a connection that sets a field its engine refuses by name
-    // (`REFUSED_CONNECTION_FIELDS`): refused here with the declared sentence, read on the caller's record, since the
-    // copy above dropped the field, after the plain-data refusal and before anything else reads it (FND-2 slice 6c,
-    // docs/SECURITY.md 3.41). Reading declarations never connects, so it does not refuse, and its copy has no such field.
-    assertNoRefusedField(record);
-    // Nor without a secret its engine declares it cannot sign in without (Snowflake's key under Key pair, its token
-    // under a programmatic access token): refused by name here, on the copy above, before any file is admitted, the
-    // build context is made or the creation is logged (FND-2 slice 6b, docs/SECURITY.md 3.41).
-    assertRequiredSecretsPresent(connection);
-  }
   // A SQLite, DuckDB or LibreDB connection (`GRANTED_OPENS_LOCAL_FILE`) is handed the file core admitted, resolved
   // against the working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL
   // byte, a connection string that names no file after `file:` or a name that is not text is refused here, by name,
@@ -494,15 +320,15 @@ async function buildProvider(
   // are admitted the same way, each refused by name with its field, and handed to the provider as absolute paths.
   connection = admittedHostPathConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
-  // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
-  // `READS_TRUST_MATERIAL` row is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names, which that
-  // provider's own TLS library would never read (FND-2, the provider plugins design section 0.1). The material is read
-  // only for such an engine, so an invalid bundle refuses that build here, before the log line, and no other. One rule
-  // for every case below, and never a caller's `egress` or `trust`: both are set here, last.
+  // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose record's
+  // `connection.readsTrustMaterial` is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names,
+  // which that provider's own TLS library would never read (FND-2, the provider plugins design section 0.1). The
+  // material is read only for such an engine, so an invalid bundle refuses that build here, before the log line, and no
+  // other. One rule for every case below, and never a caller's `egress` or `trust`: both are set here, last.
   const context: ProviderBuildContext = {
     ...execution,
     egress,
-    trust: typeIdRow(READS_TRUST_MATERIAL, connection.type) === true ? trustMaterial() : undefined,
+    trust: engine.connection.readsTrustMaterial ? trustMaterial() : undefined,
   };
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
@@ -515,7 +341,7 @@ async function buildProvider(
     options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
   }
 
-  // No `default`: `assertLegacyProvider` above refused every value that is not a type id, and the compiler holds this
+  // No `default`: `legacyProviderEngine` above refused every value that is not a type id, and the compiler holds this
   // switch exhaustive over the `DatabaseType` union, so a type id without a case fails the typecheck (TS2366) rather
   // than reaching the end of the function at run time.
   switch (connection.type) {
@@ -971,17 +797,18 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
-  // First, before the tunnel is dialled: a type that names no provider is refused by name (FND-1).
-  assertLegacyProvider(connection.type, "open");
-  assertProviderEnabled(connection);
-  assertReadOnlyHonoured(connection);
-  assertClaimsGranted(connection);
+  // First, before the tunnel is dialled: a type that names no provider is refused by name (FND-1). The checks below
+  // read the engine's record (./open-check).
+  const engine = legacyProviderEngine(connection.type, "open");
+  assertProviderEnabled(engine);
+  assertReadOnlyHonoured(engine, connection);
+  assertClaimsGranted(engine);
   // Before the callback is handed the record or a copy of it: a copy of a record that is not plain data would reach the
   // build as plain data (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), before the copy below and before anything is dialled: a
   // malformed tunnel, an engine that takes none and a tunnel with nothing to forward to are refused here, by name.
-  const tunnelDecision = decideTunnel(connection);
+  const tunnelDecision = decideTunnel(connection, engine);
   assertEgressDecided();
   if (!tunnelDecision.open) {
     return await run(connection);
@@ -1323,11 +1150,11 @@ export function findOpenSingleWriterProvider(
   for (const entry of providerCache.values()) {
     if (entry.singleWriterFile !== identity || !entry.provider.isConnected()) continue;
     // A handle of an engine that opens under a file-access posture is borrowable only by a caller of
-    // its own posture (the non-admin DuckDB file-access change). `READS_FILE_ACCESS_POSTURE`, read through
-    // `typeIdRow`, answers which engines, so this is not a `connection.type` branch (CLAUDE.md); today DuckDB
-    // and SQLite do, and of the two only DuckDB is a single-writer engine.
+    // its own posture (the non-admin DuckDB file-access change). The engine's record, its
+    // `grants.readsFileAccessPosture`, answers which engines, so this is not a `connection.type` branch (CLAUDE.md);
+    // today DuckDB and SQLite do, and of the two only DuckDB is a single-writer engine.
     if (
-      typeIdRow(GRANTED_READS_FILE_ACCESS_POSTURE, connection.type) &&
+      legacyProviderEngine(connection.type, "open").grants.readsFileAccessPosture &&
       (entry.allowExternalFileAccess === true) !== wantAccess
     ) {
       continue;
@@ -1788,18 +1615,18 @@ async function openWritable(
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539). The type
   // check comes before both: the key frames the type too, and a type that names no provider is refused by name (FND-1).
-  assertLegacyProvider(connection.type, "open");
+  const engine = legacyProviderEngine(connection.type, "open");
   assertConnectionIdPresent(connection);
-  assertProviderEnabled(connection);
-  assertReadOnlyHonoured(connection);
-  assertClaimsGranted(connection);
+  assertProviderEnabled(engine);
+  assertReadOnlyHonoured(engine, connection);
+  assertClaimsGranted(engine);
   // Ahead of the cache key, so no cached provider is handed to a record that is not plain data, and of the copy made
   // for the tunnel (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), ahead of the cache key, which frames the tunnel's route, and
   // of any bastion dial: the tunnel is opened below exactly when this answers `open`.
-  const tunnelDecision = decideTunnel(connection);
-  assertOwnerPoolHonoured(connection, execution);
+  const tunnelDecision = decideTunnel(connection, engine);
+  assertOwnerPoolHonoured(engine, execution);
   assertEgressDecided();
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
   // execution context: a readOnly reaching the provider from here would be served to every later
@@ -1851,7 +1678,7 @@ async function openWritable(
         connection,
         sized.options,
         sized.execution,
-        { cache: session.cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision },
+        { cache: session.cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision, engine },
         flight,
       ),
     wait,
@@ -1866,6 +1693,8 @@ interface EditorOpenPlan {
   readonly owner: string | undefined;
   readonly allowExternalFileAccess: boolean;
   readonly tunnelDecision: ReturnType<typeof decideTunnel>;
+  /** The engine's record, whose grant of a single-writer file the admission reads. */
+  readonly engine: EngineRecord;
 }
 
 /**
@@ -1882,7 +1711,7 @@ async function openEditorProvider(
   plan: EditorOpenPlan,
   flight: Flight<OpenMeta>,
 ): Promise<DatabaseProvider> {
-  const { cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision } = plan;
+  const { cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision, engine } = plan;
   // A single-writer engine keeps ONE writable handle per file per process. We are about to open one
   // under `cacheKey`, so a handle of THIS connection record on the SAME file under a DIFFERENT key would
   // be a second handle on one file. That happens whenever one record's key changes while its handle is
@@ -1952,11 +1781,11 @@ async function openEditorProvider(
       ...ownerContext(owner, execution),
     });
     // Cache it, remembering the file when this engine admits only one handle on it -
-    // that is what lets the callers that would otherwise open a second one find this. Which engines do is
-    // `GRANTED_SINGLE_WRITER_FILE`, Studio's grant of the claim, never the built provider's own declaration
+    // that is what lets the callers that would otherwise open a second one find this. Which engines do is the record's
+    // `grants.singleWriterFile`, Studio's grant of the claim, never the built provider's own declaration
     // (docs/providers/CONTRACT.md, clause M-57).
     const admit = () => {
-      const singleWriterFile = typeIdRow(GRANTED_SINGLE_WRITER_FILE, connection.type) ? fileIdentity(connection) : null;
+      const singleWriterFile = engine.grants.singleWriterFile ? fileIdentity(connection) : null;
       if (tunnel) tunnelProviderOpened(tunnel);
       cache.set(cacheKey, {
         provider,
@@ -2168,14 +1997,18 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
  * Refuses an agent credential in a form the engine does not take, before the provider connects. The forms are
  * `AgentCredentialForm` in `src/lib/db/types.ts`: null takes `agentUser` and `agentPassword` together, `"token"`
  * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
- * connection's own, and `"none"` takes nothing. The form is the engine's row of `GRANTED_AGENT_CREDENTIAL_FORM`
- * (./claim-grants), Studio's grant of the claim, read through `typeIdRow` and never from the built
- * provider's own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
+ * connection's own, and `"none"` takes nothing. The form is the engine's record's `grants.agentCredentialForm`,
+ * Studio's grant of the claim (for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in ./claim-grants), never
+ * the built provider's own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
  * `resolveAgentCredential` resolved, never echoed.
  */
-function assertAgentCredentialForm(connection: DatabaseConnection, password: string | undefined): void {
+function assertAgentCredentialForm(
+  engine: EngineRecord,
+  connection: DatabaseConnection,
+  password: string | undefined,
+): void {
   const { agentUser, agentPassword } = connection;
-  const form = typeIdRow(GRANTED_AGENT_CREDENTIAL_FORM, connection.type);
+  const form = engine.grants.agentCredentialForm;
   if (form === "none") {
     throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password`,
@@ -2218,14 +2051,19 @@ function assertAgentCredentialForm(connection: DatabaseConnection, password: str
 }
 
 /**
- * Refuses an agent user on an engine that refuses a user name (`REFUSED_CONNECTION_FIELDS` in ./connection-fields),
- * which the overlay in `acquireExecutionProfileProvider` therefore never writes into the connection: without this the
- * agent would sign in with its password alone and the agent user would be dropped with no error. It runs after
+ * Refuses an agent user on an engine that refuses a user name (its record's `connection.refused`, for a legacy
+ * engine its row of `REFUSED_CONNECTION_FIELDS` in ./connection-fields), which the overlay in
+ * `acquireExecutionProfileProvider` therefore never writes into the connection: without this the agent would sign in
+ * with its password alone and the agent user would be dropped with no error. It runs after
  * `assertAgentCredentialForm`, whose sentence answers first on an engine that takes the agent's token alone. It names
- * no type id: the declaration is the row's.
+ * no type id: the declaration is the record's.
  */
-function assertAgentUserTaken(connection: DatabaseConnection, credential: { readonly user?: string }): void {
-  if (credential.user === undefined || !("user" in typeIdRow(REFUSED_CONNECTION_FIELDS, connection.type))) return;
+function assertAgentUserTaken(
+  engine: EngineRecord,
+  connection: DatabaseConnection,
+  credential: { readonly user?: string },
+): void {
+  if (credential.user === undefined || !("user" in engine.connection.refused)) return;
   throw new StudioProfileRefusal(
     `Connection "${connection.id}" configures an agent user, and this engine takes no user name: clear the agent user`,
     "AGENT_CREDENTIAL_UNRESOLVABLE",
@@ -2295,18 +2133,18 @@ export async function acquireExecutionProfileProvider(
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539). The type check
   // comes before both, as in getOrCreateProvider (FND-1).
-  assertLegacyProvider(connection.type, "open");
+  const engine = legacyProviderEngine(connection.type, "open");
   assertConnectionIdPresent(connection);
-  assertProviderEnabled(connection);
-  assertReadOnlyHonoured(connection);
-  assertClaimsGranted(connection);
+  assertProviderEnabled(engine);
+  assertReadOnlyHonoured(engine, connection);
+  assertClaimsGranted(engine);
   // As in getOrCreateProvider, and ahead of the copy that carries the agent credential, which would hand the build plain
   // data (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), as in getOrCreateProvider, and ahead of the statement review
   // below, so an engine that takes no tunnel is refused for that first.
-  const tunnelDecision = decideTunnel(connection);
-  assertOwnerPoolHonoured(connection, requester);
+  const tunnelDecision = decideTunnel(connection, engine);
+  assertOwnerPoolHonoured(engine, requester);
   assertEgressDecided();
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
   const execution = executionContextFor(profile, requester);
@@ -2370,8 +2208,8 @@ export async function acquireExecutionProfileProvider(
     // A partial credential is overlaid as it stands so the provider can be built; one in a form the engine's record
     // does not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
     // (`providerFields`): an agent user on an engine that takes no user stays out of the record the build reads, so
-    // core's refusal of a field the engine refuses (`assertNoRefusedField`) never speaks for it, and the agent
-    // credential's own refusal below names it.
+    // core's refusal of a field the engine refuses (`assertOpenable` in ./open-check) never speaks for it, and the
+    // agent credential's own refusal below names it.
     const received: readonly string[] = credential ? providerFields(connection.type) : [];
     let effectiveConnection: DatabaseConnection = credential
       ? {
@@ -2411,8 +2249,8 @@ export async function acquireExecutionProfileProvider(
     }
     if (credential !== null) {
       try {
-        assertAgentCredentialForm(connection, credential.password);
-        assertAgentUserTaken(connection, credential);
+        assertAgentCredentialForm(engine, connection, credential.password);
+        assertAgentUserTaken(engine, connection, credential);
       } catch (error) {
         await releaseTunnel();
         throw error;

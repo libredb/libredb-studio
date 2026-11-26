@@ -189,8 +189,8 @@ export interface ConnectionFieldRule {
    * or null, or an empty one; a field the storage classification (`CONNECTION_FIELDS` in
    * src/lib/storage/secret-fields.ts) calls `secret` is blank, as its provider reads it, also when the value is not
    * text or holds only whitespace. Such a required secret, while `connectionFieldShown` shows it, is also refused by
-   * core, with this sentence, before the provider is built (`requiredSecretRefusal` in ./connection-field-rules), so
-   * the sentence names the field as the dialog labels it.
+   * core, with this sentence, before the provider is built (`requiredSecretOf` in ./connection-field-rules, which the
+   * open check reads over the engine's record), so the sentence names the field as the dialog labels it.
    */
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */

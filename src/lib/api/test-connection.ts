@@ -18,12 +18,8 @@ import {
   markNotSent,
   waitedSeconds,
 } from "@/lib/db/errors";
-import {
-  assertPackageOpenable,
-  type OpenedPackageSession,
-  openPackageSessionOnce,
-  teardownPackageSession,
-} from "@/lib/db/package-sessions";
+import { assertOpenable } from "@/lib/db/open-check";
+import { type OpenedPackageSession, openPackageSessionOnce, teardownPackageSession } from "@/lib/db/package-sessions";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -118,7 +114,7 @@ function testDeadlineSentence(budgetMs: number): string {
  * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-112). First,
  * before the budget starts, `connection` is read by the engine's own field rules, composed from its declaration
  * (`engine.fieldRules`), a refusal rejecting with a not-sent `DatabaseConfigError` carrying the declared sentence, and
- * then by the open checks (`assertPackageOpenable` in src/lib/db/package-sessions.ts). Then, within the engine's connect
+ * then by the one ordered open check (`assertOpenable` in src/lib/db/open-check.ts). Then, within the engine's connect
  * budget from `now`, one session opens through the package (`openPackageSessionOnce`), never cached; its health is read
  * through the host core's health call on the test's own deadline and signal (`readSessionHealthWithin`); and it is
  * closed under a cleanup context, waited for at most the teardown's close deadline, a close that fails or is cut logged
@@ -147,7 +143,7 @@ export async function testPackageConnection(
     markNotSent(refused);
     throw refused;
   }
-  assertPackageOpenable(connection, engine, execution);
+  assertOpenable(engine, connection, execution, "connect");
   const scrub = providerTextScrub(record, "any");
   const budget = packageConnectBudget(engine);
   const deadline = deadlineSignal(now + budget);

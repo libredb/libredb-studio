@@ -43,6 +43,7 @@ for (const specifier of LEGACY_MODULES) {
 
 const factory = await import("@/lib/db/factory");
 const sessions = await import("@/lib/db/package-sessions");
+const { assertOpenable } = await import("@/lib/db/open-check");
 const {
   DatabaseConfigError,
   ConnectionError,
@@ -659,7 +660,7 @@ describe("the sessions of a provider package's engine", () => {
       expect((error as Error).message).toBe(sentence);
       expect(errorOutcome(error)).toBe("not-sent");
     }
-    expect(() => sessions.assertPackageOpenable(connectionOf(MAIN), main, Object.create(ADMIN))).toThrow(
+    expect(() => assertOpenable(main, connectionOf(MAIN), Object.create(ADMIN), "connect")).toThrow(
       "The execution context must be a plain object of data fields; no provider was built.",
     );
 

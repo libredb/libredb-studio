@@ -10,7 +10,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { decideTunnel as decide } from "@/lib/db/tunnel-decision";
+import type { EngineRecord } from "@/lib/db/server-catalog";
+import { decideTunnel as decideWithRecord } from "@/lib/db/tunnel-decision";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 const REFUSED_ENGINES: readonly DatabaseType[] = [
@@ -48,6 +50,11 @@ function tunnelled(type: DatabaseType = "postgres", tunnel: Record<string, unkno
       ...tunnel,
     },
   } as DatabaseConnection;
+}
+
+/** `decideTunnel`'s answer for `connection`, read with its engine's legacy record, as the factory reads it. */
+function decide(connection: DatabaseConnection): ReturnType<typeof decideWithRecord> {
+  return decideWithRecord(connection, LEGACY_ENGINES.get(connection.type) as EngineRecord);
 }
 
 /** `decideTunnel`'s answer as one word, `none` or `open`. */

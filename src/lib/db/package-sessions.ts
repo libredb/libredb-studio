@@ -10,15 +10,10 @@
  * connection with `resolveConnection` (src/lib/seed/resolve-connection.ts), `engines` `bundled-and-package`, and calls
  * one of them.
  *
- * Before anything is read from the host, keyed or opened, `assertPackageOpenable` refuses what core cannot hand a
- * package, each as a not-sent `DatabaseConfigError`, in the order the factory checks a bundled engine: a set
- * `LIBREDB_ENABLED_PROVIDERS`, which names only bundled engines; a `readOnly` that is not a boolean, or true, since no
- * package's engine is granted the mode; a claim its grants leave refused; a connection or an execution context that is
- * not plain data, and an owner without a whole pool size; a denied file-access posture where the engine's grant refuses
- * one, so a non-admin opens no package's engine; an SSH tunnel that is on, since no tunnel path exists for a package's
- * engine; a host path field the grants name, since core admits host files only for bundled engines; then core's egress
- * decision and Studio's storage location are taken, as the factory takes them; a field the declaration refuses by name;
- * and a required secret left blank (`requiredSecretOf` in ./connection-field-rules).
+ * Before anything is read from the host, keyed or opened, the one ordered open check (`assertOpenable` in
+ * ./open-check), the check a legacy engine's build runs too, refuses what core cannot hand the package, each as a
+ * not-sent `DatabaseConfigError`, reading only the engine's record: a package's record offers no SSH tunnel and no
+ * host file, so a tunnel that is on and a host path field its grants name are refused there.
  *
  * The cache keys a session by the package's name and the frame `frameCacheKey` (./provider-cache-key) computes from the
  * connection, the engine's posture grant, the posture and the owner, which is kept unless the engine's grant keeps one
@@ -38,7 +33,6 @@
  * Module state of this copy, as the factory's caches are: each Next.js bundle that loads it keeps its own sessions.
  */
 import { callRefusalSentence, cleanupContext, deadlineSignal, type EnvReader } from "@libredb/provider-sdk/calls";
-import { storageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import { type ContractSession, openContractSession } from "@/lib/provider-host/core/contract-session";
 import {
@@ -57,16 +51,13 @@ import {
 } from "@/lib/provider-host/core/teardown";
 import { packageConnectBudget, packageEnvironment, packageOpenContext } from "@/lib/provider-host/open-context";
 import { openDeadlineSentence } from "./connect-budget";
-import { requiredSecretOf } from "./connection-field-rules";
-import { egressDecision } from "./egress-decision";
-import { enabledProviderTypes } from "./enabled-providers";
 import { errorCode, errorKind } from "./error-record";
 import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, StudioTimeoutRefusal } from "./errors";
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { frameCacheKey } from "./provider-cache-key";
-import { assertConnectionIsPlainData, assertExecutionContextIsPlainData } from "./provider-connection";
+import { assertOpenable } from "./open-check";
 import { type EngineConnection, type EngineRecord, servedPackage } from "./server-catalog";
-import type { DatabaseConnection, EditorExecutionContext } from "./types";
+import type { EditorExecutionContext } from "./types";
 
 /** A package's session the cache holds, with what its removal, sweep and calls read. */
 export interface CachedPackageSession {
@@ -102,10 +93,6 @@ const TEARDOWN_DEADLINES: TeardownDeadlines = Object.freeze({
 const OVERTAKEN_OPEN =
   "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
 
-/** The refusal of an SSH tunnel on a package's engine: no tunnel path exists for one, whatever its grant. */
-const NO_TUNNEL =
-  "This LibreDB Studio opens no SSH tunnel for an engine of a provider package, so it does not open this connection. Turn the tunnel off.";
-
 /** Strips the control characters a log line's framing is made of from a caller-supplied value. */
 const sanitize = (value: string) => value.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 
@@ -114,89 +101,6 @@ function refused(sentence: string): DatabaseConfigError {
   const error = new DatabaseConfigError(sentence);
   markNotSent(error);
   return error;
-}
-
-/** `connection` as the engine-neutral readers of its fields take it: they read no row keyed by its type. */
-function asRecord(connection: EngineConnection): DatabaseConnection {
-  return connection as unknown as DatabaseConnection;
-}
-
-/** Whether `connection` sets `field` to a value: present, and neither null nor empty. */
-function sets(connection: EngineConnection, field: string): boolean {
-  if (!Object.hasOwn(connection, field)) return false;
-  const value: unknown = Reflect.get(connection, field);
-  return value !== undefined && value !== null && value !== "";
-}
-
-/**
- * Refuses what core cannot hand `engine`'s package for `connection` under `execution`, before anything is read from the
- * host, keyed or opened; see the module's docblock for the order. Every refusal answers `outcome` `not-sent`, as every
- * refusal of a provider's build does (`buildPhase` in ./errors): nothing was opened.
- *
- * @throws {DatabaseConfigError} Not-sent, with the sentence of the first check that refuses.
- */
-export function assertPackageOpenable(
-  connection: EngineConnection,
-  engine: EngineRecord,
-  execution: EditorExecutionContext,
-): void {
-  try {
-    checkOpenable(connection, engine, execution);
-  } catch (error) {
-    markNotSent(error);
-    throw error;
-  }
-}
-
-/** The checks of `assertPackageOpenable`, in its order. */
-function checkOpenable(connection: EngineConnection, engine: EngineRecord, execution: EditorExecutionContext): void {
-  const { grants } = engine;
-  const id = sanitize(engine.id);
-  if (enabledProviderTypes() !== null) {
-    throw refused(`The ${id} provider is not available in this distribution of LibreDB Studio.`);
-  }
-  const readOnly: unknown = connection.readOnly;
-  if (readOnly !== undefined && typeof readOnly !== "boolean") throw refused("readOnly must be true or false.");
-  if (readOnly === true && !grants.readOnlyEnforced) {
-    throw refused(
-      `readOnly: true is refused for ${id}: its provider package's engine does not enforce a read-only mode in this LibreDB Studio, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
-    );
-  }
-  if (grants.ungrantedRefusals !== null) throw refused(grants.ungrantedRefusals);
-  assertConnectionIsPlainData(asRecord(connection));
-  assertExecutionContextIsPlainData(execution);
-  const max: unknown = execution.ownerPoolMax;
-  if (execution.owner !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 1)) {
-    throw refused(
-      "ownerPoolMax must be a whole number from 1 when an owner is given: it is the most connections the owner's session may open.",
-    );
-  }
-  if (grants.deniedFileAccessRefusal !== null && execution.allowExternalFileAccess === false) {
-    throw refused(grants.deniedFileAccessRefusal);
-  }
-  const tunnel: unknown = connection.sshTunnel;
-  if (tunnel !== undefined && tunnel !== null) {
-    const { enabled, host, username } = tunnel as Readonly<Record<string, unknown>>;
-    if (enabled !== false && enabled !== null && enabled !== undefined) throw refused(NO_TUNNEL);
-    // A tunnel that is off still has its route framed into the key (`tunnelRoute`), which reads both as text.
-    if (typeof host !== "string" || typeof username !== "string") {
-      throw refused("The connection's sshTunnel.host and sshTunnel.username must be text; nothing was sent.");
-    }
-  }
-  for (const field of grants.hostPathFields) {
-    if (sets(connection, field)) {
-      throw refused(
-        `This LibreDB Studio admits no host file for an engine of a provider package, so it does not hand on ${field}.`,
-      );
-    }
-  }
-  egressDecision();
-  storageLocation();
-  for (const [field, sentence] of Object.entries(engine.connection.refused)) {
-    if (sets(connection, field)) throw refused(sentence as string);
-  }
-  const secret = requiredSecretOf(engine.fieldRules, asRecord(connection));
-  if (secret !== undefined) throw refused(secret);
 }
 
 /** Logs a failure of `connectionId`'s session that no caller waits for, by its kind and code, never its text. */
@@ -372,9 +276,9 @@ async function openCached(
 }
 
 /**
- * The editor's session of `engine` for `connection`: checked (`assertPackageOpenable`), keyed, the cached one when the
- * cache holds it, else the open in flight under its key or a new one (clause C-44). With `wait`, the caller stops
- * waiting when `wait.signal` aborts, with its reason, and the open goes on and admits itself.
+ * The editor's session of `engine` for `connection`: checked (`assertOpenable` in ./open-check), keyed, the cached one
+ * when the cache holds it, else the open in flight under its key or a new one (clause C-44). With `wait`, the caller
+ * stops waiting when `wait.signal` aborts, with its reason, and the open goes on and admits itself.
  *
  * @throws {DatabaseConfigError} Not-sent, for a connection with no id or one a check refuses.
  * @throws {StudioTimeoutRefusal} Not-sent, when the engine's connect budget ended the open.
@@ -388,7 +292,7 @@ export async function getOrCreatePackageSession(
   wait?: OpenWait,
 ): Promise<CachedPackageSession> {
   if (!connection.id) throw refused("Connection ID is required");
-  assertPackageOpenable(connection, engine, execution);
+  assertOpenable(engine, connection, execution, "connect");
   const owner = engine.grants.singleWriterFile ? undefined : execution.owner;
   const allowExternalFileAccess = execution.allowExternalFileAccess === true;
   const frame = await frameCacheKey(connection, {
@@ -417,8 +321,8 @@ export async function getOrCreatePackageSession(
 
 /**
  * Opens a session of `engine` for `connection` once, never cached, for Test Connection: the open's deadline `deadline`
- * and its signal `signal` are the test's own. The caller runs `assertPackageOpenable` first, before its budget starts.
- * A stop answers the signal's reason, and a session answered after it is closed by the host core.
+ * and its signal `signal` are the test's own. The caller runs `assertOpenable` (./open-check) first, before its budget
+ * starts. A stop answers the signal's reason, and a session answered after it is closed by the host core.
  *
  * @throws The package's error by reference, marked not-sent.
  */

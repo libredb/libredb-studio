@@ -538,10 +538,10 @@ export type RefusedFieldRow = Readonly<Partial<Record<ConnectionField, string>>>
  * The fields each type's engine does not take and refuses by name, each mapped to the sentence it is refused with:
  * fields its dialog never draws, which a seed, a stored record or an embedder could still set (FND-2 slice 6c).
  * `createDatabaseProvider` refuses a connection that sets one (any value but `undefined`, `null` and `""`) with that
- * sentence, before any provider is built (`refusedFieldRefusal` in src/lib/db/provider-connection.ts), while
- * `readProviderDeclarations`, which never connects, drops it; no provider receives one (`providerFields`). Each sentence
- * is quoted in its engine's provider doc. A field is listed in the order it is checked: each engine's
- * `connection.refused`, projected from its declaration in its list order.
+ * sentence, before any provider is built (`assertOpenable` in src/lib/db/open-check.ts, which reads the row from the
+ * engine's record as `connection.refused`), while `readProviderDeclarations`, which never connects, drops it; no
+ * provider receives one (`providerFields`). Each sentence is quoted in its engine's provider doc. A field is listed in
+ * the order it is checked: each engine's `connection.refused`, projected from its declaration in its list order.
  */
 export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> = BUNDLED_REFUSED_FIELDS;
 

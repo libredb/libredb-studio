@@ -46,6 +46,7 @@ mock.module("@/lib/db/claim-grants", () => ({
 
 const { STUDIO_CLAIM_RECORDS } = realGrants;
 const { decideTunnel } = await import("@/lib/db/tunnel-decision");
+const { LEGACY_ENGINES } = await import("@/lib/provider-host/legacy-adapter/records");
 const { offersSshTunnel } = await import("@/lib/db-ui-config");
 const { providerFields } = await import("@/lib/db/provider-connection");
 const { admittedFileConnection, admittedHostPathConnection } = await import("@/lib/db/provider-files");
@@ -86,7 +87,10 @@ describe("the connection gates", () => {
         password: randomUUID(),
       },
     };
-    expect(() => decideTunnel(tunnelled)).toThrow(PLANTED_TUNNEL_REFUSAL);
+    // Core's decision reads the grant from the engine's record, here postgres's with the planted grant.
+    const postgresRecord = LEGACY_ENGINES.get("postgres") as import("@/lib/db/server-catalog").EngineRecord;
+    const planted = { ...postgresRecord, grants: { ...postgresRecord.grants, sshTunnel: PLANTED_TUNNEL_REFUSAL } };
+    expect(() => decideTunnel(tunnelled, planted)).toThrow(PLANTED_TUNNEL_REFUSAL);
     expect(offersSshTunnel("postgres")).toBe(false);
     expect(offersSshTunnel("mysql")).toBe(true);
 

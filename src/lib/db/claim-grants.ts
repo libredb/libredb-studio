@@ -19,7 +19,7 @@
  * - `singleWriterFile`, where neither value is restrictive, since a second read-write handle on a single-writer file
  *   and one handle shared between users both overreach: the row where the request equals it, false where no row exists;
  *   any other request leaves the engine refused at every open with `UNGRANTED_SINGLE_WRITER_FILE_SENTENCE`, which
- *   `UNGRANTED_CLAIM_REFUSALS` holds and the factory's `assertClaimsGranted` raises before anything is touched.
+ *   `UNGRANTED_CLAIM_REFUSALS` holds and the open check's `assertClaimsGranted` raises before anything is touched.
  * - `agentCredentialForm`, unordered: the row where the request equals it, the record's null row read as `pair`, and
  *   `none` otherwise or where no row exists. The granted table keeps the record's vocabulary, null for the pair.
  * - `maskingExemptColumns`, unordered: the row where the request equals it, column pattern and reason, and null
@@ -670,13 +670,15 @@ export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType
 
 /**
  * Which engines keep a read-only connection's promise: true exactly where the granted write reach is not `open`
- * (clause M-52), which `assertReadOnlyHonoured` in src/lib/db/factory.ts reads before anything is built or dialled.
+ * (clause M-52): each legacy engine's record holds its row as `grants.readOnlyEnforced`, which `assertReadOnlyHonoured`
+ * in src/lib/db/open-check.ts reads before anything is built or dialled.
  */
 export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readOnlyEnforced;
 
 /**
  * The sentence every open of an engine is refused with where its claims leave a refusal no grant covers, null for every
- * other engine, which `assertClaimsGranted` in src/lib/db/factory.ts reads.
+ * other engine: each legacy engine's record holds its row as `grants.ungrantedRefusals`, which `assertClaimsGranted` in
+ * src/lib/db/open-check.ts reads.
  */
 export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
 
