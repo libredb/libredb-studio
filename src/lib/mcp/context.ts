@@ -1,13 +1,14 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED, GRANTED_READ_ROOTS_REQUIRED } from "@/lib/db/claim-grants";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import { StudioProfileRefusal } from "@/lib/db/errors";
-import { assertLegacyProvider } from "@/lib/db/server-catalog";
+import { assertLegacyProvider, servedEngineRecord } from "@/lib/db/server-catalog";
 import { acquireExecutionProfileProvider, type ExecutionProfile } from "@/lib/db/factory";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseType } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { getManagedConnections, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { resolveVaultCredentials } from "@/lib/seed/credential-resolver";
@@ -100,19 +101,25 @@ async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedCo
  * Refuses a connection of an engine MCP reads only under an agent credential of the seed's own when it carries
  * neither `agentUser` nor `agentPassword`, so it is never read under its own login: the seed schema refuses such a
  * seed at load, and this is the open's own check, for a connection built in memory or loaded past the schema. One
- * that sets either field is the factory's to hold to the engine's form. Read from the registry by the connection's
- * type, never a type-id branch; the sentence names no engine. A type that is not a type id is refused through the
- * server's engine catalog (`assertLegacyProvider`) before the registry is read: a refused package's engine as
- * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError`, anything else as
- * `UnknownProviderError` (FND-1); `acquire` calls this check first, so such a connection is refused before any secret
- * is read or any provider built.
+ * that sets either field is the factory's to hold to the engine's form. Read from the connection's engine record, its
+ * `agentCredentialRequired` grant (`grantsOf`, injectable for the tests), never a type-id branch; the sentence names no
+ * engine. A type that is not a type id is refused through the server's engine catalog (`assertLegacyProvider`) before
+ * any grant is read; `acquire` calls this check first, so such a connection is refused before any secret is read or
+ * any provider built.
+ *
+ * @throws {ProviderUnavailableError} For an engine only refused provider packages name.
+ * @throws {PackageEngineUnsupportedError} For an admitted package's engine.
+ * @throws {UnknownProviderError} For a type that names no engine (FND-1).
+ * @throws {StudioProfileRefusal} `AGENT_CREDENTIAL_REQUIRED`, for a connection with no agent credential where its
+ * engine record requires one.
  */
 export function assertAgentCredentialWhereRequired(
   connection: ManagedConnection,
-  required: Readonly<Record<ManagedConnection["type"], boolean>> = GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
+  grantsOf: (type: DatabaseType) => Pick<EngineGrants, "agentCredentialRequired"> = (type) =>
+    servedEngineRecord(type).grants,
 ): void {
   assertLegacyProvider(connection.type, "open");
-  if (!required[connection.type]) return;
+  if (!grantsOf(connection.type).agentCredentialRequired) return;
   if (connection.agentUser !== undefined || connection.agentPassword !== undefined) return;
   throw new StudioProfileRefusal(
     `Connection "${connection.id}" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed.`,
@@ -123,16 +130,23 @@ export function assertAgentCredentialWhereRequired(
 /**
  * Refuses a connection of an engine MCP reads only beneath read roots its seed declares when it declares none, so it is
  * never read across the whole server: the seed schema refuses such a seed at load, and this is the open's own check,
- * for a connection built in memory or loaded past the schema. Read from the registry by the connection's type, never
- * a type-id branch. A type that is not a type id is refused through the server's engine catalog, as
- * `assertAgentCredentialWhereRequired` refuses it, before the registry is read.
+ * for a connection built in memory or loaded past the schema. Read from the connection's engine record, its
+ * `readRootsRequired` grant (`grantsOf`, injectable for the tests), never a type-id branch. A type that is not a type
+ * id is refused through the server's engine catalog, as `assertAgentCredentialWhereRequired` refuses it, before any
+ * grant is read.
+ *
+ * @throws {ProviderUnavailableError} For an engine only refused provider packages name.
+ * @throws {PackageEngineUnsupportedError} For an admitted package's engine.
+ * @throws {UnknownProviderError} For a type that names no engine (FND-1).
+ * @throws {StudioProfileRefusal} `READ_ROOTS_REQUIRED`, for a connection with no read roots where its engine record
+ * requires them.
  */
 export function assertReadRootsWhereRequired(
   connection: ManagedConnection,
-  required: Readonly<Record<ManagedConnection["type"], boolean>> = GRANTED_READ_ROOTS_REQUIRED,
+  grantsOf: (type: DatabaseType) => Pick<EngineGrants, "readRootsRequired"> = (type) => servedEngineRecord(type).grants,
 ): void {
   assertLegacyProvider(connection.type, "open");
-  if (!required[connection.type] || connection.agentReadRoots !== undefined) return;
+  if (!grantsOf(connection.type).readRootsRequired || connection.agentReadRoots !== undefined) return;
   throw new StudioProfileRefusal(
     `Connection "${connection.id}" is read by MCP only beneath read roots its seed entry declares, and it declares none: an operator sets agentReadRoots on this seed.`,
     "READ_ROOTS_REQUIRED",

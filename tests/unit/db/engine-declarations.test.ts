@@ -4002,12 +4002,16 @@ describe("the census", () => {
   });
 
   test("MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it", () => {
-    const exposure: McpExposure = {
-      executes: legacyRegisterEngines("agentExecution"),
-      exposable: declaredRecord((d) => d.mcp.exposable),
-      statementRead: declaredRecord((d) => d.mcp.statementRead),
-      language: declaredRecord((d) => d.agent.statementLanguage) as unknown as McpExposure["language"],
-    };
+    const executes = legacyRegisterEngines("agentExecution");
+    const exposable = declaredRecord((d) => d.mcp.exposable);
+    const statementRead = declaredRecord((d) => d.mcp.statementRead);
+    const statementLanguage = declaredRecord((d) => d.agent.statementLanguage);
+    const exposure: McpExposure = (type) => ({
+      agentExecution: executes.includes(type),
+      exposable: exposable[type],
+      statementRead: statementRead[type],
+      statementLanguage: statementLanguage[type] as ReturnType<McpExposure>["statementLanguage"],
+    });
     const languages = (SCHEMA.$defs.statementLanguage?.enum ?? []).filter(
       (language): language is AgentStatementLanguageId => language !== null,
     );

@@ -1,9 +1,10 @@
 /**
  * Each agent mode gate that reads a granted table answers Studio's grant of its claim, never Studio's review record of
- * it (docs/providers/CONTRACT.md, clause M-83): the agent posture, workflow availability and the MCP served set and
- * arms read the granted statement language, and the operations requirement reads the granted agent readings. The
- * engine pack resolver, the readings `inspect_operations` offers and the run ledger's reading check read the engine
- * record's grant instead, held by tests/unit/lib/agent/record-grant-readers.test.ts.
+ * it (docs/providers/CONTRACT.md, clause M-83): the agent posture and workflow availability read the granted statement
+ * language, and the operations requirement reads the granted agent readings. Those are the browser modules' tables,
+ * until M7. The engine pack resolver, the readings `inspect_operations` offers, the run ledger's reading check and the
+ * MCP served set and arms read the engine record's grant instead, held by
+ * tests/unit/lib/agent/record-grant-readers.test.ts and tests/unit/mcp/record-grant-readers.test.ts.
  *
  * Under tests/isolated because it replaces `@/lib/db/claim-grants` with `mock.module()` before it imports any gate,
  * which holds only while this file is the first in its bun process to evaluate them. The grant module is the real one
@@ -26,8 +27,6 @@ mock.module("@/lib/db/claim-grants", () => ({
 const { legacyRegisterTable } = await import("../helpers/legacy-register");
 const { agentPosture } = await import("@/lib/agent/posture");
 const { operationsWorkflowOpens, workflowAvailability } = await import("@/lib/agent/agent-manifest");
-const { mcpStatementEngines } = await import("@/lib/mcp/tools/served-engines");
-const { mcpStatementToolFor } = await import("@/lib/mcp/tools/statement-arms");
 
 describe("the agent mode gates", () => {
   test("each agent mode gate answers Studio's grant of its claim, not the record", () => {
@@ -46,10 +45,6 @@ describe("the agent mode gates", () => {
       statementLanguage: null,
       variant: null,
     });
-    // MCP serves no statement on it and names no arm for it.
-    expect(mcpStatementEngines("sql")).not.toContain("postgres");
-    expect(mcpStatementEngines("sql")).toContain("mysql");
-    expect(mcpStatementToolFor("postgres")).toBeNull();
 
     // The records hold the readings the planted grants take away.
     expect(legacyRegisterTable("agentReadings").mongodb?.length).toBeGreaterThan(0);

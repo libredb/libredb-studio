@@ -1,45 +1,39 @@
 /**
  * An engine MCP reads only under a seed's own agent credential, refused without one at load and at open.
  *
- * Studio's grant of the claim names S3 alone, whose reads run-s3-read.test.ts drives, so this file grants it to Postgres
- * in two ways, with the shipped rows unchanged. The seed schema reads the grant from the engine record the connection's
- * type names (`servedEngineRecord` in src/lib/db/server-catalog.ts), so the load case installs Studio's own catalog with
- * Postgres's record granting the claim, and forgets it before the next case. The MCP context still reads Studio's table,
- * `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` (src/lib/db/claim-grants.ts), which this file replaces, in its own process,
- * with a copy whose Postgres row the open cases set. So a refusal either one stopped making is a failure here.
+ * Studio's grant of the claim names S3 alone, whose reads run-s3-read.test.ts drives, so this file grants it to Postgres,
+ * with the shipped rows unchanged. The seed schema at load and the MCP context at open both read the grant from the
+ * engine record the connection's type names (`servedEngineRecord` in src/lib/db/server-catalog.ts), so each case that
+ * must read it installs Studio's own catalog with Postgres's record granting the claim around the step that reads it,
+ * and forgets it in `finally`. So a refusal either one stopped making is a failure here.
  *
  * The load is the seed file's: the schema refuses it by name. The open is MCP's: a connection that was loaded while the
- * row was false is still in the seed cache when the row turns true, which is a connection loaded past the schema, and
- * both tools are driven against it through /api/mcp with a token minted at run time. The Postgres open is stubbed, so
- * a refusal that came too late shows up as an open.
+ * record did not grant the claim is still in the seed cache when the record grants it, which is a connection loaded
+ * past the schema, and both tools are driven against it through /api/mcp with a token minted at run time. The Postgres
+ * open is stubbed, so a refusal that came too late shows up as an open.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DatabaseType } from "@/lib/types";
-import * as realGrants from "@/lib/db/claim-grants";
+import * as route from "@/app/api/mcp/route";
+import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
+import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { SeedConfigSchema } from "@/lib/seed/types";
+import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
+import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { connectClient, routeServe } from "../../helpers/mcp-harness";
+import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
-const required: Record<DatabaseType, boolean> = { ...realGrants.GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED };
-
-mock.module("@/lib/db/claim-grants", () => ({ ...realGrants, GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: required }));
-
-const route = await import("@/app/api/mcp/route");
-const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
-const { SeedConfigSchema } = await import("@/lib/seed/types");
-const { forgetServerCatalog, installServerCatalog, serverCatalogInstalled } = await import("@/lib/db/server-catalog");
-const { composeServerCatalog } = await import("@/lib/db/server-catalog-compose");
-const { withEngineRecord } = await import("../../helpers/package-catalog");
-const { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import("../../helpers/mcp-fixtures");
-const { connectClient, routeServe } = await import("../../helpers/mcp-harness");
-const { mintTestToken, useMcpChannel } = await import("../../helpers/mcp-token");
+/** Studio's own catalog with Postgres's record granting the claim. */
+const requiredOnPostgres = () => craftedCatalog({ postgres: { agentCredentialRequired: true } });
 
 pinMcpTestEnvironment();
 
@@ -85,7 +79,6 @@ afterEach(async () => {
   await session?.close();
   session = null;
   for (const spy of spies.splice(0)) spy.mockRestore();
-  required.postgres = false;
   process.env.SEED_CACHE_TTL_MS = "0";
   restoreChannel();
   await resetMcpTestState();
@@ -96,21 +89,12 @@ afterAll(() => {
 });
 
 describe("an engine the registry reads only under an agent credential", () => {
-  test("refuses the seed file at load, by name, at mcp", () => {
+  test("refuses the seed file at load, by name, at mcp", async () => {
     const path = seedWithoutAgentCredential();
-    const catalog = withEngineRecord(
-      composeServerCatalog([], [], realGrants.STUDIO_GRANT_REGISTER),
-      "postgres",
-      (engine) => ({ ...engine, grants: Object.freeze({ ...engine.grants, agentCredentialRequired: true }) }),
-    );
 
-    installServerCatalog(catalog);
-    let parsed: ReturnType<typeof SeedConfigSchema.safeParse>;
-    try {
-      parsed = SeedConfigSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-    } finally {
-      forgetServerCatalog();
-    }
+    const parsed = await withCatalog(requiredOnPostgres(), () =>
+      SeedConfigSchema.safeParse(JSON.parse(readFileSync(path, "utf8"))),
+    );
 
     expect(serverCatalogInstalled()).toBe(false);
 
@@ -136,9 +120,11 @@ describe("an engine the registry reads only under an agent credential", () => {
     const listed = await call("list_connections", {});
     expect(JSON.stringify(listed)).toContain("seed:warehouse");
 
-    required.postgres = true;
-    const inspected = await call("inspect_schema", { connection_id: "seed:warehouse" });
-    const read = await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" });
+    const [inspected, read] = await withCatalog(requiredOnPostgres(), async () => [
+      await call("inspect_schema", { connection_id: "seed:warehouse" }),
+      await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" }),
+    ]);
+    expect(serverCatalogInstalled()).toBe(false);
 
     expect(inspected).toMatchObject({ isError: true, content: [{ type: "text", text: refusal }] });
     expect(read.isError).toBe(true);

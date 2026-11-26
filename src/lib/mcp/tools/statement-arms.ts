@@ -14,8 +14,7 @@ import {
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { assertDatabaseType } from "@/lib/db/type-id";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";
 import type { McpReach } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
@@ -260,39 +259,46 @@ export function listedStatementArms(
 }
 
 /**
- * The arm that serves `type`, or null where no statement tool serves it.
+ * The arm that serves `type`, or null where no statement tool serves it: the arm of the statement language `type`'s
+ * engine record grants, where that arm's served set holds `type`.
  *
- * @throws {UnknownProviderError} When `type` is not a type id (FND-1), so no language row is read for it.
+ * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
-  assertDatabaseType(type);
-  const language = GRANTED_AGENT_STATEMENT_LANGUAGE[type];
+  const language = servedEngineRecord(type).grants.statementLanguage;
   const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
   return arm !== null && arm.types.includes(type) ? arm : null;
 }
 
 /**
- * The tool that runs a statement on `type`, or null where no statement tool serves it and inspect_schema is the read. A
- * `type` that is not a type id is refused with `UnknownProviderError` (FND-1).
+ * The tool that runs a statement on `type`, or null where no statement tool serves it and inspect_schema is the read.
+ *
+ * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null {
   return servingArmFor(type)?.tool ?? null;
 }
 
 /**
- * Whether list_connections leaves `type`'s database setting out of a connection's row: true where the arm its language
- * declares, serving or not, says that setting is a stored value. A `type` that is not a type id is refused with
- * `UnknownProviderError` (FND-1).
+ * Whether list_connections leaves `type`'s database setting out of a connection's row: true where the arm of the
+ * statement language its engine record grants, serving or not, says that setting is a stored value.
+ *
+ * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function mcpWithholdsDatabase(type: DatabaseType): boolean {
-  assertDatabaseType(type);
-  const language = GRANTED_AGENT_STATEMENT_LANGUAGE[type];
+  const language = servedEngineRecord(type).grants.statementLanguage;
   return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
 }
 
 /**
  * The statement tool inspect_schema sends `type` to, when the arm that serves it holds no table, or null where
- * inspect_schema reads it. A `type` that is not a type id is refused with `UnknownProviderError` (FND-1).
+ * inspect_schema reads it.
+ *
+ * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function mcpTablelessReadTool(type: DatabaseType): McpStatementTool | null {
   const arm = servingArmFor(type);

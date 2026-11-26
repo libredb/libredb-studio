@@ -1,7 +1,8 @@
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { GRANTED_DENIED_FILE_ACCESS_REFUSAL } from "@/lib/db/claim-grants";
-import { legacyProviderRefusal } from "@/lib/db/server-catalog";
+import type { EngineGrants } from "@/lib/db/claim-grants";
+import { legacyProviderRefusal, servedEngineRecord } from "@/lib/db/server-catalog";
 import type { ManagedConnection } from "@/lib/seed";
+import type { DatabaseType } from "@/lib/types";
 import type { McpCaller } from "./context";
 
 /**
@@ -14,11 +15,11 @@ import type { McpCaller } from "./context";
  * and the open agree. It builds no provider and reads no Vault reference.
  *
  * A connection whose type is not a type id has no row to read: it answers the server's engine catalog's refusal
- * (`legacyProviderRefusal` in src/lib/db/server-catalog.ts) before any table or posture is read, the type id refusal's
+ * (`legacyProviderRefusal` in src/lib/db/server-catalog.ts) before any grant or posture is read, the type id refusal's
  * own sentence for a type that names no provider this Studio has (FND-1), the sentence naming the refusal codes for an
  * engine only refused provider packages name, and the open's sentence for an admitted package's engine (C-107).
- * Otherwise the engine's row is read first, so only an engine that refuses a denied handle asks for a posture. That
- * sentence names no engine, as `list_connections` serves every engine.
+ * Otherwise the `deniedFileAccessRefusal` grant of the connection's engine record is read first, so only an engine that
+ * refuses a denied handle asks for a posture. That sentence names no engine, as `list_connections` serves every engine.
  */
 
 /** What `list_connections` lists and `inspect_schema` answers for a connection no MCP open can serve for its caller. */
@@ -27,16 +28,18 @@ export const MCP_CONNECTION_UNAVAILABLE_TEXT =
 
 /**
  * The server catalog's refusal sentence when `connection`'s type is not a type id; the sentence when its engine refuses a handle
- * opened with file access denied and `caller`'s posture on that record denies it; otherwise null. `refuses` is
- * injectable for the tests.
+ * opened with file access denied and `caller`'s posture on that record denies it; otherwise null. `grantsOf`, the
+ * reader of an engine's grants, defaults to the engine record's (`servedEngineRecord`) and is injectable for the tests.
+ * It throws nothing: a refusal is answered as its sentence.
  */
 export function mcpConnectionUnavailable(
   caller: McpCaller,
   connection: ManagedConnection,
-  refuses: Readonly<Record<ManagedConnection["type"], string | null>> = GRANTED_DENIED_FILE_ACCESS_REFUSAL,
+  grantsOf: (type: DatabaseType) => Pick<EngineGrants, "deniedFileAccessRefusal"> = (type) =>
+    servedEngineRecord(type).grants,
 ): string | null {
   const refusal = legacyProviderRefusal(connection.type, "open");
   if (refusal !== null) return refusal.message;
-  if (refuses[connection.type] === null) return null;
+  if (grantsOf(connection.type).deniedFileAccessRefusal === null) return null;
   return editorExecutionContext(caller, connection).allowExternalFileAccess ? null : MCP_CONNECTION_UNAVAILABLE_TEXT;
 }

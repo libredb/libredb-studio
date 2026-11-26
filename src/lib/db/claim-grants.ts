@@ -845,8 +845,8 @@ export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | 
 
 /**
  * Studio's grant of `agent.statementLanguage`: the language agent mode sends the engine, or null where it sends none.
- * The agent posture, workflow availability, the agent rail and the MCP served set and arms read it; the classify route
- * and the engine pack resolver read the engine record's `grants.statementLanguage`.
+ * The agent posture, workflow availability and the agent rail read it; the classify route, the engine pack resolver and
+ * the MCP served set and arms read the engine record's `grants.statementLanguage`.
  */
 export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, StatementLanguage>> =
   BUNDLED_GRANTS.statementLanguage;
@@ -868,11 +868,11 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  *
  * Every agent and MCP statement gate reads the same grant at run time, and an engine it does not grant is refused by
  * name, whatever its provider implements: the start of a statement-sending agent run (`workflowAvailability`,
- * `src/lib/agent/agent-manifest.ts`) and MCP's served set (`src/lib/mcp/tools/served-engines.ts`) read this list; the
- * factory's `agent-read-only` and `agent-handover` acquisition and the core read path every agent, hand-over and MCP
- * read-only statement passes (`runReadOnlyReading`; plan mode's statistics read under `agent-operations` does not)
- * read the engine record's `grants.agentExecution`, both through `assertStatementsReviewed`
- * (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`). A provider's read-only statement path is a second
+ * `src/lib/agent/agent-manifest.ts`) reads this list; the factory's `agent-read-only` and `agent-handover` acquisition
+ * and the core read path every agent, hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's
+ * statistics read under `agent-operations` does not), both through `assertStatementsReviewed`
+ * (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`), and MCP's served set
+ * (`src/lib/mcp/tools/served-engines.ts`) read the engine record's `grants.agentExecution`. A provider's read-only statement path is a second
  * precondition, required and never enough: an engine on the list whose provider has no `queryReadOnly` is still refused
  * `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
  *
