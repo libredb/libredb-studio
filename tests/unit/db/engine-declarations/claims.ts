@@ -24,8 +24,8 @@ export const SEGMENT_CLAIMS: readonly string[] = Object.freeze([
  * The confirmation gate's claims a declaration authors (docs/providers/CONTRACT.md, clauses M-52 and S-8): a declared
  * `readsSqlText: false`, and each exempt form of the grammar's `confirmExemptForms`. Both are members of the SQL text's
  * authored members, every other reader of which reads them as declared, so they are not in `SEGMENT_CLAIMS`: the gate
- * counts each only where Studio's review record, `CONFIRMATION_CLAIM_REVIEW`, lists it, and reads any other as if the
- * declaration had not made it. tests/unit/db/engine-declaration-readers.test.ts holds that they are the only authored
+ * counts each only where Studio grants it from the engine's register row for the grammar that row reviewed, and reads
+ * any other as if the declaration had not made it. tests/unit/db/engine-declaration-readers.test.ts holds that they are the only authored
  * claims and that only the SQL text's modules read them.
  */
 export const CONFIRMATION_GATE_CLAIMS: readonly string[] = Object.freeze([

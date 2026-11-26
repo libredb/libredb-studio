@@ -1297,12 +1297,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/isolated/sql-text-claim-grants.test.ts": [
         "each SQL text gate answers Studio's grant of its claim from the register, not the record or the declaration",
       ],
-      "tests/unit/lib/db/confirmation-claim-review.test.ts": [
-        "lists every exempt form a shipped grammar row declares, and no other",
-        "lists every text-not-sql claim a shipped grammar row makes, and no other",
+      "tests/unit/db/grant-register-legacy-rows.test.ts": [
+        "each legacy row's confirmation claims are the ones its engine's shipped rows make: text-not-SQL exactly where its declaration states readsSqlText false, its declaration's exempt forms, and decides-alone exactly where its statement vocabulary row decides alone, each with a one-sentence review note",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
-        "the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine",
+        "each declaration's SQL text claims are its legacy row's: readsSqlText, the exempt forms, the redaction and the grammar's SHA-256",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
         "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id",

@@ -624,15 +624,6 @@ const CLAIM_DESTINATION =
   /^engine declaration: [\w.]+, the engine's request, which this table grants as Studio's review record of the claim$/;
 
 /**
- * The confirmation gate's review record (docs/providers/CONTRACT.md, clause M-52): a list keyed by a claim's kind, its
- * engine and an exempt form's words rather than a table over the type ids, so the inventory does not list it, and this
- * guard holds it beside the inventory's claim records.
- */
-const CONFIRMATION_RECORDS: readonly CoreRecord[] = [
-  { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW" },
-];
-
-/**
  * Why each of `records` is not written by hand, read from the module text `files` holds for it: its initializer, seen
  * through parentheses, `as`, `satisfies` and `Object.freeze`, must be a literal, a list or a record of them, or the
  * name of a module-level `const` of its own module written the same way. A call, an imported binding, a function, a
@@ -856,12 +847,13 @@ describe("engine declaration readers", () => {
     const claimRecords = (inventory: readonly InventoryEntry[]) =>
       inventory.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
     const records = claimRecords(ENGINE_TABLE_INVENTORY);
-    const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
+    const modules = [...new Set(records.map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    // No claim table is left in the inventory: the confirmation gate's review record is the one claim record in core.
+    // No claim table is left in the inventory, and no other claim record is left in core: the confirmation gate's
+    // claims are each engine's register row's.
     expect(records).toEqual([]);
-    expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
+    expect(computedClaimRecords(files, records)).toEqual([]);
     // Vacuity: a claim table planted in the inventory is found by its destination.
     const plantedTable = { module: "src/lib/db/planted-claims.ts", name: "LITERAL", destination: claim("policy") };
     expect(claimRecords([...ENGINE_TABLE_INVENTORY, plantedTable])).toEqual([plantedTable]);

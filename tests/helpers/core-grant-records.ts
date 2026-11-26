@@ -20,7 +20,6 @@ export const CLAIM_GRANTS = "src/lib/db/claim-grants.ts";
 
 /** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
 export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW", removedBy: { item: 4 } },
   {
     module: CLAIM_GRANTS,
     name: "GRANTED_WRITE_REACH",
