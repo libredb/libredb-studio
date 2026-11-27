@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -71,12 +71,18 @@ afterAll(() => {
 });
 
 /**
- * A provider of `engine` that answers every read empty and lists one object of `listedKind`, so a planning run is
- * grounded.
+ * A provider of `engine` that answers `capabilities`, answers every read empty and lists one object of `listedKind`, so
+ * a planning run is grounded.
  */
-function providerDouble(engine: DatabaseType, listedKind: string): DatabaseProvider {
+function providerDouble(
+  engine: DatabaseType,
+  capabilities: ProviderCapabilities,
+  listedKind: string,
+): DatabaseProvider {
   return {
     type: engine,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     listContainers: async () => [],
     countObjects: async () => ({ [listedKind]: { count: 1 } }),
@@ -128,7 +134,7 @@ async function systemPromptOf(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => providerDouble(engine, listed.id),
+      acquireProvider: async () => providerDouble(engine, capabilities, listed.id),
     },
   });
   const [first] = script.turns;

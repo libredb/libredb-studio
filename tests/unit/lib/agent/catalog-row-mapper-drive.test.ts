@@ -122,6 +122,8 @@ async function drive(
   const sent: string[] = [];
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     queryReadOnly: async (sql: string): Promise<QueryResult> => {
       sent.push(sql);
       return sql === ENGINE_CATALOG

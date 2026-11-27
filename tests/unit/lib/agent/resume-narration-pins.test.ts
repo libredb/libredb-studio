@@ -92,6 +92,8 @@ async function drive(
   const [listed] = declared.capabilities.objectKinds ?? [];
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => declared.capabilities,
     queryReadOnly: async (): Promise<QueryResult> => ({
       rows: [{ n: 1 }],
       fields: ["n"],
