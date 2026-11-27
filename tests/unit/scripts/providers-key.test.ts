@@ -16,6 +16,7 @@ import path from "node:path";
 import { PROVIDER_CONTRACT } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { build } from "esbuild";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import { declaredLanguageDataRequest, declaredSqlTextRequest } from "@/lib/db/server-catalog-compose";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { contractRefusal, schemaRefusal } from "@/lib/provider-host/provider-refusals";
@@ -167,8 +168,8 @@ describe("the key command", () => {
 
   test("a null sqlText or statementLanguageData prints null for its digest", async () => {
     // The out-of-tree fixture, built with the options of its own build (tests/fixtures/out-of-tree-provider/build.mjs),
-    // against the workspace's SDK rather than a packed one, and placed as the pack step places it: its sqlText and
-    // statementLanguageData are both null.
+    // against the workspace's SDK rather than a packed one, and placed as the pack step places it: its sqlText is null,
+    // and its statementLanguageData, its own language, has the digest the composer computes from it.
     const fixture = readFixture(FIXTURE, (file) => fs.readFileSync(file, "utf8"));
     const providers = freshProviders();
     const artifact = artifactDirectoryOf(providers, fixture);
@@ -187,9 +188,16 @@ describe("the key command", () => {
     });
     const fixtureManifest = admitted(JSON.parse(fs.readFileSync(path.join(FIXTURE, MANIFEST_FILE_NAME), "utf8")));
     const fixtureKeys = composerKeys(fixtureManifest);
+    const fixtureLanguage = (fixtureManifest.engines[0] as ProviderManifest["engines"][number]).statementLanguageData;
+    expect(fixtureLanguage).not.toBeNull();
     expect(fixtureKeys).toEqual([
-      { engine: (fixture.engines[0] as { id: string }).id, grammarSha256: null, languageSha256: null },
+      {
+        engine: (fixture.engines[0] as { id: string }).id,
+        grammarSha256: null,
+        languageSha256: languageDataSha256(fixtureLanguage as NonNullable<typeof fixtureLanguage>),
+      },
     ]);
+    expect(fixtureKeys[0]?.languageSha256).toMatch(/^[0-9a-f]{64}$/);
     const digest = lockedDigest(providers);
     const run = runKey("--dir", artifact);
     expect([run.exitCode, run.stderr]).toEqual([0, ""]);

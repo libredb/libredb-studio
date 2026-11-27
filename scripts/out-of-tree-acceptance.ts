@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
 /**
- * The out-of-tree provider acceptance (issue #2520, owner decision G): a provider written outside the repository,
- * built against the packed SDK alone, is admitted by a built Studio with no change to Studio's files; its engine
- * answers a statement through Studio's API with the provider's rows; and one changed byte of the installed package is
- * refused at the next boot while Studio keeps running.
+ * The out-of-tree provider acceptance (issues #2520 and #2622, owner decision G): a provider written outside the
+ * repository, built against the packed SDK alone, is admitted by a built Studio with no change to Studio's files; its
+ * engine answers a statement through Studio's API with the provider's rows; the text bound of the statement language
+ * the provider states as data refuses a longer statement before it is sent; and one changed byte of the installed
+ * package is refused at the next boot while Studio keeps running.
  *
  * The provider is the fixture under tests/fixtures/out-of-tree-provider/, a template that is copied and never imported
  * or built in place. This script holds no knowledge of it: the engine id, the package identity, the connection, the
- * statements and the rows each statement must answer are read from the fixture's package.json, its manifest and its
- * acceptance.json, so step 7 can assert that no engine id of the fixture is named under Studio's source, this script
- * included.
+ * statements and the rows each statement must answer, the statement language's name and text bound, and the
+ * statements at and over that bound are read from the fixture's package.json, its manifest and its acceptance.json, so
+ * step 8 can assert that neither an engine id of the fixture nor its language's name is named under Studio's source,
+ * this script included.
  *
- * The eight steps, each asserting its own output, so a missing provider can never pass as "no rows":
+ * The nine steps, each asserting its own output, so a missing provider can never pass as "no rows":
  * 1. Build Studio's standalone output (`DOCKER_BUILD=true bun run build`, credentials for build-time page data drawn
  *    at run time), or take an existing one with `--standalone <dir>`; assert its server.js and .next and print its
  *    BUILD_ID.
@@ -40,12 +42,23 @@
  *    request that sends no confirmation field and marks its answer unconfirmed. The statement acceptance.json lists as
  *    refused, which the fixture refuses in its own words, is answered with Studio's sentence naming its code and holds
  *    none of the package's words (clause C-112).
- * 6. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
+ * 6. Start the server again on a data directory of its own, sign in, save the connection, and send the two statements
+ *    of acceptance.json's `textBound`: first one a byte over the text bound the fixture's own statement language
+ *    states (`confirmation.maxTextBytes` of the engine's `statementLanguageData`), then one at the bound. No register
+ *    row names the fixture, so its language is granted nothing, but the query route reads the bound from the engine
+ *    record's language row whatever its grants. Assert that the statement over the bound is answered 413 with the
+ *    sentence acceptance.json names, which names the bound and the size, with no rows and none of the statement's
+ *    words, and that the statement at the bound answers its rows marked unconfirmed. Then, once the server stopped and
+ *    its output is complete, assert that it logged the confirmation gate's line for a statement run unconfirmed
+ *    (`STUDIO.unconfirmedRunLine`) exactly once for the engine, the statement at the bound's: the statement over it
+ *    never reached the gate, so it never reached the package.
+ * 7. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
- *    PROVIDER_UNAVAILABLE for the save and the statement.
- * 7. Assert `git status --porcelain` is empty and that no engine id of the fixture appears, in any letter case, in a
- *    file under src, bin, scripts or vscode-extension/src (the isolation ratchet's core roots) or packages.
- * 8. Run the build output check (scripts/check-build-output.ts) over the standalone and <tmp>/provider, the package
+ *    PROVIDER_UNAVAILABLE for the save and the statement. It runs after every step that needs the admitted package.
+ * 8. Assert `git status --porcelain` is empty and that neither an engine id of the fixture nor its statement
+ *    language's name appears, in any letter case, in a file under src, bin, scripts or vscode-extension/src (the
+ *    isolation ratchet's core roots) or packages.
+ * 9. Run the build output check (scripts/check-build-output.ts) over the standalone and <tmp>/provider, the package
  *    the pack step packed: no file under the standalone's .next or node_modules equals a file of the package's source
  *    or of a driver it declares, or holds its name. Then assert that no file under .next, the server's build output,
  *    equals a fixture file or holds the package name, an engine id as a quoted literal or an engine's display name.
@@ -58,7 +71,7 @@
  * unpinned code, and reproduces without a network. Whether the SDK's declared range resolves from a public registry
  * is a publishing concern this run does not prove.
  *
- * The working tree must be clean before step 1, so step 7 measures this run alone: a dirty tree is refused by name
+ * The working tree must be clean before step 1, so step 8 measures this run alone: a dirty tree is refused by name
  * before the build. The temporary root, created under the system temporary directory, must lie outside the
  * repository with no node_modules above it, so nothing resolves from Studio's install. Its layout: sdk/ (the SDK
  * tarball), deps/ (the closure's tarballs), npm/ (npm's cache, configs and HOME), provider/ (the copied fixture and
@@ -79,13 +92,13 @@
  *
  * Output: one line per step, `ok   step N <title>: <evidence>` or `FAIL step N <title>: <reason>` followed by the
  * captured output, and no later step. A pass removes the temporary root and ends with
- * `out-of-tree acceptance passed: 8 of 8 steps`, exit 0; a failure keeps the root, prints its path, and exits 1.
+ * `out-of-tree acceptance passed: 9 of 9 steps`, exit 0; a failure keeps the root, prints its path, and exits 1.
  *
  * CI runs it in the "Out-of-tree Provider Acceptance" job of .github/workflows/ci.yml against the engine smoke
  * payload, extracted under the runner's temporary directory. Its logic is held by
  * tests/unit/scripts/out-of-tree-acceptance.test.ts.
  *
- * Local run, from a clean tree (one Next.js build and two server starts):
+ * Local run, from a clean tree (one Next.js build and three server starts):
  *   heavy bun scripts/out-of-tree-acceptance.ts [--standalone <dir>]
  */
 import { type ChildProcess, spawn } from "node:child_process";
@@ -123,9 +136,10 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
 /**
  * Studio's side of the run, every interface the run relies on in one place: the pack step, the lock command's wrapper
  * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's
- * variable, the refusal and answer codes, the session cookie, the admin's sign-in and the routes. The predicates beside
- * it (`refusalLines`, `unavailableProblems`, `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`,
- * `saveProblems`) read the answers.
+ * variable, the refusal and answer codes, the session cookie, the admin's sign-in, the routes, and the line the
+ * confirmation gate logs for each statement it lets run unconfirmed. The predicates beside it (`refusalLines`,
+ * `unavailableProblems`, `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`,
+ * `textBoundProblems`, `gateLineProblems`) read the answers and the server's output.
  */
 export const STUDIO = Object.freeze({
   packScript: "scripts/providers-pack.ts",
@@ -140,6 +154,7 @@ export const STUDIO = Object.freeze({
   unsupported: "PACKAGE_ENGINE_UNSUPPORTED",
   sessionCookie: SESSION_COOKIE,
   adminEmail: "admin@libredb.org",
+  unconfirmedRunLine: "A statement that needs a confirmation ran without one",
   coreRoots: Object.freeze(["src", "bin", "scripts", "vscode-extension/src"]),
   routes: Object.freeze({
     health: "/health",
@@ -213,13 +228,14 @@ export function platformProblem(platform: string): string | null {
 // ---------------------------------------------------------------------------------------------------------------------
 // The steps and their run.
 
-/** The issue's eight steps, in order. */
+/** The acceptance's nine steps, in order. */
 export const STEP_TITLES = Object.freeze([
   "build Studio's standalone output",
   "pack the SDK",
   "pack the fixture provider outside the repository against the packed SDK",
   "lock the provider package with the Node.js lock module",
   "query the fixture engine through Studio's API",
+  "refuse a statement over the text bound of the fixture's own statement language",
   "refuse the tampered package at the next boot",
   "the repository is unchanged and names no fixture engine",
   "Studio's build holds none of the fixture's source",
@@ -244,11 +260,11 @@ export class StepError extends Error {
   }
 }
 
-/** The problems with a step list: anything but the issue's eight steps, numbered 1 to 8, in order, with their titles. */
+/** The problems with a step list: anything but the acceptance's steps, numbered from 1, in order, with their titles. */
 export function stepListProblems(steps: readonly Pick<Step, "number" | "title">[]): string[] {
   const problems: string[] = [];
   if (steps.length !== STEP_TITLES.length) {
-    problems.push(`the run holds ${steps.length} steps, not the issue's ${STEP_TITLES.length}`);
+    problems.push(`the run holds ${steps.length} steps, not the acceptance's ${STEP_TITLES.length}`);
   }
   steps.forEach((step, index) => {
     const title = STEP_TITLES[index];
@@ -278,7 +294,7 @@ function failureOf(error: unknown): { message: string; output: string } {
 
 /**
  * Runs `steps` in order, stopping at the first that throws or answers no evidence, then runs the cleanup; answers
- * the exit code, 0 only when all eight passed. A list that is not the issue's eight steps runs none of them.
+ * the exit code, 0 only when every step passed. A list that is not the acceptance's steps runs none of them.
  */
 export async function runSteps(steps: readonly Step[], io: RunIo): Promise<number> {
   const listProblems = stepListProblems(steps);
@@ -337,11 +353,22 @@ export interface Refusal {
   readonly sentence: string;
 }
 
-/** The fixture as the run reads it: its package identity, its engines, its bundle's path and its expectations. */
+/** The statement one byte over the language's text bound, and the sentence Studio refuses it with. */
+export interface OverBound {
+  readonly statement: string;
+  readonly sentence: string;
+}
+
+/**
+ * The fixture as the run reads it: its package identity, its engines, its statement language's name and text bound,
+ * its bundle's path and its expectations.
+ */
 export interface Fixture {
   readonly name: string;
   readonly version: string;
   readonly engines: readonly { readonly id: string; readonly displayName: string }[];
+  /** The engine's own statement language: its `statementLanguageData` name and `confirmation.maxTextBytes`. */
+  readonly language: { readonly name: string; readonly maxTextBytes: number };
   /** The manifest's `runtime.entry`, where the bundle is written. */
   readonly entry: string;
   readonly acceptance: {
@@ -351,6 +378,8 @@ export interface Fixture {
     readonly connection: Readonly<Record<string, unknown>>;
     readonly statements: readonly Expectation[];
     readonly refused: Refusal;
+    /** Step 6's statements: one at the language's text bound, which answers, and one a byte over it, refused. */
+    readonly textBound: { readonly atBound: Expectation; readonly overBound: OverBound };
   };
 }
 
@@ -371,26 +400,80 @@ function jsonObject(text: string, file: string): Record<string, unknown> {
   return value;
 }
 
+/** One statement of acceptance.json, `where` naming it, with at least one row of its columns' length. */
+function expectation(item: unknown, where: string): Expectation {
+  if (!isRecord(item) || !isText(item.statement)) throw new Error(`${where} has no statement text`);
+  const { columns, rows } = item;
+  if (!Array.isArray(columns) || columns.length === 0 || !columns.every(isText)) {
+    throw new Error(`${where} names no columns`);
+  }
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error(`${where} expects no row`);
+  rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row) || row.length !== columns.length) {
+      throw new Error(`${where} row ${rowIndex + 1} does not hold one value for each of its ${columns.length} columns`);
+    }
+  });
+  return { statement: item.statement, columns, rows };
+}
+
 /** The statements of acceptance.json, each with at least one row of its columns' length. */
 function expectations(value: unknown, file: string): Expectation[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`${file} holds no statement`);
-  return value.map((item, index) => {
-    const where = `${file} statement ${index + 1}`;
-    if (!isRecord(item) || !isText(item.statement)) throw new Error(`${where} has no statement text`);
-    const { columns, rows } = item;
-    if (!Array.isArray(columns) || columns.length === 0 || !columns.every(isText)) {
-      throw new Error(`${where} names no columns`);
-    }
-    if (!Array.isArray(rows) || rows.length === 0) throw new Error(`${where} expects no row`);
-    rows.forEach((row, rowIndex) => {
-      if (!Array.isArray(row) || row.length !== columns.length) {
-        throw new Error(
-          `${where} row ${rowIndex + 1} does not hold one value for each of its ${columns.length} columns`,
-        );
-      }
-    });
-    return { statement: item.statement, columns, rows };
-  });
+  return value.map((item, index) => expectation(item, `${file} statement ${index + 1}`));
+}
+
+/** The size of `text` in UTF-8 bytes, as the query route counts a statement against its language's text bound. */
+const utf8Bytes = (text: string): number => Buffer.byteLength(text, "utf8");
+
+/**
+ * Step 6's statements of acceptance.json, refused when step 6 could prove nothing with them: an at-bound statement
+ * that is no expectation or whose UTF-8 size is not `bound`; an over-bound statement with no statement or sentence
+ * text, whose UTF-8 size is not one more than `bound`, whose UTF-16 length is over `bound` (a route counting UTF-16
+ * units would refuse it alike, so it could not tell bytes from units), or whose sentence does not name the size and
+ * the bound as whole numbers.
+ */
+function textBound(value: unknown, bound: number, file: string): Fixture["acceptance"]["textBound"] {
+  if (!isRecord(value)) throw new Error(`${file} holds no textBound object`);
+  const atBound = expectation(value.atBound, `${file} textBound.atBound`);
+  const atBytes = utf8Bytes(atBound.statement);
+  if (atBytes !== bound) {
+    throw new Error(`${file} textBound.atBound is ${atBytes} bytes in UTF-8, not the language's bound of ${bound}`);
+  }
+  const over = value.overBound;
+  const where = `${file} textBound.overBound`;
+  if (!isRecord(over) || !isText(over.statement)) throw new Error(`${where} has no statement text`);
+  if (!isText(over.sentence)) throw new Error(`${where} has no sentence text`);
+  const overBytes = utf8Bytes(over.statement);
+  if (overBytes !== bound + 1) {
+    throw new Error(`${where} is ${overBytes} bytes in UTF-8, not one more than the language's bound of ${bound}`);
+  }
+  if (over.statement.length > bound) {
+    throw new Error(
+      `${where} is ${over.statement.length} UTF-16 units, over the bound of ${bound}, so it cannot tell UTF-8 bytes from UTF-16 units`,
+    );
+  }
+  const words = wordsOf(over.sentence);
+  if (!words.includes(String(bound + 1)) || !words.includes(String(bound))) {
+    throw new Error(`${where}'s sentence does not name ${bound + 1} and ${bound} as whole numbers`);
+  }
+  return { atBound, overBound: { statement: over.statement, sentence: over.sentence } };
+}
+
+/**
+ * The engine's own statement language: its `statementLanguageData` name and the text bound its confirmation part
+ * states, refused when there is none, since step 6 proves nothing without them.
+ */
+function languageOf(engine: Record<string, unknown>, manifestFile: string): Fixture["language"] {
+  const data = engine.statementLanguageData;
+  if (!isRecord(data) || !isText(data.name)) {
+    throw new Error(`${manifestFile} states no statement language data with a name, so step 6 proves nothing`);
+  }
+  const confirmation = data.confirmation;
+  const maxTextBytes = isRecord(confirmation) ? confirmation.maxTextBytes : undefined;
+  if (typeof maxTextBytes !== "number" || !Number.isInteger(maxTextBytes) || maxTextBytes <= 0) {
+    throw new Error(`${manifestFile}'s statement language ${data.name} states no text bound, so step 6 proves nothing`);
+  }
+  return { name: data.name, maxTextBytes };
 }
 
 /**
@@ -450,6 +533,7 @@ export function readFixture(directory: string, read: (file: string) => string): 
   }
   const runtime = manifest.runtime;
   if (!isRecord(runtime) || !isText(runtime.entry)) throw new Error(`${manifestFile} names no runtime.entry`);
+  const language = languageOf(engine, manifestFile);
 
   const acceptanceFile = path.join(directory, "acceptance.json");
   const acceptance = jsonObject(read(acceptanceFile), acceptanceFile);
@@ -461,12 +545,14 @@ export function readFixture(directory: string, read: (file: string) => string): 
     name: pkg.name,
     version: pkg.version,
     engines: [{ id: engine.id, displayName: engine.displayName }],
+    language,
     entry: runtime.entry,
     acceptance: {
       entrySource: acceptance.entrySource,
       connection: acceptance.connection,
       statements,
       refused: refusal(acceptance.refused, statements, acceptanceFile),
+      textBound: textBound(acceptance.textBound, language.maxTextBytes, acceptanceFile),
     },
   };
 }
@@ -806,6 +892,49 @@ export function refusedProblems(answer: Answer, refused: Refusal): string[] {
   return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
 }
 
+/**
+ * The problems with the answer to the statement one byte over the language's text bound, refused before it is sent:
+ * the status 413, the sentence acceptance.json names exactly, a sentence naming the bound as a whole word, no rows,
+ * and none of the statement's own words anywhere in the body, each key and value read word by word.
+ */
+export function textBoundProblems(answer: Answer, overBound: OverBound, bound: number): string[] {
+  const quoted = "the statement over the bound answered";
+  const problems: string[] = [];
+  if (answer.status !== 413) problems.push(`${quoted} ${answer.status}, not 413`);
+  if (answer.body.error !== overBound.sentence) {
+    problems.push(
+      `${quoted} the sentence ${JSON.stringify(answer.body.error)}, not Studio's sentence naming the bound`,
+    );
+  }
+  if (!wordsOf(String(answer.body.error ?? "")).includes(String(bound))) {
+    problems.push(`${quoted} a sentence naming no bound of ${bound} bytes`);
+  }
+  if (answer.body.rows !== undefined) problems.push(`${quoted} rows`);
+  const answered = new Set(textsOf(answer.body).flatMap(wordsOf));
+  const own = [...new Set(wordsOf(overBound.statement))].filter((word) => answered.has(word));
+  if (own.length > 0) problems.push(`${quoted} its own words: ${own.join(", ")}`);
+  return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
+}
+
+/**
+ * The problems with step 6's server output, read complete once the server stopped: the confirmation gate's line for a
+ * statement run unconfirmed (`STUDIO.unconfirmedRunLine`), logged with the context key `type=<engine id>`, must appear
+ * exactly once for `engineId`, the statement at the bound's. A second line means the statement over the bound reached
+ * the gate, and so the package; none means the statement at the bound never did.
+ */
+export function gateLineProblems(output: string, engineId: string): string[] {
+  const engine = new RegExp(`[{,\\s]type=${escapeRegExp(engineId)}[,}]`);
+  const count = output
+    .split("\n")
+    .filter((line) => line.includes(STUDIO.unconfirmedRunLine) && engine.test(line)).length;
+  if (count === 1) return [];
+  return [
+    count === 0
+      ? `the statement at the bound never reached the confirmation gate: the server logged no "${STUDIO.unconfirmedRunLine}" for ${engineId}`
+      : `the statement over the bound reached the confirmation gate: the server logged "${STUDIO.unconfirmedRunLine}" ${count} times for ${engineId}, not once for the statement at the bound`,
+  ];
+}
+
 /** The lines of `output` refusing package `name` `version` with `code`, or with any PROVIDER_ code when null. */
 export function refusalLines(output: string, code: string | null, name: string, version: string): string[] {
   const pattern = new RegExp(
@@ -821,7 +950,7 @@ export function porcelainProblems(stdout: string): string[] {
 }
 
 /**
- * The files step 8's own scan reads: every regular file under the standalone's .next. A link there is judged by the
+ * The files step 9's own scan reads: every regular file under the standalone's .next. A link there is judged by the
  * build output check's rule over the trees that check reads, the standalone's .next and node_modules: Turbopack's
  * hashed alias of an external package, `.next/node_modules/<package>-<hash>`, points into node_modules, which the build
  * output check run first in the same step reads, so it is accepted and not followed; a link leaving both, or dangling,
@@ -831,7 +960,7 @@ export function buildScanFiles(standalone: string): string[] {
   return regularFiles(path.join(standalone, ".next"), { within: standaloneTrees(standalone) });
 }
 
-/** The roots step 7 scans for the fixture's engine ids, relative to the repository root. */
+/** The roots step 8 scans for the fixture's engine ids and its statement language's name, relative to the repository root. */
 export const NAMING_SCAN_ROOTS: readonly string[] = Object.freeze([...STUDIO.coreRoots, "packages"]);
 
 /** Every regular file under each of `NAMING_SCAN_ROOTS` in `repositoryRoot`, as `regularFiles` lists them. */
@@ -994,7 +1123,7 @@ export function lockSpec(input: {
   );
 }
 
-/** Step 8's build output check over `standalone` and `provider`, the package the pack step packed. */
+/** Step 9's build output check over `standalone` and `provider`, the package the pack step packed. */
 export function buildCheckSpec(input: {
   readonly standalone: string;
   readonly provider: string;
@@ -1296,17 +1425,25 @@ async function signIn(server: Server, secret: string): Promise<string> {
   return sessionCookie(answer.status, answer.setCookies);
 }
 
-/** Runs `work` on a server started with `env`, always stopping it; a failure carries the server's output. */
+/**
+ * Runs `work` on a server started with `env`, always stopping it. When `stopped` is given, it then judges the work's
+ * answer and the server's output, complete once the server exited, and answers in its place. A failure of either
+ * carries the server's output.
+ */
 async function withServer<T>(
   standalone: string,
   env: Record<string, string>,
   port: number,
   work: (server: Server) => Promise<T>,
+  stopped?: (answer: T, output: string) => T,
 ): Promise<T> {
   const server = startServer(standalone, env, port);
   try {
     await ready(server);
-    return await work(server);
+    const answer = await work(server);
+    if (stopped === undefined) return answer;
+    await stopServer(server);
+    return stopped(answer, server.output());
   } catch (error) {
     const { message, output } = failureOf(error);
     throw new StepError(
@@ -1325,7 +1462,7 @@ function assertNone(problems: readonly string[], output = ""): void {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The eight steps.
+// The nine steps.
 
 /** What the steps share: where the run works, what the caller gave and what each step leaves for the next. */
 interface Context {
@@ -1590,6 +1727,40 @@ async function queryEngine(ctx: Context): Promise<string> {
   });
 }
 
+/** A statement as step 6's evidence prints it: its text trimmed, and its size in UTF-8 bytes and UTF-16 units. */
+const sizeOf = (statement: string): string =>
+  `"${statement.trim()}" padded to ${utf8Bytes(statement)} UTF-8 bytes (${statement.length} UTF-16 units)`;
+
+async function refuseOverBound(ctx: Context): Promise<string> {
+  const { fixture } = ctx;
+  const { language } = fixture;
+  const { atBound, overBound } = fixture.acceptance.textBound;
+  const engine = (fixture.engines[0] as Fixture["engines"][number]).id;
+  const standalone = earlier(ctx.standalone, "a standalone build");
+  const port = await freePort();
+  return withServer(
+    standalone,
+    bootEnvironment(ctx, "language-boot", port),
+    port,
+    async (server) => {
+      const cookie = await signIn(server, ctx.credentials.adminPassword);
+      const connection = connectionOf(ctx);
+      assertNone(saveProblems(await postJson(server, STUDIO.routes.save, { connection }, cookie)));
+      // Over the bound first: the statement at the bound then shows the connection still answers after the refusal.
+      const over = await postJson(server, STUDIO.routes.query, { connection, sql: overBound.statement }, cookie);
+      assertNone(textBoundProblems(over, overBound, language.maxTextBytes));
+      const at = await postJson(server, STUDIO.routes.query, { connection, sql: atBound.statement }, cookie);
+      assertNone(rowsProblems(at, atBound));
+      assertNone(unconfirmedProblems(at, atBound));
+      return `language ${language.name} bounds a statement at ${language.maxTextBytes} UTF-8 bytes on engine ${engine}: ${sizeOf(overBound.statement)} -> ${over.status} ${JSON.stringify(over.body)}; ${sizeOf(atBound.statement)} -> ${JSON.stringify(at.body.rows)}, ${String(at.body.confirmation)}`;
+    },
+    (evidence, output) => {
+      assertNone(gateLineProblems(output, engine));
+      return `${evidence}; once the server stopped, its output held 1 "${STUDIO.unconfirmedRunLine}" line for ${engine}, the statement at the bound's`;
+    },
+  );
+}
+
 async function refuseTampered(ctx: Context): Promise<string> {
   const { fixture } = ctx;
   const standalone = earlier(ctx.standalone, "a standalone build");
@@ -1634,12 +1805,12 @@ async function repositoryUnchanged(ctx: Context): Promise<string> {
     ),
   );
   assertNone(porcelainProblems(status.stdout));
-  const ids = ctx.fixture.engines.map((engine) => engine.id);
+  const names = [...ctx.fixture.engines.map((engine) => engine.id), ctx.fixture.language.name];
   const files = namingScanFiles(REPO_ROOT);
   if (files.length === 0) throw new Error(`no file under ${NAMING_SCAN_ROOTS.join(", ")}`);
-  const naming = filesNaming(files, ids, (file) => readFileSync(file, "utf8"));
-  assertNone(naming.map((file) => `${path.relative(REPO_ROOT, file)} names ${ids.join(" or ")}`));
-  return `git status --porcelain is empty; none of ${files.length} files under ${NAMING_SCAN_ROOTS.join(", ")} names ${ids.join(", ")}`;
+  const naming = filesNaming(files, names, (file) => readFileSync(file, "utf8"));
+  assertNone(naming.map((file) => `${path.relative(REPO_ROOT, file)} names ${names.join(" or ")}`));
+  return `git status --porcelain is empty; none of ${files.length} files under ${NAMING_SCAN_ROOTS.join(", ")} names ${names.join(", ")}`;
 }
 
 async function buildHoldsNoFixture(ctx: Context): Promise<string> {
@@ -1665,7 +1836,7 @@ async function buildHoldsNoFixture(ctx: Context): Promise<string> {
   return `${outputLines(checked.stdout).join("; ")}; and none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
 }
 
-/** The issue's eight steps over `ctx`. */
+/** The acceptance's nine steps over `ctx`. */
 function buildSteps(ctx: Context): Step[] {
   const runs = [
     buildStandalone,
@@ -1673,6 +1844,7 @@ function buildSteps(ctx: Context): Step[] {
     packProvider,
     lockProvider,
     queryEngine,
+    refuseOverBound,
     refuseTampered,
     repositoryUnchanged,
     buildHoldsNoFixture,
@@ -1717,7 +1889,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   );
   const dirty = status.exitCode === 0 ? porcelainProblems(status.stdout) : [`git status exited ${status.exitCode}`];
   if (dirty.length > 0) {
-    console.error(`refused before the build: ${dirty.join("; ")}; step 7 asserts the run changes nothing`);
+    console.error(`refused before the build: ${dirty.join("; ")}; step 8 asserts the run changes nothing`);
     return 1;
   }
 

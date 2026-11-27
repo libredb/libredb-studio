@@ -1282,13 +1282,15 @@ jobs:
 
   # A provider written outside the repository, built against the packed SDK
   # alone, is admitted by the built standalone server with no change to
-  # Studio's files: it answers a statement through the API, and one changed
-  # byte of it is refused at the next boot (scripts/out-of-tree-acceptance.ts,
-  # issue #2520). It is built by its own build through the pack step and
-  # locked by the lock module under Node.js, and its step 8 runs the build
-  # output check over the payload. The payload is downloaded and extracted
-  # under the runner's temporary directory, outside the checkout, because the
-  # script's step 7 asserts that the checkout is unchanged. After bun install
+  # Studio's files: it answers a statement through the API, a statement over
+  # the text bound of the statement language it states is refused before it
+  # is sent, and one changed byte of it is refused at the next boot
+  # (scripts/out-of-tree-acceptance.ts, issues #2520 and #2622). It is built
+  # by its own build through the pack step and locked by the lock module
+  # under Node.js, and its build output step runs the build output check over
+  # the payload. The payload is downloaded and extracted under the runner's
+  # temporary directory, outside the checkout, because the script's clean-tree
+  # step asserts that the checkout is unchanged. After bun install
   # nothing reaches a registry: the SDK's dependencies are packed from this
   # checkout's install and npm installs offline. A required check on main.
   out-of-tree-acceptance:

@@ -20,6 +20,8 @@ import {
   GRANT_REGISTER_DIRECTORY,
   GRANT_REGISTER_FILE,
   type Io,
+  LANGUAGE_MACHINERY_MODULES,
+  LANGUAGE_SCHEMA_FILE,
   LINE_GATES,
   main,
   type Measurement,
@@ -725,6 +727,105 @@ describe("statement languages", () => {
       expect({ file, lines: measured.baseline.counters[SINGLE_LANGUAGE] }).toEqual({ file, lines: 0 });
     }
     expect(measureFiles({ "src/lib/x.ts": 'a = "kafkaread";\n' }).baseline.counters[SINGLE_LANGUAGE]).toBe(0);
+  });
+});
+
+describe("the language machinery report", () => {
+  const MACHINERY = "statementLanguages.machineryLines";
+  /** The seven modules, the first with no final newline: 2 lines, then 2, 3, 4, 5, 6 and 7, so 29 in all. */
+  const MODULES: Files = Object.fromEntries(
+    LANGUAGE_MACHINERY_MODULES.map((file, index) => [file, index === 0 ? "a\nb" : "a\n".repeat(index + 1)]),
+  );
+  /**
+   * The language root references `statementLanguageData`, which references `a` and `b`; `b` references `a` and itself;
+   * `c` is referenced only by another member of the engine declaration, so it is no language definition.
+   */
+  const DEFINITIONS = {
+    engineDeclaration: {
+      type: "object",
+      properties: {
+        statementLanguageData: { $ref: "#/$defs/statementLanguageData" },
+        id: { $ref: "#/$defs/c" },
+      },
+    },
+    statementLanguageData: { anyOf: [{ type: "null" }, { $ref: "#/$defs/a" }, { $ref: "#/$defs/b" }] },
+    a: { type: "string" },
+    b: { type: "object", properties: { x: { $ref: "#/$defs/a" }, self: { $ref: "#/$defs/b" } } },
+    c: { type: "integer" },
+  };
+  const schema = (definitions: Record<string, unknown>, space: number | undefined = 2): Files => ({
+    [LANGUAGE_SCHEMA_FILE]: `${JSON.stringify({ $defs: definitions }, null, space)}\n`,
+  });
+  /** The lines of a definition as the report counts them: printed by JSON.stringify at indent 2. */
+  const printed = (value: unknown): number => JSON.stringify(value, null, 2).split("\n").length;
+
+  test("the language machinery report counts the engine-neutral language modules and the SDK's language schema", () => {
+    expect(LANGUAGE_MACHINERY_MODULES).toEqual([
+      "src/lib/agent/languages/declared-client.ts",
+      "src/lib/agent/languages/declared-mcp.ts",
+      "src/lib/agent/languages/declared-server.ts",
+      "src/lib/db/operations/declared-request-form.ts",
+      "src/lib/db/operations/declared-language-read.ts",
+      "src/lib/db/statement-language-row.ts",
+      "src/lib/db/language-digest.ts",
+    ]);
+    expect(LANGUAGE_SCHEMA_FILE).toBe("packages/provider-sdk/src/manifest/manifest.schema.json");
+    expect(REPORT_COUNTERS.indexOf(MACHINERY)).toBe(REPORT_COUNTERS.indexOf("languages.lines") + 1);
+    expect(GATE_COUNTERS.map((counter) => counter.name)).not.toContain(MACHINERY);
+
+    const measured = measureFiles({ ...MODULES, ...schema(DEFINITIONS) });
+    // The three reachable definitions print as 13, 3 and 11 lines; the modules hold 29.
+    expect([printed(DEFINITIONS.statementLanguageData), printed(DEFINITIONS.a), printed(DEFINITIONS.b)]).toEqual([
+      13, 3, 11,
+    ]);
+    expect(measured.report[MACHINERY]).toBe(29 + 13 + 3 + 11);
+    // The schema file's own layout does not count: its definitions are counted as printed at indent 2.
+    expect(measureFiles({ ...MODULES, ...schema(DEFINITIONS, undefined) }).report[MACHINERY]).toBe(56);
+    // The report counts no file a gate counts, and moves no gate counter.
+    expect(measured.baseline.counters["statementLanguages.lines"]).toBe(0);
+    expect(compareWithBaseline(measureFiles({}).baseline, measured.baseline)).toEqual([]);
+
+    // A planted module line moves it by one.
+    const firstModule = LANGUAGE_MACHINERY_MODULES[0];
+    const planted = measureFiles({ ...MODULES, [firstModule]: "a\nb\nc", ...schema(DEFINITIONS) });
+    expect(planted.report[MACHINERY]).toBe(57);
+    // A planted line in a reachable definition moves it; a change to an unreachable one does not.
+    const reachable = { ...DEFINITIONS, a: { type: "string", description: "x" } };
+    expect(measureFiles({ ...MODULES, ...schema(reachable) }).report[MACHINERY]).toBe(57);
+    const unreachable = { ...DEFINITIONS, c: { type: "integer", minimum: 0, description: "y" } };
+    expect(measureFiles({ ...MODULES, ...schema(unreachable) }).report[MACHINERY]).toBe(56);
+
+    // A tree holding none of the eight files reports 0.
+    expect(measureFiles({}).report[MACHINERY]).toBe(0);
+  });
+
+  test("a tree holding only some of the language machinery files, or a schema whose language root or a reference is missing, is refused by name", () => {
+    const lastModule = LANGUAGE_MACHINERY_MODULES.at(-1) as string;
+    const withoutLast = Object.fromEntries(Object.entries(MODULES).filter(([file]) => file !== lastModule));
+    expect(() => measureFiles({ ...withoutLast, ...schema(DEFINITIONS) })).toThrow(
+      `the language machinery files ${lastModule} are missing while the tree holds the others, so the language machinery report cannot be counted`,
+    );
+    expect(() => measureFiles(MODULES)).toThrow(
+      `the language machinery files ${LANGUAGE_SCHEMA_FILE} are missing while the tree holds the others, so the language machinery report cannot be counted`,
+    );
+    expect(() => measureFiles({ ...MODULES, [LANGUAGE_SCHEMA_FILE]: "{ not json\n" })).toThrow(
+      `${LANGUAGE_SCHEMA_FILE} is not JSON: `,
+    );
+    const noRoot = {
+      ...DEFINITIONS,
+      engineDeclaration: { type: "object", properties: { id: { $ref: "#/$defs/c" } } },
+    };
+    expect(() => measureFiles({ ...MODULES, ...schema(noRoot) })).toThrow(
+      `${LANGUAGE_SCHEMA_FILE} holds no $defs.engineDeclaration.properties.statementLanguageData, the root of the language definitions`,
+    );
+    const absent = { ...DEFINITIONS, b: { type: "object", properties: { x: { $ref: "#/$defs/absent" } } } };
+    expect(() => measureFiles({ ...MODULES, ...schema(absent) })).toThrow(
+      `${LANGUAGE_SCHEMA_FILE}: the language definitions reference #/$defs/absent, which the schema does not define`,
+    );
+    const otherForm = { ...DEFINITIONS, a: { $ref: "other.json#/x" } };
+    expect(() => measureFiles({ ...MODULES, ...schema(otherForm) })).toThrow(
+      `${LANGUAGE_SCHEMA_FILE}: the language definitions hold the reference "other.json#/x", not one of the form #/$defs/<name>`,
+    );
   });
 });
 

@@ -1,11 +1,11 @@
 /**
  * The out-of-tree acceptance (scripts/out-of-tree-acceptance.ts) without a server: its command line, its run of the
- * issue's eight steps, its checks over captured output, the children it starts, the fixture provider it packs
+ * acceptance's nine steps, its checks over captured output, the children it starts, the fixture provider it packs
  * (tests/fixtures/out-of-tree-provider/) and the CI job that runs it.
  *
  * The script's IO (spawning, fetching) is exercised by the "Out-of-tree Provider Acceptance" job itself; scripts/ is
- * outside the merged coverage gate, so these tests are what hold the script's logic. The fixture's engine id is read
- * from its manifest and never spelled here.
+ * outside the merged coverage gate, so these tests are what hold the script's logic. The fixture's engine id and its
+ * statement language's name are read from its manifest and never spelled here.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -36,6 +36,7 @@ import {
   type Expectation,
   type Fixture,
   filesNaming,
+  gateLineProblems,
   installedSdkProblems,
   lockOutputProblems,
   NAMING_SCAN_ROOTS,
@@ -59,6 +60,7 @@ import {
   stepListProblems,
   tamperedBundle,
   temporaryRootProblems,
+  textBoundProblems,
   unavailableProblems,
   unconfirmedProblems,
   unsupportedProblems,
@@ -89,7 +91,10 @@ const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
  * session cookie's value is drawn at run time. `refusedBody` is the answer to acceptance.json's refused statement, as
  * step 5's evidence printed it in a green local run of the script on 2026-11-27. `lockStdout`'s lock line is the one
  * step 4's evidence printed in a green local run of the script on 2026-11-27, once a package's digest listed no file
- * mode.
+ * mode. `overBoundBody` and `unconfirmedRunLine` were captured by a probe on 2026-11-27 against the engine smoke payload
+ * of main ac11692ae, with the fixture stating its own statement language: the answer to a console statement one byte
+ * over the language's text bound, and the line the confirmation gate logged for each statement it let run unconfirmed;
+ * step 6's evidence printed both in a green local run of the script on the same day.
  */
 const SAMPLES = {
   lockStdout: (lockFile: string): string =>
@@ -123,6 +128,10 @@ const SAMPLES = {
     code: "INTERNAL_ERROR",
     statusCode: 500,
   },
+  overBoundBody: {
+    error: "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
+  },
+  unconfirmedRunLine: `[WARN ] [2026-11-27T17:49:47.998Z] {route=api/db/query, type=${engineId}, user=admin@libredb.org} A statement that needs a confirmation ran without one`,
   unknownBody: {
     error: `No provider for the connection type "${engineId}" is installed in this LibreDB Studio.`,
     code: "PROVIDER_UNKNOWN",
@@ -132,7 +141,7 @@ const SAMPLES = {
   },
 } as const;
 
-/** Eight steps that each answer `evidence(n)`, recording the order they ran in. */
+/** The acceptance's steps, each answering `evidence(n)`, recording the order they ran in. */
 function fakeSteps(ran: number[], answer: (n: number) => Promise<string> = async (n) => `evidence ${n}`): Step[] {
   return STEP_TITLES.map((title, index) => ({
     number: index + 1,
@@ -194,14 +203,14 @@ describe("the out-of-tree acceptance's command line", () => {
 });
 
 describe("the out-of-tree acceptance's run", () => {
-  test("runs the eight steps in order, printing each step's evidence, and passes only when all eight passed", async () => {
+  test("runs the nine steps in order, printing each step's evidence, and passes only when all nine passed", async () => {
     const ran: number[] = [];
     const { code, lines } = await run(fakeSteps(ran));
     expect(code).toBe(0);
-    expect(ran).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ran).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(lines).toEqual([
       ...STEP_TITLES.map((title, index) => `ok   step ${index + 1} ${title}: evidence ${index + 1}`),
-      "out-of-tree acceptance passed: 8 of 8 steps",
+      "out-of-tree acceptance passed: 9 of 9 steps",
     ]);
   });
 
@@ -217,7 +226,7 @@ describe("the out-of-tree acceptance's run", () => {
     expect(lines).toContain(`FAIL step 4 ${STEP_TITLES[3]}: the lock command exited 1`);
     expect(lines.join("\n")).toContain("Script not found");
     expect(lines.some((line) => line.includes("step 5"))).toBe(false);
-    expect(lines.at(-1)).toBe("out-of-tree acceptance failed at step 4 of 8");
+    expect(lines.at(-1)).toBe("out-of-tree acceptance failed at step 4 of 9");
   });
 
   test("fails a step that answers no evidence, so no step passes without asserting something", async () => {
@@ -226,6 +235,18 @@ describe("the out-of-tree acceptance's run", () => {
     expect(code).toBe(1);
     expect(ran).toEqual([1, 2]);
     expect(lines).toContain(`FAIL step 2 ${STEP_TITLES[1]}: the step asserted nothing`);
+  });
+
+  test("a leg whose evidence is empty fails by name", async () => {
+    const ran: number[] = [];
+    const { code, lines, cleanups } = await run(fakeSteps(ran, async (n) => (n === 6 ? "" : `evidence ${n}`)));
+    expect(STEP_TITLES[5]).toBe("refuse a statement over the text bound of the fixture's own statement language");
+    expect(code).toBe(1);
+    expect(ran).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(lines).toContain(`FAIL step 6 ${STEP_TITLES[5]}: the step asserted nothing`);
+    expect(lines.some((line) => line.includes("step 7"))).toBe(false);
+    expect(lines.at(-1)).toBe("out-of-tree acceptance failed at step 6 of 9");
+    expect(cleanups).toEqual([false]);
   });
 
   test("runs the cleanup after a pass, after a failure and after a step that throws", async () => {
@@ -241,10 +262,12 @@ describe("the out-of-tree acceptance's run", () => {
     expect(thrown.lines).toContain(`FAIL step 6 ${STEP_TITLES[5]}: boom`);
   });
 
-  test("is the issue's eight steps, numbered 1 to 8 in order, and a list that is not is refused before any step runs", async () => {
-    expect(STEP_TITLES).toHaveLength(8);
+  test("is the acceptance's nine steps, numbered 1 to 9 in order, and a list that is not is refused before any step runs", async () => {
+    expect(STEP_TITLES).toHaveLength(9);
     expect(STEP_TITLES[2]).toBe("pack the fixture provider outside the repository against the packed SDK");
     expect(STEP_TITLES[3]).toBe("lock the provider package with the Node.js lock module");
+    expect(STEP_TITLES[5]).toBe("refuse a statement over the text bound of the fixture's own statement language");
+    expect(STEP_TITLES[6]).toBe("refuse the tampered package at the next boot");
     expect(stepListProblems(fakeSteps([]))).toEqual([]);
 
     const ran: number[] = [];
@@ -261,8 +284,8 @@ describe("the out-of-tree acceptance's run", () => {
     const retitled = fakeSteps([]);
     retitled[6] = { number: 7, title: "anything", run: (retitled[6] as Step).run };
     expect(stepListProblems(retitled)).not.toEqual([]);
-    const extra = [...fakeSteps([]), { number: 9, title: "a ninth step", run: async () => "seen" }];
-    expect(stepListProblems(extra).join(" ")).toContain("9 steps");
+    const extra = [...fakeSteps([]), { number: 10, title: "a tenth step", run: async () => "seen" }];
+    expect(stepListProblems(extra).join(" ")).toContain("10 steps");
   });
 });
 
@@ -319,7 +342,7 @@ describe("the out-of-tree fixture", () => {
     expect(validator.validate(manifest)).toMatchObject({ admitted: true });
   });
 
-  test("its manifest requests every claim at its restrictive value but the two the SDK refuses at it for an engine with no agent credential and no seed-only field", () => {
+  test("its manifest requests every claim at its restrictive value but those the SDK refuses at it for an engine with no agent credential and no seed-only field, or that its statement language's agent part requires", () => {
     const manifest = JSON.parse(manifestText) as Record<string, unknown>;
     const at = (pointer: string): unknown =>
       pointer
@@ -342,8 +365,12 @@ describe("the out-of-tree fixture", () => {
       "/engines/0/connection/agentCredential": null,
       "/engines/0/connection/seedOnly": null,
       "/engines/0/facets/agentReadings": [],
-      "/engines/0/agent/statementLanguage": null,
-      "/engines/0/agent/overlay": null,
+      // Forced by the statement language's agent part (below): the engine speaks the language it states.
+      "/engines/0/agent/statementLanguage": fixture.language.name,
+      "/engines/0/agent/overlay": { dialect: null, grounding: null },
+      "/engines/0/statementLanguageData/confirmation/safetyAnalysis": false,
+      // What the language is: its reads name no operation. With no register row it is read at its restrictive value.
+      "/engines/0/statementLanguageData/confirmation/decidesAlone": true,
       // No SQL text: Studio reads every SQL text claim at its restrictive value (S-3).
       "/engines/0/sqlText": null,
       "/engines/0/safeguards/writePaths/editor/reach": "open",
@@ -373,6 +400,42 @@ describe("the out-of-tree fixture", () => {
     };
     forced("policy", "readRootsRequired", "read-roots-field-undeclared", "/engines/0/policy/readRootsRequired");
     forced("mcp", "agentCredentialRequired", "agent-credential-form-missing", "/engines/0/mcp/agentCredentialRequired");
+
+    // The agent claims are forced by the language's agent part: unspoken, or with no overlay, it is refused.
+    const agentRefused = (agent: Record<string, unknown>, rule: string, pointer: string) => {
+      const changed = JSON.parse(manifestText) as { engines: Record<string, unknown>[] };
+      const engine = changed.engines[0] as Record<string, unknown>;
+      engine.agent = { ...(engine.agent as Record<string, unknown>), ...agent };
+      const verdict = validator.validate(changed);
+      expect(verdict.admitted).toBe(false);
+      if (!verdict.admitted) expect(verdict.refusals).toContainEqual(expect.objectContaining({ rule, pointer }));
+    };
+    agentRefused(
+      { statementLanguage: null, overlay: null },
+      "statement-language-agent-unspoken",
+      "/engines/0/statementLanguageData/agent",
+    );
+    agentRefused({ overlay: null }, "agent-overlay-missing", "/engines/0/agent/overlay");
+  });
+
+  test("its statement language names no engine: no word of its data is an engine id of Studio's or the fixture's", () => {
+    const engine = (JSON.parse(manifestText) as { engines: Record<string, unknown>[] }).engines[0] as Record<
+      string,
+      unknown
+    >;
+    const data = engine.statementLanguageData as { name: string };
+    expect(data.name).toBe(fixture.language.name);
+    const declared = readdirSync(path.join(ROOT, "src", "lib", "db", "engine-declarations"))
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => path.basename(file, ".json"));
+    const packaged = readdirSync(path.join(ROOT, "packages"))
+      .filter((directory) => directory.startsWith("provider-") && directory !== "provider-sdk")
+      .map((directory) => directory.slice("provider-".length));
+    const ids = [...declared, ...packaged, engineId].map((id) => id.toLowerCase());
+    expect(declared.length).toBeGreaterThan(10);
+    const words = new Set(wordsOf(JSON.stringify(data)));
+    expect(ids.filter((id) => words.has(id))).toEqual([]);
+    expect(ids).not.toContain(fixture.language.name.toLowerCase());
   });
 
   test("its manifest states no SQL-family member: sqlText, sqlWriting, migrationDdl and sqlGenerators are null", () => {
@@ -389,13 +452,14 @@ describe("the out-of-tree fixture", () => {
     }
   });
 
-  test("its engine id is named in no file under src, bin, scripts, vscode-extension/src or packages", () => {
+  test("its engine id and its statement language's name are named in no file under src, bin, scripts, vscode-extension/src or packages", () => {
     const ids = fixture.engines.map((engine) => engine.id);
     expect(ids.length).toBeGreaterThan(0);
+    expect(fixture.language.name).not.toBe("");
     expect(NAMING_SCAN_ROOTS).toEqual([...STUDIO.coreRoots, "packages"]);
     const files = namingScanFiles(ROOT);
     expect(files.length).toBeGreaterThan(1000);
-    expect(filesNaming(files, ids, readText)).toEqual([]);
+    expect(filesNaming(files, [...ids, fixture.language.name], readText)).toEqual([]);
   });
 
   test("its entry imports only the SDK's calls subpath and its own manifest", () => {
@@ -462,6 +526,106 @@ describe("the out-of-tree fixture", () => {
     const first = (fixture.acceptance.statements[0] as Expectation).statement;
     expect(withRefused({ statement: first })).toThrow(
       `acceptance.json refused statement "${first}" is one of its statements, which answer rows`,
+    );
+  });
+
+  test("the statements at and over the text bound are a statement of acceptance.json padded, which the fixture's provider reads trimmed", () => {
+    const { textBound, statements } = fixture.acceptance;
+    const padded = textBound.atBound.statement.trim();
+    const expected = statements.find((item) => item.statement === padded);
+    if (expected === undefined) throw new Error(`no statement of acceptance.json is "${padded}"`);
+    expect(textBound.overBound.statement.trim()).toBe(padded);
+    expect(textBound.atBound.statement).not.toBe(padded);
+    expect({ columns: textBound.atBound.columns, rows: textBound.atBound.rows }).toEqual({
+      columns: expected.columns,
+      rows: expected.rows,
+    });
+    expect(readText(path.join(FIXTURE, fixture.acceptance.entrySource))).toContain("request.statement.trim()");
+  });
+
+  test("the text bound leg is read from acceptance.json and the manifest's language, and one step 6 could prove nothing with is refused", () => {
+    const bound = fixture.language.maxTextBytes;
+    const { atBound, overBound } = fixture.acceptance.textBound;
+    expect(Number.isInteger(bound) && bound > 0).toBe(true);
+    const files: Record<string, string> = {
+      "package.json": readText(path.join(FIXTURE, "package.json")),
+      "libredb-provider.json": manifestText,
+      "acceptance.json": readText(path.join(FIXTURE, "acceptance.json")),
+    };
+    const manifest = JSON.parse(manifestText) as { engines: Record<string, unknown>[] };
+    const acceptance = JSON.parse(files["acceptance.json"] as string) as Record<string, unknown>;
+    const reading = (overrides: Record<string, string>) => () =>
+      readFixture("/fixture", (file) => {
+        const text = { ...files, ...overrides }[path.basename(file)];
+        if (text === undefined) throw new Error(`no ${file}`);
+        return text;
+      });
+    const withLanguage = (language: unknown) =>
+      reading({
+        "libredb-provider.json": JSON.stringify({
+          ...manifest,
+          engines: [{ ...manifest.engines[0], statementLanguageData: language }],
+        }),
+      });
+    const data = (manifest.engines[0] as { statementLanguageData: Record<string, unknown> }).statementLanguageData;
+    const withBound = (maxTextBytes: unknown) =>
+      withLanguage({ ...data, confirmation: { ...(data.confirmation as object), maxTextBytes } });
+    const withTextBound = (textBound: unknown) =>
+      reading({ "acceptance.json": JSON.stringify({ ...acceptance, textBound }) });
+    const withAt = (members: Record<string, unknown>) =>
+      withTextBound({ atBound: { ...atBound, ...members }, overBound });
+    const withOver = (members: Record<string, unknown>) =>
+      withTextBound({ atBound, overBound: { ...overBound, ...members } });
+    const padded = atBound.statement.trim();
+    const ascii = (bytes: number) => `${padded}${" ".repeat(bytes - padded.length)}`;
+
+    expect(reading({})().acceptance.textBound).toEqual({ atBound, overBound });
+    expect(reading({})().language).toEqual({ name: fixture.language.name, maxTextBytes: bound });
+
+    for (const language of [null, {}, { ...data, name: 7 }, { ...data, name: "" }]) {
+      expect(withLanguage(language)).toThrow(
+        "libredb-provider.json states no statement language data with a name, so step 6 proves nothing",
+      );
+    }
+    for (const value of [null, 0, -1, 1.5, String(bound)]) {
+      expect(withBound(value)).toThrow(
+        `libredb-provider.json's statement language ${fixture.language.name} states no text bound, so step 6 proves nothing`,
+      );
+    }
+    expect(withLanguage({ ...data, confirmation: null })).toThrow("states no text bound");
+
+    const withoutTextBound = { ...acceptance };
+    delete withoutTextBound.textBound;
+    expect(reading({ "acceptance.json": JSON.stringify(withoutTextBound) })).toThrow(
+      "acceptance.json holds no textBound object",
+    );
+    expect(withTextBound("list")).toThrow("acceptance.json holds no textBound object");
+
+    expect(withAt({ statement: "" })).toThrow("acceptance.json textBound.atBound has no statement text");
+    expect(withAt({ columns: [] })).toThrow("acceptance.json textBound.atBound names no columns");
+    expect(withAt({ rows: [] })).toThrow("acceptance.json textBound.atBound expects no row");
+    expect(withAt({ statement: ascii(bound - 1) })).toThrow(
+      `acceptance.json textBound.atBound is ${bound - 1} bytes in UTF-8, not the language's bound of ${bound}`,
+    );
+
+    expect(withTextBound({ atBound, overBound: "x" })).toThrow(
+      "acceptance.json textBound.overBound has no statement text",
+    );
+    expect(withOver({ statement: "" })).toThrow("acceptance.json textBound.overBound has no statement text");
+    expect(withOver({ sentence: "" })).toThrow("acceptance.json textBound.overBound has no sentence text");
+    expect(withOver({ statement: atBound.statement })).toThrow(
+      `acceptance.json textBound.overBound is ${bound} bytes in UTF-8, not one more than the language's bound of ${bound}`,
+    );
+    // Over the bound in UTF-16 units too, so a route counting units would refuse it alike.
+    expect(withOver({ statement: ascii(bound + 1) })).toThrow(
+      `acceptance.json textBound.overBound is ${bound + 1} UTF-16 units, over the bound of ${bound}, so it cannot tell UTF-8 bytes from UTF-16 units`,
+    );
+    // The sentence names the size and the bound as whole numbers, so `${bound}-byte` counts and `${bound}0` does not.
+    expect(withOver({ sentence: "The statement is too long. Shorten it to run it." })).toThrow(
+      `acceptance.json textBound.overBound's sentence does not name ${bound + 1} and ${bound} as whole numbers`,
+    );
+    expect(withOver({ sentence: overBound.sentence.replace(`${bound}-byte`, `${bound}0-byte`) })).toThrow(
+      "as whole numbers",
     );
   });
 
@@ -817,7 +981,7 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
 
   // Plain writes, reads and a directory walk: both sides are built with path.join and no realpath is taken, so the
   // Windows separator and the macOS /var to /private/var link change nothing, and no mode or line ending is read.
-  test("step 7's scan reports a fixture engine id named in a file under packages/", () => {
+  test("the clean-tree step's scan reports a fixture engine id or language name named in a file under packages/ or scripts/", () => {
     const root = mkdtempSync(path.join(tmpdir(), "out-of-tree-naming-"));
     try {
       const write = (parts: readonly string[], text: string): string => {
@@ -837,13 +1001,73 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
         ["packages", "provider-sdk", "src", "enums.ts"],
         `export type Engine = "${engineId.toUpperCase()}";\n`,
       );
+      const language = write(["scripts", "b.ts"], `// ${fixture.language.name.toUpperCase()} reads\n`);
       const ids = fixture.engines.map((engine) => engine.id);
 
-      expect(namingScanFiles(root).sort()).toEqual([...clean, planted].sort());
+      expect(namingScanFiles(root).sort()).toEqual([...clean, planted, language].sort());
       expect(filesNaming(namingScanFiles(root), ids, readText)).toEqual([planted]);
+      expect(filesNaming(namingScanFiles(root), [...ids, fixture.language.name], readText).sort()).toEqual(
+        [planted, language].sort(),
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("the confirmation leg refuses a statement over the bound the fixture's own language states, before it is sent, and answers one under it", () => {
+    const bound = fixture.language.maxTextBytes;
+    const { atBound, overBound } = fixture.acceptance.textBound;
+    const utf8 = (text: string): number => new TextEncoder().encode(text).length;
+    // The pair pins the bound's edge, inclusive: at it the statement answers, one byte over it is refused. The over-bound
+    // statement holds fewer UTF-16 units than the bound, so a route counting units or code points would answer it.
+    expect(utf8(atBound.statement)).toBe(bound);
+    expect(utf8(overBound.statement)).toBe(bound + 1);
+    expect(overBound.statement.length).toBeLessThan(bound);
+
+    // The captured answers pass: the 413 sentence naming the bound, the at-bound statement's rows marked unconfirmed.
+    const over = { status: 413, body: SAMPLES.overBoundBody };
+    expect(SAMPLES.overBoundBody.error as string).toBe(overBound.sentence);
+    expect(textBoundProblems(over, overBound, bound)).toEqual([]);
+    expect(rowsProblems({ status: 200, body: SAMPLES.listBody }, atBound)).toEqual([]);
+    expect(unconfirmedProblems({ status: 200, body: SAMPLES.listBody }, atBound)).toEqual([]);
+
+    // A planted fault: the over-bound statement answered with rows.
+    const answered = textBoundProblems({ status: 200, body: SAMPLES.listBody }, overBound, bound);
+    expect(answered.slice(0, 4)).toEqual([
+      "the statement over the bound answered 200, not 413",
+      `the statement over the bound answered the sentence undefined, not Studio's sentence naming the bound`,
+      `the statement over the bound answered a sentence naming no bound of ${bound} bytes`,
+      "the statement over the bound answered rows",
+    ]);
+    expect(answered.at(-1)).toStartWith("body: ");
+    // A 413 naming another bound fails, and so does one quoting the statement.
+    const otherBound = { error: overBound.sentence.replace(`${bound}-byte`, `${bound * 2}-byte`) };
+    expect(textBoundProblems({ status: 413, body: otherBound }, overBound, bound).join(" ")).toContain(
+      `naming no bound of ${bound} bytes`,
+    );
+    const quoting = { error: overBound.sentence, statement: overBound.statement };
+    expect(textBoundProblems({ status: 413, body: quoting }, overBound, bound)).toEqual([
+      `the statement over the bound answered its own words: ${wordsOf(overBound.statement).join(", ")}`,
+      expect.stringMatching(/^body: /),
+    ]);
+
+    // Not sent: exactly one gate line for the engine in the server's complete output, the at-bound statement's.
+    const boot = `${SAMPLES.admittedLine}\n`;
+    expect(gateLineProblems(`${boot}${SAMPLES.unconfirmedRunLine}\n`, engineId)).toEqual([]);
+    expect(gateLineProblems(`${boot}${SAMPLES.unconfirmedRunLine}\n${SAMPLES.unconfirmedRunLine}\n`, engineId)).toEqual(
+      [
+        `the statement over the bound reached the confirmation gate: the server logged "${STUDIO.unconfirmedRunLine}" 2 times for ${engineId}, not once for the statement at the bound`,
+      ],
+    );
+    expect(gateLineProblems(boot, engineId)).toEqual([
+      `the statement at the bound never reached the confirmation gate: the server logged no "${STUDIO.unconfirmedRunLine}" for ${engineId}`,
+    ]);
+    // A line for another engine, or for an id that only begins with the fixture's, is not counted.
+    for (const other of [`${engineId}x`, `x${engineId}`]) {
+      const line = SAMPLES.unconfirmedRunLine.replace(`type=${engineId},`, `type=${other},`);
+      expect(gateLineProblems(`${boot}${line}\n`, engineId)).toEqual(gateLineProblems(boot, engineId));
+    }
+    expect(gateLineProblems(`${SAMPLES.unconfirmedRunLine}\r\n`, engineId)).toEqual([]);
   });
 
   test("the build scan's needles are the package name, each engine id quoted three ways and each display name", () => {
@@ -1111,7 +1335,7 @@ describe("the out-of-tree acceptance's pack, lock and build output steps", () =>
     }
   }, 120_000);
 
-  test("step 8 runs the build output check over the packed fixture and keeps its own scan of .next", () => {
+  test("the build output step runs the build output check over the packed fixture and keeps its own scan of .next", () => {
     const temp = path.join(tmpdir(), "acceptance-root");
     const spec = acceptance.buildCheckSpec({
       standalone: path.join(temp, "standalone"),
@@ -1144,7 +1368,7 @@ describe("the out-of-tree acceptance's pack, lock and build output steps", () =>
     ]);
   });
 
-  test("step 8's own scan reads the regular files under .next, accepting a link whose target lies in the standalone's .next or node_modules and naming one that leaves them", () => {
+  test("the build output step's own scan reads the regular files under .next, accepting a link whose target lies in the standalone's .next or node_modules and naming one that leaves them", () => {
     const standalone = realpathSync(mkdtempSync(path.join(tmpdir(), "acceptance-scan-")));
     try {
       const write = (relative: string, text: string) => {

@@ -46,8 +46,8 @@
  * `--standalone <absolute directory>` followed by absolute package directories prints the usage, exit 2.
  *
  * CI runs it in the "Engine Smoke - Build Payload" job of .github/workflows/ci.yml over the extracted payload, naming
- * the out-of-tree fixture (tests/fixtures/out-of-tree-provider), and the out-of-tree acceptance's step 8 runs it over
- * the fixture it packed (scripts/out-of-tree-acceptance.ts). Its logic is held by
+ * the out-of-tree fixture (tests/fixtures/out-of-tree-provider), and the out-of-tree acceptance's build output step
+ * runs it over the fixture it packed (scripts/out-of-tree-acceptance.ts). Its logic is held by
  * tests/unit/scripts/check-build-output.test.ts.
  *
  * Run: bun scripts/check-build-output.ts --standalone <absolute directory> [<absolute package directory> ...]

@@ -23,5 +23,19 @@
     "packageWords": "This engine runs two statements: list, and get followed by a name.",
     "code": "INTERNAL_ERROR",
     "sentence": "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words."
+  },
+  "textBound": {
+    "atBound": {
+      "statement": "list\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000",
+      "columns": ["name", "value"],
+      "rows": [
+        ["alpha", "first"],
+        ["beta", "second"]
+      ]
+    },
+    "overBound": {
+      "statement": "list \u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000",
+      "sentence": "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it."
+    }
   }
 }

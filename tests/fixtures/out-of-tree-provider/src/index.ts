@@ -8,6 +8,8 @@
  * published surface fails that check.
  *
  * Statements: `list` answers every row, `get <name>` the row of that name or none; anything else is refused.
+ * A statement is read trimmed, so white space around it changes nothing. The manifest's own statement language bounds
+ * a console statement's text in UTF-8 bytes, and Studio refuses one past that bound before it reaches this provider.
  */
 import { defineProvider, type ExecuteAnswer, type HealthInfo, rowsSource } from "@libredb/provider-sdk/calls";
 import manifest from "../libredb-provider.json" with { type: "json" };
