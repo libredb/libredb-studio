@@ -317,20 +317,40 @@ export function runtimeLoadForm({ node, name, requireCallee }: Visit): RuntimeLo
   }
 }
 
+/** The offset of every line feed of `text`, in order. */
+function lineFeeds(text: string): number[] {
+  const offsets: number[] = [];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) offsets.push(at);
+  return offsets;
+}
+
+/** 1 plus the count of `feeds`, line feed offsets in order, that lie before `offset`: a binary search. */
+function lineAt(feeds: readonly number[], offset: number): number {
+  let low = 0;
+  let high = feeds.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((feeds[middle] as number) < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low + 1;
+}
+
 /**
  * Every runtime load of the module file whose text is `text` and whose readings are `programs`, each by its line and
  * form, once, in order of line then form: one walk with an explicit stack over every reading, so only the parser's own
- * depth bounds a file. The line is 1 plus the count of line feeds before the node.
+ * depth bounds a file. The line is 1 plus the count of line feeds before the node, read from the offsets of the text's
+ * line feeds, listed once per call, so the work grows with the text and its loads, never with their product.
  */
 export function runtimeLoads(text: string, programs: readonly AnyNode[]): { line: number; form: RuntimeLoadForm }[] {
+  const feeds = lineFeeds(text);
   const found = new Map<string, { line: number; form: RuntimeLoadForm }>();
   const pending: Visit[] = programs.map((node) => ({ node, name: false, requireCallee: false, reExport: false }));
   for (let visit = pending.pop(); visit !== undefined; visit = pending.pop()) {
     const { node } = visit;
     const form = runtimeLoadForm(visit);
     if (form !== null) {
-      let line = 1;
-      for (let at = text.indexOf("\n"); at !== -1 && at < node.start; at = text.indexOf("\n", at + 1)) line += 1;
+      const line = lineAt(feeds, node.start);
       found.set(`${line} ${form}`, { line, form });
     }
     const reExport = node.type === "ExportNamedDeclaration" && node.source !== null && node.source !== undefined;

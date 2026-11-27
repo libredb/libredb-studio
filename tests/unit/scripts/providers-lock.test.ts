@@ -68,12 +68,39 @@ const nodeCommand = boundedChild({
   timeoutMs: 60_000,
 });
 
+/**
+ * The lock's runtime-load rule run in a bounded child over a module of `count` lines `require;`, each one load: the
+ * count of loads it finds and the line of the last. A rule whose line count grows with the square of the module's
+ * length runs far past the spawn's timeout here, so it fails within that timeout and never in the test process.
+ */
+const ruleChild = boundedChild({
+  label: "providers-lock-rule",
+  imports: [
+    { from: path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts"), names: ["parsedModule", "runtimeLoads"] },
+  ],
+  runCase: (
+    deps: {
+      parsedModule: (bytes: Buffer) => { text: string; programs: unknown[] } | null;
+      runtimeLoads: (text: string, programs: readonly unknown[]) => { line: number }[];
+    },
+    count: string,
+  ): { count: number; last: number | null } => {
+    const parsed = deps.parsedModule(Buffer.from("require;\n".repeat(Number(count))));
+    if (parsed === null) throw new Error("the module of loads does not parse");
+    const loads = deps.runtimeLoads(parsed.text, parsed.programs);
+    return { count: loads.length, last: loads.at(-1)?.line ?? null };
+  },
+  heapLimitMiB: 512,
+  timeoutMs: 30_000,
+});
+
 beforeAll(async () => {
-  await nodeCommand.build();
+  await Promise.all([nodeCommand.build(), ruleChild.build()]);
 });
 
 afterAll(() => {
   nodeCommand.remove();
+  ruleChild.remove();
   removeScratch(scratch);
 });
 
@@ -741,6 +768,16 @@ describe("the lock command", () => {
     expect([...nodeRefused.err, ""]).toEqual(lines(bunRefused.stderr));
     expect(fs.existsSync(path.join(refused, LOCK_FILE_NAME))).toBe(false);
   }, 120_000);
+
+  test("the lock's rule judges a module of 200,000 runtime loads within its time", async () => {
+    // Each line is found once, so the work grows with the module's length; the child's 30 s timeout is about a hundred
+    // times what the rule needs over this 1.8 MB module, and a line count that walks the text from its start for every
+    // load needs minutes.
+    expect(await ruleChild.run<{ count: number; last: number | null }>("200000")).toEqual({
+      count: 200_000,
+      last: 200_000,
+    });
+  }, 60_000);
 
   test("package.json runs the command as providers:lock", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"));
