@@ -32,11 +32,11 @@
  *    file (`.d.ts`, `.d.mts`, `.d.cts`) among them, judged on the listing alone (`PROVIDER_MODULE_FORMAT`,
  *    `typescript-module`), since Bun maps an extensionless, a `.d` and a `.js` specifier onto a TypeScript file and
  *    Node.js's type stripping loads an import Bun's scanner drops, so a TypeScript file could run unseen on either
- *    runtime; a package of this contract is a JavaScript bundle;
+ *    runtime; a package of this contract is a JavaScript bundle (`isTypeScriptFile`);
  * 7. its import closure (`./provider-closure`), over the import record its lock entry gives (`PROVIDER_LOAD_FAILED`,
  *    `closure-outside`);
- * 8. native addons: a `.node` file in any letter case, or a manifest declaring `runtime.native`
- *    (`PROVIDER_NATIVE_UNSUPPORTED`), until a later milestone decides native admission;
+ * 8. native addons: a `.node` file in any letter case (`isNativeAddonFile`), or a manifest declaring `runtime.native`
+ *    (`declaresNativePackages`) (`PROVIDER_NATIVE_UNSUPPORTED`), until a later milestone decides native admission;
  * 9. the import, by the loader under the caller's deadline; a loader refusal is `PROVIDER_LOAD_FAILED` with the
  *    loader's reason, and the thrown value of `import-threw` is answered as `cause`, for the host's log only;
  * 10. the record's manifest equal to the file's: compared by own data properties of plain objects and arrays, key order
@@ -107,6 +107,24 @@ const CONTRACT_FORM = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/;
 
 /** A TypeScript file by its extension, in any letter case, a declaration file among them. */
 const TYPESCRIPT_FILE = /\.(?:[mc]?ts|tsx)$/i;
+
+/**
+ * Whether the artifact path `file` is a TypeScript file, a declaration file among them, which admission refuses
+ * (step 6). The pack step (scripts/providers-pack.ts) asks it of every file of a built package, to name each one.
+ */
+export function isTypeScriptFile(file: string): boolean {
+  return TYPESCRIPT_FILE.test(file);
+}
+
+/** Whether the artifact path `file` is a native addon, a `.node` file in any letter case, refused at step 8. */
+export function isNativeAddonFile(file: string): boolean {
+  return file.toLowerCase().endsWith(".node");
+}
+
+/** Whether a manifest's `runtime` declares native packages, `runtime.native`, which admission refuses (step 8). */
+export function declaresNativePackages(runtime: object): boolean {
+  return Object.hasOwn(runtime, "native");
+}
 
 /** The implementation's segments, each read by its descriptor and frozen once admitted. */
 const IMPL_SEGMENTS = ["console", "objects", "maintenance", "monitoring"] as const;
@@ -317,7 +335,7 @@ function nearestPackageJson(pkg: VerifiedPackage, entry: string): ArtifactFile |
  * loads an import Bun's scanner drops, so the record cannot hold every import a TypeScript file makes.
  */
 function checkTypeScript(pkg: VerifiedPackage): void {
-  if (pkg.files.some((file) => TYPESCRIPT_FILE.test(file.path))) {
+  if (pkg.files.some((file) => isTypeScriptFile(file.path))) {
     throw new Refused(admissionRefusal(pkg, { code: "PROVIDER_MODULE_FORMAT", rule: "typescript-module" }));
   }
 }
@@ -383,10 +401,10 @@ async function admit(pkg: VerifiedPackage, options: AdmissionOptions): Promise<A
   if (closureOutside(pkg.imports)) {
     throw new Refused(admissionRefusal(pkg, { code: "PROVIDER_LOAD_FAILED", rule: "closure-outside" }));
   }
-  if (pkg.files.some((file) => file.path.toLowerCase().endsWith(".node"))) {
+  if (pkg.files.some((file) => isNativeAddonFile(file.path))) {
     throw new Refused(admissionRefusal(pkg, { code: "PROVIDER_NATIVE_UNSUPPORTED", rule: "native-file" }));
   }
-  if (Object.hasOwn(manifest.runtime, "native")) {
+  if (declaresNativePackages(manifest.runtime)) {
     throw new Refused(admissionRefusal(pkg, { code: "PROVIDER_NATIVE_UNSUPPORTED", rule: "native-declared" }));
   }
   const loaded = await loadPackage(pkg.entryFile, {
