@@ -842,7 +842,7 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
  * lone schema, a lone catalog, and a catalog then the schema inside it. These are the lists the shipped engines state,
  * and the ones Studio's object kind readers read, which take a catalog level for the outer one wherever it stands.
  */
-const CONTAINER_LEVEL_LISTS: ReadonlySet<string> = new Set(["", "schema", "catalog", "catalog,schema"]);
+const CONTAINER_LEVEL_LISTS: readonly string[] = Object.freeze(["", "schema", "catalog", "catalog,schema"]);
 
 /**
  * The rules of an engine's object model the schema cannot state, at pointers under `at`: each container level id and
@@ -867,7 +867,7 @@ function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
     levels.add(id);
   });
   const levelList = model.containerLevels.map(({ id }) => id).join(",");
-  if (levels.size === model.containerLevels.length && !CONTAINER_LEVEL_LISTS.has(levelList)) {
+  if (levels.size === model.containerLevels.length && !CONTAINER_LEVEL_LISTS.includes(levelList)) {
     refusals.push(schemaRefusal("object-level-order", `${base}/containerLevels`));
   }
   const stated = new Set<string>();
