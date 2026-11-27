@@ -560,7 +560,8 @@ export function assertContainerAddress(
  * who names it.
  *
  * `model` is the object model of the session the reads are made on, and `engine` the engine's id the sentences name.
- * A kind the model does not state is refused with outcome `not-sent` (clause M-89).
+ * Both refusals answer outcome `not-sent`, since each is made before any read: a kind the model does not state (clause
+ * M-89), and a kind only the Keys panel enumerates.
  */
 export function resolveKinds<K extends ObjectKindView>(
   model: ObjectModelView<K>,
@@ -579,6 +580,8 @@ export function resolveKinds<K extends ObjectKindView>(
         `${engine} enumerates the kind "${id}" in the Keys panel alone, so no inventory or search lists it; ` +
           "browse it in the Keys panel",
         400,
+        undefined,
+        NOT_SENT,
       );
     }
     return kind;

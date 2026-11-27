@@ -2110,7 +2110,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     expect(listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
   });
 
-  test("an inventory naming it is a 400 that points at the Keys panel, and lists nothing", async () => {
+  test("an inventory naming it is a 400 that points at the Keys panel, outcome not-sent, and lists nothing", async () => {
     const listObjects = keyValueProvider();
 
     const response = await inventoryRoute.POST(
@@ -2118,11 +2118,11 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL });
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL, outcome: "not-sent" });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
-  test("a search naming it beside another kind is the same 400, and lists nothing", async () => {
+  test("a search naming it beside another kind is the same 400, outcome not-sent, and lists nothing", async () => {
     const listObjects = keyValueProvider();
 
     const response = await searchRoute.POST(
@@ -2133,7 +2133,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(REFUSAL);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL, outcome: "not-sent" });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
