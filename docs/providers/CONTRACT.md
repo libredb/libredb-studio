@@ -448,7 +448,7 @@ A row is LibreDB's review, kept in Studio's repository until the providers move 
 ### M-85 (normative): An engine's statement language is data of its declaration
 
 An engine that speaks a statement language of its own, not SQL, states that language as data in its declaration, and states null there where it speaks SQL or no statement language.
-The data names the language and states its confirmation part (M-86) and its agent part, the request form agent mode admits and the text agent mode shows, or null where agent mode sends the language no statement, every member required as M-8 says, with the manifest schema as its vocabulary.
+The data names the language and states its confirmation part (M-86) and its agent part, or null where agent mode sends the language no statement: the request form agent mode admits, the text agent mode shows and the MCP statement tool the language is served as, null where it has none; every member required as M-8 says, with the manifest schema as its vocabulary.
 A text is a string or a list of parts, a part naming a value Studio fills only where the schema lists that value for the text, and it reaches the model and the user only as the register row grants the language (M-87).
 
 ### M-86 (normative): The confirmation part of a statement language
