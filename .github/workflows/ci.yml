@@ -150,6 +150,9 @@ jobs:
       - name: Check that the packed library loads (lib:load)
         run: bun run lib:load
 
+      - name: Check that the packed CLI locks a providers directory (lib:lock)
+        run: bun run lib:lock
+
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest

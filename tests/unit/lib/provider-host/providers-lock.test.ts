@@ -63,6 +63,11 @@ import { valueImportsOf } from "../../../helpers/value-import-closure";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const LOCK_READER = "src/lib/provider-host/providers-lock.ts";
+/**
+ * The modules outside src/lib/provider-host that may import the lock reader, each with its reason: the packed lock
+ * check reads back, in CI, the lock the packed npm package's command wrote, and decides no package's admission.
+ */
+const LOCK_READER_CHECKS: readonly string[] = ["scripts/check-lib-lock.ts"];
 const ARTIFACT_MODULE = "src/lib/provider-host/provider-artifact.ts";
 const LOCK_READER_PATH = path.join(REPOSITORY_ROOT, LOCK_READER);
 const SCHEMA_FILE = path.join(REPOSITORY_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -1156,7 +1161,7 @@ function importsOf(file: string): string[] {
 }
 
 describe("the lock's boundaries", () => {
-  test("no module outside src/lib/provider-host imports the lock reader", () => {
+  test("no module outside src/lib/provider-host imports the lock reader but the packed lock check", () => {
     const sources = execFileSync(
       "git",
       ["ls-files", "--cached", "--others", "--exclude-standard", "--", "src", "bin", "scripts", "vscode-extension/src"],
@@ -1168,7 +1173,9 @@ describe("the lock's boundaries", () => {
       );
     const importersOf = (module: string): string[] => sources.filter((file) => importsOf(file).includes(module)).sort();
 
-    expect(importersOf(LOCK_READER).filter((file) => !file.startsWith("src/lib/provider-host/"))).toEqual([]);
+    expect(importersOf(LOCK_READER).filter((file) => !file.startsWith("src/lib/provider-host/"))).toEqual([
+      ...LOCK_READER_CHECKS,
+    ]);
     // A control on the scan: the command imports the artifact module.
     expect(importersOf(ARTIFACT_MODULE)).toContain("scripts/providers-lock.ts");
   });

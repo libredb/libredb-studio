@@ -131,7 +131,7 @@ describe("the lock command's module", () => {
       files: { "dist/index.mjs": 'import "node:fs";\nimport "./other.mjs";\nexport default {};\n' },
     });
     writeArtifact(providers, { name: "@acme/scoped", version: "2.0.0", engines: ["acmescoped"] });
-    const lockFile = path.join(fs.realpathSync(providers), LOCK_FILE_NAME);
+    const lockFile = path.join(fs.realpathSync.native(providers), LOCK_FILE_NAME);
 
     const node = runNode(
       `const { main } = await import(${JSON.stringify(url)}); process.exitCode = main(["--dir", ${JSON.stringify(providers)}]);`,
