@@ -151,6 +151,16 @@ describe("the build output check", () => {
       ]);
     }
 
+    // An entry whose driver no checked package declares excepts nothing, and is refused naming it.
+    const unused = repository({
+      extra: { "src/lib/uses-beta.ts": 'import { driver } from "beta-driver";\nexport default driver;\n' },
+    });
+    expect(
+      run(unused, standalone(), { exceptions: [{ driver: "beta-driver", importer: "src/lib/uses-beta.ts" }] }).problems,
+    ).toEqual([
+      "check-build-output: the exception for beta-driver imported by src/lib/uses-beta.ts: no checked package declares beta-driver",
+    ]);
+
     // An entry for alpha-driver excepts no file of beta-driver.
     const both = standalone({
       "node_modules/alpha-driver/index.js": DRIVER_TEXT,
@@ -215,6 +225,10 @@ describe("the build output check", () => {
     ]);
     expect(run(empty, payload, { packageDirectories: [path.join(scratch, "absent")] }).problems).toEqual([
       `check-build-output: ${path.join(scratch, "absent")}: the package directory does not exist`,
+    ]);
+    const file = path.join(planted("not-a-directory", { "package.json": "{}\n" }), "package.json");
+    expect(run(empty, payload, { packageDirectories: [file] }).problems).toEqual([
+      `check-build-output: ${file} is not a directory`,
     ]);
   });
 
@@ -288,6 +302,30 @@ describe("the build output check", () => {
     expect(run(repository(), payload, { packageDirectories: [missingDriver] }).problems).toEqual([
       `check-build-output: absent-driver, a driver missing-driver-provider declares, is not installed in any node_modules above ${missingDriver}`,
     ]);
+  });
+
+  test("a link in the payload or in a declared driver's directory is a problem naming its path, never followed or skipped", () => {
+    // Each link is a directory junction, which Windows creates without a privilege and POSIX makes a symbolic link.
+    const target = planted("link-target", { "index.js": SOURCE_TEXT });
+    const payload = standalone();
+    fs.symlinkSync(target, path.join(payload, ".next", "linked"), "junction");
+    fs.symlinkSync(target, path.join(payload, "node_modules", "linked"), "junction");
+    expect(run(repository(), payload).problems).toEqual([
+      `check-build-output: ${path.join(payload, ".next", "linked")} is a symbolic link or junction in the standalone, so the check would not read its target`,
+      `check-build-output: ${path.join(payload, "node_modules", "linked")} is a symbolic link or junction in the standalone, so the check would not read its target`,
+    ]);
+
+    const root = repository();
+    const driverLink = path.join(root, "node_modules", "alpha-driver", "lib");
+    fs.symlinkSync(target, driverLink, "junction");
+    expect(run(root, standalone()).problems).toEqual([
+      `check-build-output: ${driverLink} is a symbolic link or junction inside alpha-driver's directory, a driver ${PACKAGE_NAME} declares, so the check would not compare its target`,
+    ]);
+
+    // Listed without a handler of its own, a link is an error naming it.
+    expect(() => check.regularFiles(payload)).toThrow(
+      `${path.join(payload, ".next", "linked")} is a symbolic link or junction, which the scan does not follow`,
+    );
   });
 
   test("a package's drivers are its dependencies, optionalDependencies and peerDependencies, never its devDependencies", () => {

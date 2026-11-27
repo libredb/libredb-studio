@@ -1286,11 +1286,11 @@ jobs:
   # byte of it is refused at the next boot (scripts/out-of-tree-acceptance.ts,
   # issue #2520). It is built by its own build through the pack step and
   # locked by the lock module under Node.js, and its step 8 runs the build
-  # output check over the payload. The payload is downloaded and extracted under the runner's
-  # temporary directory, outside the checkout, because the script's step 7
-  # asserts that the checkout is unchanged. After bun install nothing reaches
-  # a registry: the SDK's dependencies are packed from this checkout's install
-  # and npm installs offline. A required check on main.
+  # output check over the payload. The payload is downloaded and extracted
+  # under the runner's temporary directory, outside the checkout, because the
+  # script's step 7 asserts that the checkout is unchanged. After bun install
+  # nothing reaches a registry: the SDK's dependencies are packed from this
+  # checkout's install and npm installs offline. A required check on main.
   out-of-tree-acceptance:
     name: Out-of-tree Provider Acceptance
     needs: [engine-payload]

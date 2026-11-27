@@ -17,19 +17,21 @@
  *   package directory from the package's directory: the nearest `node_modules/<name>/package.json` above it, its real
  *   path taken, so a workspace link reaches the package itself. A declared driver that is not installed is refused by
  *   name. A driver's files are every regular file of its directory outside its own nested `node_modules` (its
- *   dependencies are not the package's declaration), links not followed;
+ *   dependencies are not the package's declaration); a symbolic link or junction in it is refused by name;
  * - an empty file is left out of the compared files: it equals every other empty file and identifies nothing;
  * - its name, as UTF-8 bytes, is searched in every payload file, across the boundaries of the chunks it is read in.
  *
- * The scanned files are every regular file under the standalone's `.next` and `node_modules`, links not followed; the
- * standalone must hold both directories, each refused by name when missing.
+ * The scanned files are every regular file under the standalone's `.next` and `node_modules`; a symbolic link or
+ * junction met there is a problem naming it, never followed and never skipped. The standalone must hold both
+ * directories, each refused by name when missing.
  *
  * A driver some core module still imports, which Next.js then traces into the payload, is excepted by
  * `CORE_IMPORTED_DRIVERS`, a closed list naming the importer: a declared driver listed there is not compared. Every
  * run checks every entry: its importer must be a repository path under one of the isolation ratchet's core roots
  * (src, bin, scripts, vscode-extension/src), exist, and import a module of the driver, read by the TypeScript
  * compiler's public `preProcessFile` (static and dynamic imports, `require` and re-exports alike); a stale entry is
- * refused naming it. The list is empty while no core module imports a provider package's driver.
+ * refused naming it, and so is an entry whose driver no checked package declares, since it would except nothing. The
+ * list is empty while no core module imports a provider package's driver.
  *
  * Output: every problem on standard error, one per line, exit 1; or, on a pass, one line per package on standard
  * output naming its counts and its drivers, plus one line per exception used, exit 0. Any command line but
@@ -100,18 +102,38 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
 const relativeOf = (directory: string, file: string): string =>
   path.relative(directory, file).split(path.sep).join("/");
 
-/** Every regular file under `directory`, recursively, sorted; symbolic links are not followed. */
-export function regularFiles(directory: string): string[] {
+/** The error a walk raises for a link when its caller handles none. */
+const refuseLink = (link: string): never => {
+  throw new Error(`${link} is a symbolic link or junction, which the scan does not follow`);
+};
+
+/**
+ * Every regular file under `directory`, recursively, sorted, outside any directory named in `skipped`; a symbolic link
+ * or junction is never followed, and `onLink` sees each one found.
+ */
+function walk(directory: string, onLink: (link: string) => void, skipped: readonly string[]): string[] {
   const files: string[] = [];
   const pending = [directory];
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    for (const entry of readdirSync(next, { withFileTypes: true })) {
-      const child = path.join(next, entry.name);
-      if (entry.isDirectory()) pending.push(child);
-      else if (entry.isFile()) files.push(child);
+    for (const name of readdirSync(next)) {
+      if (skipped.includes(name)) continue;
+      const child = path.join(next, name);
+      // lstat rather than the directory listing's type: it names a Windows junction a link as well.
+      const stats = lstatSync(child);
+      if (stats.isSymbolicLink()) onLink(child);
+      else if (stats.isDirectory()) pending.push(child);
+      else if (stats.isFile()) files.push(child);
     }
   }
   return files.sort();
+}
+
+/**
+ * Every regular file under `directory`, recursively, sorted; a symbolic link or junction is never followed, and is
+ * handed to `onLink`, which by default raises an error naming it.
+ */
+export function regularFiles(directory: string, onLink: (link: string) => void = refuseLink): string[] {
+  return walk(directory, onLink, []);
 }
 
 /** A file's SHA-256 and the needles it holds, read in chunks of `chunkSize` bytes with an overlap. */
@@ -161,9 +183,13 @@ export function scanProblems(
 /** Whether `inner` is `outer` or lies under it, both relative `/`-separated paths. */
 const under = (inner: string, outer: string): boolean => inner === outer || inner.startsWith(`${outer}/`);
 
+/** The refusal of exception `entry`, giving `why`. */
+const exceptionRefusal = (entry: CoreImportedDriver, why: string): string =>
+  `${PREFIX}: the exception for ${entry.driver} imported by ${entry.importer}: ${why}`;
+
 /** The problem with an exception, or null when its importer is a core module that imports a module of its driver. */
 function exceptionProblem(entry: CoreImportedDriver, repositoryRoot: string): string | null {
-  const refuse = (why: string) => `${PREFIX}: the exception for ${entry.driver} imported by ${entry.importer}: ${why}`;
+  const refuse = (why: string) => exceptionRefusal(entry, why);
   const normal = path.posix.normalize(entry.importer);
   if (normal !== entry.importer || !CORE_ROOTS.some((root) => under(normal, root))) {
     return refuse(
@@ -196,22 +222,8 @@ function installedPackage(name: string, from: string): string | null {
 }
 
 /** Every regular file under `directory` outside any directory named `node_modules`; `onLink` sees each link found. */
-function filesOutsideNodeModules(directory: string, onLink: (link: string) => void): string[] {
-  const files: string[] = [];
-  const pending = [directory];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    for (const name of readdirSync(next)) {
-      if (name === "node_modules") continue;
-      const child = path.join(next, name);
-      // lstat rather than the directory listing's type: it names a Windows junction a link as well.
-      const stats = lstatSync(child);
-      if (stats.isSymbolicLink()) onLink(child);
-      else if (stats.isDirectory()) pending.push(child);
-      else if (stats.isFile()) files.push(child);
-    }
-  }
-  return files.sort();
-}
+const filesOutsideNodeModules = (directory: string, onLink: (link: string) => void): string[] =>
+  walk(directory, onLink, ["node_modules"]);
 
 /** One package as the check compares it. */
 interface ComparedPackage {
@@ -267,7 +279,11 @@ function comparedPackage(
       );
       continue;
     }
-    driverFiles += filesOutsideNodeModules(installed, () => {}).filter((file) =>
+    const onLink = (link: string) =>
+      refusals.push(
+        `${PREFIX}: ${link} is a symbolic link or junction inside ${driver}'s directory, a driver ${name} declares, so the check would not compare its target`,
+      );
+    driverFiles += filesOutsideNodeModules(installed, onLink).filter((file) =>
       record(file, `${driver} ${relativeOf(installed, file)}, a driver ${name} declares`),
     ).length;
   }
@@ -305,8 +321,12 @@ export function checkBuildOutput(options: CheckOptions): CheckResult {
   ];
   for (const directory of candidates) {
     const stats = lstatSync(directory, { throwIfNoEntry: false });
-    if (stats?.isDirectory() !== true) {
+    if (stats === undefined) {
       refusals.push(`${PREFIX}: ${directory}: the package directory does not exist`);
+      continue;
+    }
+    if (!stats.isDirectory()) {
+      refusals.push(`${PREFIX}: ${directory} is not a directory`);
       continue;
     }
     const real = realpathSync.native(directory);
@@ -325,14 +345,27 @@ export function checkBuildOutput(options: CheckOptions): CheckResult {
     if (Array.isArray(compared)) refusals.push(...compared);
     else packages.push(compared);
   }
+  // Read only once every package is: a refused package's declarations are not known.
+  if (packages.length === directories.length) {
+    for (const entry of options.exceptions) {
+      if (!packages.some((pkg) => pkg.excepted.includes(entry))) {
+        refusals.push(exceptionRefusal(entry, `no checked package declares ${entry.driver}`));
+      }
+    }
+  }
   if (refusals.length > 0) return { problems: refusals, lines: [] };
 
+  const links: string[] = [];
+  const onLink = (link: string) =>
+    links.push(
+      `${PREFIX}: ${link} is a symbolic link or junction in the standalone, so the check would not read its target`,
+    );
   const files = [
-    ...regularFiles(path.join(standalone, ".next")),
-    ...regularFiles(path.join(standalone, "node_modules")),
+    ...regularFiles(path.join(standalone, ".next"), onLink),
+    ...regularFiles(path.join(standalone, "node_modules"), onLink),
   ];
   const needles = packages.map((pkg) => pkg.name);
-  const problems = scanProblems(files, needles, digests, options.chunkSize);
+  const problems = [...links, ...scanProblems(files, needles, digests, options.chunkSize)];
   if (problems.length > 0) return { problems, lines: [] };
   return {
     problems: [],

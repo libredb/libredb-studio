@@ -122,9 +122,10 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
 
 /**
  * Studio's side of the run, every interface the run relies on in one place: the pack step, the lock command's wrapper
- * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's variable, the refusal and answer codes, the session
- * cookie, the admin's sign-in and the routes. The predicates beside it (`refusalLines`, `unavailableProblems`,
- * `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`) read the answers.
+ * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's
+ * variable, the refusal and answer codes, the session cookie, the admin's sign-in and the routes. The predicates beside
+ * it (`refusalLines`, `unavailableProblems`, `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`,
+ * `saveProblems`) read the answers.
  */
 export const STUDIO = Object.freeze({
   packScript: "scripts/providers-pack.ts",
@@ -1338,7 +1339,10 @@ function earlier<T>(value: T | undefined, what: string): T {
 
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
-/** An empty directory npm, the fixture's build, the pack step and the lock module use as HOME, so no user configuration reaches them. */
+/**
+ * An empty directory npm, the fixture's build, the pack step and the lock module use as HOME, so no user configuration
+ * reaches them.
+ */
 const emptyHome = (ctx: Context): string => path.join(ctx.temp, "npm", "home");
 
 async function buildStandalone(ctx: Context): Promise<string> {
