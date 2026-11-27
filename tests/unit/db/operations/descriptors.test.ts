@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { declaredLanguageReadDescriptor } from "@/lib/db/operations/declared-language-read";
+import { acmereadText } from "../../../helpers/declared-agent-language";
 import { OperationRegistry } from "@/lib/db/operations/registry";
 import {
   clusterUsageReadDescriptor,
@@ -21,7 +22,10 @@ import {
   sqlTableProfileDescriptor,
 } from "@/lib/db/operations/descriptors";
 
-/** Statement language data named `acmeread` whose agent part admits `{"read": "topics"}` alone, by a generated sentence. */
+/**
+ * Statement language data named `acmeread` whose agent part admits `{"read": "topics"}` alone, by a generated sentence,
+ * and states the crafted text.
+ */
 function acmereadData(): NonNullable<StatementLanguageData> {
   const refusal = (code: string) => ({ code, sentence: `Refused (${code}): ${randomUUID()}.` });
   return {
@@ -49,6 +53,7 @@ function acmereadData(): NonNullable<StatementLanguageData> {
         common: [],
         reads: [{ value: "topics", refuses: [], checks: [] }],
       },
+      text: acmereadText(),
     },
   };
 }
