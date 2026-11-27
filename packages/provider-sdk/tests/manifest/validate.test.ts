@@ -4160,6 +4160,38 @@ describe("rules the schema cannot state", () => {
     ]);
   });
 
+  test("a refusal's sentence holds no control character and no character that makes text read other than it is written", () => {
+    const SENTENCE = `${REQUEST}/refusals/empty/sentence`;
+    const sentenceManifest = (sentence: string) => requestManifest((r) => (r.refusals.empty.sentence = sentence));
+
+    for (const [name, character] of [
+      ["DEL", "\u007f"],
+      ["the first C1 control", "\u0080"],
+      ["the last C1 control", "\u009f"],
+      ["the line separator", "\u2028"],
+      ["the paragraph separator", "\u2029"],
+      ["the first bidi embedding", "\u202a"],
+      ["the last bidi override", "\u202e"],
+      ["the first bidi isolate", "\u2066"],
+      ["the last bidi isolate", "\u2069"],
+      ["the left-to-right mark", "\u200e"],
+      ["the right-to-left mark", "\u200f"],
+      ["the Arabic letter mark", "\u061c"],
+    ]) {
+      expect(refusalsFor(sentenceManifest(`The request holds ${name}: ${character}.`))).toEqual([
+        refusal("pattern-mismatch", SENTENCE),
+      ]);
+    }
+
+    for (const ordinary of [
+      "Die Anfrage f\u00fcr \u201eStra\u00dfe\u201c ist abgelehnt: bitte sp\u00e4ter erneut, danke!",
+      "La requ\u00eate \u00ab caf\u00e9 \u00bb est refus\u00e9e (essayez encore ; merci).",
+      "No-break\u00a0space, \u2027 and \u202f and \u2065 and \u206a sit beside the refused ranges.",
+    ]) {
+      expect(refusalsFor(sentenceManifest(ordinary))).toEqual([]);
+    }
+  });
+
   test("a request form that does not rule every key of every read exactly once is refused at the key or read that breaks it", () => {
     const limitCheck = (key: string): Json => ({
       key,

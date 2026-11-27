@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "161446c03374dfbe47288d953d3a66d97b96300138bf63aa3812d36a6fe40f98";
+export const MANIFEST_SCHEMA_SHA256 = "0dda191d7239b4e2b903e5676922dc077a4c1c93a8cad53f211bfad95cc18ec0";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -730,7 +730,7 @@ export interface AgentRequestRefusals {
   readonly unknownKey: AgentRequestRefusal;
 }
 
-/** One refusal of a request, answered as written: code, lower-case words joined by single hyphens, up to 32 characters; sentence, what the model reads, up to 4096 characters with no control character. */
+/** One refusal of a request, answered as written: code, lower-case words joined by single hyphens, up to 32 characters; sentence, what the model reads and a user is shown, up to 4096 characters with no control character (U+0000 to U+001F, U+007F to U+009F), no line or paragraph separator (U+2028, U+2029), no bidi embedding, override or isolate (U+202A to U+202E, U+2066 to U+2069) and no direction mark (U+200E, U+200F, U+061C). */
 export interface AgentRequestRefusal {
   readonly code: string;
   readonly sentence: string;

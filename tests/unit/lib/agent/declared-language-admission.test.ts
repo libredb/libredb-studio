@@ -321,7 +321,7 @@ describe("a data-declared language's admission", () => {
           absent: null,
           rule: {
             kind: "name",
-            characters: [{ from: "퟿", to: "" }],
+            characters: [{ from: "\u{D7FF}", to: "\u{E000}" }],
             minLength: 1,
             maxLength: 4,
             refused: [],
