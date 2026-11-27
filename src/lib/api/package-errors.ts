@@ -75,6 +75,7 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "batch-empty-not-done": "package",
   "transaction-answer-unreadable": "package",
   "execute-answer-unreadable": "package",
+  "tree-answer-unreadable": "package",
 });
 
 /** The words that open the message of the error logged for a refusal of what a provider package answered. */
