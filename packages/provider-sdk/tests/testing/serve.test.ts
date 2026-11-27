@@ -76,6 +76,44 @@ interface Fixture {
   readonly answers: Json;
 }
 
+/** A relation kind `id`, every member written out as a declaration states it. */
+function objectKind(id: string): Json {
+  return {
+    id,
+    role: "relation",
+    label: id,
+    labelPlural: id,
+    hasSource: false,
+    sourceLanguage: null,
+    hasColumns: true,
+    acceptsSourceEdits: false,
+    childKinds: [],
+    attachedTo: null,
+    acceptsRowWrites: false,
+    enumeratedBy: null,
+    countIsListing: false,
+    machineNames: null,
+    group: null,
+  };
+}
+
+/** The fixture engine's object model: one container level, addressed exactly, holding the kinds `table` and `view`. */
+function objectModel(): Json {
+  return {
+    containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+    containerPathShapes: "exact",
+    containerNameSpelling: null,
+    objectKinds: [objectKind("table"), objectKind("view")],
+    rowActions: [],
+    containersNameKinds: false,
+    tablesNeedContainer: false,
+    tablesAreDerivedGroupings: false,
+    agentWalkScope: null,
+    schemaDiffScope: null,
+    maskedNameKinds: [],
+  };
+}
+
 /** A provider module over the minimal manifest: honours both fields, offers every facet unless told otherwise. */
 function fixture(
   options: {
@@ -92,6 +130,8 @@ function fixture(
     readonly offersPanels?: boolean;
     /** Whether the engine lists maintenance: vacuum and analyze on a row and whole, kill on neither, release on a row. */
     readonly listsMaintenance?: boolean;
+    /** Whether the engine states its object model: one level and the kinds `table` and `view`; true by default. */
+    readonly statesModel?: boolean;
   } = {},
 ): Fixture {
   const manifest = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
@@ -106,6 +146,7 @@ function fixture(
   manifest.calls.monitoring.poolStats = options.poolStats === false ? "not-offered" : "offered";
   manifest.engines[0].facets.monitoring.overview = options.offersPanels === true ? "offered" : "not-offered";
   manifest.engines[0].facets.monitoring.tables = options.offersPanels === true ? "offered" : "not-offered";
+  if (options.statesModel !== false) manifest.engines[0].objects = objectModel();
   if (options.listsMaintenance === true) {
     const placed: [string, boolean, boolean, boolean][] = [
       ["vacuum", true, true, false],
@@ -922,6 +963,71 @@ describe("serve", () => {
       "to-provider objects.tree",
       "to-host objects.tree",
     ]);
+  });
+
+  test("a served tree call naming a level or a kind its engine's object model does not state is refused before any frame", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const unstated = marker();
+    const refusedRequests: [TreeRequest, CallRefusal[]][] = [
+      [
+        { action: "containers", parent: [marker(), marker()] },
+        [{ rule: "request-level-not-stated", pointer: "/parent" }],
+      ],
+      [{ action: "count", container: [] }, [{ rule: "request-level-not-stated", pointer: "/container" }]],
+      [
+        { action: "list", container: [marker()], kind: unstated },
+        [{ rule: "request-kind-not-stated", pointer: "/kind" }],
+      ],
+      [
+        { action: "describeMany", container: [marker(), marker()], kind: "__proto__" },
+        [
+          { rule: "request-level-not-stated", pointer: "/container" },
+          { rule: "request-kind-not-stated", pointer: "/kind" },
+        ],
+      ],
+      [
+        { action: "describe", path: [marker()], kind: unstated },
+        [{ rule: "request-kind-not-stated", pointer: "/kind" }],
+      ],
+    ];
+
+    for (const [request, refusals] of refusedRequests) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each refusal is its own call's.
+      const refused = await failure(async () => impl.objects?.tree?.(opened.handle, request, callContext()));
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual(refusals);
+      expect((refused as CallRefusalError).message).not.toContain(unstated);
+    }
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+
+    // A stated request is served.
+    fx.answers.tree = () => ({ objects: [] });
+    expect(
+      await impl.objects?.tree?.(opened.handle, { action: "list", container: [marker()], kind: "view" }, callContext()),
+    ).toEqual({ objects: [] });
+    expect(fx.seen.map((item) => item.call)).toEqual(["open", "objects.tree"]);
+  });
+
+  test("a served tree call on a session offering objects.tree whose engine states no object model is the host's defect, before any frame", async () => {
+    const fx = fixture({ statesModel: false });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+
+    const thrown = await failure(async () =>
+      impl.objects?.tree?.(opened.handle, { action: "containers" }, callContext()),
+    );
+
+    expect(thrown).not.toBeInstanceOf(CallRefusalError);
+    expect((thrown as Error).message).toBe(
+      "The session offers objects.tree and its engine states no object model, a defect of the host's session.",
+    );
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
   });
 
   test("a tree call on a session without objects.tree is refused before any frame", async () => {

@@ -1,5 +1,5 @@
 /**
- * The memory test transport (docs/providers/CONTRACT.md, clauses C-19, C-22 to C-25, C-27 and C-31 to C-33): `serve`
+ * The memory test transport (docs/providers/CONTRACT.md, clauses C-19, C-22 to C-25, C-27, C-31 to C-33 and M-89): `serve`
  * puts a provider module record behind JSON frames, so a test calls a provider exactly as the contract says calls
  * look.
  *
@@ -27,8 +27,9 @@
  * every execute to the read-only policy its session was opened under (`checkReadOnlyRequest`, clause C-78), read from
  * the open context's `policy` and kept with the session,
  * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
- * `checkMaintenancePreviewRequest`) and every monitoring panel request to the panels the session's engine offers
- * (`checkMonitoringPanelRequest`), reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter
+ * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers
+ * (`checkMonitoringPanelRequest`) and every tree request to the object model the session's engine states
+ * (`checkTreeRequest`, clause M-89), reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter
  * against the maintenance of the engine the open context names, which it refuses before any frame when the module's
  * manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
@@ -42,7 +43,7 @@
  * delivered whole, its token and served sources included, for the host's late handler to close. Each served instance
  * keeps its sessions in its own tables, so a token of one is foreign to another.
  */
-import type { Calls, MonitoringPanels, ProviderManifest } from "../manifest/manifest-types.generated";
+import type { Calls, MonitoringPanels, ObjectModel, ProviderManifest } from "../manifest/manifest-types.generated";
 import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
@@ -58,6 +59,7 @@ import {
   checkMonitoringPanelRequest,
   checkObjectsFacet,
   checkReadOnlyRequest,
+  checkTreeRequest,
   sessionCalls,
   sessionMaintenance,
 } from "../calls/session";
@@ -124,8 +126,9 @@ const SERVICES: readonly string[] = Object.freeze(["signal", "env"] satisfies (k
 
 /**
  * What the host's side keeps of an open session: its calls and its maintenance, narrowed as its open answered, the
- * monitoring panels of the engine it was opened as, and whether its open policy made it a read-only statement session,
- * `policy.readOnly` and `policy.sendsStatements` both true.
+ * monitoring panels and the object model of the engine it was opened as, the latter absent where the engine states
+ * none, and whether its open policy made it a read-only statement session, `policy.readOnly` and
+ * `policy.sendsStatements` both true.
  */
 interface HostSession {
   readonly id: string;
@@ -133,6 +136,7 @@ interface HostSession {
   readonly readOnlyStatements: boolean;
   readonly maintenance: EngineMaintenance;
   readonly monitoring: MonitoringPanels;
+  readonly objectModel?: ObjectModel;
 }
 
 /** The maintenance each engine of `manifest` declares, by its id: the two maintenance members of its facets. */
@@ -148,6 +152,32 @@ function engineMaintenance(manifest: ProviderManifest): ReadonlyMap<string, Engi
 /** The monitoring panels each engine of `manifest` declares, by its id. */
 function enginePanels(manifest: ProviderManifest): ReadonlyMap<string, MonitoringPanels> {
   return new Map(manifest.engines.map((engine) => [engine.id, engine.facets.monitoring]));
+}
+
+/** The object model each engine of `manifest` states, by its id; an engine that states none has no entry. */
+function engineObjectModels(manifest: ProviderManifest): ReadonlyMap<string, ObjectModel> {
+  return new Map(
+    manifest.engines.flatMap((engine) => (engine.objects === undefined ? [] : [[engine.id, engine.objects]])),
+  );
+}
+
+/**
+ * The refusals of a tree request on `session`: `objects.tree` not offered, else every way the request names what the
+ * engine's object model does not state (`checkTreeRequest`).
+ *
+ * @throws {Error} When the session offers `objects.tree` and its engine states no object model, which the validator's
+ * `object-model-missing` refuses in an admitted manifest, so only a manifest no validator read reaches it: the host's
+ * defect.
+ */
+function treeRefusals(session: HostSession, request: TreeRequest): readonly CallRefusal[] {
+  const offered = checkObjectsFacet(session.calls, "tree");
+  if (offered.length > 0) return offered;
+  if (session.objectModel === undefined) {
+    throw new Error(
+      "The session offers objects.tree and its engine states no object model, a defect of the host's session.",
+    );
+  }
+  return checkTreeRequest(session.objectModel, request);
 }
 
 /** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
@@ -200,6 +230,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   const declared = sessionCalls(manifest.calls, undefined);
   const engines = engineMaintenance(manifest);
   const panels = enginePanels(manifest);
+  const objectModels = engineObjectModels(manifest);
   const impl = module.impl;
   const consoleImpl = impl.console;
   const objectsImpl = impl.objects;
@@ -491,7 +522,15 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       const token: ServedHandle = Object.freeze({ session: id });
       const readOnlyStatements = ctx.policy.readOnly && ctx.policy.sendsStatements;
       const monitoring = panels.get(ctx.engine) as MonitoringPanels;
-      sessions.set(token, { id, calls, readOnlyStatements, maintenance, monitoring });
+      const objectModel = objectModels.get(ctx.engine);
+      sessions.set(token, {
+        id,
+        calls,
+        readOnlyStatements,
+        maintenance,
+        monitoring,
+        ...(objectModel === undefined ? {} : { objectModel }),
+      });
       return { ...decoded, handle: token };
     } catch (error) {
       return throwAfterClosing(error, [closeSession]);
@@ -610,7 +649,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
           tree: (handle: ServedHandle, request: TreeRequest, ctx: CallContext) =>
             facetCall<TreeAnswer>(
               "objects.tree",
-              (session) => checkObjectsFacet(session.calls, "tree"),
+              (session) => treeRefusals(session, request),
               tree as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
               objectsImpl,
               handle,

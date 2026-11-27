@@ -1,6 +1,6 @@
 /**
  * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57,
- * C-67, C-68, C-71 and C-78).
+ * C-67, C-68, C-71, C-78 and M-89).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The refinement may also narrow the session's
@@ -15,7 +15,8 @@
  * the session's maintenance with `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is
  * never sent an operation or a placement its session's maintenance does not offer, and every monitoring panel request
  * to the panels the session's engine offers with `checkMonitoringPanelRequest`, so a package is never asked for a panel
- * its engine does not offer.
+ * its engine does not offer, and every tree request to the session's object model with `checkTreeRequest`, so a package
+ * is never asked for a level or a kind its engine's model does not state.
  */
 import type {
   Calls,
@@ -24,6 +25,7 @@ import type {
   MaintenanceOperation,
   MaintenanceSpec,
   MonitoringPanels,
+  ObjectModel,
 } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn, valueOf } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
@@ -45,6 +47,7 @@ import {
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
+  type TreeRequest,
 } from "./types";
 
 /**
@@ -148,6 +151,52 @@ export function checkMonitoringPanelRequest(
   const panel = valueOf(readOwn(request, "panel"));
   if (typeof panel === "string" && valueOf(readOwn(panels, panel)) === "offered") return [];
   return [{ rule: "request-panel-not-offered", pointer: "/panel" }];
+}
+
+/**
+ * Every way `request` names what `model`, the object model of the session's engine, does not state, in request order:
+ * a `containers` parent longer than the model's container levels, which lists below no level the model states (a
+ * parent naming every level is the last level's container and passes); a `count`, `list` or `describeMany` container no
+ * path shape of the levels admits (`exact`: every level; `prefixes`: one level up to every level), each refused
+ * `request-level-not-stated`; and a `list`, `describe` or `describeMany` kind that is no stated kind's id, refused
+ * `request-kind-not-stated`, a kind only the key browser enumerates being stated. A describe's object path is not read:
+ * its shape depends on the kind's attachment, which the provider reads. A kind is compared with each stated id, so an
+ * inherited name such as `__proto__` is unstated and nothing throws. An action outside the vocabulary, and a parent or
+ * container that is not a list, are not read here: they are not a request of this shape, and reading the request's
+ * frame refuses them by name. A refusal names a pointer into the request, never a value of it.
+ */
+export function checkTreeRequest(model: ObjectModel, request: TreeRequest): readonly CallRefusal[] {
+  const refusals: CallRefusal[] = [];
+  const levels = model.containerLevels.length;
+  const stated = (kind: unknown) => model.objectKinds.some((objectKind) => objectKind.id === kind);
+  // exact: a path naming every level; prefixes: one naming one level up to every level. So a model of no level
+  // admits only the empty path under exact and no path under prefixes, and no path longer than the levels either way.
+  const addressed = (container: unknown) =>
+    !Array.isArray(container) ||
+    (model.containerPathShapes === "prefixes"
+      ? container.length >= 1 && container.length <= levels
+      : container.length === levels);
+  switch (request.action) {
+    case "containers": {
+      const parent: unknown = request.parent;
+      if (Array.isArray(parent) && parent.length > levels) {
+        refusals.push({ rule: "request-level-not-stated", pointer: "/parent" });
+      }
+      break;
+    }
+    case "count":
+    case "list":
+    case "describeMany":
+      if (!addressed(request.container)) refusals.push({ rule: "request-level-not-stated", pointer: "/container" });
+      if (request.action !== "count" && !stated(request.kind)) {
+        refusals.push({ rule: "request-kind-not-stated", pointer: "/kind" });
+      }
+      break;
+    case "describe":
+      if (!stated(request.kind)) refusals.push({ rule: "request-kind-not-stated", pointer: "/kind" });
+      break;
+  }
+  return refusals;
 }
 
 /**
