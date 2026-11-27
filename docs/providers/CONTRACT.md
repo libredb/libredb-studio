@@ -79,7 +79,7 @@ An engine id is the schema's `engineId`, and a manifest declares each of its eng
 
 ### M-8 (normative): Every engine fact is required
 
-Every fact of an engine declaration is a required key in the schema's engine declaration, written as `null`, `false` or an empty list where the engine has none, except the object model, which M-89 requires only where the package offers `objects.tree`; only the connection defaults have optional keys.
+Every fact of an engine declaration is a required key in the schema's engine declaration, written as `null`, `false` or an empty list where the engine has none, except the object model, which M-89 requires only where the package offers `objects.tree` or the declaration names an object kind; only the connection defaults have optional keys.
 
 ### M-9 (normative): Connection fields are the contract's vocabulary, and so are their classes
 

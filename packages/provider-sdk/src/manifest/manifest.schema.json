@@ -270,7 +270,7 @@
       "pattern": "^[a-z][a-z0-9]{0,31}$"
     },
     "engineDeclaration": {
-      "description": "One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission; only the object model, objects, is left out by an engine whose package does not offer objects.tree.",
+      "description": "One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission; only the object model, objects, is left out, by an engine whose package does not offer objects.tree and whose maintenance specs and catalog capture name no object kind.",
       "type": "object",
       "properties": {
         "id": {
@@ -3918,7 +3918,7 @@
       "additionalProperties": false
     },
     "objectModel": {
-      "description": "The engine's object model, which an engine whose package offers objects.tree states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none.",
+      "description": "The engine's object model, which an engine whose package offers objects.tree, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none.",
       "type": "object",
       "properties": {
         "containerLevels": {

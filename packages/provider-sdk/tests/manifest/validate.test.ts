@@ -383,9 +383,10 @@ function maintenanceSpec(operation: string, label: string, perEntity: boolean, g
  * The fixture's one engine offering five maintenance operations, each with a spec of one shipped shape, in the list's
  * order: both placements (vacuum), the whole database only (check), one row only with its kinds, a typed target, a
  * description and a preview (release), a whole-database card with its title, description and typed confirmation
- * (compact), and placed nowhere (kill).
+ * (compact), and placed nowhere (kill). The engine's object model states the release spec's kinds (`statingKinds`).
  */
 function withMaintenance(m: Json): void {
+  statingKinds(m, ["collection", "materialized_query_table", "file-format"]);
   facetsOf(m).maintenance = ["vacuum", "check", "release", "compact", "kill"];
   facetsOf(m).maintenanceSpecs = [
     maintenanceSpec("vacuum", "Vacuum", true, true),
@@ -498,6 +499,15 @@ function objectModel(): Json {
     schemaDiffScope: null,
     maskedNameKinds: [],
   };
+}
+
+/**
+ * Each of `kinds` stated in the fixture's one engine's object model, after the kinds it already states; an engine that
+ * states no model first states `objectModel()`, since a kind the declaration names is one its model states.
+ */
+function statingKinds(m: Json, kinds: readonly string[]): void {
+  m.engines[0].objects ??= objectModel();
+  objectsOf(m).objectKinds.push(...kinds.map((kind) => objectKind(kind)));
 }
 
 /** The fixture with its package offering `objects.tree` and its one engine stating `objectModel()`, then `change`. */
@@ -771,8 +781,12 @@ function sqlDialect(): Json {
   };
 }
 
-/** The fixture's one engine as an SQL engine whose overlay gives `sqlDialect()` and a grounding override. */
+/**
+ * The fixture's one engine as an SQL engine whose overlay gives `sqlDialect()` and a grounding override, its object model
+ * stating the capture's kind words (`statingKinds`).
+ */
 function withSqlDialect(m: Json): void {
+  statingKinds(m, ["table", "view", "sequence"]);
   agentOf(m).statementLanguage = "sql";
   agentOf(m).overlay = { dialect: sqlDialect(), grounding: "groundingOverride" };
 }
@@ -4030,6 +4044,7 @@ describe("rules the schema cannot state", () => {
   test("a dialect on an engine of another family is refused as agent-dialect-unspoken", () => {
     const changed = kafkaManifest();
     agentOf(changed).overlay.dialect = sqlDialect();
+    statingKinds(changed, ["table", "view", "sequence"]);
 
     expect(refusalsFor(changed)).toEqual([refusal("agent-dialect-unspoken", DIALECT)]);
   });
@@ -5036,22 +5051,16 @@ describe("the object model", () => {
   });
 
   test("a maintenance spec naming a kind the object model does not state is refused at its pointer", () => {
-    const unstated = modelled(withMaintenance);
-    const stated = modelled((m) => {
+    const unstated = modelled((m) => {
       withMaintenance(m);
-      objectsOf(m).objectKinds.push(
-        objectKind("collection"),
-        objectKind("materialized_query_table"),
-        objectKind("file-format"),
-      );
+      maintenanceSpecsOf(m)[2].kinds = ["absent", "item", "gone"];
     });
 
     expect(refusalsFor(unstated)).toEqual([
       refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/0`),
-      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/1`),
       refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/2`),
     ]);
-    expect(refusalsFor(stated)).toEqual([]);
+    expect(refusalsFor(modelled(withMaintenance))).toEqual([]);
     // A spec with no kind list runs on every relation kind, so it names no kind the model must state.
     expect(refusalsFor(modelled((m) => (withMaintenance(m), (maintenanceSpecsOf(m)[2].kinds = null))))).toEqual([]);
   });
@@ -5068,31 +5077,54 @@ describe("the object model", () => {
   test("a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer", () => {
     const unstated = modelled((m) => {
       withSqlDialect(m);
+      sqlDialectOf(m).catalogCapture.kindWords[1].kind = "lost";
       objectsOf(m).rowActions[0].kinds = ["item", "missing"];
       objectsOf(m).objectKinds[0].childKinds = ["absent"];
       objectsOf(m).objectKinds[1].attachedTo = "gone";
     });
-    const stated = modelled((m) => {
-      withSqlDialect(m);
-      objectsOf(m).objectKinds.push(objectKind("table"), objectKind("view"), objectKind("sequence"));
-    });
+    const stated = modelled(withSqlDialect);
 
     expect(refusalsFor(unstated)).toEqual([
-      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/0/kind`),
       refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/1/kind`),
-      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/2/kind`),
       refusal("object-kind-unstated", `${OBJECTS}/objectKinds/0/childKinds/0`),
       refusal("object-kind-unstated", `${OBJECTS}/objectKinds/1/attachedTo`),
       refusal("object-kind-unstated", `${OBJECTS}/rowActions/0/kinds/1`),
     ]);
     expect(refusalsFor(stated)).toEqual([]);
-    // Without an object model there is no model to name a kind of: the references are read only against one stated.
-    expect(refusalsFor(manifest(withSqlDialect))).toEqual([]);
+  });
+
+  test("a maintenance spec kind or a catalog capture kind word of an engine that states no object model is refused at its pointer", () => {
+    const unmodelled = manifest((m) => {
+      withMaintenance(m);
+      withSqlDialect(m);
+      delete m.engines[0].objects;
+    });
+
+    // No model states any kind, so every kind the declaration names is unstated, whether or not the package offers
+    // objects.tree.
+    expect(refusalsFor(unmodelled)).toEqual([
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/0/kind`),
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/1/kind`),
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/2/kind`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/0`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/1`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/2`),
+    ]);
+    // A spec with no kind list and a dialect with no catalog capture name no kind, so they need no model.
+    const unnamed = manifest((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m)[2].kinds = null;
+      withSqlDialect(m);
+      sqlDialectOf(m).catalogCapture = null;
+      delete m.engines[0].objects;
+    });
+    expect(refusalsFor(unnamed)).toEqual([]);
   });
 
   test("an engine declaration's object model is refused at its own pointer under validateEngine", () => {
     const declaration = modelled((m) => {
       withMaintenance(m);
+      maintenanceSpecsOf(m)[2].kinds = ["absent"];
       objectsOf(m).objectKinds.push(objectKind("item"));
       objectsOf(m).maskedNameKinds = ["missing"];
     }).engines[0] as Json;
@@ -5101,14 +5133,15 @@ describe("the object model", () => {
       admitted: false,
       refusals: [
         refusal("object-kind-unstated", "/facets/maintenanceSpecs/2/kinds/0"),
-        refusal("object-kind-unstated", "/facets/maintenanceSpecs/2/kinds/1"),
-        refusal("object-kind-unstated", "/facets/maintenanceSpecs/2/kinds/2"),
         refusal("object-kind-unstated", "/objects/maskedNameKinds/0"),
-        refusal("object-kind-duplicate", "/objects/objectKinds/2/id"),
+        refusal("object-kind-duplicate", "/objects/objectKinds/5/id"),
       ],
     });
-    // A declaration read alone has no package calls, so the model's absence is the manifest's rule, not the engine's.
+    // A declaration read alone has no package calls, so the model's absence and the kinds an engine with no model names
+    // are the manifest's rules, not the engine's.
     expect(validator.validateEngine(manifest().engines[0])).toEqual({ admitted: true, engine: manifest().engines[0] });
+    const unmodelled = manifest((m) => (withMaintenance(m), withSqlDialect(m), delete m.engines[0].objects)).engines[0];
+    expect(validator.validateEngine(unmodelled)).toEqual({ admitted: true, engine: unmodelled });
   });
 
   test("an object model refusal carries no value of the manifest", () => {

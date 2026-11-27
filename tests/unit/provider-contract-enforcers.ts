@@ -1169,6 +1169,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a maintenance spec naming a kind the object model does not state is refused at its pointer",
         "a masked kind the object model does not state is refused at its pointer",
         "a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer",
+        "a maintenance spec kind or a catalog capture kind word of an engine that states no object model is refused at its pointer",
         "an engine declaration's object model is refused at its own pointer under validateEngine",
         "an object model refusal carries no value of the manifest",
       ],
