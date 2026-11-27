@@ -26,7 +26,7 @@ import {
 import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import { applicableKinds } from "@/lib/db/object-kinds";
 import { scrubObjectDetail, scrubProviderText } from "@/lib/db/operations/provider-text";
-import type { DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -102,9 +102,10 @@ export async function POST(req: NextRequest) {
     req,
     "api/db/objects/inventory",
     async (provider, body, ctx): Promise<ObjectInventory> => {
-      const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
+      const tree = objectTree(provider, req.signal, ctx.route);
+      const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
       const named = optionalContainerList(body, "containers");
-      named?.forEach((container) => assertContainerAddress(provider, "containers", container));
+      named?.forEach((container) => assertContainerAddress(tree.objectModel, provider.type, "containers", container));
 
       // Deduplicated before the fan-out is built, not after: a repeated container costs one full
       // listing round trip per kind, and a body may name the same one any number of times.
@@ -116,11 +117,8 @@ export async function POST(req: NextRequest) {
       // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
       // not have its namespaced kinds listed there. See `namedEnumeration`.
       if (named === undefined) assertNotWholeServer(provider);
-      const tree = objectTree(provider, req.signal, ctx.route);
       const enumerated =
-        named === undefined
-          ? await enumerateContainers(tree)
-          : await namedEnumeration(provider, tree, dedupePaths(named));
+        named === undefined ? await enumerateContainers(tree) : await namedEnumeration(tree, dedupePaths(named));
       const containers = dedupePaths(enumerated.containers);
       const kindsOf = kindsByContainer(enumerated);
       const { listObjects } = tree;
@@ -240,14 +238,13 @@ export async function POST(req: NextRequest) {
  * inapplicable pair with a sentence, and that refusal would end the whole inventory. So the caller is
  * told before any listing, in a sentence naming what it sent. The paths arrive deduplicated, and the
  * sentence echoes the first few of them and counts the rest, so a large body never comes back whole.
- * The listings are read from `source`, the request's object tree, and counted from `provider`'s capabilities.
+ * The listings are read from `source`, the request's object tree, and counted from its object model.
  */
 async function namedEnumeration(
-  provider: DatabaseProvider,
   source: ContainerSource,
   named: readonly (readonly string[])[],
 ): Promise<ContainerEnumeration> {
-  const listings = namedContainerListings(provider, named);
+  const listings = namedContainerListings(source, named);
   if (listings > INVENTORY_PAIR_LIMIT) {
     throw new ObjectRouteError(
       `"containers" names containers under ${listings} parents, and the kinds each holds take one container ` +

@@ -117,8 +117,15 @@ function stub(options: Stub = {}) {
       options.describe?.(container, kind) ?? { details: [] },
   );
   const inventoryNeedsConfiguration = mock(async () => options.needs?.reason);
+  const capabilities: ProviderCapabilities = {
+    ...BASE,
+    objectKinds: options.kinds ?? [POD, SECRET],
+    ...options.extra,
+  };
   const provider = {
     type: "mongodb",
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     listObjects,
     countObjects,
     listContainers,
@@ -132,11 +139,7 @@ function stub(options: Stub = {}) {
     workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
     connection: { id: "conn-1", name: "Cluster", type: "mongodb", createdAt: new Date(0), ...options.connection },
-    capabilities: {
-      ...BASE,
-      objectKinds: options.kinds ?? [POD, SECRET],
-      ...options.extra,
-    },
+    capabilities,
     labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),
     scope: createTargetScope("conn-1"),

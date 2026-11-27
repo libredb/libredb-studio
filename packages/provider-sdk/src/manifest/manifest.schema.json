@@ -3922,7 +3922,7 @@
       "type": "object",
       "properties": {
         "containerLevels": {
-          "description": "The engine's container levels, outermost first: none where every object is addressed by its bare name, one, or a catalog and the schema inside it.",
+          "description": "The engine's container levels, outermost first, exactly one of four lists: none where every object is addressed by its bare name, a lone schema, a lone catalog, or a catalog then the schema inside it.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/containerLevel"
@@ -4006,7 +4006,7 @@
       "additionalProperties": false
     },
     "containerLevel": {
-      "description": "One container level, in the engine's own words. id: its structural role, catalog for the outer of two levels and schema for the only or the inner one.",
+      "description": "One container level, in the engine's own words. id: its structural role, catalog for the outer of two levels or a lone catalog, and schema for the inner of two levels or a lone schema, as containerLevels admits them.",
       "type": "object",
       "properties": {
         "id": {

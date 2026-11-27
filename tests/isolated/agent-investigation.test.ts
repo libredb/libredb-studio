@@ -214,6 +214,9 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
   // on its bridged session, which reads its engine's panels by that type.
   const provider = {
     type: CONNECTION.type,
+    // The bridged session states the provider's object model, which every tree read is held to: the one kind the
+    // fixture lists, as the runs grounded through the OBJECT surface state it.
+    getCapabilities: () => OBJECT_CAPABILITIES,
     queryReadOnly,
     listContainers: async () => [],
     countObjects: async () => ({ table: { count: (await describes()).length } }),

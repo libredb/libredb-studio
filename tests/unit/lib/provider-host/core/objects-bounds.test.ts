@@ -34,6 +34,19 @@ const child = boundedChild({
         maintenance: { run: "not-offered", preview: "not-offered" },
         monitoring: { panel: "not-offered", poolStats: "not-offered" },
       },
+      objectModel: {
+        containerLevels: [],
+        containerPathShapes: "exact",
+        containerNameSpelling: null,
+        objectKinds: [],
+        rowActions: [],
+        containersNameKinds: false,
+        tablesNeedContainer: false,
+        tablesAreDerivedGroupings: false,
+        agentWalkScope: null,
+        schemaDiffScope: null,
+        maskedNameKinds: [],
+      },
       tree: () => new Promise<never>(() => {}),
     } as unknown as Parameters<typeof deps.treeCall>[0];
     const record = await deps.treeCall(

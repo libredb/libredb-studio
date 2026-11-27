@@ -9,7 +9,8 @@
  * `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet` and `checkMonitoringFacet`, which refuse a console,
  * object, maintenance or monitoring facet the session does not offer, `checkMaintenanceRunRequest` and
  * `checkMaintenancePreviewRequest`, which refuse a maintenance request the session's maintenance does not take,
- * `checkMonitoringPanelRequest`, which refuses a panel the session's engine does not offer, `checkTransactionAnswer`
+ * `checkMonitoringPanelRequest`, which refuses a panel the session's engine does not offer, `checkTreeRequest`, which
+ * refuses a tree request naming a level or a kind the session's object model does not state, `checkTransactionAnswer`
  * and `checkTransactionStatement`, which refuse a session state a transaction call or a statement inside the
  * transaction answered that the host cannot read, `checkRefinement` and `sessionCalls`, which narrow a session's calls
  * by the refinement `open` answers, `sessionMaintenance`, which narrows a session's maintenance by the placements its
@@ -72,6 +73,7 @@ export {
   checkObjectsFacet,
   checkReadOnlyRequest,
   checkRefinement,
+  checkTreeRequest,
   sessionCalls,
   sessionMaintenance,
 } from "./session";

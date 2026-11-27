@@ -107,6 +107,8 @@ async function planDrive(
   if (listed === undefined) throw new Error(`${connection.type} declares no object kind to list`);
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     listContainers: async () => [],
     countObjects: async () => ({ [listed.id]: { count: 1 } }),
     listObjects: async (_container: readonly string[], kind: string) =>
@@ -252,6 +254,8 @@ async function kubectlDrive(
   const engine = new KubernetesProvider(connection);
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => engine.getCapabilities(),
     listContainers: async () => {
       if (unreadable) throw new QueryError("namespaces is forbidden", "kubernetes");
       return [{ path: ["shop"], name: "shop", level: 0, isSessionDefault: true, kinds: ["pods"] }];
@@ -1062,6 +1066,8 @@ async function agentDrive(
   const [listed] = declared.capabilities.objectKinds ?? [];
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => declared.capabilities,
     queryReadOnly: async (): Promise<QueryResult> => ({
       rows: [{ n: 1 }],
       fields: ["n"],
@@ -1406,6 +1412,8 @@ async function planDriveRefusingReadOnly(
   const levels = ["app", "dbo"].slice(0, capabilities.containerLevels?.length ?? 0);
   const provider = {
     type: connection.type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     listContainers: async (parent: readonly string[] = []) =>
       parent.length < levels.length
         ? [{ path: levels.slice(0, parent.length + 1), name: levels[parent.length], level: parent.length }]

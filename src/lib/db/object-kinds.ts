@@ -1,5 +1,9 @@
 /**
- * Pure derivations over a provider's object declarations.
+ * Pure derivations over an engine's object model (docs/providers/CONTRACT.md, clause M-89), in either of the two forms
+ * it is stated in: the engine declaration's `objects` member, which a provider package's session states and which
+ * writes every member out with `null` where the engine has none, and a legacy provider's `ProviderCapabilities`, which
+ * leaves such a member absent. `ObjectModelView` is the one type both satisfy, and every reader here reads `null` and
+ * absent alike.
  *
  * Exists so no consumer inlines a default. Every question a consumer asks about a kind
  * is answered here, in one place, so the defaults cannot drift: an absent
@@ -10,12 +14,60 @@ import type {
   ContainerLevelSpec,
   DatabaseType,
   KindCount,
-  KindRowAction,
   ObjectKindSpec,
   ObjectSourcePart,
   ProviderCapabilities,
 } from "@/lib/db/types";
 import type { IndexSchema } from "@/lib/types";
+
+/**
+ * One object kind as an engine's object model states it: an `ObjectKindSpec` of a legacy provider's capabilities, or
+ * an `ObjectKind` of an engine declaration, which writes `null` where the spec leaves a member out. Every member but
+ * the kind's identity is optional, and each reader here reads `null` and absent alike.
+ */
+export interface ObjectKindView {
+  readonly id: string;
+  readonly role: ObjectKindSpec["role"];
+  readonly label: string;
+  readonly labelPlural: string;
+  readonly hasSource?: boolean;
+  readonly sourceLanguage?: string | null;
+  readonly hasColumns?: boolean;
+  readonly acceptsSourceEdits?: boolean;
+  readonly childKinds?: readonly string[];
+  readonly attachedTo?: string | null;
+  readonly acceptsRowWrites?: boolean;
+  readonly enumeratedBy?: "key-browser" | null;
+  readonly countIsListing?: boolean;
+  readonly machineNames?: "withheld" | null;
+  readonly group?: { readonly id: string; readonly label: string } | null;
+}
+
+/** One row action as an engine's object model states it, in either form. */
+export interface RowActionView {
+  readonly id: string;
+  readonly label: string;
+  readonly kinds: readonly string[];
+  readonly activates?: boolean;
+}
+
+/**
+ * The members of an engine's object model the readers here take, as both forms state them: a session's `objectModel`
+ * (the SDK's `ObjectModel`) and a legacy provider's `ProviderCapabilities` each satisfy it. Generic over the kind and
+ * the row action, so a reader that answers a kind or an action answers the caller's own type.
+ */
+export interface ObjectModelView<K extends ObjectKindView = ObjectKindView, A extends RowActionView = RowActionView> {
+  readonly containerLevels?: readonly ContainerLevelSpec[];
+  readonly containerPathShapes?: "exact" | "prefixes";
+  readonly objectKinds?: readonly K[];
+  readonly rowActions?: readonly A[];
+  readonly containersNameKinds?: boolean;
+}
+
+/** Whether a member of the model is stated: neither absent, as a legacy provider leaves it, nor `null`, as a declaration writes it. */
+function stated<T>(value: T | null | undefined): value is T {
+  return value !== undefined && value !== null;
+}
 
 /**
  * How many container levels this engine declares, as the tree models them.
@@ -26,8 +78,8 @@ import type { IndexSchema } from "@/lib/types";
  * is read by nothing. This arm is what a cast past that type still meets, and what every
  * two-level provider's own path validation already refuses independently.
  */
-export function containerDepth(capabilities: ProviderCapabilities): 0 | 1 | 2 {
-  const levels = capabilities.containerLevels?.length ?? 0;
+export function containerDepth(model: ObjectModelView): 0 | 1 | 2 {
+  const levels = model.containerLevels?.length ?? 0;
   if (levels >= 2) return 2;
   if (levels === 1) return 1;
   return 0;
@@ -38,12 +90,12 @@ export function containerDepth(capabilities: ProviderCapabilities): 0 | 1 | 2 {
  * included: `findKind` resolves through it, and the Source tab and both edit routes need that kind.
  * A reader that walks all kinds reads `enumerableKinds()` below instead (#1089 3.4).
  */
-export function declaredKinds(capabilities: ProviderCapabilities): readonly ObjectKindSpec[] {
-  return capabilities.objectKinds ?? [];
+export function declaredKinds<K extends ObjectKindView>(model: ObjectModelView<K>): readonly K[] {
+  return model.objectKinds ?? [];
 }
 
-export function findKind(capabilities: ProviderCapabilities, id: string): ObjectKindSpec | undefined {
-  return declaredKinds(capabilities).find((kind) => kind.id === id);
+export function findKind<K extends ObjectKindView>(model: ObjectModelView<K>, id: string): K | undefined {
+  return declaredKinds(model).find((kind) => kind.id === id);
 }
 
 /**
@@ -59,8 +111,8 @@ export function findKind(capabilities: ProviderCapabilities, id: string): Object
  * gets is a folder, an inventory listing or a line of plan mode's prompt, any of which would put key
  * names where the tree and the agent read them.
  */
-export function enumerableKinds(capabilities: ProviderCapabilities): readonly ObjectKindSpec[] {
-  return declaredKinds(capabilities).filter((kind) => kind.enumeratedBy === undefined);
+export function enumerableKinds<K extends ObjectKindView>(model: ObjectModelView<K>): readonly K[] {
+  return declaredKinds(model).filter((kind) => !stated(kind.enumeratedBy));
 }
 
 /**
@@ -76,10 +128,10 @@ export function enumerableKinds(capabilities: ProviderCapabilities): readonly Ob
  * here rather than raised, because the tree calls this inside its render; the object-surface
  * conformance refuses such a declaration by name instead.
  */
-export function applicableKinds(
-  kinds: readonly ObjectKindSpec[],
+export function applicableKinds<K extends ObjectKindView>(
+  kinds: readonly K[],
   containerKinds: readonly string[] | undefined,
-): readonly ObjectKindSpec[] {
+): readonly K[] {
   if (containerKinds === undefined) return kinds;
   return kinds.filter((kind) => containerKinds.includes(kind.id));
 }
@@ -88,11 +140,11 @@ export function applicableKinds(
  * The enumerable kinds of one container: `applicableKinds` over every kind the object surface
  * enumerates, for a reader that holds no narrower list, which is the object-surface conformance.
  */
-export function kindsForContainer(
-  capabilities: ProviderCapabilities,
+export function kindsForContainer<K extends ObjectKindView>(
+  model: ObjectModelView<K>,
   containerKinds: readonly string[] | undefined,
-): readonly ObjectKindSpec[] {
-  return applicableKinds(enumerableKinds(capabilities), containerKinds);
+): readonly K[] {
+  return applicableKinds(enumerableKinds(model), containerKinds);
 }
 
 /**
@@ -103,7 +155,7 @@ export function kindsForContainer(
  * string `label`, is read as no group, the way `registeredDialect` reads a host's dialect, rather than
  * thrown on.
  */
-export function kindGroup(spec: ObjectKindSpec): { readonly id: string; readonly label: string } | undefined {
+export function kindGroup(spec: ObjectKindView): { readonly id: string; readonly label: string } | undefined {
   const group: unknown = spec.group;
   if (typeof group !== "object" || group === null) return undefined;
   const { id, label } = group as {
@@ -116,16 +168,19 @@ export function kindGroup(spec: ObjectKindSpec): { readonly id: string; readonly
 /**
  * The row actions declared for one kind, in declaration order. Empty on every engine that declares none.
  *
- * The one reader of `ProviderCapabilities.rowActions`: the row menu offers these, and the tab manager
+ * The one reader of the model's `rowActions`: the row menu offers these, and the tab manager
  * refuses an action id that is not among them. Read defensively for the reason `kindGroup` gives: a
  * declaration that is not a list, and an entry that is not a record with a string `id`, a string `label`
  * and a `kinds` list, offer nothing.
  */
-export function rowActionsForKind(capabilities: ProviderCapabilities, kindId: string): readonly KindRowAction[] {
-  const declared: unknown = capabilities.rowActions;
+export function rowActionsForKind<A extends RowActionView>(
+  model: ObjectModelView<ObjectKindView, A>,
+  kindId: string,
+): readonly A[] {
+  const declared: unknown = model.rowActions;
   if (!Array.isArray(declared)) return [];
   return declared.filter(
-    (action: unknown): action is KindRowAction =>
+    (action: unknown): action is A =>
       typeof action === "object" &&
       action !== null &&
       typeof (action as { id?: unknown }).id === "string" &&
@@ -142,11 +197,11 @@ export function rowActionsForKind(capabilities: ProviderCapabilities, kindId: st
  * actions that both activate one kind are a declaration error and raise here, at the first activation of such a row,
  * rather than one of them being picked by its place in the list.
  */
-export function activationRowActionForKind(
-  capabilities: ProviderCapabilities,
+export function activationRowActionForKind<A extends RowActionView>(
+  model: ObjectModelView<ObjectKindView, A>,
   kindId: string,
-): KindRowAction | undefined {
-  const activating = rowActionsForKind(capabilities, kindId).filter(
+): A | undefined {
+  const activating = rowActionsForKind(model, kindId).filter(
     (action) => (action as { activates?: unknown }).activates === true,
   );
   if (activating.length > 1)
@@ -166,8 +221,8 @@ export function activationRowActionForKind(
  * `tests/isolated/object-source-declarations.test.ts` refuses a second, one without `hasSource` and
  * one on capabilities without `keyScan`.
  */
-export function keyBrowserKind(capabilities: ProviderCapabilities): ObjectKindSpec | undefined {
-  return declaredKinds(capabilities).find((kind) => kind.enumeratedBy === "key-browser");
+export function keyBrowserKind<K extends ObjectKindView>(model: ObjectModelView<K>): K | undefined {
+  return declaredKinds(model).find((kind) => kind.enumeratedBy === "key-browser");
 }
 
 /**
@@ -192,8 +247,8 @@ export type ObjectPathShapeEngine = {
  * the depth rule and the level list cannot be taken by two different rules. Exported for
  * `jsonCommandAddress`, which reads a MongoDB statement's database the same way.
  */
-export function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
-  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+export function declaredLevels(model: ObjectModelView): readonly ContainerLevelSpec[] {
+  return (model.containerLevels ?? []).slice(0, containerDepth(model));
 }
 
 /** Whether requests run in a catalog the caller names (#1530): `catalogSessions` and a `catalog` level. */
@@ -225,23 +280,22 @@ export function catalogOfPath(capabilities: ProviderCapabilities, path: readonly
  * caller's own words.
  */
 export function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
+  model: ObjectModelView,
+  spec: ObjectKindView,
   kind: string,
   path: readonly string[],
   engine: ObjectPathShapeEngine,
 ): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const levels = declaredLevels(model).map((level) => level.label.toLowerCase());
   const attachedTo = spec.attachedTo;
-  const shapes: string[][] =
-    attachedTo === undefined
-      ? [[...levels, "name"]]
-      : engine.attachedSegment === "optional"
-        ? [
-            [...levels, attachedTo, "name"],
-            [...levels, "name"],
-          ]
-        : [[...levels, attachedTo, "name"]];
+  const shapes: string[][] = !stated(attachedTo)
+    ? [[...levels, "name"]]
+    : engine.attachedSegment === "optional"
+      ? [
+          [...levels, attachedTo, "name"],
+          [...levels, "name"],
+        ]
+      : [[...levels, attachedTo, "name"]];
   if (shapes.some((shape) => shape.length === path.length)) return;
   throw new QueryError(
     `${engine.label} "${kind}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
@@ -290,7 +344,7 @@ export type ContainerPathShapeEngine = {
 /**
  * The container paths this engine accepts as an ADDRESS, as lists of its declared levels (#1147).
  *
- * The one reader of `ProviderCapabilities.containerPathShapes`, and both refusals read it: the
+ * The one reader of the model's `containerPathShapes`, and both refusals read it: the
  * provider's own `assertContainerPathShape` below, and the address check of the HTTP object routes
  * in `src/lib/api/object-route.ts`. `exact` answers the declared levels as the only shape;
  * `prefixes` answers every leading slice of them, from one level up to all of them, because on
@@ -309,11 +363,9 @@ export type ContainerPathShapeEngine = {
  * the empty path, because the depth it asks for is zero; `prefixes` answers no shape at all, since
  * every prefix of an empty list is a shape it never declared.
  */
-export function acceptedContainerShapes(
-  capabilities: ProviderCapabilities,
-): readonly (readonly ContainerLevelSpec[])[] {
-  const levels = declaredLevels(capabilities);
-  if (capabilities.containerPathShapes !== "prefixes") return [levels];
+export function acceptedContainerShapes(model: ObjectModelView): readonly (readonly ContainerLevelSpec[])[] {
+  const levels = declaredLevels(model);
+  if (model.containerPathShapes !== "prefixes") return [levels];
   return levels.map((_, index) => levels.slice(0, index + 1));
 }
 
@@ -359,11 +411,11 @@ export function renderContainerShapes(
  * and a path one segment too long would bind the object's own name as the missing level.
  */
 export function assertContainerPathShape(
-  capabilities: ProviderCapabilities,
+  model: ObjectModelView,
   container: readonly string[],
   engine: ContainerPathShapeEngine,
 ): void {
-  const shapes = acceptedContainerShapes(capabilities);
+  const shapes = acceptedContainerShapes(model);
   if (shapes.some((shape) => shape.length === container.length)) return;
   throw new QueryError(
     `${engine.label} container path is ${renderContainerShapes(shapes, engine.shapeNames)}, received ${JSON.stringify(container)}`,
@@ -388,8 +440,8 @@ export function assertContainerPathShape(
  * A caller that needs an engine fact as well asks a predicate that names both, such as
  * `offersTestDataGeneration` below.
  */
-export function kindAcceptsRowWrites(capabilities: ProviderCapabilities, id: string): boolean {
-  return findKind(capabilities, id)?.acceptsRowWrites === true;
+export function kindAcceptsRowWrites(model: ObjectModelView, id: string): boolean {
+  return findKind(model, id)?.acceptsRowWrites === true;
 }
 
 /**
@@ -443,10 +495,8 @@ export function offersTestDataGeneration(capabilities: ProviderCapabilities, id:
  * among these and answers `[]` either way - what the two engines share is `enumerableKinds`, which
  * is the rule the sidebar and the tree read.
  */
-export function relationKindIds(capabilities: ProviderCapabilities): readonly string[] {
-  const relations = declaredKinds(capabilities).filter(
-    (kind) => kind.role === "relation" && kind.enumeratedBy === undefined,
-  );
+export function relationKindIds(model: ObjectModelView): readonly string[] {
+  const relations = declaredKinds(model).filter((kind) => kind.role === "relation" && !stated(kind.enumeratedBy));
   const withheld = relations.find((kind) => kindNamesWithheld(kind));
   if (withheld !== undefined) {
     throw new Error(
@@ -508,8 +558,8 @@ export function isCountSampled(count: KindCount): count is { readonly count: num
  * end the whole capture, and carries the sentence as `AgentInventoryKind.unavailable` instead. A kind
  * that declares nothing is walked exactly as before, a refused count and all.
  */
-export function kindCountIsListing(capabilities: ProviderCapabilities, id: string): boolean {
-  return findKind(capabilities, id)?.countIsListing === true;
+export function kindCountIsListing(model: ObjectModelView, id: string): boolean {
+  return findKind(model, id)?.countIsListing === true;
 }
 
 /**
@@ -518,7 +568,7 @@ export function kindCountIsListing(capabilities: ProviderCapabilities, id: strin
  * Absent and undeclared both read as false. It takes the SPEC, as `kindHasColumns` does, because its one reader,
  * the agent's grounding walk, already holds it.
  */
-export function kindNamesWithheld(kind: ObjectKindSpec | undefined): boolean {
+export function kindNamesWithheld(kind: ObjectKindView | undefined): boolean {
   return kind?.machineNames === "withheld";
 }
 
@@ -557,19 +607,19 @@ export function callerBoundTruncationReason(limit: number): string {
  * can answer it. Four kinds in the fleet are readable for some of their objects and not
  * others, and this answers for the kind.
  */
-export function kindHasSource(capabilities: ProviderCapabilities, id: string): boolean {
-  return findKind(capabilities, id)?.hasSource === true;
+export function kindHasSource(model: ObjectModelView, id: string): boolean {
+  return findKind(model, id)?.hasSource === true;
 }
 
 /**
  * Whether THIS KIND has columns (#789, columns under an object row).
  *
  * Absent and undeclared both read as FALSE, and the name says the scope so a caller cannot inline
- * the default. It takes the SPEC rather than `(capabilities, id)` like its siblings, because both
+ * the default. It takes the SPEC rather than `(model, id)` like its siblings, because both
  * readers already hold one: the tree walk holds the folder's spec, and the conformance guard
- * iterates them. A caller holding only an id passes `findKind(capabilities, id)` straight in.
+ * iterates them. A caller holding only an id passes `findKind(model, id)` straight in.
  */
-export function kindHasColumns(kind: ObjectKindSpec | undefined): boolean {
+export function kindHasColumns(kind: ObjectKindView | undefined): boolean {
   return kind?.hasColumns === true;
 }
 
@@ -581,8 +631,8 @@ export function kindHasColumns(kind: ObjectKindSpec | undefined): boolean {
  * source is a broken DECLARATION, and the census refuses it by name. A derivation that hid it by
  * answering false would take the only guard that can see it away.
  */
-export function kindAcceptsSourceEdits(capabilities: ProviderCapabilities, id: string): boolean {
-  return findKind(capabilities, id)?.acceptsSourceEdits === true;
+export function kindAcceptsSourceEdits(model: ObjectModelView, id: string): boolean {
+  return findKind(model, id)?.acceptsSourceEdits === true;
 }
 
 /**
@@ -708,12 +758,12 @@ export function applySourceBound(
  * The return narrows `sourceLanguage` to `string`, which is the whole point of the third throw:
  * the caller reads `spec.sourceLanguage` with no `??` and no second undefined check.
  */
-export function requireSourceKind(
-  capabilities: ProviderCapabilities,
+export function requireSourceKind<K extends ObjectKindView>(
+  model: ObjectModelView<K>,
   kind: string,
   engine: { readonly displayName: string; readonly type: DatabaseType },
-): ObjectKindSpec & { readonly sourceLanguage: string } {
-  const spec = findKind(capabilities, kind);
+): K & { readonly sourceLanguage: string } {
+  const spec = findKind(model, kind);
   if (spec === undefined) {
     throw new QueryError(`${engine.displayName} declares no object kind "${kind}"`, engine.type);
   }
@@ -721,7 +771,7 @@ export function requireSourceKind(
     throw new QueryError(`${engine.displayName} publishes no definition text for the kind "${kind}"`, engine.type);
   }
   const { sourceLanguage } = spec;
-  if (sourceLanguage === undefined) {
+  if (!stated(sourceLanguage)) {
     throw new QueryError(
       `${engine.displayName} declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
       engine.type,
@@ -748,12 +798,12 @@ export function requireSourceKind(
  * reason: both are strings, a positional pair of them can be swapped silently, and an object at
  * the call site names each one.
  */
-export function requireEditableKind(
-  capabilities: ProviderCapabilities,
+export function requireEditableKind<K extends ObjectKindView>(
+  model: ObjectModelView<K>,
   kind: string,
   engine: { readonly displayName: string; readonly type: DatabaseType },
-): ObjectKindSpec & { readonly sourceLanguage: string } {
-  const spec = findKind(capabilities, kind);
+): K & { readonly sourceLanguage: string } {
+  const spec = findKind(model, kind);
   if (spec === undefined) {
     throw new QueryError(`${engine.displayName} declares no object kind "${kind}"`, engine.type);
   }
@@ -764,7 +814,7 @@ export function requireEditableKind(
     );
   }
   const { sourceLanguage } = spec;
-  if (sourceLanguage === undefined) {
+  if (!stated(sourceLanguage)) {
     throw new QueryError(
       `${engine.displayName} declares an editable kind "${kind}" and no sourceLanguage to render it with`,
       engine.type,

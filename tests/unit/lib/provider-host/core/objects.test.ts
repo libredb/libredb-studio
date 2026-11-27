@@ -8,8 +8,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { type CallContext, envReader, type TreeAnswer, type TreeRequest } from "@libredb/provider-sdk/calls";
-import type { Calls } from "@libredb/provider-sdk/manifest";
+import {
+  type CallContext,
+  type CallRefusal,
+  envReader,
+  type TreeAnswer,
+  type TreeRequest,
+} from "@libredb/provider-sdk/calls";
+import type { Calls, ObjectModel } from "@libredb/provider-sdk/manifest";
 import type { HostCallPorts } from "@/lib/provider-host/core/console";
 import { type ObjectsSession, treeCall } from "@/lib/provider-host/core/objects";
 
@@ -28,6 +34,44 @@ function callsOf(tree = true): Calls {
     objects: { tree: tree ? "offered" : "not-offered" },
     maintenance: { run: "not-offered", preview: "not-offered" },
     monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  };
+}
+
+/** A relation kind `id`, every member written out as a declaration states it. */
+function kindOf(id: string): ObjectModel["objectKinds"][number] {
+  return {
+    id,
+    role: "relation",
+    label: id,
+    labelPlural: id,
+    hasSource: false,
+    sourceLanguage: null,
+    hasColumns: true,
+    acceptsSourceEdits: false,
+    childKinds: [],
+    attachedTo: null,
+    acceptsRowWrites: false,
+    enumeratedBy: null,
+    countIsListing: false,
+    machineNames: null,
+    group: null,
+  };
+}
+
+/** A session's object model: one container level, addressed exactly, holding the kinds `table` and `view`. */
+function modelOf(): ObjectModel {
+  return {
+    containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+    containerPathShapes: "exact",
+    containerNameSpelling: null,
+    objectKinds: [kindOf("table"), kindOf("view")],
+    rowActions: [],
+    containersNameKinds: false,
+    tablesNeedContainer: false,
+    tablesAreDerivedGroupings: false,
+    agentWalkScope: null,
+    schemaDiffScope: null,
+    maskedNameKinds: [],
   };
 }
 
@@ -54,6 +98,7 @@ function sessionOf(answer: (request: TreeRequest, ctx: CallContext) => Promise<T
   const called = Promise.withResolvers<void>();
   const session: ObjectsSession = {
     calls,
+    objectModel: modelOf(),
     tree: (request, ctx) => {
       reads.push({ request, ctx });
       called.resolve();
@@ -123,6 +168,65 @@ describe("treeCall", () => {
       refusals: [{ rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" }],
     });
     expect(fx.reads).toEqual([]);
+  });
+
+  test("a tree call naming a level or a kind the session's object model does not state is refused as a record before the call, and the provider is never called", async () => {
+    const fx = sessionOf(async () => ({ objects: [] }));
+    const { ports } = portsOf();
+    const unstated = marker();
+    const level: CallRefusal = { rule: "request-level-not-stated", pointer: "/container" };
+    const kind: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
+    const cases: [TreeRequest, CallRefusal[]][] = [
+      [
+        { action: "containers", parent: [marker(), marker()] },
+        [{ rule: "request-level-not-stated", pointer: "/parent" }],
+      ],
+      [{ action: "count", container: [marker(), marker()] }, [level]],
+      [{ action: "list", container: [marker()], kind: unstated }, [kind]],
+      [{ action: "describe", path: [marker(), marker()], kind: unstated }, [kind]],
+      [{ action: "describeMany", container: [], kind: unstated }, [level, kind]],
+    ];
+
+    for (const [request, refusals] of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each record is its own call's.
+      const record = await treeCall(fx.session, request, contextOf(), ports);
+      expect(record).toEqual({ kind: "refused", called: false, refusals });
+      expect(JSON.stringify(record)).not.toContain(unstated);
+    }
+    expect(fx.reads).toEqual([]);
+
+    // A request the model states is called, as before.
+    const stated = await treeCall(
+      fx.session,
+      { action: "list", container: [marker()], kind: "view" },
+      contextOf(),
+      ports,
+    );
+    expect(stated).toEqual({ kind: "answered", answer: { objects: [] } });
+    expect(fx.reads).toHaveLength(1);
+  });
+
+  test("a session that offers objects.tree and states no object model is a host defect, named, and a session that does not offer it is refused first", async () => {
+    const { ports } = portsOf();
+    const fx = sessionOf(async () => ({ containers: [] }));
+    const unmodelled: ObjectsSession = { calls: fx.session.calls, tree: fx.session.tree };
+    const notOffered = sessionOf(async () => ({ containers: [] }), callsOf(false));
+    const withoutModel: ObjectsSession = { calls: notOffered.session.calls, tree: notOffered.session.tree };
+
+    const defect = await failure(() => treeCall(unmodelled, { action: "containers" }, contextOf(), ports));
+    const refused = await treeCall(withoutModel, { action: "containers" }, contextOf(), ports);
+
+    expect(defect).toBeInstanceOf(Error);
+    expect((defect as Error).message).toBe(
+      "The session offers objects.tree and states no object model, a defect of the host's session.",
+    );
+    expect(refused).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" }],
+    });
+    expect(fx.reads).toEqual([]);
+    expect(notOffered.reads).toEqual([]);
   });
 
   test("a tree call answers the session's own answer, with the request and context frozen", async () => {
@@ -258,7 +362,7 @@ describe("treeCall", () => {
 
   test("a session that offers objects.tree with no tree function is a host defect, named", async () => {
     const { ports } = portsOf();
-    const missing: ObjectsSession = { calls: callsOf() };
+    const missing: ObjectsSession = { calls: callsOf(), objectModel: modelOf() };
 
     const defect = await failure(() => treeCall(missing, { action: "containers" }, contextOf(), ports));
 

@@ -11,7 +11,8 @@
  * the maintenance facet, and a monitoring facet call only to one that offers the monitoring facet (clause C-17).
  * A maintenance run or preview request is held to the session's maintenance: an operation it lists, a placement its
  * spec offers, a preview its spec declares on a row, and no empty text where the request names something. A monitoring
- * panel request is held to the panels the session's engine offers (clause C-71).
+ * panel request is held to the panels the session's engine offers (clause C-71). A tree request is held to the
+ * session's object model: a container path its levels and path shapes admit, and a kind it states (clause M-89).
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -29,6 +30,7 @@ import {
   checkMonitoringPanelRequest,
   checkObjectsFacet,
   checkReadOnlyRequest,
+  checkTreeRequest,
   type EngineMaintenance,
   type ExecuteRequest,
   type MaintenancePreviewRequest,
@@ -36,8 +38,16 @@ import {
   type MonitoringPanelRequest,
   sessionCalls,
   sessionMaintenance,
+  type TreeRequest,
 } from "@libredb/provider-sdk/calls";
-import type { Calls, MaintenanceOperation, MaintenanceSpec, MonitoringPanels } from "@libredb/provider-sdk/manifest";
+import type {
+  Calls,
+  MaintenanceOperation,
+  MaintenanceSpec,
+  MonitoringPanels,
+  ObjectKind,
+  ObjectModel,
+} from "@libredb/provider-sdk/manifest";
 
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
@@ -350,6 +360,165 @@ describe("checkMonitoringPanelRequest", () => {
     expect(refusals).toEqual([PANEL_NOT_OFFERED, PANEL_NOT_OFFERED]);
     expect(text).not.toContain(schema);
     expect(text).not.toContain(unknownPanel);
+  });
+});
+
+/** An object kind `id`, every member written out as a declaration states a plain relation. */
+function kindOf(id: string): ObjectKind {
+  return {
+    id,
+    role: "relation",
+    label: id,
+    labelPlural: id,
+    hasSource: false,
+    sourceLanguage: null,
+    hasColumns: true,
+    acceptsSourceEdits: false,
+    childKinds: [],
+    attachedTo: null,
+    acceptsRowWrites: false,
+    enumeratedBy: null,
+    countIsListing: false,
+    machineNames: null,
+    group: null,
+  };
+}
+
+/** An object model of `levels` container levels, the outer a catalog, addressed by `shapes`, stating the kinds given. */
+function modelOf(levels: 0 | 1 | 2, shapes: ObjectModel["containerPathShapes"], kinds: readonly string[]): ObjectModel {
+  const schema = { id: "schema", label: "Folder", labelPlural: "Folders" } as const;
+  const catalog = { id: "catalog", label: "Shelf", labelPlural: "Shelves" } as const;
+  return {
+    containerLevels: levels === 0 ? [] : levels === 1 ? [schema] : [catalog, schema],
+    containerPathShapes: shapes,
+    containerNameSpelling: null,
+    objectKinds: kinds.map((id) => kindOf(id)),
+    rowActions: [],
+    containersNameKinds: false,
+    tablesNeedContainer: false,
+    tablesAreDerivedGroupings: false,
+    agentWalkScope: null,
+    schemaDiffScope: null,
+    maskedNameKinds: [],
+  };
+}
+
+const LEVEL_AT_PARENT: CallRefusal = { rule: "request-level-not-stated", pointer: "/parent" };
+const LEVEL_AT_CONTAINER: CallRefusal = { rule: "request-level-not-stated", pointer: "/container" };
+const KIND_AT_KIND: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
+
+/** A path of `length` segments. */
+const pathOf = (length: number): string[] => Array.from({ length }, (_, index) => `segment${index}`);
+
+describe("checkTreeRequest", () => {
+  const twoExact = modelOf(2, "exact", ["item", "entry"]);
+
+  test("a containers parent deeper than the object model's levels is refused as request-level-not-stated at its pointer", () => {
+    const parents = [undefined, [], pathOf(1), pathOf(2)];
+
+    for (const parent of parents) {
+      const request: TreeRequest = parent === undefined ? { action: "containers" } : { action: "containers", parent };
+      expect(checkTreeRequest(twoExact, request)).toEqual([]);
+    }
+    expect(checkTreeRequest(twoExact, { action: "containers", parent: pathOf(3) })).toEqual([LEVEL_AT_PARENT]);
+    expect(checkTreeRequest(modelOf(0, "exact", []), { action: "containers", parent: pathOf(1) })).toEqual([
+      LEVEL_AT_PARENT,
+    ]);
+    expect(checkTreeRequest(modelOf(0, "exact", []), { action: "containers" })).toEqual([]);
+    expect(callRefusalSentence(LEVEL_AT_PARENT)).toBe(
+      'The request names at "/parent" a container path whose levels the engine\'s object model does not state, so the call was not made.',
+    );
+  });
+
+  test("a container no path shape of the object model's levels admits is refused at its pointer, under exact and prefixes alike", () => {
+    /** The container lengths of 0 to 3 segments a count, a list and a describeMany over `model` admit. */
+    const admitted = (model: ObjectModel): number[][] =>
+      (["count", "list", "describeMany"] as const).map((action) =>
+        [0, 1, 2, 3].filter((length) => {
+          const container = pathOf(length);
+          const request: TreeRequest = action === "count" ? { action, container } : { action, container, kind: "item" };
+          const refusals = checkTreeRequest(model, request);
+          if (refusals.length > 0) expect(refusals).toEqual([LEVEL_AT_CONTAINER]);
+          return refusals.length === 0;
+        }),
+      );
+
+    expect(admitted(twoExact)).toEqual([[2], [2], [2]]);
+    expect(admitted(modelOf(2, "prefixes", ["item"]))).toEqual([
+      [1, 2],
+      [1, 2],
+      [1, 2],
+    ]);
+    expect(admitted(modelOf(1, "exact", ["item"]))).toEqual([[1], [1], [1]]);
+    expect(admitted(modelOf(1, "prefixes", ["item"]))).toEqual([[1], [1], [1]]);
+    // No level: exact admits only the empty path, and prefixes admits nothing, since no prefix of no level is a shape.
+    expect(admitted(modelOf(0, "exact", ["item"]))).toEqual([[0], [0], [0]]);
+    expect(admitted(modelOf(0, "prefixes", ["item"]))).toEqual([[], [], []]);
+  });
+
+  test("a kind the object model does not state is refused as request-kind-not-stated at its pointer, an inherited name included, without throwing", () => {
+    const container = pathOf(2);
+    const kinds = ["missing", "constructor", "__proto__", "toString", "hasOwnProperty", "", "ITEM"];
+
+    for (const kind of ["item", "entry"]) {
+      expect(checkTreeRequest(twoExact, { action: "list", container, kind })).toEqual([]);
+      expect(checkTreeRequest(twoExact, { action: "describe", path: pathOf(3), kind })).toEqual([]);
+      expect(checkTreeRequest(twoExact, { action: "describeMany", container, kind, limit: 5 })).toEqual([]);
+    }
+    for (const kind of kinds) {
+      expect(checkTreeRequest(twoExact, { action: "list", container, kind })).toEqual([KIND_AT_KIND]);
+      expect(checkTreeRequest(twoExact, { action: "describe", path: pathOf(3), kind })).toEqual([KIND_AT_KIND]);
+      expect(checkTreeRequest(twoExact, { action: "describeMany", container, kind })).toEqual([KIND_AT_KIND]);
+    }
+    // A kind only the key browser enumerates is stated, so the request reaches the provider, which refuses listing it.
+    const keyed = { ...twoExact, objectKinds: [{ ...kindOf("key"), enumeratedBy: "key-browser" as const }] };
+    expect(checkTreeRequest(keyed, { action: "list", container, kind: "key" })).toEqual([]);
+    // Both refusals of one request, container first.
+    expect(checkTreeRequest(twoExact, { action: "list", container: pathOf(1), kind: "missing" })).toEqual([
+      LEVEL_AT_CONTAINER,
+      KIND_AT_KIND,
+    ]);
+    expect(callRefusalSentence(KIND_AT_KIND)).toBe(
+      'The request names at "/kind" an object kind the engine\'s object model does not state, so the call was not made.',
+    );
+  });
+
+  test("a describe's path is not read, and every refusal names a pointer and never a value of the request", () => {
+    for (const length of [0, 1, 2, 3, 4, 7]) {
+      expect(checkTreeRequest(twoExact, { action: "describe", path: pathOf(length), kind: "item" })).toEqual([]);
+    }
+    // Requests no host builds: an action outside the vocabulary, and a parent or container that is no list, are left to
+    // the request frame's reading, which refuses them by name; nothing throws.
+    const malformed = [
+      { action: "search" },
+      { action: "containers", parent: "segment" },
+      { action: "count", container: "segment" },
+      { action: "list", container: { length: 2 }, kind: "item" },
+    ].map((request) => request as unknown as TreeRequest);
+    for (const request of malformed) expect(checkTreeRequest(twoExact, request)).toEqual([]);
+    const segment = randomUUID();
+    const kind = randomUUID();
+    const refusals = [
+      ...checkTreeRequest(twoExact, { action: "containers", parent: [segment, segment, segment] }),
+      ...checkTreeRequest(twoExact, { action: "count", container: [segment] }),
+      ...checkTreeRequest(twoExact, { action: "list", container: [segment], kind }),
+      ...checkTreeRequest(twoExact, { action: "describe", path: [segment], kind }),
+      ...checkTreeRequest(twoExact, { action: "describeMany", container: [segment, segment, segment], kind }),
+    ];
+    const text = JSON.stringify(refusals) + new CallRefusalError(refusals).message;
+
+    expect(refusals).toEqual([
+      LEVEL_AT_PARENT,
+      LEVEL_AT_CONTAINER,
+      LEVEL_AT_CONTAINER,
+      KIND_AT_KIND,
+      KIND_AT_KIND,
+      LEVEL_AT_CONTAINER,
+      KIND_AT_KIND,
+    ]);
+    for (const refusal of refusals) expect(Object.keys(refusal)).toEqual(["rule", "pointer"]);
+    expect(text).not.toContain(segment);
+    expect(text).not.toContain(kind);
   });
 });
 

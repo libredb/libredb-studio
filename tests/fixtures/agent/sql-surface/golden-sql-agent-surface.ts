@@ -104,6 +104,8 @@ async function driveFirstTurn(
   const provider = {
     // The engine it stands for, whose engine row the bridged session of the grounding walk reads.
     type: engine,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     // The statistics read a plan run takes under the operations profile, which arrives here rather than above.
     query: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),

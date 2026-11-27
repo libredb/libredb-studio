@@ -57,6 +57,7 @@ type McpFailureClass = Exclude<ReadOnlyRefusalKind, "time"> | "timeout" | "allow
  * provider's refusal; every other kind, `timeout` among them, is the engine's error. MCP answers Studio's offset
  * refusal, and a provider's under a non-zero offset, by class before this table is read, so the `studio-offset-refusal`
  * row is never reached on an MCP statement path, and the `offset-unsupported` row only for a refusal with no offset.
+ * Studio's object model refusal answers a tree read and never a statement, so its row is never reached on one either.
  */
 export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> = {
   database: "engine",
@@ -73,6 +74,7 @@ export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> =
   query: "engine",
   "offset-unsupported": "engine",
   "studio-offset-refusal": "engine",
+  "studio-object-model-refusal": "engine",
   "refused-before-send": "not-sent",
   "read-allowance-exceeded": "allowance",
   "row-budget-refusal": "rows",

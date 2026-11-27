@@ -1172,6 +1172,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine declaration states its object model: its container levels, path shapes and name spelling, its kinds with their columns, source, edit flags and row actions, and its agent walk and schema diff scopes, every member required",
         "an engine of a package that offers objects.tree is refused as object-model-missing unless its declaration states its object model",
         "a repeated container level id or object kind id is refused at the later one's pointer",
+        "a container level list other than none, schema, catalog, or catalog then schema is refused at the levels' pointer",
+        "a second row action stating activates for a kind an earlier activating action names is refused at its activates",
         "a maintenance spec naming a kind the object model does not state is refused at its pointer",
         "a masked kind the object model does not state is refused at its pointer",
         "a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer",
@@ -1184,8 +1186,56 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/object-model-declarations.test.ts": [
         "each legacy provider's object model, projected into its declaration, is admitted by the SDK's schema and every object model rule, under each connection variant reachable without a server",
+        "the variants reach exactly the engines whose model depends on the connection, and skip exactly the engines that refuse a variant's connection",
+        "each shipped provider's bridged session states the projection of its capabilities' object model, under each connection variant",
+        "every object kind reader answers the same over each projected model as over its provider's capabilities",
+        "the host's tree request check admits exactly the levels and kinds the object kind readers admit, over every projected model",
         "a planted projection fails each object model rule by name at its pointer",
         "the projection reads every member of the schema's object model and of each kind, and every member a provider answers is read or classified",
+      ],
+      "packages/provider-sdk/tests/calls/request.test.ts": [
+        "a containers parent deeper than the object model's levels is refused as request-level-not-stated at its pointer",
+        "a container no path shape of the object model's levels admits is refused at its pointer, under exact and prefixes alike",
+        "a kind the object model does not state is refused as request-kind-not-stated at its pointer, an inherited name included, without throwing",
+        "a describe's path is not read, and every refusal names a pointer and never a value of the request",
+      ],
+      "packages/provider-sdk/tests/testing/serve.test.ts": [
+        "a served tree call naming a level or a kind its engine's object model does not state is refused before any frame",
+      ],
+      "tests/unit/lib/provider-host/core/objects.test.ts": [
+        "a tree call naming a level or a kind the session's object model does not state is refused as a record before the call, and the provider is never called",
+        "a session that offers objects.tree and states no object model is a host defect, named, and a session that does not offer it is refused first",
+      ],
+      "tests/unit/lib/provider-host/core/contract-session.test.ts": [
+        "a package session states the object model its declaration states",
+      ],
+      "tests/isolated/editor-cache-package-engines.test.ts": [
+        "a package engine's session states its declaration's object model, and a tree call naming a kind it does not state is refused before the package is called",
+      ],
+      "tests/unit/lib/provider-host/legacy-bridge.test.ts": [
+        "the bridged session states the object model its provider's capabilities answer",
+        "a bridged tree call naming a kind its provider's object model does not state is refused before the provider is called",
+      ],
+      "tests/unit/lib/provider-host/access.test.ts": [
+        "a refusal of a level or a kind the session's object model does not state is Studio's own refusal, outcome not-sent, in Studio's words with no value of the request",
+      ],
+      "tests/unit/db/object-kinds.test.ts": [
+        "every object kind reader takes the session's model, not a built provider's capabilities",
+      ],
+      "tests/unit/lib/api/object-tree.test.ts": [
+        "the editor's tree reads every read on one bridged session, and its object model is that session's",
+      ],
+      "tests/unit/db/container-walk.test.ts": [
+        "a walk reads its depth and its kind-naming containers from its source's object model",
+      ],
+      "tests/api/db-objects.test.ts": [
+        "a list or describe naming a kind the connection's object model does not state is refused before any provider call, outcome not-sent, in Studio's words",
+        "the source route reads the object model the bridge states for the provider: an unstated kind is refused by name and the edit flag is the model's",
+        "a containers parent deeper than the connection's object model states is refused at the edge, outcome not-sent",
+      ],
+      "tests/unit/lib/api/object-route-model-readers.test.ts": [
+        "no object route or its helpers reads a provider's capabilities, but the edit routes parked with 10c5's edit",
+        "a planted call is found in every spelling, and a comment or a string naming the member is not a call",
       ],
     },
     schema: ["/$defs/engineDeclaration/properties/objects", "/$defs/objectModel"],
@@ -1896,11 +1946,16 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a session that offers monitoring.panel and monitoring.poolStats is called",
         "a monitoring panel request is held to the panels the session's engine offers",
         "no monitoring request refusal carries a value of the request",
+        "a containers parent deeper than the object model's levels is refused as request-level-not-stated at its pointer",
+        "a container no path shape of the object model's levels admits is refused at its pointer, under exact and prefixes alike",
+        "a kind the object model does not state is refused as request-kind-not-stated at its pointer, an inherited name included, without throwing",
+        "a describe's path is not read, and every refusal names a pointer and never a value of the request",
         "every call refusal rule is worded in one sentence",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served maintenance call whose request the session's maintenance does not take is refused before any frame",
         "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame",
+        "a served tree call naming a level or a kind its engine's object model does not state is refused before any frame",
       ],
     },
   },
@@ -1989,6 +2044,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a request field or a console facet the session does not offer is refused before any frame",
         "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame",
         "a tree call on a session without objects.tree is refused before any frame",
+        "a served tree call naming a level or a kind its engine's object model does not state is refused before any frame",
         "a maintenance call on a session without the facet is refused before any frame",
         "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame",
         "a refinement open answers narrows the served session's calls",
@@ -2247,7 +2303,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "vscode-extension/test/unit/backend-handlers.test.ts": [
         "query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent",
         "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers",
-        "query/cancel with a token already cancelled calls nothing",
+        "query/cancel with a token already cancelled sends no cancel",
       ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "two concurrent first opens open one session",
@@ -2515,6 +2571,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies",
         "a containers answer that says the inventory needs configuration crosses as a frame with its sentence",
+      ],
+      "tests/unit/lib/provider-host/core/objects.test.ts": [
+        "a tree call naming a level or a kind the session's object model does not state is refused as a record before the call, and the provider is never called",
       ],
     },
     schema: ["/$defs/calls/properties/objects", "/$defs/objectsCalls/properties/tree"],

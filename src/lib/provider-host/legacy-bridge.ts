@@ -22,6 +22,12 @@
  * `request-panel-not-offered` before the call and never calls a member that is not there. `health` is served on every
  * session, since every legacy provider holds `getHealth`.
  *
+ * The session's object model is `bridgedObjectModel`'s answer: the model the provider's `getCapabilities()` answers when
+ * the session is built, projected into the declaration's form (`declaredObjectModel` in
+ * src/lib/provider-host/legacy-object-model.ts), so a connected provider's per-connection model is the one served. The
+ * host core holds every tree call to it, so a request naming a level or a kind the provider's model does not state is
+ * refused before the provider is called (clause M-89). The other bridged sessions offer no tree and state no model.
+ *
  * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
  * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
  * statistics call answers the provider's own `getPoolStats()` by reference, a synchronous throw answered as the call's
@@ -151,7 +157,7 @@ import {
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
-import type { Calls, ExecuteRequestField, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
+import type { Calls, ExecuteRequestField, MaintenanceSpec, ObjectModel } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { StudioOffsetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
@@ -178,6 +184,7 @@ import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
+import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type ExecutionUnit, unitIsModuleBody } from "@/lib/sql/statement-splitter";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
@@ -204,8 +211,7 @@ export interface AnsweredRun {
  */
 export interface BridgedConsole {
   readonly session: ConsoleSession &
-    ObjectsSession &
-    Omit<MaintenanceSession, "maintenance"> &
+    ObjectsSession & { readonly objectModel: ObjectModel } & Omit<MaintenanceSession, "maintenance"> &
     MonitoringSession &
     HealthSession;
   readonly run: LegacyRun;
@@ -547,6 +553,14 @@ function bridgedPanels(provider: DatabaseProvider): MonitoringPanelOffer {
 }
 
 /**
+ * The object model `provider`'s session states: its `getCapabilities()` model in the declaration's form, read each time
+ * a session is built, so a connected provider's answer is served and never a snapshot.
+ */
+export function bridgedObjectModel(provider: DatabaseProvider): ObjectModel {
+  return declaredObjectModel(provider.getCapabilities());
+}
+
+/**
  * `provider` served as one session of console execute, cancel and transaction, of the object tree, of maintenance and
  * of monitoring, its execute run with a copy of `options`, the caller's own page options. `objectReads` is the
  * host-side input a tree request does not carry: the billed-read allowance its count, listing and bulk describe are
@@ -634,6 +648,7 @@ export function bridgedConsole(
       calls,
       readOnlyStatements: false,
       execute,
+      objectModel: bridgedObjectModel(provider),
       tree: (request: TreeRequest) => legacyTree(provider, request, objectReads),
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
       panels: bridgedPanels(provider),

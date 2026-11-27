@@ -1725,6 +1725,8 @@ export interface ProviderCapabilities {
    * in `src/lib/api/object-route.ts` apply one rule to one declaration. It governs an address, the
    * `container` a count or a listing names; the `parent` a container listing starts from is a tree
    * cursor and keeps the depth ceiling on every engine.
+   * The legacy bridge's projection (`declaredObjectModel` in `src/lib/provider-host/legacy-object-model.ts`) copies it
+   * into the declaration's form, absent written as `exact`, and decides nothing on it.
    *
    * Optional for the same published-interface reason as `containerLevels` (`src/exports/types.ts`):
    * a required field added after the fact stops every external implementer compiling.

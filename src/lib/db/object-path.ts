@@ -9,8 +9,8 @@
  * ordered and keyed by the same rule or the join is by accident.
  *
  * It lives here rather than in `object-kinds.ts`, which standing ruling 5h named while there
- * were still four copies: that file's own docblock scopes it to "pure derivations over a
- * provider's object declarations", and neither function below reads a declaration. The move
+ * were still four copies: that file's own docblock scopes it to "pure derivations over an
+ * engine's object model", and neither function below reads a model. The move
  * ruling 5h asked for is the one that happened; only the file name is different, and this
  * sentence is the record of that.
  */

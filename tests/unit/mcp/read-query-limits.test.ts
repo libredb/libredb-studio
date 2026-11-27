@@ -696,6 +696,15 @@ describe("the MCP object tree", () => {
   /** The mock behind a provider's member, for its implementation. */
   const mockOf = (fn: unknown) => fn as ReturnType<typeof mock>;
 
+  /** A mock provider whose object model states the one container level and the kind `table` the reads below name. */
+  const treeProvider = () =>
+    createMockProvider({
+      capabilities: {
+        containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+        objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+      },
+    });
+
   test("a tree read of an MCP call ends at the call's deadline as the timeout and when the request leaves as cancelled, logged under /api/mcp afterwards", async () => {
     const warned: unknown[][] = [];
     const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
@@ -703,7 +712,7 @@ describe("the MCP object tree", () => {
     });
     const secret = randomUUID();
     try {
-      const timed = createMockProvider();
+      const timed = treeProvider();
       const neverTimed = Promise.withResolvers<never>();
       mockOf(timed.describeObject).mockImplementation(() => neverTimed.promise);
       const request = new AbortController();
@@ -714,7 +723,7 @@ describe("the MCP object tree", () => {
 
       expect(ended).toEqual({ kind: "timeout" });
 
-      const left = createMockProvider();
+      const left = treeProvider();
       const neverLeft = Promise.withResolvers<never>();
       const entered = Promise.withResolvers<void>();
       mockOf(left.listObjects).mockImplementation(() => {
@@ -751,7 +760,7 @@ describe("the MCP object tree", () => {
   });
 
   test("a tree read's answer and a provider's failure pass by reference", async () => {
-    const provider = createMockProvider();
+    const provider = treeProvider();
     const containers = [{ path: ["app"], name: "app", level: 0 }];
     const thrown = new Error(randomUUID());
     mockOf(provider.listContainers).mockImplementation(async () => containers);
@@ -773,7 +782,7 @@ describe("the MCP object tree", () => {
   });
 
   test("a provider's own timeout or cancel error is its failure, never the call's deadline or the request leaving", async () => {
-    const provider = createMockProvider();
+    const provider = treeProvider();
     const timeout = new StudioTimeoutRefusal(randomUUID());
     const cancelled = new QueryCancelledError(randomUUID());
     mockOf(provider.listContainers).mockImplementation(async () => {

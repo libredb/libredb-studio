@@ -16,6 +16,8 @@ import {
   isSourcePartUnavailable,
   kindAcceptsSourceEdits,
   kindHasSource,
+  type ObjectKindView,
+  type ObjectModelView,
   renderContainerShapes,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
@@ -25,10 +27,8 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   ObjectDetail,
-  ObjectKindSpec,
   ObjectSourceDocument,
   ObjectSourcePart,
-  ProviderCapabilities,
 } from "@/lib/db/types";
 import type { ApiErrorCode } from "@/lib/api/error-codes";
 import type { UserPayload } from "@/lib/auth";
@@ -354,8 +354,11 @@ export class ObjectRouteError extends Error {
     message: string,
     public readonly status: number,
     public readonly code?: ApiErrorCode,
-    /** Machine-readable facts a coded refusal carries beside `error` and `code`, such as a bound and a count. */
-    public readonly fields?: Readonly<Record<string, number>>,
+    /**
+     * Machine-readable facts a refusal carries beside `error` and `code`, such as a bound and a count, or the outcome
+     * `not-sent` of a refusal of a level or a kind the engine's object model does not state (clause M-89).
+     */
+    public readonly fields?: Readonly<Record<string, number | string>>,
   ) {
     super(message);
     this.name = "ObjectRouteError";
@@ -463,6 +466,13 @@ export function dedupePaths(paths: readonly (readonly string[])[]): readonly (re
 }
 
 /**
+ * The fields of a refusal of a level or a kind the engine's object model does not state: it is refused before any call,
+ * so nothing reached the engine (docs/providers/CONTRACT.md, clause M-89). No `code`, like every other caller mistake
+ * this layer decides for itself.
+ */
+const NOT_SENT = Object.freeze({ outcome: "not-sent" });
+
+/**
  * A container PARENT the engine could list under, checked before the provider is called.
  *
  * `parent` on `POST /api/db/objects/containers` is a tree cursor rather than an address: the
@@ -476,14 +486,23 @@ export function dedupePaths(paths: readonly (readonly string[])[]): readonly (re
  * It used to guard addresses too, and #1147 split that out: an ADDRESS is checked against the
  * declared shapes by `assertContainerAddress` below, because a depth ceiling admits a path one
  * segment short on an engine that accepts only the declared depth.
+ *
+ * `model` is the object model of the session the read is made on, and `engine` the engine's id the sentence names.
  */
-export function assertContainerDepth(provider: DatabaseProvider, name: string, path: readonly string[]): void {
-  const depth = containerDepth(provider.getCapabilities());
+export function assertContainerDepth(
+  model: ObjectModelView,
+  engine: string,
+  name: string,
+  path: readonly string[],
+): void {
+  const depth = containerDepth(model);
   if (path.length <= depth) return;
   throw new ObjectRouteError(
-    `${provider.type} declares a container depth of ${depth}, and "${name}" has ${path.length} segments: ` +
+    `${engine} declares a container depth of ${depth}, and "${name}" has ${path.length} segments: ` +
       `${JSON.stringify(path)}`,
     400,
+    undefined,
+    NOT_SENT,
   );
 }
 
@@ -500,20 +519,29 @@ export function assertContainerDepth(provider: DatabaseProvider, name: string, p
  * here with neither.
  *
  * One sentence and one wire shape for both directions: a 400 in this module's own
- * `ObjectRouteError` family, `{ error }` with no `code`, like every other caller mistake this
- * layer decides for itself. The shapes are spelled from the lowercased level LABELS by the
+ * `ObjectRouteError` family, `{ error, outcome: "not-sent" }` with no `code`, like every other caller
+ * mistake this layer decides for itself. The shapes are spelled from the lowercased level LABELS by the
  * kernel's `renderContainerShapes()`, whichever field a provider's own sentence spells them by,
  * because this refusal binds nothing and is read by a person.
  *
  * The provider check stays behind it: MCP's `inspect-schema` and an embedded host reach the
  * provider without this route.
+ *
+ * `model` is the object model of the session the read is made on, and `engine` the engine's id the sentence names.
  */
-export function assertContainerAddress(provider: DatabaseProvider, name: string, path: readonly string[]): void {
-  const shapes = acceptedContainerShapes(provider.getCapabilities());
+export function assertContainerAddress(
+  model: ObjectModelView,
+  engine: string,
+  name: string,
+  path: readonly string[],
+): void {
+  const shapes = acceptedContainerShapes(model);
   if (shapes.some((shape) => shape.length === path.length)) return;
   throw new ObjectRouteError(
-    `${provider.type} accepts "${name}" as ${renderContainerShapes(shapes, "label")}, received ${JSON.stringify(path)}`,
+    `${engine} accepts "${name}" as ${renderContainerShapes(shapes, "label")}, received ${JSON.stringify(path)}`,
     400,
+    undefined,
+    NOT_SENT,
   );
 }
 
@@ -530,21 +558,30 @@ export function assertContainerAddress(provider: DatabaseProvider, name: string,
  * inventory, a search and plan mode's prompt. With no `kinds` the answer is `enumerableKinds()`, so
  * the `inventory` and `search` routes leave that kind out by default and say why only to a caller
  * who names it.
+ *
+ * `model` is the object model of the session the reads are made on, and `engine` the engine's id the sentences name.
+ * Both refusals answer outcome `not-sent`, since each is made before any read: a kind the model does not state (clause
+ * M-89), and a kind only the Keys panel enumerates.
  */
-export function resolveKinds(provider: DatabaseProvider, requested?: readonly string[]): readonly ObjectKindSpec[] {
-  const capabilities = provider.getCapabilities();
-  const enumerable = enumerableKinds(capabilities);
+export function resolveKinds<K extends ObjectKindView>(
+  model: ObjectModelView<K>,
+  engine: string,
+  requested?: readonly string[],
+): readonly K[] {
+  const enumerable = enumerableKinds(model);
   if (requested === undefined) return enumerable;
   return requested.map((id) => {
-    const kind = findKind(capabilities, id);
+    const kind = findKind(model, id);
     if (kind === undefined) {
-      throw new ObjectRouteError(`${provider.type} declares no object kind "${id}"`, 400);
+      throw new ObjectRouteError(`${engine} declares no object kind "${id}"`, 400, undefined, NOT_SENT);
     }
     if (!enumerable.some((listed) => listed.id === id)) {
       throw new ObjectRouteError(
-        `${provider.type} enumerates the kind "${id}" in the Keys panel alone, so no inventory or search lists it; ` +
+        `${engine} enumerates the kind "${id}" in the Keys panel alone, so no inventory or search lists it; ` +
           "browse it in the Keys panel",
         400,
+        undefined,
+        NOT_SENT,
       );
     }
     return kind;
@@ -571,14 +608,24 @@ export function resolveKinds(provider: DatabaseProvider, requested?: readonly st
  * The returned function is BOUND to the provider, because it is read off the instance as a value
  * and a provider method that reaches its own pool through `this` would otherwise be called with
  * no receiver.
+ *
+ * `model` is the object model the source route reads the kind through (the one the legacy bridge states for the
+ * provider's session), and the reader stays the provider's own until the source read is a contract call. The refusal
+ * answers outcome `not-sent`: nothing was asked of the engine (clause M-89).
  */
 export function requireSourceReader(
   provider: DatabaseProvider,
+  model: ObjectModelView,
   kind: string,
 ): (path: readonly string[], kind: string, limit?: number) => Promise<ObjectSourceDocument> {
   const read = provider.readObjectSource;
-  if (!kindHasSource(provider.getCapabilities(), kind) || read === undefined) {
-    throw new ObjectRouteError(`${provider.type} declares no readable source for kind "${kind}"`, 400);
+  if (!kindHasSource(model, kind) || read === undefined) {
+    throw new ObjectRouteError(
+      `${provider.type} declares no readable source for kind "${kind}"`,
+      400,
+      undefined,
+      NOT_SENT,
+    );
   }
   return read.bind(provider);
 }
@@ -617,8 +664,9 @@ export function requireSourceReader(
  * `TypeError: part is not an Object`, which `createErrorResponse` reports as an unhandled error
  * rather than as the caller's mistake it is.
  *
- * THE THIRD ARGUMENT is the CONNECTED provider's capabilities, and it is what makes the edit
- * affordance a route-enforced fact rather than a provider-reported one (#789 Phase 3). Same
+ * THE THIRD ARGUMENT is the object model the source route reads the kind through, the one the legacy
+ * bridge states for the CONNECTED provider's session, and it is what makes the edit affordance a
+ * route-enforced fact rather than a provider-reported one (#789 Phase 3). Same
  * precedent as the paragraph above: a declaration merely READ from an implementation is a report
  * and not a bound. A provider that offers `edit` on a part whose kind it never declared
  * `acceptsSourceEdits` would ship a client an Edit button for an object no `buildObjectEdit` can
@@ -627,7 +675,7 @@ export function requireSourceReader(
 export function boundSourceDocument(
   document: ObjectSourceDocument,
   limit: number,
-  capabilities: ProviderCapabilities,
+  model: ObjectModelView,
 ): ObjectSourceDocument {
   if (document.parts.length === 0) {
     throw new ObjectRouteError(
@@ -644,7 +692,7 @@ export function boundSourceDocument(
   // Destructured rather than mapped, because `parts` is a NON-EMPTY tuple and `Array.prototype.map`
   // answers a plain array that no longer satisfies it.
   const [first, ...rest] = document.parts;
-  const kindEditable = kindAcceptsSourceEdits(capabilities, document.kind);
+  const kindEditable = kindAcceptsSourceEdits(model, document.kind);
   return {
     ...document,
     parts: [boundPart(first, limit, kindEditable), ...rest.map((part) => boundPart(part, limit, kindEditable))],

@@ -519,8 +519,9 @@ describe("POST /api/db/objects/counts", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "container" as [schema], received ["app","nested"]',
+      outcome: "not-sent",
     });
     expect(countObjects).toHaveBeenCalledTimes(0);
   });
@@ -577,8 +578,9 @@ describe("POST /api/db/objects/counts", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "container" as [schema], received []',
+      outcome: "not-sent",
     });
     expect(countObjects).toHaveBeenCalledTimes(0);
   });
@@ -598,8 +600,8 @@ describe("POST /api/db/objects/counts", () => {
 
     expect(short.status).toBe(400);
     expect(long.status).toBe(400);
-    expect(Object.keys(short.body)).toEqual(["error"]);
-    expect(Object.keys(long.body)).toEqual(["error"]);
+    expect(Object.keys(short.body)).toEqual(["outcome", "error"]);
+    expect(Object.keys(long.body)).toEqual(["outcome", "error"]);
     const opening = (body: Record<string, string>) => body.error.replace(/received .*$/, "");
     expect(opening(short.body)).toBe(opening(long.body));
     expect(opening(short.body)).toBe('postgres accepts "container" as [schema], ');
@@ -647,8 +649,9 @@ describe("POST /api/db/objects/counts", () => {
       createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
     );
     expect(empty.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(empty)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(empty)).toEqual({
       error: 'trino accepts "container" as [catalog] or [catalog, schema], received []',
+      outcome: "not-sent",
     });
 
     const long = await countsRoute.POST(
@@ -658,8 +661,9 @@ describe("POST /api/db/objects/counts", () => {
       }) as never,
     );
     expect(long.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(long)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(long)).toEqual({
       error: 'trino accepts "container" as [catalog] or [catalog, schema], received ["memory","app","x"]',
+      outcome: "not-sent",
     });
     expect(countObjects).toHaveBeenCalledTimes(0);
   });
@@ -675,8 +679,9 @@ describe("POST /api/db/objects/counts", () => {
       }) as never,
     );
     expect(named.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(named)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(named)).toEqual({
       error: 'sqlite accepts "container" as empty, received ["main"]',
+      outcome: "not-sent",
     });
     expect(countObjects).toHaveBeenCalledTimes(0);
 
@@ -697,8 +702,9 @@ describe("POST /api/db/objects/counts", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "container" as [namespace], received []',
+      outcome: "not-sent",
     });
   });
 
@@ -711,8 +717,9 @@ describe("POST /api/db/objects/counts", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "container" as nothing: this declaration carries no container level, received []',
+      outcome: "not-sent",
     });
     expect(countObjects).toHaveBeenCalledTimes(0);
   });
@@ -813,8 +820,9 @@ describe("POST /api/db/objects/list", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "container" as [schema], received []',
+      outcome: "not-sent",
     });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
@@ -935,7 +943,13 @@ describe("POST /api/db/objects/describe", () => {
     // mysql for any kind its own `hasColumns` predicate rejects (`MySQLProvider.describeObject`
     // in `src/lib/db/providers/sql/mysql.ts`).
     const describeObject = mock(async () => emptyDetail(["app", "order_total(integer)"]));
-    activeProvider = objectProvider({ describeObject });
+    const functionKind: ObjectKindSpec = {
+      id: "function",
+      role: "routine",
+      label: "Function",
+      labelPlural: "Functions",
+    };
+    activeProvider = objectProvider({ describeObject, objectKinds: [TABLE_KIND, VIEW_KIND, functionKind] });
 
     const response = await describeRoute.POST(
       createMockRequest("/api/db/objects/describe", {
@@ -1799,8 +1813,9 @@ describe("POST /api/db/objects/inventory", () => {
 
     expect(response.status).toBe(400);
     // The first entry is valid, so a check that ran inside the fan-out would have listed it first.
-    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+    expect(await parseResponseJSON<Record<string, string>>(response)).toEqual({
       error: 'postgres accepts "containers" as [schema], received []',
+      outcome: "not-sent",
     });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
@@ -2095,7 +2110,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     expect(listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
   });
 
-  test("an inventory naming it is a 400 that points at the Keys panel, and lists nothing", async () => {
+  test("an inventory naming it is a 400 that points at the Keys panel, outcome not-sent, and lists nothing", async () => {
     const listObjects = keyValueProvider();
 
     const response = await inventoryRoute.POST(
@@ -2103,11 +2118,11 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL });
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL, outcome: "not-sent" });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
-  test("a search naming it beside another kind is the same 400, and lists nothing", async () => {
+  test("a search naming it beside another kind is the same 400, outcome not-sent, and lists nothing", async () => {
     const listObjects = keyValueProvider();
 
     const response = await searchRoute.POST(
@@ -2118,7 +2133,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(REFUSAL);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL, outcome: "not-sent" });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
@@ -2137,6 +2152,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     expect(response.status).toBe(400);
     expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
       error: 'redis declares no object kind "value"',
+      outcome: "not-sent",
     });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
@@ -3884,5 +3900,117 @@ describe("the tree routes on the metadata session", () => {
     const unresolved = await handleObjectRequest(request(), probeRoute, answered, { session: "metadata" });
     expect(unresolved.status).toBe(404);
     expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("the object model the routes read", () => {
+  /** A source-bearing kind, editable or not. */
+  const sourceKind = (id: string, acceptsSourceEdits: boolean): ObjectKindSpec => ({
+    id,
+    role: "routine",
+    label: id,
+    labelPlural: id,
+    hasSource: true,
+    sourceLanguage: "sql",
+    acceptsSourceEdits,
+  });
+
+  test("a list or describe naming a kind the connection's object model does not state is refused before any provider call, outcome not-sent, in Studio's words", async () => {
+    const listObjects = mock(async () => []);
+    const describeObject = mock(async (path: readonly string[]) => emptyDetail(path));
+    activeProvider = objectProvider({ listObjects, describeObject });
+    const unstated = `kind${randomUUID().replaceAll("-", "")}`;
+
+    const listed = await listRoute.POST(
+      createMockRequest("/api/db/objects/list", {
+        method: "POST",
+        body: { connection, container: ["app"], kind: unstated },
+      }) as never,
+    );
+    const described = await describeRoute.POST(
+      createMockRequest("/api/db/objects/describe", {
+        method: "POST",
+        body: { connection, path: ["app", "orders"], kind: unstated },
+      }) as never,
+    );
+
+    for (const response of [listed, described]) {
+      expect(response.status).toBe(400);
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+      expect(body).toEqual({
+        error:
+          "The request names an object kind this connection's object model does not state, so Studio did not call the provider.",
+        code: "QUERY_ERROR",
+        statusCode: 400,
+        kind: "studio-object-model-refusal",
+        outcome: "not-sent",
+      });
+      expect(JSON.stringify(body)).not.toContain(unstated);
+    }
+    expect(listObjects).toHaveBeenCalledTimes(0);
+    expect(describeObject).toHaveBeenCalledTimes(0);
+  });
+
+  test("the source route reads the object model the bridge states for the provider: an unstated kind is refused by name and the edit flag is the model's", async () => {
+    const editablePart: ObjectSourcePart = {
+      id: "body",
+      label: "Body",
+      text: "CREATE FUNCTION f() RETURNS integer AS $$ SELECT 1 $$ LANGUAGE sql",
+      language: "sql",
+      form: "complete",
+      origin: "regenerated",
+      edit: { offered: true },
+    };
+    const readObjectSource = mock(async (path: readonly string[], kind: string) => ({
+      path: [...path],
+      kind,
+      parts: [editablePart] as [ObjectSourcePart],
+    }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND, sourceKind("function", true), sourceKind("view_source", false)],
+      readObjectSource,
+    });
+    const post = async (kind: string) => {
+      const response = await sourceRoute.POST(
+        createMockRequest("/api/db/objects/source", {
+          method: "POST",
+          body: { connection, path: ["app", "f"], kind },
+        }) as never,
+      );
+      return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
+    };
+
+    const unstated = await post("procedure");
+    const editable = await post("function");
+    const readOnly = await post("view_source");
+
+    expect(unstated).toEqual({
+      status: 400,
+      body: { error: 'postgres declares no readable source for kind "procedure"', outcome: "not-sent" },
+    });
+    expect(readObjectSource.mock.calls.map(([, kind]) => kind)).toEqual(["function", "view_source"]);
+    expect(editable.status).toBe(200);
+    expect((editable.body as unknown as ObjectSourceDocument).parts[0]).toHaveProperty("edit", { offered: true });
+    expect(readOnly.status).toBe(200);
+    expect((readOnly.body as unknown as ObjectSourceDocument).parts[0]).not.toHaveProperty("edit");
+  });
+
+  test("a containers parent deeper than the connection's object model states is refused at the edge, outcome not-sent", async () => {
+    const listContainers = mock(async () => []);
+    activeProvider = objectProvider({ listContainers });
+
+    const response = await containersRoute.POST(
+      createMockRequest("/api/db/objects/containers", {
+        method: "POST",
+        body: { connection, parent: ["app", "nested"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: 'postgres declares a container depth of 1, and "parent" has 2 segments: ["app","nested"]',
+      outcome: "not-sent",
+    });
+    expect(listContainers).toHaveBeenCalledTimes(0);
   });
 });

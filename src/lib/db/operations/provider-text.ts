@@ -33,6 +33,7 @@ import {
   QueryError,
   ReadAllowanceExceededError,
   StudioByteBudgetRefusal,
+  StudioObjectModelRefusal,
   StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
@@ -428,9 +429,10 @@ export function providerAuthor(type: DatabaseType): string {
 }
 
 /**
- * Whether a refusal is Studio's own: the seven classes only core constructs. `ReadAllowanceExceededError` (the run's
- * read allowance, before sending), `StudioProfileRefusal` (an execution profile refusal) and `StudioOffsetRefusal` (an
- * offset the provider's prepare did not apply, before sending) come before a statement is sent;
+ * Whether a refusal is Studio's own: the eight classes only core constructs. `ReadAllowanceExceededError` (the run's
+ * read allowance, before sending), `StudioProfileRefusal` (an execution profile refusal), `StudioOffsetRefusal` (an
+ * offset the provider's prepare did not apply, before sending) and `StudioObjectModelRefusal` (a tree request naming a
+ * level or a kind the object model does not state, before any call) come before a statement is sent;
  * `StudioRowBudgetRefusal`, `StudioByteBudgetRefusal` and `StudioTimeBudgetRefusal` (core's row, byte and time
  * refusals of an answer) and `StudioTimeoutRefusal` (the agent's statistics read outlasting its time) come after.
  */
@@ -439,6 +441,7 @@ export function isStudioRefusal(error: unknown): boolean {
     error instanceof ReadAllowanceExceededError ||
     error instanceof StudioProfileRefusal ||
     error instanceof StudioOffsetRefusal ||
+    error instanceof StudioObjectModelRefusal ||
     error instanceof StudioRowBudgetRefusal ||
     error instanceof StudioByteBudgetRefusal ||
     error instanceof StudioTimeBudgetRefusal ||

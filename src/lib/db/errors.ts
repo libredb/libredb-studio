@@ -335,6 +335,24 @@ export class StudioOffsetRefusal extends OffsetUnsupportedError {
 }
 
 /**
+ * Studio's refusal, before any call, of a tree request naming a container level or an object kind the connection's
+ * object model does not state (docs/providers/CONTRACT.md, clause M-89). The host core answers such a request as a
+ * refused record, and only the accessor (src/lib/provider-host/access.ts) constructs this class from it, so its error
+ * record answers kind `studio-object-model-refusal`, outcome `not-sent`, and the agent and MCP say it in Studio's voice
+ * rather than as the provider's. A `QueryError`, so the route answers 400 `QUERY_ERROR` as it answers a provider's
+ * refusal of an unknown kind; its `name` stays `QueryError`. Its message is Studio's sentence and names no value of the
+ * request.
+ */
+export class StudioObjectModelRefusal extends QueryError {
+  constructor(message: string) {
+    super(message);
+    this.name = "QueryError";
+    this.outcome = "not-sent";
+    Object.setPrototypeOf(this, StudioObjectModelRefusal.prototype);
+  }
+}
+
+/**
  * A statement this repository refused before sending it, so the database never saw it: a provider's own fence on what
  * the read-only profile may run, or a charge the run's read allowance cannot pay. A QueryError, so every caller that
  * settles a statement failure still settles this one, and a statement that avoids what the sentence names is the

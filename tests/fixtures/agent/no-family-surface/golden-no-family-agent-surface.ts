@@ -38,7 +38,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
@@ -74,13 +74,19 @@ async function declarationsOf(engine: DatabaseType) {
 }
 
 /**
- * A provider that answers every read empty and lists one object of the engine's first declared kind, as the SQL
- * oracle's drive builds one.
+ * A provider that answers `capabilities`, answers every read empty and lists one object of the engine's first declared
+ * kind, as the SQL oracle's drive builds one.
  */
-function providerDouble(engine: DatabaseType, listedKind: string): DatabaseProvider {
+function providerDouble(
+  engine: DatabaseType,
+  capabilities: ProviderCapabilities,
+  listedKind: string,
+): DatabaseProvider {
   return {
     // The engine it stands for, whose engine row the bridged session of the grounding walk reads.
     type: engine,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     listContainers: async () => [],
     countObjects: async () => ({ [listedKind]: { count: 1 } }),
@@ -152,7 +158,7 @@ async function surfaceOf(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
         repairs: new AgentRepairLedger(),
-        acquireProvider: async () => providerDouble(engine, listedKind),
+        acquireProvider: async () => providerDouble(engine, capabilities, listedKind),
         clock,
       },
     });
@@ -208,7 +214,7 @@ async function curatedDenial(engine: DatabaseType) {
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.operations.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => providerDouble(engine, listedKind),
+      acquireProvider: async () => providerDouble(engine, capabilities, listedKind),
       clock,
     },
     { kind: "table-stats", schema: "secrets" },

@@ -3699,6 +3699,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       // Studio's refusal of an offset the provider did not apply, before sending: dropping the offset, or the query's
       // own limit, is the repair.
       StudioOffsetRefusal: "repairable",
+      // Studio's refusal, before any call, of a tree request naming a level or a kind the connection's object model does
+      // not state: no statement rewrite changes the model.
+      StudioObjectModelRefusal: "propagates",
       // Refused by the provider before the statement was sent: a statement that avoids what the refusal names is the repair.
       RefusedBeforeSendError: "repairable",
       // Refused before the read was sent: a smaller read that fits what the run's read allowance has left is the repair.
@@ -5954,7 +5957,13 @@ function curatedHarness(
   // The readings reach the provider through the host core's panel and health calls on its bridged session, whose
   // panels are its engine's row: a PostgreSQL provider's, which offers every panel, so each kind's member is reached,
   // while the run's connection stays the engine with no read-only statement path.
-  const provider = { type: "postgres", ...curated, ...providerOverrides } as unknown as DatabaseProvider;
+  // The bridged session also states the provider's object model, which this provider answers empty.
+  const provider = {
+    type: "postgres",
+    getCapabilities: () => ({}),
+    ...curated,
+    ...providerOverrides,
+  } as unknown as DatabaseProvider;
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });

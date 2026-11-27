@@ -27,6 +27,8 @@ import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/i
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
+// The provider's own declaration, which each test that plants another restores from.
+const declaredCapabilities = mockProvider.getCapabilities();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
 const mockGetSession = mock(
@@ -176,6 +178,7 @@ describe("POST /api/db/monitoring", () => {
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.getCapabilities as Mocked).mockImplementation(() => ({ ...declaredCapabilities }));
     for (const member of PANEL_MEMBERS) (mockProvider[member] as Mocked).mockReset();
     (mockProvider.getOverview as Mocked).mockImplementation(async () => ({
       version: "PostgreSQL 16.1",
@@ -224,7 +227,8 @@ describe("POST /api/db/monitoring", () => {
   // #1387: provider-meta never connects, so the maintenance a CONNECTED server accepts reaches the
   // tabs from here, read off the same provider the panels came from.
   test("the payload carries the connected provider's maintenance declaration", async () => {
-    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementationOnce(() => ({
+    // Every read answers it: each bridged session the route builds reads its object model off the same provider.
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
       maintenanceOperations: ["analyze", "kill"],
       maintenanceOperationSpecs: {
         analyze: { label: "Analyze Table", perEntity: true, global: false },
@@ -247,7 +251,7 @@ describe("POST /api/db/monitoring", () => {
   });
 
   test("a provider that declares no operation specs sends the operations alone", async () => {
-    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementationOnce(() => ({
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
       maintenanceOperations: ["vacuum"],
     }));
 
@@ -758,7 +762,9 @@ describe("what the monitoring route answers today, which the host core keeps", (
         maintenanceOperationSpecs: { vacuum: { label: "Vacuum", perEntity: true, global: true } },
       },
     });
-    expect(provider.getCapabilities).toHaveBeenCalledTimes(1);
+    // Once for the route's maintenance declaration, and once for the object model of each of the two bridged sessions
+    // the route builds: the pool statistics offer's and the dashboard's.
+    expect(provider.getCapabilities).toHaveBeenCalledTimes(3);
   });
 
   test("a dashboard whose every panel fails answers the first panel's error by its class, and several sentences answer one database error naming each", async () => {

@@ -281,8 +281,11 @@ describe("the GETs of every automatic path", () => {
     const { since, provider: p } = await connected();
     const kinds = relationKindIds(p.getCapabilities());
     expect(kinds).toEqual(["stream"]);
-    const resolved = resolveKinds(p, kinds);
-    const enumerated = await enumerateContainers(p);
+    const resolved = resolveKinds(p.getCapabilities(), p.type, kinds);
+    const enumerated = await enumerateContainers({
+      objectModel: p.getCapabilities(),
+      listContainers: p.listContainers.bind(p),
+    });
     for (const container of enumerated.containers) {
       for (const kind of applicableKinds(resolved, undefined)) {
         const listed = await p.listObjects(container, kind.id);
@@ -294,9 +297,12 @@ describe("the GETs of every automatic path", () => {
 
   test("tree search: the virtual hosts, then the three pages per virtual host, 1 + 3V GETs", async () => {
     const { since, provider: p } = await connected();
-    const enumerated = await enumerateContainers(p);
+    const enumerated = await enumerateContainers({
+      objectModel: p.getCapabilities(),
+      listContainers: p.listContainers.bind(p),
+    });
     for (const container of enumerated.containers)
-      for (const kind of resolveKinds(p)) await p.listObjects(container, kind.id);
+      for (const kind of resolveKinds(p.getCapabilities(), p.type)) await p.listObjects(container, kind.id);
     expect(since()).toEqual([
       VHOSTS,
       STREAMS("/"),

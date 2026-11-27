@@ -544,7 +544,7 @@ export function createHandlers(
       const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
       const record = openRecord(connectionId);
       // The request's cancellation is the caller going away, as a dropped browser request is the cancel route's: it
-      // ends the wait for the provider's open and for the engine's answer, and a token already cancelled calls nothing.
+      // ends the wait for the provider's open and for the engine's answer, and a token already cancelled sends no cancel.
       const controller = new AbortController();
       const listener = token.onCancellationRequested(() => controller.abort());
       if (token.isCancellationRequested) controller.abort();

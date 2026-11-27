@@ -25,8 +25,9 @@ export async function POST(req: NextRequest) {
     "api/db/objects/containers",
     async (provider, body, context) => {
       const parent = optionalStringArray(body, "parent");
-      if (parent !== undefined) assertContainerDepth(provider, "parent", parent);
-      return objectTree(provider, req.signal, context.route).listContainers(parent);
+      const tree = objectTree(provider, req.signal, context.route);
+      if (parent !== undefined) assertContainerDepth(tree.objectModel, provider.type, "parent", parent);
+      return tree.listContainers(parent);
     },
     { session: "metadata" },
   );

@@ -20,7 +20,9 @@
  *    refusals (clause C-10).
  * 6. The session's calls are `sessionCalls` of the manifest's calls and the refinement, its maintenance
  *    `sessionMaintenance` of the engine's, and it is a read-only statement session exactly when the open policy says
- *    `readOnly` and `sendsStatements` (clause C-78).
+ *    `readOnly` and `sendsStatements` (clause C-78). A session that offers `objects.tree` states the object model the
+ *    engine's admitted declaration states, by reference, which the host core holds every tree call to (clause M-89);
+ *    one that does not offer it states none, since nothing reads it.
  *
  * `teardownContractSession` tears a session down under the teardown's deadlines (clause C-45): its close under a cleanup
  * context with the package's environment, waited for at most the close deadline, with no rollback step, since a contract
@@ -59,7 +61,7 @@ import {
   sessionCalls,
   sessionMaintenance,
 } from "@libredb/provider-sdk/calls";
-import type { Calls, MonitoringPanels } from "@libredb/provider-sdk/manifest";
+import type { Calls, MonitoringPanels, ObjectModel } from "@libredb/provider-sdk/manifest";
 import {
   type ConsoleSession,
   type RefusedRecord,
@@ -96,6 +98,8 @@ export interface DeclaredSession {
   readonly calls: Calls;
   readonly maintenance: EngineMaintenance;
   readonly panels: MonitoringPanels;
+  /** The engine's object model, absent where its declaration states none. */
+  readonly objectModel?: ObjectModel;
 }
 
 /** An open that answered a session, with what the package reported beside its handle. */
@@ -174,7 +178,8 @@ function narrowed(
 
 /**
  * The session over `handle` of `impl`, with `calls`, `maintenance` and `panels` as narrowed for it: each member present
- * exactly when `calls` offers it, each calling the package's function as a method of the object that holds it.
+ * exactly when `calls` offers it, each calling the package's function as a method of the object that holds it, and
+ * `objectModel`, the declaration's, beside `tree` where the declaration states one.
  */
 function bindSession(
   impl: ProviderImpl<unknown>,
@@ -182,6 +187,7 @@ function bindSession(
   calls: Calls,
   maintenance: EngineMaintenance,
   panels: MonitoringPanels,
+  objectModel: ObjectModel | undefined,
   readOnlyStatements: boolean,
 ): ContractSession {
   const { console: consoleImpl, objects, maintenance: maintenanceImpl, monitoring } = impl;
@@ -202,6 +208,7 @@ function bindSession(
       transaction: (request, ctx) => consoleImpl.transaction?.(handle, request, ctx),
     }),
     ...(offered(checkObjectsFacet(calls, "tree")) && {
+      ...(objectModel !== undefined && { objectModel }),
       tree: (request, ctx) => objects?.tree?.(handle, request, ctx),
     }),
     ...(offered(checkMaintenanceFacet(calls, "run")) && {
@@ -311,6 +318,7 @@ export async function openContractSession(
     sessionCalls(declared.calls, narrowing.refine),
     narrowing.maintenance,
     declared.panels,
+    declared.objectModel,
     ctx.policy.readOnly && ctx.policy.sendsStatements,
   );
   return {

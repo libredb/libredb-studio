@@ -141,6 +141,8 @@ function readingHarness(engine: DatabaseType | undefined, type: DatabaseType) {
   }));
   const provider = {
     type,
+    // The provider answers the object model the run's context states, which its session states and every read is held to.
+    getCapabilities: () => capabilities,
     getActiveSessions: read,
     getSlowQueries: read,
     getTableStats: read,

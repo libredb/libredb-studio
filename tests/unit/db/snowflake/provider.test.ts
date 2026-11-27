@@ -981,7 +981,10 @@ describe("the object surface", () => {
       { path: ["OTHER", "RAW"], name: "RAW", level: 1, isSessionDefault: false },
     ]);
     entry.transports.answer(SUBMIT, names("SALES", "OTHER"), names("PUBLIC", "STAGING"), names("PUBLIC", "RAW"));
-    const enumeration = await enumerateContainers(entry.provider);
+    const enumeration = await enumerateContainers({
+      objectModel: entry.provider.getCapabilities(),
+      listContainers: entry.provider.listContainers.bind(entry.provider),
+    });
     expect(enumeration.defaultContainer).toEqual(["SALES", "PUBLIC"]);
     const scoped = scopeGroundingContainers(enumeration, entry.provider.getCapabilities().agentWalkScope);
     expect(scoped.enumeration.containers).toEqual([["SALES", "PUBLIC"]]);

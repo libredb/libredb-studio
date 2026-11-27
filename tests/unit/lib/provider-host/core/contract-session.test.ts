@@ -25,7 +25,7 @@ import {
   type ProviderImpl,
   rowsSource,
 } from "@libredb/provider-sdk/calls";
-import type { Calls, MonitoringPanels } from "@libredb/provider-sdk/manifest";
+import type { Calls, MonitoringPanels, ObjectModel } from "@libredb/provider-sdk/manifest";
 import { type ContractSession, openContractSession } from "@/lib/provider-host/core/contract-session";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 
@@ -171,7 +171,40 @@ function callContext(signal?: AbortSignal): CallContext {
   return { deadline, signal: signal ?? deadlineSignal(deadline), env: NO_ENV };
 }
 
-const declared = (calls: Calls) => ({ calls, maintenance: MAINTENANCE, panels: PANELS });
+/** The engine's object model: one container level, addressed exactly, holding the one kind `item`. */
+const MODEL: ObjectModel = {
+  containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+  containerPathShapes: "exact",
+  containerNameSpelling: null,
+  objectKinds: [
+    {
+      id: "item",
+      role: "relation",
+      label: "Item",
+      labelPlural: "Items",
+      hasSource: false,
+      sourceLanguage: null,
+      hasColumns: true,
+      acceptsSourceEdits: false,
+      childKinds: [],
+      attachedTo: null,
+      acceptsRowWrites: false,
+      enumeratedBy: null,
+      countIsListing: false,
+      machineNames: null,
+      group: null,
+    },
+  ],
+  rowActions: [],
+  containersNameKinds: false,
+  tablesNeedContainer: false,
+  tablesAreDerivedGroupings: false,
+  agentWalkScope: null,
+  schemaDiffScope: null,
+  maskedNameKinds: [],
+};
+
+const declared = (calls: Calls) => ({ calls, maintenance: MAINTENANCE, panels: PANELS, objectModel: MODEL });
 const late: unknown[] = [];
 const onLate = (error: unknown) => late.push(error);
 
@@ -242,6 +275,58 @@ describe("a session opened on a provider package", () => {
       onLate,
     );
     expect(readOnly.kind === "opened" && readOnly.session.readOnlyStatements).toBe(true);
+  });
+
+  test("a package session states the object model its declaration states", async () => {
+    const handle = { session: randomUUID() };
+    const log: Recorded[] = [];
+    const offering = await sessionOf(
+      implOf(async () => ({ handle }), log),
+      callsOf(["objects.tree"]),
+    );
+    const narrowedAway = await sessionOf(
+      implOf(async () => ({ handle, refine: { calls: { objects: { tree: NOT } } } }), log),
+      callsOf(["objects.tree"]),
+    );
+    const notOffering = await sessionOf(
+      implOf(async () => ({ handle }), log),
+      callsOf(),
+    );
+    const unmodelled = await openContractSession(
+      implOf(async () => ({ handle }), log),
+      contextOf(),
+      { calls: callsOf(), maintenance: MAINTENANCE, panels: PANELS },
+      onLate,
+    );
+
+    expect(offering.objectModel).toBe(MODEL);
+    // A session that offers no tree reads no model, so it states none, whether a refinement withdrew the tree or the
+    // package never offered it.
+    expect(Object.hasOwn(narrowedAway, "objectModel")).toBe(false);
+    expect(Object.hasOwn(notOffering, "objectModel")).toBe(false);
+    expect(unmodelled.kind === "opened" && Object.hasOwn(unmodelled.session, "objectModel")).toBe(false);
+
+    // The host core holds the package's tree call to that model: an unstated kind never reaches the package.
+    const core = createHostCore();
+    const ports = { late: onLate };
+    const before = log.length;
+    const refused = await core.treeCall(
+      offering,
+      { action: "list", container: [randomUUID()], kind: randomUUID() },
+      callContext(),
+      ports,
+    );
+    expect(refused).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-kind-not-stated", pointer: "/kind" }],
+    });
+    expect(log.length).toBe(before);
+    expect(
+      (await core.treeCall(offering, { action: "list", container: [randomUUID()], kind: "item" }, callContext(), ports))
+        .kind,
+    ).toBe("answered");
+    expect(log.slice(before).map(({ name }) => name)).toEqual(["tree"]);
   });
 
   test("a refinement narrows the calls and the maintenance; a widening one is refused and the handle is closed under a cleanup context", async () => {

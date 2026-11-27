@@ -471,6 +471,7 @@ Until then agent mode and MCP refuse a package engine's connection as C-107 says
 ### M-89 (normative): An engine's object model is data of its declaration
 
 An engine that offers `objects.tree` states its object model in its declaration's `objects` member: its container levels, the catalog level among them, and the object kinds each level holds, with each kind's columns, source and row actions.
+Studio reads an engine's tree, its source and its row actions only through that model, and refuses before any call, by name and with outcome not-sent, a request naming a level or a kind the model does not state.
 A kind whose names the engine masks for machine readers, and a kind a maintenance spec names, is one the model states.
 
 ## Values
@@ -812,11 +813,12 @@ The pump hands on the provider's own row arrays, so a source whose cells change 
 ### C-17 (normative): The host calls a facet only when the session offers it
 
 The host holds every facet call to the session's calls, as `sessionCalls` answers them, with `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet` or `checkMonitoringFacet` before the call, and refuses a facet the session does not offer as `facet-not-offered`.
-It holds maintenance and monitoring requests to the session's maintenance and the engine's panels, each refusal naming a JSON Pointer into the request, in request order, and never a value:
+It holds maintenance, monitoring and tree requests to the session's maintenance, the engine's panels and the engine's object model (M-89), each refusal naming a JSON Pointer into the request, in request order, and never a value:
 
 - `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest` refuse an operation the session does not list as `request-operation-not-offered`, a placement its spec does not offer as `request-placement-not-offered`, which `kill` and an operation listed with no spec pass, and a preview its spec does not declare as `request-preview-not-offered`;
 - empty text where a request names something, a target, a container, a path or a name in it, is `request-field-empty`;
-- `checkMonitoringPanelRequest` refuses a panel the engine does not offer, a request that names none and an inherited panel name as `request-panel-not-offered`, without throwing.
+- `checkMonitoringPanelRequest` refuses a panel the engine does not offer, a request that names none and an inherited panel name as `request-panel-not-offered`, without throwing;
+- `checkTreeRequest` refuses a container path the session's object model does not state as `request-level-not-stated` and an object kind it does not state as `request-kind-not-stated`, without throwing.
 
 ### C-18 (normative): The testing entry is for tests
 
@@ -849,7 +851,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 
 ### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
 
-The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68) and each panel call to the open engine's panels, and refuses an open context that names an engine the manifest does not declare.
+The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68), each panel call to the open engine's panels and each tree call to its object model, and refuses an open context that names an engine the manifest does not declare.
 An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close` under a cleanup context of its own (C-47), and a refused execute answer closes each result source it handed over, an item that is not an object refused at its index and a source whose `columns` or `rowCount` read throws closed with those before it.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
@@ -1033,7 +1035,7 @@ An end that fails is answered in the run's place, and the run's answer says the 
 - `describe` answers one object's columns, indexes and foreign keys, its indexes the engine's sentence where that read was refused;
 - `describeMany` answers the same for every object of one kind in one container in one read, at most `limit` of them when sent, saying so in `truncated` when the read stopped short, and with `defaultSql` each default as SQL text.
 
-A container's path and an object's path are opaque: the host sends each back exactly as it was answered and reads nothing in it.
+A container's path and an object's path are opaque: the host sends each back exactly as it was answered and reads nothing in it but how many segments it has (M-89).
 The facet has no honours list: a provider honours every member of the request its action names (C-63).
 
 ### C-62 (informative): A tree answer is read by reference

@@ -57,8 +57,10 @@ import {
   bridgedMaintenance,
   bridgedReadOnlyStatements,
   bridgedScriptUnit,
+  bridgedObjectModel,
   bridgedTransactionScriptUnit,
 } from "@/lib/provider-host/legacy-bridge";
+import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 import { OffsetUnsupportedError, StudioOffsetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -222,6 +224,94 @@ describe("bridgedConsole", () => {
       expect(checkObjectsFacet(session.calls, "tree")).toEqual([]);
       expect(typeof session.tree).toBe("function");
     }
+  });
+
+  test("the bridged session states the object model its provider's capabilities answer", () => {
+    const capabilities: Partial<ProviderCapabilities> = {
+      containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+      containerPathShapes: "exact",
+      objectKinds: [
+        { id: "item", role: "relation", label: "Item", labelPlural: "Items", hasColumns: true },
+        {
+          id: "entry",
+          role: "routine",
+          label: "Entry",
+          labelPlural: "Entries",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+      ],
+      rowActions: [{ id: "peek", label: "Peek", kinds: ["item"], activates: true }],
+      machineRedaction: { maskedNameKinds: ["entry"] },
+    };
+    let answered: Partial<ProviderCapabilities> = capabilities;
+    const provider = Object.assign(fake(resultOf([])), {
+      getCapabilities: mock(() => ({ ...answered }) as ProviderCapabilities),
+    });
+
+    const first = bridgedConsole(provider, {}).session.objectModel;
+    expect(first).toEqual(declaredObjectModel(capabilities as ProviderCapabilities));
+    expect(bridgedObjectModel(provider)).toEqual(declaredObjectModel(capabilities as ProviderCapabilities));
+    expect(first?.objectKinds.map((kind) => kind.id)).toEqual(["item", "entry"]);
+    expect(first?.maskedNameKinds).toEqual(["entry"]);
+
+    // The model is read from the provider each time a session is built, so a connected provider's answer is served,
+    // never a snapshot taken before it connected.
+    answered = { ...capabilities, objectKinds: [{ id: "other", role: "relation", label: "O", labelPlural: "Os" }] };
+    const second = bridgedConsole(provider, {}).session.objectModel;
+    expect(second?.objectKinds.map((kind) => kind.id)).toEqual(["other"]);
+    expect(first?.objectKinds.map((kind) => kind.id)).toEqual(["item", "entry"]);
+  });
+
+  test("a bridged tree call naming a kind its provider's object model does not state is refused before the provider is called", async () => {
+    const provider = Object.assign(
+      fake(resultOf([]), {
+        getCapabilities: mock(
+          () =>
+            ({
+              containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+              objectKinds: [{ id: "item", role: "relation", label: "Item", labelPlural: "Items" }],
+            }) as unknown as ProviderCapabilities,
+        ),
+      }),
+      {
+        listContainers: mock(async () => []),
+        listObjects: mock(async () => []),
+        countObjects: mock(async () => ({})),
+      },
+    );
+    const core = createHostCore();
+    const { session } = bridgedConsole(provider, {});
+    const ports = { late: () => undefined };
+    const unstated = marker();
+
+    const refused = await core.treeCall(
+      session,
+      { action: "list", container: ["app"], kind: unstated },
+      contextOf(),
+      ports,
+    );
+    const tooDeep = await core.treeCall(session, { action: "count", container: ["app", "deeper"] }, contextOf(), ports);
+    const listed = await core.treeCall(
+      session,
+      { action: "list", container: ["app"], kind: "item" },
+      contextOf(),
+      ports,
+    );
+
+    expect(refused).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-kind-not-stated", pointer: "/kind" }],
+    });
+    expect(tooDeep).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-level-not-stated", pointer: "/container" }],
+    });
+    expect(listed).toEqual({ kind: "answered", answer: { objects: [] } });
+    expect(callsOf(provider.listObjects)).toEqual([[["app"], "item"]]);
+    expect(provider.countObjects).not.toHaveBeenCalled();
   });
 
   test("a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews", () => {

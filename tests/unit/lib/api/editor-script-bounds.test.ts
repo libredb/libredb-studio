@@ -45,6 +45,8 @@ const child = boundedChild({
       config: { id: "c1", name: "Prod", type: "postgres", host: "db", queryTimeout: 1 },
       query: () => new Promise<never>(() => {}),
       prepareQuery: (query: string) => ({ query, wasLimited: false, limit: 500, offset: 0 }),
+      // The bridge reads the session's object model from the provider; this one states none.
+      getCapabilities: () => ({}),
       beginTransaction: async () => {},
       commitTransaction: async () => {},
       rollbackTransaction: async () => {},

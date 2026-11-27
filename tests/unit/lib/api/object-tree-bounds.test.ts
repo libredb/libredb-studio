@@ -51,7 +51,11 @@ const child = boundedChild({
     const provider = {
       type: "postgres",
       config: { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout },
-      getCapabilities: () => ({}),
+      // One container level and the kind `table`, the model the reads below name.
+      getCapabilities: () => ({
+        containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+        objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+      }),
       listObjects: () => new Promise<never>(() => {}),
     } as never;
     if (name === "granted-never-answers") {

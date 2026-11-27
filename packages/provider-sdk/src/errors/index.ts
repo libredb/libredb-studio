@@ -31,6 +31,7 @@ export const ERROR_KINDS = [
   "query",
   "offset-unsupported",
   "studio-offset-refusal",
+  "studio-object-model-refusal",
   "refused-before-send",
   "read-allowance-exceeded",
   "row-budget-refusal",
@@ -100,6 +101,11 @@ export const CORE_ERROR_KINDS = [
    * provider's prepare did not apply; a provider raises `offset-unsupported`.
    */
   "studio-offset-refusal",
+  /**
+   * Studio's refusal, before any call, of a tree request naming a level or a kind the session's object model does not
+   * state; a provider is never sent such a request.
+   */
+  "studio-object-model-refusal",
   /**
    * The read allowance is core's budget across an agent run, and core's allowance object raises this refusal: a
    * provider charges the allowance it is handed and lets the refusal pass unchanged, but never constructs one.

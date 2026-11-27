@@ -525,6 +525,9 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     // on its bridged session, whose monitoring panels are that engine's row.
     const provider = {
       type: engine.connection.type,
+      // The provider answers the object model the run's context states, which its session states and every read is
+      // held to.
+      getCapabilities: () => engine.capabilities,
       ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
       // The object surface is REQUIRED on `DatabaseProvider`, so a preset without it is a
       // provider shape that cannot exist and an eval driven against it would prove nothing

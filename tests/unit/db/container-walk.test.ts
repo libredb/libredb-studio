@@ -11,7 +11,8 @@ import {
   scopeReadsUnder,
   sessionDefaultContainer,
 } from "@/lib/db/container-walk";
-import type { Container, ContainerLevels, DatabaseProvider } from "@/lib/db/types";
+import type { Container, ContainerLevels } from "@/lib/db/types";
+import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 import { createMockProvider } from "../../helpers/mock-provider";
 
 const container = (name: string, isSessionDefault?: boolean): Container => ({
@@ -58,14 +59,15 @@ describe("sessionDefaultContainer", () => {
 const NAMESPACE_LEVEL = { id: "schema", label: "Namespace", labelPlural: "Namespaces" } as const;
 
 /**
- * A provider whose containers answer as given, recording every parent it was asked about. It declares
+ * A provider's container source, as the three walks that read a provider build it: its capabilities as the object
+ * model, and its containers answering as given, recording every parent it was asked about. It declares
  * `containersNameKinds` unless told not to, which is the engine a named container is listed for.
  */
 function walked(
   levels: ContainerLevels,
   answer: (parent?: readonly string[]) => Container[],
   namesKinds = true,
-): { readonly provider: DatabaseProvider; readonly asked: (readonly string[] | undefined)[] } {
+): { readonly provider: ContainerSource; readonly asked: (readonly string[] | undefined)[] } {
   const asked: (readonly string[] | undefined)[] = [];
   const provider = createMockProvider({
     capabilities: { containerLevels: levels, ...(namesKinds ? { containersNameKinds: true as const } : {}) },
@@ -74,7 +76,10 @@ function walked(
     asked.push(parent);
     return answer(parent);
   };
-  return { provider, asked };
+  return {
+    provider: { objectModel: provider.getCapabilities(), listContainers: provider.listContainers.bind(provider) },
+    asked,
+  };
 }
 
 describe("the kinds a container walk carries", () => {
@@ -219,7 +224,7 @@ describe("the kinds a container walk carries", () => {
     const read: (readonly string[] | undefined)[] = [];
     // Two closures, as the object tree's caller facade holds them: no provider members, no `this`.
     const source: ContainerSource = {
-      getCapabilities: () => ({ ...provider.getCapabilities() }),
+      objectModel: { ...provider.objectModel },
       listContainers: async (parent?: readonly string[]) => {
         read.push(parent);
         return answer(parent);
@@ -231,6 +236,51 @@ describe("the kinds a container walk carries", () => {
       await describeNamedContainers(provider, [["db", "app"]]),
     );
     expect(read).toEqual(asked);
+  });
+});
+
+describe("the object model a walk reads", () => {
+  test("a walk reads its depth and its kind-naming containers from its source's object model", async () => {
+    const levels: ContainerLevels = [{ id: "catalog", label: "Database", labelPlural: "Databases" }, NAMESPACE_LEVEL];
+    const answer = (parent?: readonly string[]): Container[] =>
+      parent === undefined
+        ? [{ path: ["db"], name: "db", level: 0, isSessionDefault: true }]
+        : [{ path: [...parent, "app"], name: "app", level: 1, kinds: ["item"], isSessionDefault: true }];
+    const asked: (readonly string[] | undefined)[] = [];
+    const listContainers = async (parent?: readonly string[]) => {
+      asked.push(parent);
+      return answer(parent);
+    };
+    // The session's model in the declaration's form, every member written out, null where the model has none.
+    const model = declaredObjectModel({
+      containerLevels: levels,
+      containersNameKinds: true,
+    } as unknown as Parameters<typeof declaredObjectModel>[0]);
+    const flat = declaredObjectModel({} as unknown as Parameters<typeof declaredObjectModel>[0]);
+
+    expect(await enumerateContainers({ objectModel: model, listContainers })).toEqual({
+      containers: [["db", "app"]],
+      containerKinds: [["item"]],
+      defaultContainer: ["db", "app"],
+    });
+    expect(await describeNamedContainers({ objectModel: model, listContainers }, [["db", "app"]])).toEqual({
+      enumeration: { containers: [["db", "app"]], containerKinds: [["item"]] },
+      unlisted: [],
+    });
+    expect(namedContainerListings({ objectModel: model, listContainers }, [["db", "app"]])).toBe(1);
+    expect(asked).toEqual([undefined, ["db"], ["db"]]);
+
+    // A model of no level is one container, the connection itself, and is never asked to list one.
+    expect(await enumerateContainers({ objectModel: flat, listContainers })).toEqual({
+      containers: [[]],
+      defaultContainer: [],
+    });
+    expect(
+      namedContainerListings({ objectModel: { ...model, containersNameKinds: false }, listContainers }, [
+        ["db", "app"],
+      ]),
+    ).toBe(0);
+    expect(asked).toHaveLength(3);
   });
 });
 
