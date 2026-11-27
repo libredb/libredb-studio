@@ -962,7 +962,8 @@ It writes nothing and exits 1 when it refuses the directory, printing every refu
 - more than 256 packages, the most a lock holds;
 - every refusal of a package's files (a link, a special file, a name outside the portable set, the size limits, a package.json or manifest it cannot read, more engine ids than an entry holds, a package.json naming another package, an entry that is not a file of the package);
 - a module file its parser cannot read or that is not UTF-8, an import outside the lock's forms, more than 4,096 imports in a package, and a lock over 1 MiB;
-- a module that loads at run time what the lock cannot record (C-114): one that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`, each named by its module, line and form.
+- a module that loads at run time what the lock cannot record (C-114): one that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`, each named by its module, line and form;
+- a directory this user cannot write (`EACCES`, `EPERM` or `EROFS` when the command creates its temporary file or renames it), named by one sentence that says to run the command as a user who may write it.
 
 Any other argument, a relative `--dir` included, prints the usage and exits 2.
 Remove or fix what a refusal names, and run the command again.

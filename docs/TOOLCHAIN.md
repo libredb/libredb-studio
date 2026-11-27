@@ -273,10 +273,12 @@ The launcher and the images' wrapper import the module and run its `main`; it is
 7. `bun scripts/providers-lock.ts --dir <probe>`, run from the repository, writes the same bytes.
 8. The packed command refuses a `--dir` naming a regular file with exit 1 and its sentence, and answers `providers` alone with the usage and exit 2.
 9. Over a second probe directory, whose one package calls `import()` with something other than a string, the packed command exits 1, prints that runtime load's sentence (C-114) and `providers:lock wrote nothing`, and writes no lock.
+10. Over an empty directory of mode 0o555, the packed command exits 1 and prints the unwritable directory's sentence with `(EACCES)` and `providers:lock wrote nothing`, with no stack.
+    The step runs on Linux and macOS as a user other than root: on Windows a directory's write permission is an ACL that chmod does not set, and root writes a directory whatever its mode bits, so there the check prints `lib:lock: not run:` with the step and its reason.
 
 The temporary root is always removed.
 Measured cost: the module build adds under a second to `build:lib`, and the whole check takes about 2 s.
-`tests/unit/check-lib-lock.test.ts` runs the check over a planted package root whose module is built by the same build function, over a planted module that writes no lock, and over a module built from the command that answers the second probe as a lock, each of which the check names.
+`tests/unit/check-lib-lock.test.ts` runs the check over a planted package root whose module is built by the same build function, over a planted module that writes no lock, over a module built from the command that answers the second probe as a lock, and, on Linux and macOS as a user other than root, over a module built from the command that raises over the unwritable directory, each of which the check names.
 
 ### The published engine id type (`DatabaseType`)
 

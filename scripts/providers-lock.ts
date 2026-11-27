@@ -55,7 +55,12 @@
  * refuses for a cap. The directory's refusals come first, in walk order, then the entry cap, then each package's, by
  * name: every package is read even past the entry cap, so one run prints every refusal. Otherwise it writes the lock
  * through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the same
- * directory always gives the same bytes, and prints the lock's path and one line per package; exit 0.
+ * directory always gives the same bytes, and prints the lock's path and one line per package; exit 0. A directory this
+ * user may not write, an `EACCES`, `EPERM` or `EROFS` from the temporary file's open or from the rename, is refused by
+ * one sentence and `providers:lock wrote nothing`, exit 1, with no stack; any other error from the open, the write, the
+ * close or the rename is raised, since it is not the operator's input. Every failure after the open removes the
+ * temporary file before it is named or raised, so a failed lock leaves no file in the directory, and a failed removal
+ * is raised. On Windows a read-only or in-use `providers.lock.json` fails the rename with `EPERM`, named the same way.
  *
  * The directory must be absolute on every channel: `bun run` runs the script from the repository root and an image
  * runs it in a container whose working directory is not the operator's, so a relative path would not be the one
@@ -555,6 +560,23 @@ function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string[] {
   return artifactEntry(resolved.directory, pkg, PREFIX);
 }
 
+/** The codes of a providers directory this user may not write: the open of the temporary file, or its rename. */
+const UNWRITABLE_CODES: ReadonlySet<string | undefined> = new Set(["EACCES", "EPERM", "EROFS"]);
+
+/**
+ * Names a providers directory this user may not write and answers 1, when `error` carries one of
+ * `UNWRITABLE_CODES`; raises `error` otherwise, since any other failure is not the operator's input.
+ */
+function refuseUnwritable(directory: string, error: unknown): number {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (!UNWRITABLE_CODES.has(code)) throw error;
+  console.error(
+    `${PREFIX}: ${directory}: the providers directory is not writable by this user (${code}), so no lock was written; run the command as a user who may write it.`,
+  );
+  console.error(`${PREFIX} wrote nothing`);
+  return 1;
+}
+
 /** Writes the lock of `directory`; the exit code. */
 function writeLock(directory: string): number {
   let root: string;
@@ -596,8 +618,28 @@ function writeLock(directory: string): number {
   }
   const lock = path.join(root, LOCK_FILE_NAME);
   const temporary = path.join(root, `.${LOCK_FILE_NAME}.${process.pid}.tmp`);
-  fs.writeFileSync(temporary, text, { flag: "wx" });
-  fs.renameSync(temporary, lock);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(temporary, "wx");
+  } catch (error) {
+    return refuseUnwritable(directory, error);
+  }
+  try {
+    try {
+      fs.writeFileSync(descriptor, text);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch (error) {
+    fs.unlinkSync(temporary);
+    throw error;
+  }
+  try {
+    fs.renameSync(temporary, lock);
+  } catch (error) {
+    fs.unlinkSync(temporary);
+    return refuseUnwritable(directory, error);
+  }
   console.log(`Wrote ${lock}`);
   for (const entry of [...entries].sort((a, b) => (a.name < b.name ? -1 : 1))) {
     console.log(`${entry.name} ${entry.version} ${entry.digest}`);

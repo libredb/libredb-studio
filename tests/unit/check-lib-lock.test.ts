@@ -15,11 +15,23 @@ import path from "node:path";
 import { parse } from "yaml";
 import { buildLockModule } from "../../scripts/build-lock-module.mjs";
 import { checkLibLock } from "../../scripts/check-lib-lock";
-import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
+import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "../..");
 const CHECK_LIB_LOCK = path.join(REPOSITORY_ROOT, "scripts", "check-lib-lock.ts");
 const scratchRoots: string[] = [];
+
+/**
+ * Why the check does not plant an unwritable providers directory here, as the check states it: a directory's write
+ * permission on Windows is an ACL, which chmod does not set, and root writes a directory whatever its mode bits. Null
+ * on Linux and macOS as another user than root, where mode 0o555 refuses a new entry (POSIX).
+ */
+const UNWRITABLE_NOT_RUN: string | null =
+  process.platform === "win32"
+    ? "the unwritable providers directory step, since a directory's write permission on Windows is an ACL, which chmod does not set."
+    : process.getuid?.() === 0
+      ? "the unwritable providers directory step, since root writes a directory whatever its mode bits."
+      : null;
 
 afterAll(() => {
   for (const root of scratchRoots) fs.rmSync(root, { recursive: true, force: true });
@@ -71,6 +83,7 @@ describeIf(missingUnixTool("tar"), "the packed lock command check", () => {
 
     expect(result.failures).toEqual([]);
     expect(result.packages).toEqual(["@acme/scoped 2.0.0", "acme-probe 1.0.0"]);
+    expect(result.notRun).toEqual(UNWRITABLE_NOT_RUN === null ? [] : [UNWRITABLE_NOT_RUN]);
   });
 
   test("the check names a packed lock command that writes no lock", () => {
@@ -121,6 +134,45 @@ describeIf(missingUnixTool("tar"), "the packed lock command check", () => {
     ]);
     expect(result.packages).toEqual(["@acme/scoped 2.0.0", "acme-probe 1.0.0"]);
   });
+
+  testIf(
+    UNWRITABLE_NOT_RUN,
+    "the check names a packed lock command that raises on an unwritable directory",
+    async () => {
+      // The real command, built by the build's own function, except that it raises over the unwritable probe as the
+      // command did before it named that directory.
+      const lockSource = path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts");
+      const raising = await buildLockModule({
+        root: REPOSITORY_ROOT,
+        outfile: path.join(scratch("lib-lock-raising-module-"), "providers-lock.mjs"),
+        entry: [
+          `import { main as lock, USAGE } from ${JSON.stringify(lockSource)};`,
+          "export { USAGE };",
+          "export function main(argv) {",
+          '  if (argv[1]?.endsWith("unwritable")) {',
+          '    throw Object.assign(new Error("EACCES: planted by the test"), { code: "EACCES" });',
+          "  }",
+          "  return lock(argv);",
+          "}",
+          "",
+        ].join("\n"),
+      });
+      const root = plantedRoot("lib-lock-raising-");
+      fs.mkdirSync(path.join(root, "dist"));
+      fs.copyFileSync(raising.outfile, path.join(root, "dist", "providers-lock.mjs"));
+      const temp = scratch("lib-lock-raising-temp-");
+
+      const result = checkLibLock({ root, temp, repository: REPOSITORY_ROOT, tar: resolveUnixTool("tar") as string });
+
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toStartWith(
+        "the packed command over an unwritable providers directory exited 1, printed nothing on stdout and ",
+      );
+      expect(result.failures[0]).toContain("EACCES: planted by the test");
+      expect(result.failures[0]).toEndWith(", not its sentence and exit 1.");
+      expect(result.packages).toEqual(["@acme/scoped 2.0.0", "acme-probe 1.0.0"]);
+    },
+  );
 });
 
 describe("the lock command check's wiring", () => {

@@ -27,8 +27,15 @@
  * 9. It writes a second probe providers directory holding one package whose entry calls `import()` with something
  *    other than a string, a runtime load C-114 refuses, and expects the packed command to exit 1, print nothing on
  *    stdout, print the load's sentence and `providers:lock wrote nothing` on stderr, and write no lock.
+ * 10. It makes an empty directory of mode 0o555 under the temporary root and expects the packed command over it to exit
+ *    1, print nothing on stdout, and print the unwritable directory's sentence with `(EACCES)` and
+ *    `providers:lock wrote nothing` on stderr, with no stack; the mode is restored after. POSIX refuses a new entry in
+ *    such a directory on Linux and macOS; the step does not run on Windows, where a directory's write permission is an
+ *    ACL that chmod does not set, nor as root, who writes a directory whatever its mode bits, and the check names
+ *    each step it did not run and why.
  *
- * It prints one failure per line and a summary line, exits 1 on any failure, and always removes its temporary root.
+ * It prints one failure per line, one `not run` line per step it did not run, and a summary line, exits 1 on any
+ * failure, and always removes its temporary root.
  */
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -58,6 +65,25 @@ const PROBE_PACKAGES = [
 
 /** The package of the refusal probe, naming no engine: its entry makes one runtime load (C-114). */
 const LOAD_PROBE = { name: "acme-loads", version: "1.0.0", engine: "acmeloads" } as const;
+
+/** What the packed command prints on stderr for the empty directory of mode 0o555 `directory` (step 10). */
+function unwritableRefusal(directory: string): string[] {
+  return [
+    `providers:lock: ${directory}: the providers directory is not writable by this user (EACCES), so no lock was written; run the command as a user who may write it.`,
+    "providers:lock wrote nothing",
+  ];
+}
+
+/** Why step 10 does not run on this machine, or null when it runs. */
+function unwritableNotRun(): string | null {
+  if (process.platform === "win32") {
+    return "the unwritable providers directory step, since a directory's write permission on Windows is an ACL, which chmod does not set.";
+  }
+  if (process.getuid?.() === 0) {
+    return "the unwritable providers directory step, since root writes a directory whatever its mode bits.";
+  }
+  return null;
+}
 
 /** What the packed command prints on stderr for the refusal probe. */
 const LOAD_REFUSAL = [
@@ -107,14 +133,15 @@ function spawn(command: string, args: readonly string[], options: { cwd: string;
   return { status: result.status, out: lines(result.stdout), err: lines(result.stderr) };
 }
 
-/** What the check found: one sentence per failure, and the packages the reader verified. */
+/** What the check found: one sentence per failure, the packages the reader verified, and each step it did not run. */
 export interface LibLockResult {
   readonly failures: string[];
   readonly packages: string[];
+  readonly notRun: string[];
 }
 
 /**
- * Runs steps 2 to 9 over the package root `root`, packed into `temp`, with `repository` the checkout whose
+ * Runs steps 2 to 10 over the package root `root`, packed into `temp`, with `repository` the checkout whose
  * `scripts/providers-lock.ts` writes the bytes to compare with. Stops at the first step whose failure leaves nothing
  * for the next to read.
  */
@@ -131,19 +158,20 @@ export function checkLibLock({
 }): LibLockResult {
   const failures: string[] = [];
   const packages: string[] = [];
+  const notRun: string[] = [];
   const ancestor = ancestorNodeModules(temp, fs.existsSync);
   if (ancestor !== null) {
     failures.push(
       `${ancestor} holds node_modules above the temporary root ${temp}, so the launcher could resolve what the package does not ship. Point TMPDIR (TEMP on Windows) at a directory with no node_modules above it.`,
     );
-    return { failures, packages };
+    return { failures, packages, notRun };
   }
 
   const { packageDir } = packPackage(root, temp, tar);
   const missing = PACKED_FILES.filter((file) => !fs.existsSync(path.join(packageDir, ...file.split("/"))));
   if (missing.length > 0) {
     failures.push(...missing.map((file) => `${file} is not in the packed package, so its lock command cannot run.`));
-    return { failures, packages };
+    return { failures, packages, notRun };
   }
   if (!fs.readFileSync(path.join(packageDir, LOCK_MODULE), "utf8").startsWith("/*\nThis module bundles acorn ")) {
     failures.push(
@@ -168,13 +196,13 @@ export function checkLibLock({
     failures.push(
       `${command} exited ${locked.status} and printed ${locked.out[0] ?? "nothing"} first, not Wrote ${lockFile}, and ${fs.existsSync(lockFile) ? "wrote" : "wrote no"} lock: ${locked.err.join(" ")}`,
     );
-    return { failures, packages };
+    return { failures, packages, notRun };
   }
 
   const read = readProvidersLock(probe);
   if (!read.read) {
     failures.push(`Studio's reader refused the lock the packed command wrote: ${read.refusal.sentence}`);
-    return { failures, packages };
+    return { failures, packages, notRun };
   }
   for (const pkg of read.packages) {
     if (pkg.verified) packages.push(`${pkg.name} ${pkg.version}`);
@@ -229,7 +257,31 @@ export function checkLibLock({
       `the packed command over a package making a runtime load exited ${loads.status}, printed ${loads.out.join(" ") || "nothing"} on stdout and ${loads.err.join(" ") || "nothing"} on stderr, and ${loadLock ? "wrote" : "wrote no"} lock, not its refusal, exit 1 and no lock.`,
     );
   }
-  return { failures, packages };
+
+  const notRunUnwritable = unwritableNotRun();
+  if (notRunUnwritable !== null) {
+    notRun.push(notRunUnwritable);
+  } else {
+    const unwritable = path.join(fs.realpathSync.native(temp), "unwritable");
+    fs.mkdirSync(unwritable);
+    fs.chmodSync(unwritable, 0o555);
+    let refused: Run;
+    try {
+      refused = packed("lock", "--dir", unwritable);
+    } finally {
+      fs.chmodSync(unwritable, 0o755);
+    }
+    if (
+      refused.status !== 1 ||
+      refused.out.length > 0 ||
+      refused.err.join("\n") !== unwritableRefusal(unwritable).join("\n")
+    ) {
+      failures.push(
+        `the packed command over an unwritable providers directory exited ${refused.status}, printed ${refused.out.join(" ") || "nothing"} on stdout and ${refused.err.join(" ") || "nothing"} on stderr, not its sentence and exit 1.`,
+      );
+    }
+  }
+  return { failures, packages, notRun };
 }
 
 function main(): number {
@@ -250,6 +302,7 @@ function main(): number {
     fs.rmSync(temp, { recursive: true, force: true });
   }
   for (const failure of result.failures) console.error(`${PREFIX}: ${failure}`);
+  for (const step of result.notRun) console.log(`${PREFIX}: not run: ${step}`);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   if (result.failures.length === 0) {
     console.log(
