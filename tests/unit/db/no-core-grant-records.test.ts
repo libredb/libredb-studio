@@ -121,6 +121,26 @@ function sourceModules(): ReadonlyMap<string, string> {
 /** An `import()` or `require()` call, as `valueInputs` writes its input. */
 const LOAD_CALL = /^(import|require)\s*\(/;
 
+/** The module of each listed entry, as `moduleOf` writes it. */
+const LISTED_MODULES: ReadonlySet<string> = new Set(CORE_GRANT_RECORDS.map((entry) => moduleOf(entry.module)));
+
+/** The last path segment of each listed module, `claim-grants` for src/lib/db/claim-grants.ts. */
+const LISTED_BASENAMES: readonly string[] = [
+  ...new Set([...LISTED_MODULES].map((module) => path.posix.basename(module))),
+];
+
+/**
+ * Whether `file` can hold an input resolving to a listed module, so only those modules are parsed: parsing every module
+ * of both roots under coverage instrumentation outruns bun's default test timeout. An input resolves to a listed module
+ * only when that module's last segment is a segment of the specifier, `@/...` or relative, or else a directory segment
+ * of `file`'s own path that a relative specifier climbs back to, such as `.` or `./index`. So a module whose text
+ * and path both lack every listed basename holds no such input, and skipping it changes no answer. The text is read as
+ * written: a specifier spelling the basename with an escape sequence is not seen.
+ */
+function mayNameListedModule(file: string, text: string): boolean {
+  return LISTED_BASENAMES.some((basename) => text.includes(basename) || file.includes(basename));
+}
+
 /**
  * Every value input of `modules` from the module of a listed entry: `<file> imports <input>`, or `<file> re-exports
  * <input>` for one the module exports again. Each input carries the name it reads, `*` for one that reaches every
@@ -129,10 +149,9 @@ const LOAD_CALL = /^(import|require)\s*\(/;
 function listedModuleInputs(
   modules: ReadonlyMap<string, string>,
 ): readonly { readonly file: string; readonly name: string; readonly exported: boolean; readonly line: string }[] {
-  const listedModules = new Set(CORE_GRANT_RECORDS.map((entry) => moduleOf(entry.module)));
   return [...modules].flatMap(([file, text]) =>
-    valueInputs(file, text)
-      .filter(({ module }) => module !== null && listedModules.has(module))
+    (mayNameListedModule(file, text) ? valueInputs(file, text) : [])
+      .filter(({ module }) => module !== null && LISTED_MODULES.has(module))
       .map(({ input, exported }) => ({
         file,
         name: LOAD_CALL.test(input) ? "*" : input.slice(0, input.indexOf(" from ")),
@@ -225,6 +244,14 @@ describe("the exit of M3", () => {
     expect(
       planted("src/lib/sql/planted-grants.ts", 'import { GRANTED_WRITE_REACH as reach } from "../db/claim-grants";'),
     ).toEqual(["src/lib/sql/planted-grants.ts imports GRANTED_WRITE_REACH from ../db/claim-grants"]);
+    // Only a module naming a listed module's basename is parsed: a relative load names it in its text, and `.` written
+    // in a directory named for it names it by the path of the module that writes it.
+    expect(planted("src/lib/db/planted-grants.ts", 'const grants = require("./claim-grants");')).toEqual([
+      'src/lib/db/planted-grants.ts imports require("./claim-grants")',
+    ]);
+    expect(planted("src/lib/db/claim-grants/planted-grants.ts", 'import { legacyEngineGrants } from ".";')).toEqual([
+      "src/lib/db/claim-grants/planted-grants.ts imports legacyEngineGrants from .",
+    ]);
     expect(
       planted("vscode-extension/src/planted-grants.ts", `import { GRANTED_AGENT_READINGS } from "${from}";`),
     ).toEqual([`vscode-extension/src/planted-grants.ts imports GRANTED_AGENT_READINGS from ${from}`]);
