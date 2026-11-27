@@ -60,8 +60,8 @@ function compiledRow(engine: string, data: NonNullable<StatementLanguageData>): 
  *
  * The legacy composer hands the data its declaration states, projected into `BUNDLED_STATEMENT_LANGUAGE_DATA`, through
  * `typeStatementLanguageRow` in `./destructive-commands.ts`, and the package composer hands no code row, since Studio
- * holds none of a package's engine. What the row's claims
- * count for is the engine's record's grants, read by the gate (`rowDecidesAlone`); this grants nothing.
+ * holds none of a package's engine. What the row's claims count for is the engine's record's grants, read by the gate
+ * (`rowDecidesAlone`); this grants nothing.
  *
  * @throws {Error} Naming the engine, a host defect, where both are present: Studio holds a code row only for an engine
  * whose declaration states no data. Naming the engine and the kind, for a reader kind core does not hold.
