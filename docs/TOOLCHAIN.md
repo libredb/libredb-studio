@@ -212,8 +212,8 @@ own file for that reason:
 import "@libredb/studio/styles.css"; // required once, before any studio component renders
 ```
 
-`build:lib` is `tsup && node scripts/copy-theme.mjs`, and the order is load-bearing: tsup runs with
-`clean: true`, so anything staged into `dist/` before it is wiped. The copy has to come after.
+`build:lib` is `tsup && node scripts/copy-theme.mjs && node scripts/build-lock-module.mjs`, and the order is load-bearing: tsup runs with
+`clean: true`, so anything staged into `dist/` before it is wiped. The copy and the lock command's module ("The lock command module (`lib:lock`)") have to come after.
 
 `dist/styles.css` is the line `@import "@xyflow/react/dist/style.css";`, the ER diagram's base styles, followed by `src/styles/theme.css` unchanged.
 The published JavaScript imports no stylesheet: `tsup.config.ts` puts `/\.css$/` in `noExternal` and loads it with esbuild's `empty` loader (`loader: { ".css": "empty" }`), because Node cannot load a `.css` import, and before this a host's `import("@libredb/studio")` or `require("@libredb/studio")` under Node failed on the SchemaDiagram chunk's import of that sheet.
@@ -250,6 +250,17 @@ Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
 - CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure` and `lib:load`, in that order (plus a Biome format check), so the package
   surface is gated on every PR.
+
+### The lock command module (`lib:lock`)
+
+The lock command (`scripts/providers-lock.ts`, docs/providers/CONTRACT.md C-91) ships to operators in the npm package and in the three images, which run Node.js and no Bun, so `build:lib` and each Dockerfile's builder stage build it into one Node.js ES module, `dist/providers-lock.mjs`, with `scripts/build-lock-module.mjs`.
+The build is one esbuild call, not a second tsup config: tsup runs the builds of an array config side by side, and the library build's `clean: true` would empty `dist/` while the module is written.
+Its entry is esbuild's `stdin` entry `export { main, USAGE } from "./scripts/providers-lock.ts";`, because esbuild keeps an entry file's `#!` line, which would put the script's Bun hashbang at the top of a Node.js module; esbuild writes that entry's `sourcefile` name, `lock-module-entry.ts`, as a comment in the output.
+The module bundles acorn and every Studio module the command reaches, for `platform: "node"`, `format: "esm"` and `target: "node24"`, with no minification and no source map.
+After the build, the script reads esbuild's metafile and fails, naming each, on an input from a package other than acorn and on an import that is not a `node:` built-in, the same rule as the VS Code bundles' metafile checks ("Bundles and notices").
+The module begins with acorn's license text, read from `node_modules/acorn/LICENSE` at build time, so the notice travels with the one artifact that bundles acorn on every channel; the build fails naming that file when it is missing.
+The launcher and the images' wrapper import the module and run its `main`; it is never run as a program of its own under Node.js, since its self-run line, kept for `bun run`, tests `import.meta.main`, which Node.js 24.0.0 does not set.
+`tests/unit/scripts/build-lock-module.test.ts` builds the module into a temporary directory and holds the rules above: its imports, its inputs, no engine id by the isolation ratchet's naming rule (with a build of the type-id module as the control), the license comment, that importing it under Node.js runs nothing, and that its `main` writes the bytes `bun run providers:lock` writes.
 
 ### The published engine id type (`DatabaseType`)
 

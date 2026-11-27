@@ -30,7 +30,10 @@ import {
 import { moduleImports } from "../../../scripts/providers-lock";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
-const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
+const USAGE = [
+  "Usage: libredb-studio providers lock --dir <absolute directory>",
+  "       (in a checkout of Studio: bun run providers:lock -- --dir <absolute directory>)",
+].join("\n");
 const scratch = scratchDirectory("libredb-providers-lock-command-");
 let counter = 0;
 
