@@ -12,7 +12,9 @@
  * `languageSha256` to what the key command answers for the row's engine. A row's version other than its package.json's
  * fails, so a version bump replaces the package's rows rather than adding beside them. A row of a package outside the
  * repository is not in the census, nor a row naming the SDK. Each problem names the package, the row's version and
- * engine, and the member, with both values as JSON.
+ * engine, and the member, with both values as JSON. The key command's digest of the pack is held to the pack's too, by
+ * package; no planted case reaches a difference, since both read one artifact's bytes through `artifactEntry` and the
+ * census has no seam between its pack and its key, so the planted tests assert that equality on every pack they key.
  *
  * The register is the one Studio grants from, `STUDIO_GRANT_REGISTER`, read through its reader's `packageRows`; the
  * census never parses register.json itself. On today's tree the register holds legacy rows only and the repository no
@@ -137,6 +139,12 @@ function registerPackageRowCensus(root: string, register: GrantRegister, scratch
       problems.push(`${name}: the key command refused its pack: ${keys}`);
       continue;
     }
+    if (keys.package.digest !== first.digest) {
+      problems.push(
+        `${name}: the key command's digest is ${JSON.stringify(keys.package.digest)}, the pack's is ${JSON.stringify(first.digest)}`,
+      );
+      continue;
+    }
     for (const row of packageRows) {
       const label = rowLabel(row);
       const compare = (member: string, rowValue: string | null, packValue: string | null): void => {
@@ -258,7 +266,10 @@ function printedKeys(
     timeout: 60_000,
   });
   expect([run.exitCode, run.stderr.toString()]).toEqual([0, ""]);
-  return JSON.parse(run.stdout.toString());
+  const keys = JSON.parse(run.stdout.toString());
+  // The census's key digest problem, held here since no planted case reaches it: the key's digest is the pack's.
+  expect(keys.package.digest).toBe(pack.digest);
+  return keys;
 }
 
 /** The rows of the package at `directory` of `root`, regenerated from the key command's printed keys. */
@@ -299,18 +310,22 @@ function editEngine(root: string, change: (engine: PlantedEngine) => void): void
 }
 
 describe("the in-repo register row census", () => {
-  test("every register package row of an in-repo package equals the keys of its pack", () => {
-    const answered = registerPackageRowCensus(REPOSITORY_ROOT, STUDIO_GRANT_REGISTER, scratch);
-    expect(answered.problems).toEqual([]);
-    // The census holds exactly the register's package rows that name a provider package of this repository. On today's
-    // tree that is none: the register holds legacy rows only and packages/ no provider package.
-    const inRepo = inRepoPackages(REPOSITORY_ROOT);
-    expect(answered.held).toEqual(
-      STUDIO_GRANT_REGISTER.packageRows()
-        .filter((row) => inRepo.has(row.package.name))
-        .map(rowLabel),
-    );
-  });
+  test(
+    "every register package row of an in-repo package equals the keys of its pack",
+    () => {
+      const answered = registerPackageRowCensus(REPOSITORY_ROOT, STUDIO_GRANT_REGISTER, scratch);
+      expect(answered.problems).toEqual([]);
+      // The census holds exactly the register's package rows that name a provider package of this repository. On
+      // today's tree that is none: the register holds legacy rows only and packages/ no provider package.
+      const inRepo = inRepoPackages(REPOSITORY_ROOT);
+      expect(answered.held).toEqual(
+        STUDIO_GRANT_REGISTER.packageRows()
+          .filter((row) => inRepo.has(row.package.name))
+          .map(rowLabel),
+      );
+    },
+    CENSUS_TIMEOUT_MS,
+  );
 
   test(
     "a changed byte of a planted in-repo package fails the census by package and member",
