@@ -301,7 +301,7 @@
     "@types/ssh2": "^1.15.6",
     "@workflow/world-local": "4.2.4",
     "@workflow/world-postgres": "4.3.3",
-    "acorn": "8.18.0",
+    "acorn": "8.19.0",
     "ai": "7.0.143",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
