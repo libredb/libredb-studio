@@ -1,8 +1,8 @@
 /**
  * The language data digest (src/lib/db/language-digest.ts): the SHA-256 of an engine declaration's statement language
  * data, `statementLanguageData`, over the canonical text the grammar digest uses (src/lib/db/canonical-json.ts). The
- * canonical text and the digest are read here on hand-made values; no declaration states language data yet, and no
- * register row states a language digest yet.
+ * canonical text and the digest are read here on hand-made values; no module of src imports the digest yet, and
+ * no register row states a language digest yet.
  */
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";

@@ -932,7 +932,7 @@ Only a watchdog outside the process detects a hung process, and the kit's import
 
 Core decides whether a statement needs a confirmation, never by a call into a provider, and decides it for a provider package's engine by one check over what its declaration states of its statements, its statement language data (M-85) or its SQL text (S-3), read as its register row grants them (M-87, S-8).
 The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
-No declaration states statement language data yet, so nothing checks the check over it.
+No confirmation check reads statement language data yet.
 
 ### C-39 (normative): A protected read path is a precondition of agent and MCP statements
 
