@@ -1373,7 +1373,9 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mqttreadQueryReadDescriptor,
   sparkplugreadQueryReadDescriptor,
   // The read of each language the bundled declarations state agent data for: one generic descriptor per language.
-  ...DECLARED_STATEMENT_LANGUAGES.filter((data) => data.agent !== null).map(declaredLanguageReadDescriptor),
+  ...DECLARED_STATEMENT_LANGUAGES.filter((data) => data.agent !== null).map((data) =>
+    declaredLanguageReadDescriptor(data),
+  ),
 ]);
 
 /**
