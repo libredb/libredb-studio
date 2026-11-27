@@ -4,10 +4,10 @@
  * a driver a core module still imports is excepted only by a closed list naming its importer.
  *
  * Every planted root and standalone lives under the system's temporary directory, never under the repository's
- * packages/, where the isolation ratchet would count a planted `packages/provider-<id>/` as an engine. A link in a
- * planted package is a directory junction, which Windows creates without a privilege and POSIX treats as a symbolic
- * link, so that case runs on all three platforms; no file mode is asserted, and a child's lines are split on `\r?\n`,
- * since a Windows child ends them with CRLF.
+ * packages/, where the isolation ratchet would count a planted `packages/provider-<id>/` as an engine. Every planted
+ * link is a directory junction, which Windows creates without a privilege and POSIX treats as a symbolic link, so each
+ * link case runs on all three platforms (a dangling one is planted by removing its target after the link is made); no
+ * file mode is asserted, and a child's lines are split on `\r?\n`, since a Windows child ends them with CRLF.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -43,6 +43,24 @@ function planted(label: string, files: Readonly<Record<string, string>>): string
     fs.writeFileSync(file, text);
   }
   return directory;
+}
+
+/** Writes `text` at `relative` under `directory`, creating its parents. */
+function writeFile(directory: string, relative: string, text: string): void {
+  const file = path.join(directory, ...relative.split("/"));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
+/**
+ * Plants a directory junction at `relative` under `directory` to `target`, kept as written (relative to the link's own
+ * directory on POSIX, made absolute by Windows), and answers the link's path.
+ */
+function plantLink(directory: string, relative: string, target: string): string {
+  const link = path.join(directory, ...relative.split("/"));
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(target, link, "junction");
+  return link;
 }
 
 /**
@@ -304,27 +322,98 @@ describe("the build output check", () => {
     ]);
   });
 
-  test("a link in the payload or in a declared driver's directory is a problem naming its path, never followed or skipped", () => {
-    // Each link is a directory junction, which Windows creates without a privilege and POSIX makes a symbolic link.
-    const target = planted("link-target", { "index.js": SOURCE_TEXT });
-    const payload = standalone();
-    fs.symlinkSync(target, path.join(payload, ".next", "linked"), "junction");
-    fs.symlinkSync(target, path.join(payload, "node_modules", "linked"), "junction");
-    expect(run(repository(), payload).problems).toEqual([
-      `check-build-output: ${path.join(payload, ".next", "linked")} is a symbolic link or junction in the standalone, so the check would not read its target`,
-      `check-build-output: ${path.join(payload, "node_modules", "linked")} is a symbolic link or junction in the standalone, so the check would not read its target`,
-    ]);
+  test("a link in the payload whose target lies inside its .next and node_modules is accepted, its target still read where it lives", () => {
+    // Turbopack's hashed external aliases as measured in main's payload, one of them scoped.
+    const payload = standalone({
+      "node_modules/ssh2/package.json": `${JSON.stringify({ name: "ssh2" })}\n`,
+      "node_modules/ssh2/lib/client.js": "module.exports = 'ssh2';\n",
+      "node_modules/mongodb/lib/index.js": "module.exports = 'mongodb';\n",
+      "node_modules/@duckdb/node-api/lib/index.js": "module.exports = 'duckdb';\n",
+    });
+    const aliases = [
+      [".next/node_modules/ssh2-f3b551c9be6f736f", "../../node_modules/ssh2"],
+      [".next/node_modules/mongodb-438b504308ffa4be", "../../node_modules/mongodb"],
+      [".next/node_modules/@duckdb/node-api-7f7f433da97dfb54", "../../../node_modules/@duckdb/node-api"],
+    ] as const;
+    for (const [alias, target] of aliases) plantLink(payload, alias, target);
 
     const root = repository();
-    const driverLink = path.join(root, "node_modules", "alpha-driver", "lib");
-    fs.symlinkSync(target, driverLink, "junction");
-    expect(run(root, standalone()).problems).toEqual([
-      `check-build-output: ${driverLink} is a symbolic link or junction inside alpha-driver's directory, a driver ${PACKAGE_NAME} declares, so the check would not compare its target`,
-    ]);
+    const passed = run(root, payload);
+    expect(passed.problems).toEqual([]);
+    // The two clean files and the four under the aliases' targets, each read once where it lives.
+    expect(passed.lines[0]).toContain(`none of 6 files under ${path.join(payload, ".next")} and node_modules`);
 
-    // Listed without a handler of its own, a link is an error naming it.
-    expect(() => check.regularFiles(payload)).toThrow(
-      `${path.join(payload, ".next", "linked")} is a symbolic link or junction, which the scan does not follow`,
+    // An accepted link is no hole: a provider package's file under its target fails by the target's path.
+    writeFile(payload, "node_modules/ssh2/lib/copied.js", SOURCE_TEXT);
+    expect(run(root, payload).problems).toEqual([
+      `${path.join(payload, "node_modules", "ssh2", "lib", "copied.js")} equals ${PACKAGE_NAME}'s src/index.ts`,
+    ]);
+  });
+
+  test("a link in the payload whose target lies outside its .next and node_modules, or does not exist, is a problem naming the link and its target", () => {
+    const outside = planted("link-target", { "index.js": SOURCE_TEXT });
+    const payload = standalone({ "public/logo.txt": "a public file\n", "node_modules/gone/index.js": "gone\n" });
+    const away = plantLink(payload, ".next/node_modules/outside-0123456789abcdef", outside);
+    const beside = plantLink(payload, ".next/public-link", "../public");
+    const dangling = plantLink(payload, ".next/node_modules/gone-fedcba9876543210", "../../node_modules/gone");
+    fs.rmSync(path.join(payload, "node_modules", "gone"), { recursive: true });
+    const elsewhere = plantLink(payload, "node_modules/outside", outside);
+    // A target reached through another link is judged by where it really is.
+    const chained = plantLink(payload, ".next/chain", "../node_modules/outside");
+
+    const leaves = (link: string, target: string) =>
+      `check-build-output: ${link} is a symbolic link or junction in the standalone to ${target}, which lies outside its .next and node_modules, so the check would not read it`;
+    expect(run(repository(), payload).problems).toEqual([
+      leaves(chained, path.join(payload, "node_modules", "outside")),
+      `check-build-output: ${dangling} is a symbolic link or junction in the standalone to ${path.join(payload, "node_modules", "gone")}, which does not exist`,
+      leaves(away, outside),
+      leaves(beside, path.join(payload, "public")),
+      leaves(elsewhere, outside),
+    ]);
+  });
+
+  test("a link in a declared driver's directory is accepted inside it, and is a problem naming the link and its target outside it, in its nested node_modules or dangling", () => {
+    const root = repository({ extra: { "node_modules/alpha-driver/lib/inner.js": "exports.inner = 1;\n" } });
+    const driver = path.join(root, "node_modules", "alpha-driver");
+    plantLink(driver, "alias", "./lib");
+    const accepted = run(root, standalone());
+    expect(accepted.problems).toEqual([]);
+    // package.json, index.js and lib/inner.js, read once where they live.
+    expect(accepted.lines[0]).toContain("3 files of its drivers (alpha-driver)");
+
+    const outside = planted("link-target", { "index.js": "exports.outside = 1;\n" });
+    const away = plantLink(driver, "away", outside);
+    const nested = plantLink(driver, "nested", "./node_modules/nested-dep");
+    fs.mkdirSync(path.join(driver, "gone"));
+    const dangling = plantLink(driver, "dangling", "./gone");
+    fs.rmSync(path.join(driver, "gone"), { recursive: true });
+    const prefix = (link: string) =>
+      `check-build-output: ${link} is a symbolic link or junction inside alpha-driver's directory, a driver ${PACKAGE_NAME} declares, to`;
+    const leaves = "which lies outside that directory or in its nested node_modules, so the check would not compare it";
+    expect(run(root, standalone()).problems).toEqual([
+      `${prefix(away)} ${outside}, ${leaves}`,
+      `${prefix(dangling)} ${path.join(driver, "gone")}, which does not exist`,
+      `${prefix(nested)} ${path.join(driver, "node_modules", "nested-dep")}, ${leaves}`,
+    ]);
+  });
+
+  test("regularFiles reads a link whose target lies inside the walked trees where it lives, and raises an error naming a link that leaves them or dangles", () => {
+    const tree = planted("walked", { "a/one.js": "1\n", "b/two.js": "2\n" });
+    plantLink(tree, "a/alias", "../b");
+    const relative = (files: string[]) => files.map((file) => path.relative(tree, file).split(path.sep).join("/"));
+    expect(relative(check.regularFiles(tree))).toEqual(["a/one.js", "b/two.js"]);
+    // The trees a walk accepts are its own directory unless it names them: a link from a/ to b/ leaves a/ alone.
+    const a = path.join(tree, "a");
+    const b = path.join(tree, "b");
+    expect(relative(check.regularFiles(a, { within: [a, b] }))).toEqual(["a/one.js"]);
+    expect(() => check.regularFiles(a)).toThrow(
+      `${path.join(a, "alias")} is a symbolic link or junction to ${b}, which lies outside ${a}, so the scan would not read it`,
+    );
+    fs.mkdirSync(path.join(tree, "gone"));
+    plantLink(tree, "dangling", "./gone");
+    fs.rmSync(path.join(tree, "gone"), { recursive: true });
+    expect(() => check.regularFiles(tree)).toThrow(
+      `${path.join(tree, "dangling")} is a symbolic link or junction to ${path.join(tree, "gone")}, which does not exist`,
     );
   });
 

@@ -111,7 +111,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { SESSION_COOKIE } from "../src/lib/auth-cookies";
 import { buildLockModule } from "./build-lock-module.mjs";
-import { regularFiles, scanProblems } from "./check-build-output";
+import { regularFiles, scanProblems, standaloneTrees } from "./check-build-output";
 import { ancestorNodeModules } from "./check-lib-load.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -818,6 +818,17 @@ export function refusalLines(output: string, code: string | null, name: string, 
 export function porcelainProblems(stdout: string): string[] {
   const lines = stdout.split("\n").filter((line) => line.trim() !== "");
   return lines.length === 0 ? [] : [`the working tree is not clean: ${lines.join(" | ")}`];
+}
+
+/**
+ * The files step 8's own scan reads: every regular file under the standalone's .next. A link there is judged by the
+ * build output check's rule over the trees that check reads, the standalone's .next and node_modules: Turbopack's
+ * hashed alias of an external package, `.next/node_modules/<package>-<hash>`, points into node_modules, which the build
+ * output check run first in the same step reads, so it is accepted and not followed; a link leaving both, or dangling,
+ * raises an error naming the link and its target.
+ */
+export function buildScanFiles(standalone: string): string[] {
+  return regularFiles(path.join(standalone, ".next"), { within: standaloneTrees(standalone) });
 }
 
 /** The roots step 7 scans for the fixture's engine ids, relative to the repository root. */
@@ -1649,7 +1660,7 @@ async function buildHoldsNoFixture(ctx: Context): Promise<string> {
       `the fixture's ${path.relative(FIXTURE_DIRECTORY, file).split(path.sep).join("/")}`,
     ]),
   );
-  const files = regularFiles(build);
+  const files = buildScanFiles(standalone);
   assertNone(scanProblems(files, needles, digests));
   return `${outputLines(checked.stdout).join("; ")}; and none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
 }

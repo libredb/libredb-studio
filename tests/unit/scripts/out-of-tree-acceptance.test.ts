@@ -1143,6 +1143,40 @@ describe("the out-of-tree acceptance's pack, lock and build output steps", () =>
       ]),
     ]);
   });
+
+  test("step 8's own scan reads the regular files under .next, accepting a link whose target lies in the standalone's .next or node_modules and naming one that leaves them", () => {
+    const standalone = realpathSync(mkdtempSync(path.join(tmpdir(), "acceptance-scan-")));
+    try {
+      const write = (relative: string, text: string) => {
+        const file = path.join(standalone, ...relative.split("/"));
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, text);
+      };
+      const link = (relative: string, target: string) => {
+        const file = path.join(standalone, ...relative.split("/"));
+        mkdirSync(path.dirname(file), { recursive: true });
+        symlinkSync(target, file, "junction");
+        return file;
+      };
+      write(".next/server/chunks/core.js", "export const core = 1;\n");
+      write("node_modules/pg/index.js", "module.exports = {};\n");
+      write("node_modules/@duckdb/node-api/index.js", "module.exports = {};\n");
+      write("public/logo.txt", "a public file\n");
+      // Turbopack's hashed external aliases, as measured in main's payload.
+      link(".next/node_modules/pg-587764f78a6c7a9c", "../../node_modules/pg");
+      link(".next/node_modules/@duckdb/node-api-7f7f433da97dfb54", "../../../node_modules/@duckdb/node-api");
+      const relative = (files: string[]) =>
+        files.map((file) => path.relative(standalone, file).split(path.sep).join("/"));
+      expect(relative(acceptance.buildScanFiles(standalone))).toEqual([".next/server/chunks/core.js"]);
+
+      const away = link(".next/public-link", "../public");
+      expect(() => acceptance.buildScanFiles(standalone)).toThrow(
+        `${away} is a symbolic link or junction to ${path.join(standalone, "public")}, which lies outside ${path.join(standalone, ".next")} and ${path.join(standalone, "node_modules")}, so the scan would not read it`,
+      );
+    } finally {
+      rmSync(standalone, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the Out-of-tree Provider Acceptance job", () => {

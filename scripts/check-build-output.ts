@@ -10,20 +10,28 @@
  * none at all the check is refused, since a check that compares nothing asserts nothing. For each package:
  * - its package.json must be a JSON object with a string `name`, refused naming the file;
  * - its source files are every regular file of its directory outside any directory named `node_modules` (its own
- *   install is no part of its source); a symbolic link or junction in it is refused by name, since the check would
- *   not compare its target;
+ *   install is no part of its source); a symbolic link or junction in it is refused by name wherever it points, since
+ *   the check would not compare its target;
  * - its drivers are the names of its package.json `dependencies`, `optionalDependencies` and `peerDependencies`, what
  *   it may load at run time, never its `devDependencies`, which are build tools. Each is found as Node.js finds a
  *   package directory from the package's directory: the nearest `node_modules/<name>/package.json` above it, its real
  *   path taken, so a workspace link reaches the package itself. A declared driver that is not installed is refused by
  *   name. A driver's files are every regular file of its directory outside its own nested `node_modules` (its
- *   dependencies are not the package's declaration); a symbolic link or junction in it is refused by name;
+ *   dependencies are not the package's declaration); a link in it is judged by the rule below, its tree being that
+ *   directory without its nested `node_modules`;
  * - an empty file is left out of the compared files: it equals every other empty file and identifies nothing;
  * - its name, as UTF-8 bytes, is searched in every payload file, across the boundaries of the chunks it is read in.
  *
- * The scanned files are every regular file under the standalone's `.next` and `node_modules`; a symbolic link or
- * junction met there is a problem naming it, never followed and never skipped. The standalone must hold both
- * directories, each refused by name when missing.
+ * The scanned files are every regular file under the standalone's `.next` and `node_modules`, the tree it walks. The
+ * standalone must hold both directories, each refused by name when missing.
+ *
+ * A symbolic link or junction met in a walked tree (the standalone's, or a driver's directory) is never followed and
+ * never skipped silently. Its target is read with readlink (which answers a Windows junction's target too), resolved
+ * from the link's own directory, and judged by its real path, so a target reached through another link is judged by
+ * where it really is. A target inside the tree is accepted, since the walk reads it where it lives; a target outside
+ * the tree, or one that does not exist, is a problem naming the link and its target. Turbopack writes such a link for
+ * every external package: `.next/node_modules/<package>-<hash>` to `../../node_modules/<package>` (one level deeper
+ * for a scoped package), inside the standalone, so the package's files are read once, under `node_modules`.
  *
  * A driver some core module still imports, which Next.js then traces into the payload, is excepted by
  * `CORE_IMPORTED_DRIVERS`, a closed list naming the importer: a declared driver listed there is not compared. Every
@@ -45,7 +53,16 @@
  * Run: bun scripts/check-build-output.ts --standalone <absolute directory> [<absolute package directory> ...]
  */
 import { createHash } from "node:crypto";
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { packageNameOf } from "./check-lib-load.mjs";
@@ -102,38 +119,100 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
 const relativeOf = (directory: string, file: string): string =>
   path.relative(directory, file).split(path.sep).join("/");
 
-/** The error a walk raises for a link when its caller handles none. */
-const refuseLink = (link: string): never => {
-  throw new Error(`${link} is a symbolic link or junction, which the scan does not follow`);
-};
-
 /**
- * Every regular file under `directory`, recursively, sorted, outside any directory named in `skipped`; a symbolic link
- * or junction is never followed, and `onLink` sees each one found.
+ * A link a walk cannot accept: its path, its target resolved from the link's own directory, and why: the target lies
+ * outside the walked trees, or does not exist.
  */
-function walk(directory: string, onLink: (link: string) => void, skipped: readonly string[]): string[] {
-  const files: string[] = [];
-  const pending = [directory];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    for (const name of readdirSync(next)) {
-      if (skipped.includes(name)) continue;
-      const child = path.join(next, name);
-      // lstat rather than the directory listing's type: it names a Windows junction a link as well.
-      const stats = lstatSync(child);
-      if (stats.isSymbolicLink()) onLink(child);
-      else if (stats.isDirectory()) pending.push(child);
-      else if (stats.isFile()) files.push(child);
-    }
+export interface RefusedLink {
+  readonly link: string;
+  readonly target: string;
+  readonly exists: boolean;
+}
+
+/** What a walk reads: its trees, every directory named in `skipped` left out of each. */
+interface WalkedTrees {
+  readonly roots: readonly string[];
+  readonly skipped: readonly string[];
+}
+
+/** The real path of `target`, or null when it does not exist. */
+function realTarget(target: string): string | null {
+  try {
+    return realpathSync.native(target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
   }
-  return files.sort();
+}
+
+/** Whether real path `real` lies in one of the real `roots`, outside every directory named in `skipped`. */
+function insideTrees(real: string, roots: readonly string[], skipped: readonly string[]): boolean {
+  return roots.some((root) => {
+    const relative = path.relative(root, real);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return false;
+    return !relative.split(path.sep).some((segment) => skipped.includes(segment));
+  });
 }
 
 /**
- * Every regular file under `directory`, recursively, sorted; a symbolic link or junction is never followed, and is
- * handed to `onLink`, which by default raises an error naming it.
+ * Every regular file under `directory`, recursively, sorted, outside any directory named in `trees.skipped`. A symbolic
+ * link or junction (Windows junctions included: lstat names them links and readlink answers their target) is never
+ * followed and never skipped silently: its target, read with readlink and resolved from the link's own directory, is
+ * judged by its real path, so a target reached through another link is judged by where it really is. A target inside
+ * one of `trees.roots` (outside its skipped directories) is accepted, since a walk of those trees reads it where it
+ * lives; every other link, its target outside them or missing, is handed to `onLink`, sorted by path. With no root,
+ * every link is handed over.
  */
-export function regularFiles(directory: string, onLink: (link: string) => void = refuseLink): string[] {
-  return walk(directory, onLink, []);
+function walk(directory: string, trees: WalkedTrees, onLink: (refused: RefusedLink) => void): string[] {
+  const roots = trees.roots.map((root) => realpathSync.native(root));
+  const files: string[] = [];
+  const refused: RefusedLink[] = [];
+  const pending = [directory];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    for (const name of readdirSync(next)) {
+      if (trees.skipped.includes(name)) continue;
+      const child = path.join(next, name);
+      // lstat rather than the directory listing's type: it names a Windows junction a link as well.
+      const stats = lstatSync(child);
+      if (stats.isSymbolicLink()) {
+        const target = path.resolve(path.dirname(child), readlinkSync(child));
+        const real = realTarget(target);
+        if (real === null || !insideTrees(real, roots, trees.skipped)) {
+          refused.push({ link: child, target, exists: real !== null });
+        }
+      } else if (stats.isDirectory()) pending.push(child);
+      else if (stats.isFile()) files.push(child);
+    }
+  }
+  for (const link of refused.sort((a, b) => (a.link < b.link ? -1 : 1))) onLink(link);
+  return files.sort();
+}
+
+/** Why a refused link is refused: its target and, unless it does not exist, the trees it lies outside of. */
+const linkReason = (refused: RefusedLink, outside: string): string =>
+  refused.exists ? `to ${refused.target}, which lies outside ${outside}` : `to ${refused.target}, which does not exist`;
+
+/**
+ * Every regular file under `directory`, recursively, sorted. A link whose target lies inside `within` (by default
+ * `directory` itself) is accepted and not followed, since the walk of those trees reads its target where it lives; a
+ * link whose target lies outside them or does not exist is handed to `onLink`, which by default raises an error naming
+ * the link and its target.
+ */
+export function regularFiles(
+  directory: string,
+  options: { within?: readonly string[]; onLink?: (refused: RefusedLink) => void } = {},
+): string[] {
+  const within = options.within ?? [directory];
+  const onLink =
+    options.onLink ??
+    ((refused: RefusedLink) => {
+      const reason = linkReason(refused, within.join(" and "));
+      throw new Error(
+        `${refused.link} is a symbolic link or junction ${reason}${refused.exists ? ", so the scan would not read it" : ""}`,
+      );
+    });
+  return walk(directory, { roots: within, skipped: [] }, onLink);
 }
 
 /** A file's SHA-256 and the needles it holds, read in chunks of `chunkSize` bytes with an overlap. */
@@ -221,9 +300,15 @@ function installedPackage(name: string, from: string): string | null {
   }
 }
 
-/** Every regular file under `directory` outside any directory named `node_modules`; `onLink` sees each link found. */
-const filesOutsideNodeModules = (directory: string, onLink: (link: string) => void): string[] =>
-  walk(directory, onLink, ["node_modules"]);
+/**
+ * Every regular file under `directory` outside any directory named `node_modules`. A link whose target lies inside
+ * `within` (outside its `node_modules` directories) is accepted; `onLink` sees every other.
+ */
+const filesOutsideNodeModules = (
+  directory: string,
+  within: readonly string[],
+  onLink: (refused: RefusedLink) => void,
+): string[] => walk(directory, { roots: within, skipped: ["node_modules"] }, onLink);
 
 /** One package as the check compares it. */
 interface ComparedPackage {
@@ -259,7 +344,8 @@ function comparedPackage(
     if (!digests.has(digest)) digests.set(digest, label);
     return true;
   };
-  const sources = filesOutsideNodeModules(directory, (link) =>
+  // A package's source holds no link at all: every link there is refused, wherever it points.
+  const sources = filesOutsideNodeModules(directory, [], ({ link }) =>
     refusals.push(
       `${PREFIX}: ${link} is a symbolic link or junction inside ${name}'s directory, so the check would not compare its target`,
     ),
@@ -279,17 +365,21 @@ function comparedPackage(
       );
       continue;
     }
-    const onLink = (link: string) =>
+    const onLink = (refused: RefusedLink) =>
       refusals.push(
-        `${PREFIX}: ${link} is a symbolic link or junction inside ${driver}'s directory, a driver ${name} declares, so the check would not compare its target`,
+        `${PREFIX}: ${refused.link} is a symbolic link or junction inside ${driver}'s directory, a driver ${name} declares, ${linkReason(refused, "that directory or in its nested node_modules")}${refused.exists ? ", so the check would not compare it" : ""}`,
       );
-    driverFiles += filesOutsideNodeModules(installed, onLink).filter((file) =>
+    driverFiles += filesOutsideNodeModules(installed, [installed], onLink).filter((file) =>
       record(file, `${driver} ${relativeOf(installed, file)}, a driver ${name} declares`),
     ).length;
   }
   if (refusals.length > 0) return refusals;
   return { name, sourceFiles: sources.length, driverFiles, drivers, excepted };
 }
+
+/** The trees of a standalone the check reads: its `.next` and its `node_modules`. */
+export const standaloneTrees = (standalone: string): string[] =>
+  [".next", "node_modules"].map((directory) => path.join(standalone, directory));
 
 /** The refusal of a standalone missing `directory`, or null. */
 function missingDirectory(standalone: string, directory: string): string | null {
@@ -356,14 +446,12 @@ export function checkBuildOutput(options: CheckOptions): CheckResult {
   if (refusals.length > 0) return { problems: refusals, lines: [] };
 
   const links: string[] = [];
-  const onLink = (link: string) =>
+  const onLink = (refused: RefusedLink) =>
     links.push(
-      `${PREFIX}: ${link} is a symbolic link or junction in the standalone, so the check would not read its target`,
+      `${PREFIX}: ${refused.link} is a symbolic link or junction in the standalone ${linkReason(refused, "its .next and node_modules")}${refused.exists ? ", so the check would not read it" : ""}`,
     );
-  const files = [
-    ...regularFiles(path.join(standalone, ".next"), onLink),
-    ...regularFiles(path.join(standalone, "node_modules"), onLink),
-  ];
+  const within = standaloneTrees(standalone);
+  const files = within.flatMap((tree) => regularFiles(tree, { within, onLink }));
   const needles = packages.map((pkg) => pkg.name);
   const problems = [...links, ...scanProblems(files, needles, digests, options.chunkSize)];
   if (problems.length > 0) return { problems, lines: [] };
