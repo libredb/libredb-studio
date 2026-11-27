@@ -14,7 +14,8 @@
  * - Caps, checked before any value is walked: `LOCK_BYTE_CAP` bytes (the reader's, `./providers-lock`),
  *   `LOCK_ENTRY_CAP` entries, `LOCK_ENGINE_CAP` engine ids and `LOCK_IMPORT_CAP` imports an entry, and each string's
  *   length before its pattern. The byte cap binds first: a lock of entries at their longest import records is many times
- *   over it, so the lock command refuses to write a lock over the byte cap, and the reader refuses one as `lock-over-cap`.
+ *   over it, and the reader refuses one as `lock-over-cap`. The lock command refuses to write a lock over any of the
+ *   four caps, so every lock it writes is read.
  * - The check reads only the keys of the format at their depths, with `Object.keys` on the two objects it reads, and
  *   answers values built from the primitives it checked, so a deep value under an unknown key or in place of an engine
  *   id is refused without being walked. `JSON.parse` keeps the last of two equal keys, so a duplicate key cannot be
@@ -24,9 +25,14 @@
  *   is keyed by name (C-90).
  *
  * This module is pure: it reads no file. The lock reader reads the bytes; the lock command writes the text
- * `serializeProvidersLock` gives, which is the same for the same entries in any order.
+ * `serializeProvidersLock` gives, which is the same for the same entries in any order, under the file name
+ * `LOCK_FILE_NAME` in the providers directory.
  */
-import { type LockRefusal, type LockShapeRule, lockRefusal } from "./provider-refusals";
+import { lockRefusal } from "./lock-refusals";
+import type { LockRefusal, LockShapeRule } from "./provider-refusals";
+
+/** The lock's file name in the providers directory. */
+export const LOCK_FILE_NAME = "providers.lock.json";
 
 /** The format's version. */
 const LOCK_VERSION = 1;

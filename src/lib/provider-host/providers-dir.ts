@@ -1,7 +1,8 @@
 /**
  * The providers directory: where an operator puts the provider packages Studio may take in, each as
  * `<name>/<version>/` (a scoped name as `@scope/<name>/<version>/`), beside their lock, `providers.lock.json`
- * (docs/providers/CONTRACT.md, clause C-91). `LIBREDB_PROVIDERS_DIR` names it.
+ * (docs/providers/CONTRACT.md, clause C-91). `LIBREDB_PROVIDERS_DIR` names it. The lock's file name, `LOCK_FILE_NAME`,
+ * is the lock format's (`./providers-lock-format`).
  *
  * This module is the only code that reads `LIBREDB_PROVIDERS_DIR`; `tests/unit/lib/db/provider-environment-scan.test.ts`
  * holds it, and holds that no provider module reaches this one.
@@ -21,9 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { canonicalPath, foldPathKey } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
-
-/** The lock's file name in the providers directory. */
-export const LOCK_FILE_NAME = "providers.lock.json";
+import { LOCK_FILE_NAME } from "./providers-lock-format";
 
 const DIRECTORY_KEY = Symbol.for("libredb-studio.providers-directory");
 

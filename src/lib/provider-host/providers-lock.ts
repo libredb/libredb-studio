@@ -36,17 +36,15 @@ import {
   resolveArtifactDirectory,
   walkArtifact,
 } from "./provider-artifact";
+import { lockRefusal, packageRefusal } from "./lock-refusals";
 import {
   bundledEngineRefusal,
   type LockRefusal,
-  lockRefusal,
   type PackageName,
   type PackageRefusal,
-  packageRefusal,
   sharedEngineRefusal,
 } from "./provider-refusals";
-import { LOCK_FILE_NAME } from "./providers-dir";
-import { checkProvidersLock, LOCK_BYTE_CAP, type LockEntry } from "./providers-lock-format";
+import { checkProvidersLock, LOCK_BYTE_CAP, LOCK_FILE_NAME, type LockEntry } from "./providers-lock-format";
 
 /** A package that passed its lock: what the admission's later steps read. */
 export interface VerifiedPackage {

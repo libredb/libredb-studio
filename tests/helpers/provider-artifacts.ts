@@ -12,8 +12,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { artifactDigest, MANIFEST_FILE_NAME, walkArtifact } from "@/lib/provider-host/provider-artifact";
-import { type LockEntry, serializeProvidersLock } from "@/lib/provider-host/providers-lock-format";
-import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
+import { LOCK_FILE_NAME, type LockEntry, serializeProvidersLock } from "@/lib/provider-host/providers-lock-format";
 import { moduleImports } from "../../scripts/providers-lock";
 
 /** A package as a test writes it. */

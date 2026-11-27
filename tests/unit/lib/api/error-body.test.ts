@@ -539,6 +539,7 @@ describe("the error body is Next-free", () => {
       "src/lib/db/error-record.ts",
       "src/lib/db/errors.ts",
       "src/lib/db/type-id.ts",
+      "src/lib/one-line-quote.ts",
     ]);
     // The error record's vocabulary, the provider contract's errors entry, whose module imports no value.
     expect(closure.packages).toEqual(["@libredb/provider-sdk/errors"]);

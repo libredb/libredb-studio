@@ -9,12 +9,24 @@
  * whose name ends in `.js`, `.mjs` or `.cjs` in any letter case, reached by the entry or not. A file of any other
  * extension is listed and digested but not scanned; a TypeScript file among them is not scanned either, since
  * admission refuses a package holding one by its listing, whatever its imports. Each module file is read as strict
- * UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports` (loader `js`), after a leading `#!` line is
- * removed, since the scanner refuses one. It reports import declarations, side-effect imports, re-exports, `import()`
- * of a string or a template without substitution and `require()` of a string, in dead branches too; not
- * `require.resolve` or `import.meta.resolve`, which load nothing. Each import is recorded with its kind, `importKind`:
- * `require` for a `require()` call, `import` for the rest. The command records; Studio's admission judges the record
- * (src/lib/provider-host/admission.ts and src/lib/provider-host/provider-closure.ts).
+ * UTF-8 and parsed by acorn (pinned to one version in package.json, since its version is the record's grammar), with
+ * the latest syntax it reads, as a script that may also hold import and export declarations and top-level `return`,
+ * twice: once with top-level `await` an operator, as in an ES module, and once with it an identifier, as in a CommonJS
+ * file. The record holds the imports of every reading that parses, and a file neither reading parses is refused. The
+ * only lexical difference between a script and a module, an HTML-like comment (`<!--`, or `-->` at a line's start), is
+ * refused. A leading `#!` line ends at any line terminator, as in Node.js. `new.target` outside a function runs in a
+ * CommonJS file, which Node.js wraps in a function, but the pinned parser has no option to read it there, so such a
+ * file is refused as one the parser cannot read. The tree is walked with an explicit stack, so only the parser's own
+ * depth bounds a file; that depth depends on the runtime's stack, and a file nested past it is refused by name under
+ * Node.js and Bun alike, never raised.
+ * Recorded, in dead branches too: import declarations, side-effect imports, re-exports with a source, `import()` of a
+ * string or a template without substitution, and a call of the identifier `require` (an optional call included) whose
+ * first argument is a string or a template without substitution, whatever follows it. Not recorded: a computed
+ * `import()` or `require()`, `require.resolve` or `import.meta.resolve`, which load nothing, and a `require` reached
+ * through a member or another name. Each import is recorded with its kind: `require` for a `require()` call, `import`
+ * for the rest. The command records; Studio's admission judges the record (src/lib/provider-host/admission.ts and
+ * src/lib/provider-host/provider-closure.ts). The command runs the same under Node.js and Bun: it imports acorn and
+ * Node.js built-ins, and `main` is exported for a caller that runs it under Node.js.
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
@@ -23,14 +35,21 @@
  * command never imports the lock reader, and never imports or runs a package's code. It does not judge engine id
  * collisions: Studio's read does, and the command records what the directory holds.
  *
- * It refuses, writing nothing and exiting 1 with every refusal on stderr: an entry of the directory that is neither a
- * package nor the lock, a package directory holding anything but one version directory, and every refusal an artifact
- * draws (a link, a special file, a name outside the portable set, the limits, a package.json or manifest it cannot
- * read, a package.json naming another package, an entry that is not a file of the package), a module file the scanner
- * cannot parse or that is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a
- * package, and a lock over the reader's byte cap. Otherwise it writes the
- * lock through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the
- * same directory always gives the same bytes, and prints the lock's path and one line per package; exit 0.
+ * A `--dir` that names anything but a directory is refused alone. Otherwise it refuses, writing nothing and exiting 1
+ * with every refusal on stderr, each naming its entry: an entry of the directory that is neither a package nor the
+ * lock, a scope directory holding no package, an entry of a package directory that is not a version directory (at
+ * each of the three levels, a link whose target does not exist is such an entry), a package directory holding no
+ * entry or two version directories or more, more package directories than the lock reader admits entries
+ * (`LOCK_ENTRY_CAP`), each counted whatever its layout refusal, and every refusal an artifact draws (a link, a special
+ * file, a name outside the portable set, the limits, a package.json or manifest it cannot read, more engine ids than
+ * an entry holds among them, a package.json naming another package, an entry that is not a file of the package), a
+ * module file the parser cannot read or that is not UTF-8, a specifier or module path outside the lock's forms, more
+ * than 4,096 imports in a package, and a lock over the reader's byte cap. None is passed over, so an operator removes
+ * a stray entry once, and the command never writes a lock the reader refuses for a cap. The directory's refusals come
+ * first, in walk order, then the entry cap, then each package's, by name: every package is read even past the entry
+ * cap, so one run prints every refusal. Otherwise it writes the lock through a temporary file in the same directory
+ * and a rename, entries by name and engine ids in order, so the same directory always gives the same bytes, and
+ * prints the lock's path and one line per package; exit 0.
  *
  * The directory must be absolute: `bun run` runs the script from the repository root, so a relative path would not
  * be the one typed. Any other argument prints the usage; exit 2.
@@ -39,6 +58,7 @@
  */
 import * as fs from "node:fs";
 import path from "node:path";
+import { type AnyNode, type Comment, parse } from "acorn";
 import {
   type ArtifactFile,
   artifactDigest,
@@ -48,13 +68,15 @@ import {
   resolveArtifactDirectory,
   walkArtifact,
 } from "../src/lib/provider-host/provider-artifact";
-import { type ArtifactFault, type PackageName, packageRefusal } from "../src/lib/provider-host/provider-refusals";
-import { LOCK_FILE_NAME } from "../src/lib/provider-host/providers-dir";
+import { packageRefusal } from "../src/lib/provider-host/lock-refusals";
+import type { ArtifactFault, PackageName } from "../src/lib/provider-host/provider-refusals";
 import {
   IMPORT_FROM_FORM,
   IMPORT_SPECIFIER_FORM,
   LOCAL_SOURCE,
   LOCK_BYTE_CAP,
+  LOCK_ENTRY_CAP,
+  LOCK_FILE_NAME,
   LOCK_IMPORT_CAP,
   type ImportKind,
   type LockEntry,
@@ -85,9 +107,17 @@ function inForm(value: string, form: StringForm): boolean {
   return value.length <= form.maxLength && form.pattern.test(value);
 }
 
-/** Whether `file` is a directory, following links. */
+/**
+ * Whether `file` is a directory, following links: a link whose target does not exist is not one, so it is refused by
+ * name as the entry it stands for. Any other failure to read it is raised.
+ */
 function isDirectory(file: string): boolean {
-  return fs.statSync(file).isDirectory();
+  try {
+    return fs.statSync(file).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return false;
+  }
 }
 
 /** Code-unit order. */
@@ -97,39 +127,105 @@ function sorted(names: readonly string[]): string[] {
 
 /** A JavaScript module file by its extension, in any letter case: the only files the command scans. */
 const MODULE_FILE = /\.[mc]?js$/i;
-const SCAN_JAVASCRIPT = new Bun.Transpiler({ loader: "js" });
 /** UTF-8 that refuses an invalid byte. */
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
-/**
- * The kind the lock records for an import the scanner reports as `scannerKind`: `require` for a `require()` call,
- * `import` for an import declaration, a re-export or an `import()`.
- *
- * @throws {Error} For any other kind, which the scanner reports for no JavaScript or TypeScript file.
- */
-export function importKind(scannerKind: string): ImportKind {
-  if (scannerKind === "require-call") return "require";
-  if (scannerKind === "import-statement" || scannerKind === "dynamic-import") return "import";
-  throw new Error(
-    `providers:lock: the scanner reported an import of the kind ${scannerKind}, which the lock does not record`,
-  );
+/** The string a node holds when it is a string literal or a template literal without substitution; else null. */
+function staticString(node: AnyNode | undefined): string | null {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
+  return null;
 }
 
-/** The imports `text` makes statically, or null when it is not UTF-8 or the scanner cannot parse it. */
+/** The import `node` makes, if it is one the lock records. */
+function recordedImport(node: AnyNode): { specifier: string; kind: ImportKind } | null {
+  switch (node.type) {
+    case "ImportDeclaration":
+    case "ExportAllDeclaration":
+      return { specifier: node.source.value as string, kind: "import" };
+    case "ExportNamedDeclaration":
+      return node.source ? { specifier: node.source.value as string, kind: "import" } : null;
+    case "ImportExpression": {
+      const specifier = staticString(node.source);
+      return specifier === null ? null : { specifier, kind: "import" };
+    }
+    case "CallExpression": {
+      if (node.callee.type !== "Identifier" || node.callee.name !== "require") return null;
+      const specifier = staticString(node.arguments[0]);
+      return specifier === null ? null : { specifier, kind: "require" };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Whether `value` is a node of the tree: an object whose `type` is a string. */
+function isNode(value: unknown): value is AnyNode {
+  return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
+}
+
+/**
+ * One reading of `text`: its tree and its comments, with top-level `await` an operator when `awaitOperator` holds and
+ * an identifier otherwise; or null when the parser cannot read it that way.
+ */
+function reading(text: string, awaitOperator: boolean): { program: AnyNode; comments: Comment[] } | null {
+  const comments: Comment[] = [];
+  try {
+    const program = parse(text, {
+      ecmaVersion: "latest",
+      sourceType: "script",
+      allowImportExportEverywhere: true,
+      allowAwaitOutsideFunction: awaitOperator,
+      allowReturnOutsideFunction: true,
+      allowHashBang: true,
+      onComment: comments,
+    });
+    return { program, comments };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return null;
+  }
+}
+
+/**
+ * The imports `bytes` makes statically in every reading that parses, or null when they are not UTF-8 or the parser
+ * reads them neither way: a syntax error, an HTML-like comment, `new.target` outside a function, or nesting past the
+ * runtime's stack, which acorn reports as a syntax error.
+ */
 function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
   let text: string;
   try {
-    text = STRICT_UTF8.decode(bytes).replace(/^#![^\n]*/, "");
+    text = STRICT_UTF8.decode(bytes);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
     return null;
   }
-  try {
-    return SCAN_JAVASCRIPT.scanImports(text).map((found) => ({ specifier: found.path, kind: importKind(found.kind) }));
-  } catch (error) {
-    if (!(error instanceof BuildMessage) && !(error instanceof AggregateError)) throw error;
+  const readings = [reading(text, true), reading(text, false)].filter((read) => read !== null);
+  if (readings.length === 0) return null;
+  if (
+    readings.some((read) =>
+      read.comments.some(
+        (comment) =>
+          comment.type === "Line" && (text.startsWith("<!--", comment.start) || text.startsWith("-->", comment.start)),
+      ),
+    )
+  ) {
     return null;
   }
+  const found: { specifier: string; kind: ImportKind }[] = [];
+  const pending: AnyNode[] = readings.map((read) => read.program);
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    const recorded = recordedImport(node);
+    if (recorded !== null) found.push(recorded);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) if (isNode(item)) pending.push(item);
+      } else if (isNode(value)) {
+        pending.push(value);
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -160,25 +256,29 @@ interface FoundPackage {
   readonly version: string;
 }
 
-/** The packages under `root`, and a sentence for each entry that is not one. */
-function enumerate(root: string): { packages: FoundPackage[]; refusals: string[] } {
+/**
+ * The packages under `root`, a sentence for each entry that is not one, and the count of package directories, each
+ * counted whatever its layout refusal, so the entry cap is judged in the same run as those refusals.
+ */
+function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]; packageDirectories: number } {
   const packages: FoundPackage[] = [];
   const refusals: string[] = [];
+  let packageDirectories = 0;
   const notAPackage = (relative: string) => refusals.push(`${PREFIX}: ${relative}: neither a package nor the lock`);
   const packageAt = (relative: string, name: string): void => {
-    const versions = sorted(fs.readdirSync(path.join(root, relative)));
-    if (versions.length !== 1) {
-      refusals.push(
-        `${PREFIX}: ${relative}: ${versions.length === 0 ? "no version of the package" : "two versions of one package"}`,
-      );
+    packageDirectories += 1;
+    const entries = sorted(fs.readdirSync(path.join(root, relative)));
+    if (entries.length === 0) {
+      refusals.push(`${PREFIX}: ${relative}: no version of the package`);
       return;
     }
-    const version = versions[0] as string;
-    if (!inForm(version, PACKAGE_VERSION_FORM) || !isDirectory(path.join(root, relative, version))) {
-      refusals.push(`${PREFIX}: ${path.join(relative, version)}: not a version of the package`);
-      return;
+    const versions: string[] = [];
+    for (const entry of entries) {
+      if (inForm(entry, PACKAGE_VERSION_FORM) && isDirectory(path.join(root, relative, entry))) versions.push(entry);
+      else refusals.push(`${PREFIX}: ${path.join(relative, entry)}: not a version directory of the package`);
     }
-    packages.push({ name, version });
+    if (versions.length > 1) refusals.push(`${PREFIX}: ${relative}: two versions of one package`);
+    if (versions.length === 1) packages.push({ name, version: versions[0] as string });
   };
   for (const entry of sorted(fs.readdirSync(root))) {
     if (entry === LOCK_FILE_NAME) continue;
@@ -191,14 +291,16 @@ function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]
       else notAPackage(entry);
       continue;
     }
-    for (const scoped of sorted(fs.readdirSync(path.join(root, entry)))) {
+    const scope = sorted(fs.readdirSync(path.join(root, entry)));
+    if (scope.length === 0) refusals.push(`${PREFIX}: ${entry}: a scope directory holding no package`);
+    for (const scoped of scope) {
       const relative = path.join(entry, scoped);
       const name = `${entry}/${scoped}`;
       if (inForm(name, PACKAGE_NAME_FORM) && isDirectory(path.join(root, relative))) packageAt(relative, name);
       else notAPackage(relative);
     }
   }
-  return { packages, refusals };
+  return { packages, refusals, packageDirectories };
 }
 
 /**
@@ -248,7 +350,17 @@ function writeLock(directory: string): number {
     console.error(`${PREFIX} wrote nothing`);
     return 1;
   }
-  const { packages, refusals } = enumerate(root);
+  if (!isDirectory(root)) {
+    console.error(`${PREFIX}: ${directory}: the providers directory is not a directory`);
+    console.error(`${PREFIX} wrote nothing`);
+    return 1;
+  }
+  const { packages, refusals, packageDirectories } = enumerate(root);
+  if (packageDirectories > LOCK_ENTRY_CAP) {
+    refusals.push(
+      `${PREFIX}: the lock would hold ${packageDirectories} entries, more than the ${LOCK_ENTRY_CAP} Studio reads`,
+    );
+  }
   const entries: LockEntry[] = [];
   for (const pkg of packages) {
     const entry = lockEntryOf(root, pkg);
@@ -277,7 +389,7 @@ function writeLock(directory: string): number {
   return 0;
 }
 
-function main(argv: readonly string[]): number {
+export function main(argv: readonly string[]): number {
   const directory = directoryArgument(argv);
   if (directory === null) {
     console.error(USAGE);
