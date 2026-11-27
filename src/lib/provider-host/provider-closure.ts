@@ -29,8 +29,8 @@
  * not serve, such as `node:sea`, passes this check and fails at the package's import under Bun as
  * `PROVIDER_LOAD_FAILED` with the loader's reason; Bun is not a runtime Studio's images or CLI run providers on.
  *
- * The limits: a computed `import()` or `require()` is not recorded, so not checked; the `main` of a package.json,
- * which a `require` of a directory reads, is not read. The check keeps a package from depending on modules outside its
+ * The limits: a computed `import()` or `require()` is not recorded, so not checked here (the lock command refuses
+ * one, C-114); the `main` of a package.json, which a `require` of a directory reads, is not read. The check keeps a package from depending on modules outside its
  * directory, Studio's own `node_modules` among them; it is not a sandbox, since an admitted package runs in Studio's
  * process.
  */

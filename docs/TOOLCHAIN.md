@@ -260,7 +260,7 @@ The module bundles acorn and every Studio module the command reaches, for `platf
 After the build, the script reads esbuild's metafile and fails, naming each, on an input from a package other than acorn and on an import that is not a `node:` built-in, the same rule as the VS Code bundles' metafile checks ("Bundles and notices").
 The module begins with acorn's license text, read from `node_modules/acorn/LICENSE` at build time, so the notice travels with the one artifact that bundles acorn on every channel; the build fails naming that file when it is missing.
 The launcher and the images' wrapper import the module and run its `main`; it is never run as a program of its own under Node.js, since its self-run line, kept for `bun run`, tests `import.meta.main`, which Node.js 24.0.0 does not set.
-`tests/unit/scripts/build-lock-module.test.ts` builds the module into a temporary directory and holds the rules above: its imports, its inputs, no engine id by the isolation ratchet's naming rule (with a build of the type-id module as the control), the license comment, that importing it under Node.js runs nothing, and that its `main` writes the bytes `bun run providers:lock` writes.
+`tests/unit/scripts/build-lock-module.test.ts` builds the module into a temporary directory and holds the rules above: its imports, its inputs, no engine id by the isolation ratchet's naming rule (with a build of the type-id module as the control), the license comment, that importing it under Node.js runs nothing, that its `main` writes the bytes `bun run providers:lock` writes, and that it refuses a package by C-114's rule with the lines `bun run providers:lock` prints.
 
 `bun run lib:lock` (`scripts/check-lib-lock.ts`), run after `build:lib` and `lib:load`, runs the command the way an operator does, from the package as it is published, with no checkout of Studio and no download:
 
@@ -272,10 +272,11 @@ The launcher and the images' wrapper import the module and run its `main`; it is
 6. The home directory is still empty, so nothing was downloaded or cached.
 7. `bun scripts/providers-lock.ts --dir <probe>`, run from the repository, writes the same bytes.
 8. The packed command refuses a `--dir` naming a regular file with exit 1 and its sentence, and answers `providers` alone with the usage and exit 2.
+9. Over a second probe directory, whose one package calls `import()` with something other than a string, the packed command exits 1, prints that runtime load's sentence (C-114) and `providers:lock wrote nothing`, and writes no lock.
 
 The temporary root is always removed.
 Measured cost: the module build adds under a second to `build:lib`, and the whole check takes about 2 s.
-`tests/unit/check-lib-lock.test.ts` runs the check over a planted package root whose module is built by the same build function, and over a planted module that writes no lock, which the check names.
+`tests/unit/check-lib-lock.test.ts` runs the check over a planted package root whose module is built by the same build function, over a planted module that writes no lock, and over a module built from the command that answers the second probe as a lock, each of which the check names.
 
 ### The published engine id type (`DatabaseType`)
 
@@ -813,9 +814,10 @@ The step reads `package.json` and `libredb-provider.json` once before the build,
 A build that changed either, or left either other than a regular file, is refused by one sentence naming the file.
 esbuild 0.28.2 writes each input's path, relative to the package's directory with links followed, into a comment of the bundle (measured 2026-11-27), so a bundle's bytes are the same in every checkout only when every input lies inside the repository.
 
-What the build wrote is judged by the lock command's own sequence over one artifact directory (`artifactEntry`), then by admission's own checks before import, each finding named by file: an import outside the package by `closureOutside` with Node.js's built-in list, a TypeScript file, a native addon, and a manifest declaring `runtime.native`.
+What the build wrote is judged by the lock command's walk, identity and import record over one artifact directory (`artifactRecord`), then by admission's own checks before import, each finding named by file: an import outside the package by `closureOutside` with Node.js's built-in list, a TypeScript file, a native addon, and a manifest declaring `runtime.native`.
 Then every module file, read by the lock's own parse, is refused for a runtime load the lock's record cannot hold (C-114), each named by file and line: a module that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`.
-The rule runs at pack time only, never at admission, and `scripts/providers-pack.ts` lists what it does not refuse.
+The rule is `runtimeLoads` in `scripts/providers-lock.ts`, and the pack step lists the loads the lock's own scan of each module found.
+The lock and key commands refuse the same loads, admission does not repeat the check, and `scripts/providers-pack.ts` lists what the rule does not refuse.
 esbuild's ES module bundle of a driver that calls `require` carries a `__require` shim that reads `require` as a value: under Node.js 24 it throws `Dynamic require of "events" is not supported`, and under Bun 1.4.4 it loads the module (measured 2026-11-27), so a test under Bun would pass a bundle Studio's Node.js server cannot load.
 Every refusal is one sentence on standard error; a refused package gets nothing written and a closing sentence saying so, and the other packages are still packed.
 The output directory must exist and lie outside the repository, as must the temporary directory, and an artifact already at `<out>/<name>/<version>` is refused, never overwritten.

@@ -32,23 +32,23 @@
  *    left either other than a regular file or with other bytes is refused by one sentence naming the file;
  * 5. the build wrote no `package.json` and no `libredb-provider.json` at the root of its output, since the step places
  *    both from the package's directory next, as it read them before the build;
- * 6. the artifact passes the lock command's own sequence over one directory (`artifactEntry`), refused with the
- *    sentence the lock command prints;
+ * 6. the artifact passes the lock command's walk, identity and import record over one directory (`artifactRecord`),
+ *    refused with the sentence the lock command prints;
  * 7. every finding of admission's checks before import, each named: an import its closure judges outside the package
  *    (`closureOutside`, Node.js's built-in list), a TypeScript file, a native addon, a manifest declaring
  *    `runtime.native`;
- * 8. no module file (`isModuleFile`), read by the lock's own parse (`parsedModule`) in each of its readings, makes a
- *    runtime load the lock's record cannot hold (C-114), each named by file, line and form: it names `createRequire`
- *    (an identifier in any position, or a string or a template without substitution equal to it, so a computed
- *    member is named too); it reads `require` other than as the callee of a call whose first argument is a string or
- *    a template without substitution, a declared binding named `require` included; it calls `require()` or `import()`
- *    with anything else; or it calls a member named `require`, such as `module.require(x)`. An identifier that is a
- *    name rather than a reference is not read: a non-computed member or key, a label, an imported or exported name,
- *    the name a namespace is re-exported under, and the local name of a re-export with a source. Not refused: a
- *    member named `require` read without a call, `process.getBuiltinModule`, which loads built-ins only, and code
- *    built at run time by `new Function` or `eval`, which no rule over the source can follow; an admitted package is
- *    not sandboxed (C-102). The rule runs here only, never at admission. A line is 1 plus the count of line feeds
- *    before the node;
+ * 8. no module file makes a runtime load the lock's record cannot hold (C-114), each named by file, line and form, as
+ *    the lock's one scan of each module file found them (`runtimeLoads` in scripts/providers-lock.ts, over each reading
+ *    of the lock's own parse): it names `createRequire` (an identifier in any position, or a string or a template
+ *    without substitution equal to it, so a computed member is named too); it reads `require` other than as the callee
+ *    of a call whose first argument is a string or a template without substitution, a declared binding named `require`
+ *    included; it calls `require()` or `import()` with anything else; or it calls a member named `require`, such as
+ *    `module.require(x)`. An identifier that is a name rather than a reference is not read: a non-computed member or
+ *    key, a label, an imported or exported name, the name a namespace is re-exported under, and the local name of a
+ *    re-export with a source. Not refused: a member named `require` read without a call, `process.getBuiltinModule`,
+ *    which loads built-ins only, and code built at run time by `new Function` or `eval`, which no rule over the source
+ *    can follow; an admitted package is not sandboxed (C-102). The lock and key commands refuse the same loads by the
+ *    same rule; admission does not repeat it. A line is 1 plus the count of line feeds before the node;
  * 9. `<out>/<name>/<version>`, its existing part resolved through any link, lies outside the repository's real path,
  *    since `--out` may be an ancestor of the repository or hold a link into it, and does not exist yet; the artifact
  *    is then copied there, and its digest printed.
@@ -84,7 +84,7 @@ import {
   PACKAGE_VERSION_FORM,
   type StringForm,
 } from "../src/lib/provider-host/providers-lock-format";
-import { artifactEntry, isModuleFile, parsedModule, runtimeLoads } from "./providers-lock";
+import { artifactRecord, type RuntimeLoad, runtimeLoadRefusals } from "./providers-lock";
 import { PACKAGES_DIRECTORY, providerPackageDirectories } from "./workspace-packages.mjs";
 
 const USAGE = "Usage: bun run providers:pack -- --out <absolute directory> [<absolute package directory> ...]";
@@ -222,9 +222,15 @@ function readPackageJson(directory: string): { name: string; version: string; by
 
 /**
  * Every finding of admission's checks before import over the built artifact at `artifact`, then every runtime load of
- * each of its module files, each one sentence.
+ * each of its module files, `loads` as the lock's scan found them, each one sentence.
  */
-function admissionFindings(artifact: string, label: string, entry: LockEntry): string[] {
+function admissionFindings(
+  artifact: string,
+  pkg: { readonly name: string; readonly version: string },
+  entry: LockEntry,
+  loads: readonly RuntimeLoad[],
+): string[] {
+  const label = `${pkg.name} ${pkg.version}`;
   const walked = walkArtifact(artifact);
   if (!walked.ok) throw new Error(`${PREFIX}: ${artifact}: the walk refused an artifact the lock's sequence admitted`);
   const findings: string[] = [];
@@ -257,16 +263,7 @@ function admissionFindings(artifact: string, label: string, entry: LockEntry): s
   if (declaresNativePackages(runtime)) {
     findings.push(`${PREFIX}: ${label}: its manifest declares runtime.native, which this Studio does not admit yet`);
   }
-  for (const file of walked.files) {
-    if (!isModuleFile(file.path)) continue;
-    // The lock's sequence parsed every module file of this listing, so a null here is a host defect.
-    const parsed = parsedModule(fs.readFileSync(path.join(artifact, ...file.path.split("/"))));
-    if (parsed === null)
-      throw new Error(`${PREFIX}: ${file.path}: the lock's parse refused a module file it read before`);
-    for (const { line, form } of runtimeLoads(parsed.text, parsed.programs)) {
-      findings.push(`${PREFIX}: ${label}: ${file.path} line ${line} ${form}`);
-    }
-  }
+  findings.push(...runtimeLoadRefusals(PREFIX, pkg, loads));
   return findings;
 }
 
@@ -330,9 +327,10 @@ function packOne(
     for (const { file, bytes } of placed) fs.writeFileSync(path.join(artifact, file), bytes);
 
     const named = { name: pkg.name, version: pkg.version };
-    const entry = artifactEntry(artifact, named, PREFIX);
-    if (typeof entry === "string") return [entry];
-    const findings = admissionFindings(artifact, `${pkg.name} ${pkg.version}`, entry);
+    const record = artifactRecord(artifact, named, PREFIX);
+    if (typeof record === "string") return [record];
+    const { entry } = record;
+    const findings = admissionFindings(artifact, named, entry, record.runtimeLoads);
     if (findings.length > 0) return findings;
 
     const segments = [...pkg.name.split("/"), pkg.version];

@@ -26,7 +26,8 @@ import { packageRefusal } from "@/lib/provider-host/lock-refusals";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
 import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import { plantedRoot, removePlantedRoot } from "../../helpers/planted-package";
-import { artifactDirectoryOf, removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
+import { artifactDirectoryOf, removeScratch, scratchDirectory, writeArtifact } from "../../helpers/provider-artifacts";
+import { parsedModule, runtimeLoads } from "../../../scripts/providers-lock";
 import { packProviders, type PackResult } from "../../../scripts/providers-pack";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
@@ -909,6 +910,60 @@ describe("providers:pack", () => {
       ]);
       expect(result.packed.map((packed) => packed.name)).toEqual(["@libredb/provider-controls"]);
       expect(fs.readdirSync(path.join(out, "@libredb"))).toEqual(["provider-controls"]);
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
+
+  test(
+    "the pack step and the lock command read one runtime-load rule",
+    () => {
+      // Every form once, one per line, and a control line that loads nothing.
+      const text = [
+        'import { createRequire } from "node:module";',
+        "const alias = require;",
+        "require(globalThis.name);",
+        "export const later = () => import(globalThis.name);",
+        'module.require("x");',
+        "export default { alias };",
+        "",
+      ].join("\n");
+      const planted = root(writingPackage("provider-loads", "@libredb/provider-loads", { "dist/index.mjs": text }));
+      const packed = pack(planted, fresh("out"));
+      const providers = fresh("providers");
+      writeArtifact(providers, {
+        name: "acme-loads",
+        version: "1.0.0",
+        engines: ["acmeloads"],
+        files: { "dist/index.mjs": text },
+      });
+      const locked = runBun(path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts"), ["--dir", providers]);
+      expect([locked.exitCode, locked.stdout]).toEqual([1, ""]);
+      expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+
+      const parsed = parsedModule(Buffer.from(text));
+      if (parsed === null) throw new Error("the module of every form does not parse");
+      const rule = runtimeLoads(parsed.text, parsed.programs).map(
+        ({ line, form }) => `dist/index.mjs line ${line} ${form}`,
+      );
+      expect(rule).toEqual([
+        "dist/index.mjs line 1 names createRequire",
+        "dist/index.mjs line 2 reads require other than to call it with a string",
+        "dist/index.mjs line 3 calls require() with something other than a string",
+        "dist/index.mjs line 4 calls import() with something other than a string",
+        "dist/index.mjs line 5 calls a member named require",
+      ]);
+      /** The module, line and form each sentence names, after its command's prefix and package. */
+      const named = (sentences: readonly string[]): string[] =>
+        sentences
+          .filter((sentence) => sentence.includes(" line "))
+          .map((sentence) => sentence.slice(sentence.indexOf("dist/")));
+      expect(packed.packed).toEqual([]);
+      expect(named(packed.refusals)).toEqual(rule);
+      expect(named(lines(locked.stderr))).toEqual(rule);
+      expect(lines(locked.stderr)).toEqual([
+        ...rule.map((load) => `providers:lock: acme-loads 1.0.0: ${load}`),
+        "providers:lock wrote nothing",
+      ]);
     },
     BUNDLING_TIMEOUT_MS,
   );
