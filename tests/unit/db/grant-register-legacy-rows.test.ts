@@ -10,7 +10,8 @@
  * statement vocabulary row, each with its review note, and each row's reviewed grammar digest with the SHA-256 of its
  * declaration's grammar, and each row's reviewed language data digest with the digest of its declaration's statement
  * language data, null for null, so a changed legacy grammar, changed language data or a new loosening claim fails here
- * until its row is reviewed again. It lives in core, not in the package's tests, because a package imports nothing of Studio's.
+ * until its row is reviewed again. It lives in core, not in the package's tests, because a package imports nothing of
+ * Studio's.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";

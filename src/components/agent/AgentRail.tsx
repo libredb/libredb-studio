@@ -34,6 +34,7 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
+import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 /*
   The rail's single reading of what the selected mode executes. It is the safety strip's
   whole content, and the engine notice below is the same four levels read once more — so
@@ -59,7 +60,6 @@ import { AGENT_TERMINAL_STATUSES } from "@/lib/agent/types";
 import type { AgentWorkflowClassification } from "@/lib/agent/workflow-classifier";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnswerCard, answerCardState } from "./AnswerCard";

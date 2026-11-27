@@ -87,13 +87,13 @@
  * (`legacySqlTextRequest`), and its language data request its row's language digest (`legacyLanguageDataRequest`); a
  * package engine's are its admitted declaration's, with the digests of its grammar and of its statement language data
  * computed on the server by the server catalog's composer, so no module the browser loads hashes either. A legacy
- * engine's row is its legacy row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads,
- * with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine
- * the register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
- * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
- * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
- * the server. Studio's review of whether an engine's connections serve one session and whether agent mode executes
- * statements on it, two host facts no declaration requests, is the same legacy rows' `servesOneSession` and
+ * engine's row is its legacy row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module
+ * loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served
+ * engine the register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's
+ * review notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations
+ * (clauses M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the
+ * browser as on the server. Studio's review of whether an engine's connections serve one session and whether agent mode
+ * executes statements on it, two host facts no declaration requests, is the same legacy rows' `servesOneSession` and
  * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
  * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
  * that no other module of Studio's source loads the register, that none but the claim projection and the listed
@@ -857,17 +857,18 @@ function rowRecords(engine: string, grants: RegisterGrants): ClaimRecords {
 
 /**
  * Studio's grant of every policy, MCP, connection, agent mode and SQL text claim `requested` and `sqlText` by engine
- * `engine`, with `languageData` the digest of the statement language data it states, against `row`, the engine's row of the grant register, or null where the register holds none, so every
- * claim is read at its restrictive value; with `seedOnly` the seed-only fields of every engine, read for the host path
- * fields where no row exists. The one call that grants an engine's claims, for a legacy engine and a package's alike: a
- * legacy engine is handed its legacy row, a package's engine its row keyed by the package's name, version and digest.
- * The answer is frozen, each value the register's own deep-frozen value or a fresh frozen one.
+ * `engine`, with `languageData` the digest of the statement language data it states, against `row`, the engine's row of
+ * the grant register, or null where the register holds none, so every claim is read at its restrictive value; with
+ * `seedOnly` the seed-only fields of every engine, read for the host path fields where no row exists. The one call that
+ * grants an engine's claims, for a legacy engine and a package's alike: a legacy engine is handed its legacy row, a
+ * package's engine its row keyed by the package's name, version and digest. The answer is frozen, each value the
+ * register's own deep-frozen value or a fresh frozen one.
  *
  * @throws {Error} Naming both engines, for a row of another engine: a host defect, the row is never read. Naming the
- * engine, the claim and the value, for a request value outside its claim's vocabulary, the language data digest
- * among them; naming Studio's record, the
- * claim, the value and the engine, for a row value outside it; naming the engine and the field, for a row's superseding
- * field that is not a text field a connection form draws; naming the engine, for an engine `seedOnly` holds no row for.
+ * engine, the claim and the value, for a request value outside its claim's vocabulary, the language data digest among
+ * them; naming Studio's record, the claim, the value and the engine, for a row value outside it; naming the engine and
+ * the field, for a row's superseding field that is not a text field a connection form draws; naming the engine, for an
+ * engine `seedOnly` holds no row for.
  */
 export function grantEngineClaims(
   engine: string,
@@ -939,10 +940,10 @@ const LEGACY_ENGINE_GRANTS: ReadonlyMap<string, EngineGrants> = new Map(
 
 /**
  * Studio's grant of each claim of legacy engine `id`: `grantEngineClaims` with its bundled request, its SQL text
- * request (`legacySqlTextRequest`), its language data request (`legacyLanguageDataRequest`) and its legacy row, which the legacy adapter's record of the engine holds
- * (src/lib/provider-host/legacy-adapter/records.ts). The browser's confirmation gate reads it by id until M7
- * (src/lib/sql/dangerous-query.ts and src/lib/db/destructive-commands.ts), since it holds a connection type and no
- * record.
+ * request (`legacySqlTextRequest`), its language data request (`legacyLanguageDataRequest`) and its legacy row, which
+ * the legacy adapter's record of the engine holds (src/lib/provider-host/legacy-adapter/records.ts). The browser's
+ * confirmation gate reads it by id until M7 (src/lib/sql/dangerous-query.ts and src/lib/db/destructive-commands.ts),
+ * since it holds a connection type and no record.
  *
  * @throws {Error} Naming the id, for an id the legacy adapter does not serve: a host defect.
  */

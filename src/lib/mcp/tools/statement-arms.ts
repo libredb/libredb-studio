@@ -5,6 +5,7 @@ import {
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
+import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 import {
   AGENT_LANGUAGE_MCP_FACETS,
   type AgentLanguageMcpDeclaredFacet,
@@ -13,7 +14,6 @@ import {
   type AgentLanguageMcpWords,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";

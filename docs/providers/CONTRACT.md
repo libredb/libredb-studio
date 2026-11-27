@@ -460,7 +460,7 @@ It names no function of the package, and no confirmation check reads it yet (C-3
 ### M-87 (normative): A register row reviews an engine's statement language data
 
 A register row states the digest of the statement language data it reviewed, `languageSha256`, or null for an engine that states none, and grants the engine's statement language, the claim that its confirmation reading is the whole answer and `readsSqlText: false` only where that is the digest of the data the engine states, so a changed byte of that data grants none of them until LibreDB reviews it again.
-A package row that grants either confirmation claim with a null digest is refused, so a package engine that states no statement language data is never granted them.
+A package row that grants `readsSqlText: false` or `decidesAlone: true` with a null digest is refused, so a package engine that states no statement language data is never granted either of the two.
 
 ## Values
 
