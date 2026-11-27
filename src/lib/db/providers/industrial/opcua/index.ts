@@ -556,7 +556,15 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    */
   public async getOverview(): Promise<DatabaseOverview> {
     if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.overview);
-    const unknown = { version: "unknown", uptime: "unknown", databaseSize: "unknown", tableCount: 0, indexCount: 0 };
+    // OPC UA publishes no connection ceiling, which the overview's type writes as 0, "none is published".
+    const unknown: DatabaseOverview = {
+      version: "unknown",
+      uptime: "unknown",
+      maxConnections: 0,
+      databaseSize: "unknown",
+      tableCount: 0,
+      indexCount: 0,
+    };
     try {
       const status = await this.pool.withSession(async (client) => {
         const [answer] = await client.read([OPCUA_SERVER_STATUS]);
@@ -564,11 +572,11 @@ export class OpcuaProvider extends BaseDatabaseProvider {
           ? serverStatusCard(answer.value, (ms) => this.formatDuration(ms))
           : undefined;
       });
-      return { ...unknown, ...(status ?? {}) } as DatabaseOverview;
+      return { ...unknown, ...status };
     } catch {
       // The dashboard reads this beside three other panels; a server that will not answer one node
       // is not a reason to take the other three away.
-      return unknown as DatabaseOverview;
+      return unknown;
     }
   }
 
