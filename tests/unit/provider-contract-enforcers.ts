@@ -3104,6 +3104,17 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
   },
+  "C-114": {
+    tests: {
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED",
+      ],
+      "tests/unit/lib/provider-host/provider-closure.test.ts": [
+        "a name only Bun treats as a built-in is outside the closure under every runtime",
+        "the built-in list is Node.js's, the same under Node.js and Bun",
+      ],
+    },
+  },
 };
 
 /** Each id the document no longer holds, to the tracked file whose docblock states its rule. Never reused. */
