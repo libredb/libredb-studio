@@ -7,7 +7,10 @@
  *   digest of a package has no row until LibreDB reviews it. The digest is the one the lock entry pins (clause C-93),
  *   over the package's files as the host walks them, which lists no file mode, so a package version has one digest on
  *   every platform. A row author prints a package's name, version and digest, and each engine's `grammarSha256` and
- *   `languageSha256`, with the repository's key command, `bun run providers:key -- --dir <artifact directory>`;
+ *   `languageSha256`, with the repository's key command, `bun run providers:key -- --dir <artifact directory>`.
+ *   tests/unit/db/register-package-row-census.test.ts holds each package row of a provider package of this repository
+ *   equal to the keys of its pack (its version, its digest and its engine's two digests), packed twice and held
+ *   reproducible first;
  * - `legacy`: the legacy key, `LEGACY_KEY`, `@libredb/studio`, the source name of Studio's legacy adapter, for an engine
  *   Studio still serves through that adapter. A legacy row describes Studio's own code, not a package, and is deleted as
  *   its engine moves into a package of its own.
@@ -40,8 +43,8 @@
  *
  * A read answers each row deep-frozen for its key, or null where the register holds none; the value read is copied,
  * never frozen in the caller's hands.
- * It also answers every package row, deep-frozen, in the register's order (`packageRows`), for a census that holds each
- * package row to its package; no grant path reads it, since a grant is found by its key.
+ * It also answers every package row, deep-frozen, in the register's order (`packageRows`), for the in-repo census
+ * (tests/unit/db/register-package-row-census.test.ts); no grant path reads it, since a grant is found by its key.
  */
 import committed from "./register.json";
 import schema from "./register.schema.json";
