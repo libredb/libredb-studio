@@ -173,6 +173,35 @@ function held<T>() {
   return Promise.withResolvers<T>();
 }
 
+/**
+ * Result lists of three elements whose middle one the host must neither read nor close: a number, and an accessor
+ * that records each read and throws. `reads` lists the accessor's reads.
+ */
+function laterElementShapes() {
+  const number = {
+    name: "a number",
+    reads: [] as string[],
+    results: (first: ResultSource, later: ResultSource) => [first, 42, later] as unknown as ResultSource[],
+  };
+  const accessor = {
+    name: "an accessor",
+    reads: [] as string[],
+    results: (first: ResultSource, later: ResultSource) => {
+      const results: unknown[] = [first];
+      Object.defineProperty(results, "1", {
+        enumerable: true,
+        get: () => {
+          accessor.reads.push("element");
+          throw new Error(marker());
+        },
+      });
+      results[2] = later;
+      return results as ResultSource[];
+    },
+  };
+  return [number, accessor];
+}
+
 describe("executeCall", () => {
   test("a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called", async () => {
     const execute = mock(async () => answerOf([]));
@@ -513,6 +542,59 @@ describe("executeCall", () => {
       refusals: [{ rule: "execute-answer-unreadable", pointer: "/results/0/columns" }],
     });
     expect(later.seen).toEqual({ pulls: 0, closes: 2 });
+  });
+
+  test("closing the other results of a page never throws past the page: a later element that is no object or an accessor is never read or closed", async () => {
+    const { ports } = portsOf();
+    for (const shape of laterElementShapes()) {
+      const first = counted([[1]], 1);
+      const later = counted([[2]]);
+      const record = await executeCall(
+        sessionOf(async () => answerOf(shape.results(first.source, later.source))).session,
+        requestOf(),
+        contextOf(),
+        () => LIMITS,
+        ports,
+      );
+      if (record.kind !== "page") throw new Error(`${shape.name}: the execute answered ${record.kind}, not a page.`);
+      record.release();
+      expect([shape.name, record.page.rows, record.resultCount]).toEqual([shape.name, [[1]], 3]);
+      expect([shape.name, shape.reads]).toEqual([shape.name, []]);
+      expect([shape.name, first.seen, later.seen]).toEqual([
+        shape.name,
+        { pulls: 1, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+    }
+  });
+
+  test("closing an aborted run's results never throws past the stop: an element that is no object or an accessor is never read or closed", async () => {
+    for (const shape of laterElementShapes()) {
+      const first = counted([[1]]);
+      const later = counted([[2]]);
+      const answer = held<ExecuteAnswer>();
+      const fx = sessionOf(() => answer.promise);
+      const { ports, late } = portsOf();
+      const controller = new AbortController();
+
+      const running = executeCall(fx.session, requestOf(), contextOf(controller), () => LIMITS, ports);
+      await fx.executeCalled;
+      controller.abort();
+      const stopped = await running;
+      if (stopped.kind !== "stopped")
+        throw new Error(`${shape.name}: the execute answered ${stopped.kind}, not a stop.`);
+      answer.resolve(answerOf(shape.results(first.source, later.source)));
+      await stopped.settled;
+      await turn();
+
+      expect([shape.name, late]).toEqual([shape.name, []]);
+      expect([shape.name, shape.reads]).toEqual([shape.name, []]);
+      expect([shape.name, first.seen, later.seen]).toEqual([
+        shape.name,
+        { pulls: 0, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+    }
   });
 
   test("a row no page can hold is refused as a record, and the source is closed once", async () => {

@@ -15,14 +15,16 @@
  * turn of the event loop before every pull (`withTurns`, clause C-49) and under the page budget the calls are bound to
  * (`withLargePageSlot`, clause C-53), then every other result closed once. A `CallRefusalError` the pump throws is
  * answered as a record, `called` true. When the run sees the signal aborted after execute answered, it closes every
- * source and pumps nothing.
+ * source and pumps nothing. Every path that closes results, a refused answer's, an aborted run's and a page's other
+ * results, closes them through `closeResults`: only an element of the list held as an object by its own data
+ * descriptor is closed, walked by index up to the first hole, so an element that is an accessor is never read and one
+ * that is no object is never closed.
  *
  * Every execute answer, a provider package's and the bridge's alike, is read by `checkExecuteAnswer` right after it
  * answered, before the abort check and the pump (clause C-112): a result list, a first result's columns or row count,
  * an execution time, a warning list or a warning outside the SDK's types is refused as a record, `called` true, after
- * every source is closed once and none pulled: only an element of the list held as an object by its own data
- * descriptor is closed, and a close that fails rides on the record as `closeFailures`, never thrown past the refusal
- * (`refusedAnswer`). The page record carries the members the check read, its warnings a
+ * every source is closed once and none pulled, and a close that fails rides on the record as `closeFailures`, never
+ * thrown past the refusal (`refusedAnswer`). The page record carries the members the check read, its warnings a
  * fresh frozen list, so no caller re-checks them and none reads the session's answer again.
  *
  * An endScope call answers the outcome its session answered, `openTransaction`, read by reference as a cancel's
@@ -285,9 +287,16 @@ export function startCall<T>(call: () => Promise<T>): Promise<T> {
   });
 }
 
-/** Closes every one of `sources` once, all at once, and answers the errors of those whose close failed. */
-async function closeEach(sources: readonly ResultSource[]): Promise<readonly unknown[]> {
-  const settled = await Promise.allSettled(sources.map((source) => startCall(() => source.close())));
+/**
+ * Closes once, all at once, every element of `results`, a provider's result list, from index `from` that it can close
+ * (`closableSources`), and answers the errors of those whose close failed. It never throws: a close that throws is read
+ * as its rejection. Every path of the run that closes results closes them through it: a refused answer's, an aborted
+ * run's, and a page's other results.
+ */
+async function closeResults(results: readonly unknown[], from = 0): Promise<readonly unknown[]> {
+  const settled = await Promise.allSettled(
+    closableSources(results, from).map((source) => startCall(() => source.close())),
+  );
   return settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 }
 
@@ -333,13 +342,13 @@ function sessionTransaction(
 }
 
 /**
- * The elements of `results`, a result list the host refused an answer over, that it can close: each element read
+ * The elements of `results`, a provider's result list, from index `from` that the host can close: each element read
  * through its own data descriptor whose value is an object, walked by index up to the first hole. An element that is
  * an accessor is never called, and one that is no object is never closed.
  */
-function closableSources(results: readonly unknown[]): readonly ResultSource[] {
+function closableSources(results: readonly unknown[], from: number): readonly ResultSource[] {
   const sources: ResultSource[] = [];
-  for (let index = 0; index < results.length; index++) {
+  for (let index = from; index < results.length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(results, index);
     if (descriptor === undefined) break;
     if ("value" in descriptor && typeof descriptor.value === "object" && descriptor.value !== null) {
@@ -351,11 +360,11 @@ function closableSources(results: readonly unknown[]): readonly ResultSource[] {
 
 /**
  * The record of an execute answer the host refused, `refusals` its refusals, after every source of `results` it can
- * close (`closableSources`) is closed once. It never throws past the refusal: the error of each close that failed
+ * close (`closeResults`) is closed once. It never throws past the refusal: the error of each close that failed
  * rides on the record as `closeFailures`, for the caller's one log line of the refusal.
  */
 async function refusedAnswer(results: readonly unknown[], refusals: readonly CallRefusal[]): Promise<RefusedRecord> {
-  const closeFailures = await closeEach(closableSources(results));
+  const closeFailures = await closeResults(results);
   return { kind: "refused", called: true, refusals, ...(closeFailures.length > 0 ? { closeFailures } : {}) };
 }
 
@@ -402,7 +411,7 @@ async function runExecute(
   if (stateRefusals.length > 0) return refusedAnswer(sources, stateRefusals);
   if (answerRefusals.length > 0) return refusedAnswer(sources, answerRefusals);
   if (ctx.signal.aborted) {
-    const closeErrors = await closeEach(sources);
+    const closeErrors = await closeResults(sources);
     if (closeErrors.length > 0) throw new AggregateError(closeErrors, "Closing a stopped run's result sources failed.");
     // The run answers this record as it settles, so the call it names has settled.
     return { kind: "stopped", reason: ctx.signal.reason, settled: Promise.resolve() };
@@ -411,9 +420,10 @@ async function runExecute(
   try {
     limits = pumpLimits(answer);
   } catch (error) {
-    throw withCloseErrors(error, await closeEach(sources));
+    throw withCloseErrors(error, await closeResults(sources));
   }
-  const [first, ...rest] = sources;
+  // The check read the first result as an own data object; the others are closed by `closeResults` from index 1.
+  const first = sources.length === 0 ? undefined : (sources[0] as ResultSource);
   let page: Page;
   enterPhase(progress, "page", ctx);
   try {
@@ -424,7 +434,7 @@ async function runExecute(
   } catch (error) {
     releaseHold(hold);
     enterPhase(progress, "other-results", ctx);
-    const closeErrors = await closeEach(rest);
+    const closeErrors = await closeResults(sources, 1);
     if (closeErrors.length > 0) throw withCloseErrors(error, closeErrors);
     if (!(error instanceof CallRefusalError)) throw error;
     return {
@@ -435,7 +445,7 @@ async function runExecute(
     };
   }
   enterPhase(progress, "other-results", ctx);
-  const closeErrors = await closeEach(rest);
+  const closeErrors = await closeResults(sources, 1);
   if (closeErrors.length > 0) releaseHold(hold);
   if (closeErrors.length === 1) throw closeErrors[0];
   if (closeErrors.length > 1) throw new AggregateError(closeErrors, "Closing a run's other result sources failed.");
