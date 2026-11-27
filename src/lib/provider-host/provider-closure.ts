@@ -6,9 +6,9 @@
  * The check is pure: it reads the package's import record, never a file, so it answers the same on every platform.
  * Each recorded pair `(from, specifier)` is inside when:
  *
- * 1. the specifier is a built-in of the running runtime, `isBuiltin` of `node:module`, the runtime that imports the
- *    package and resolves the specifier to its own built-in (Bun answers true for a few names Node.js does not, such as
- *    `ws`; Studio's server runs under Node.js); or
+ * 1. the specifier is a name of Node.js's built-in list as Studio commits it (`./node-builtins`), judged alike under
+ *    Node.js and Bun and never by the running runtime's own built-in check, since Bun answers true for names Node.js
+ *    does not, such as `ws`; or
  * 2. it is relative (`.`, `..`, or starting with `./` or `../`), holds none of `%`, `?`, `#` or a backslash, and
  *    `path.posix` joins it to the importing file's directory without leaving the package. Node's ES module loader
  *    decodes a percent-encoded `..` segment and `require` does not, so refusing those characters makes both loaders'
@@ -16,19 +16,26 @@
  *
  * Anything else is outside: an absolute path, a URL or another scheme, a subpath import (`#...`), and every bare
  * specifier, whether an `import` or a `require` names it and whatever `node_modules` folder the package holds. A
- * package of this contract is a bundle whose static imports are relative paths inside it or built-ins. A vendored
- * `node_modules` folder does not keep a bare name inside: when the folder found first lacks the file, Node.js's
- * CommonJS resolver, Bun's, and Bun's ES module resolver move on to the next `node_modules` directory up, outside the
- * package. Bare specifiers are refused until a later milestone designs dependency resolution for packages. The kind of
- * each import stays in the record, as what the scanner saw, and no rule here reads it.
+ * package of this contract is a bundle whose static imports are relative paths inside it or Node.js built-ins, so it
+ * carries its drivers bundled into its own modules (C-114). A vendored `node_modules` folder does not keep a bare name
+ * inside: when the folder found first lacks the file, Node.js's CommonJS resolver, Bun's, and Bun's ES module resolver
+ * move on to the next `node_modules` directory up, outside the package, so bare specifiers are refused and Studio keeps
+ * no resolver of its own for packages. The kind of each import stays in the record, as what the scanner saw, and no
+ * rule here reads it.
+ *
+ * Every admitted built-in is a built-in of every Node.js release Studio runs on, in each form admitted: a name of the
+ * floor's list a later release Studio runs on no longer serves is refused bare and as `node:`, since that release
+ * resolves the bare name as a package through node_modules and fails at the `node:` one. A name of the list Bun does
+ * not serve, such as `node:sea`, passes this check and fails at the package's import under Bun as
+ * `PROVIDER_LOAD_FAILED` with the loader's reason; Bun is not a runtime Studio's images or CLI run providers on.
  *
  * The limits: a computed `import()` or `require()` is not recorded, so not checked; the `main` of a package.json,
  * which a `require` of a directory reads, is not read. The check keeps a package from depending on modules outside its
  * directory, Studio's own `node_modules` among them; it is not a sandbox, since an admitted package runs in Studio's
  * process.
  */
-import { isBuiltin } from "node:module";
 import * as path from "node:path";
+import { isNodeBuiltin } from "./node-builtins";
 import type { ModuleImport } from "./providers-lock-format";
 
 /** The characters a relative specifier may not hold. */
@@ -49,7 +56,7 @@ function relativeInside(from: string, specifier: string): boolean {
 /** Whether any import of `imports`, a package's import record, leaves the package. */
 export function closureOutside(imports: readonly ModuleImport[]): boolean {
   return imports.some(({ from, specifier }) => {
-    if (isBuiltin(specifier)) return false;
+    if (isNodeBuiltin(specifier)) return false;
     return !isRelative(specifier) || !relativeInside(from, specifier);
   });
 }

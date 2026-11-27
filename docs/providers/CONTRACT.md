@@ -1175,9 +1175,9 @@ The lock command records, with Bun's transpiler and each with its kind, every st
 Before the import, admission refuses:
 
 - as `PROVIDER_MODULE_FORMAT` with the rule `typescript-module`, a package whose listing holds a TypeScript file, `.ts`, `.mts`, `.cts` or `.tsx` in any letter case, declaration files included, since Bun and Node.js can each run one unseen;
-- as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`, an import that is neither a built-in of the runtime nor a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, so every bare specifier, absolute path, URL and subpath import is refused, whatever `node_modules` folder the package holds.
+- as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`, an import that is neither a name of Node.js's built-in modules as Studio lists them, each a built-in of every Node.js release Studio runs on and judged alike under Node.js and Bun, nor a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, so every bare specifier, absolute path, URL and subpath import is refused, whatever `node_modules` folder the package holds.
 
-So a package of this contract is a JavaScript bundle whose static imports are relative paths inside it or built-ins; a computed `import()` or `require()`, a directory's `main` and a file loaded by another extension are not checked, and the check is no sandbox, since an admitted package runs in Studio's process.
+So a package of this contract is a JavaScript bundle whose static imports are relative paths inside it or Node.js built-ins; a computed `import()` or `require()`, a directory's `main` and a file loaded by another extension are not checked, and the check is no sandbox, since an admitted package runs in Studio's process.
 
 ### C-103 (normative): A native addon is not admitted in this contract yet
 
@@ -1236,7 +1236,7 @@ The package's own words then go only to the server's log, each error and each wa
 
 A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a built-in (C-102), and a native addon stays refused (C-103).
 An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a function made by `createRequire` and called under a name other than `require`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
-Nothing checks this clause yet beyond C-102 and C-103.
+Nothing checks the second sentence yet.
 
 ## Not yet in this contract
 
