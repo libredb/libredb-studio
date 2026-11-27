@@ -40,6 +40,8 @@ import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-langu
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "@/lib/agent/workflow-tool-sets";
 import type { AgentArtifactReference, AgentReadingDenyCode, AgentRunEvent } from "@/lib/agent/types";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -148,7 +150,7 @@ const MODULE_LANGUAGE_IDS: Readonly<Record<AgentModuleLanguageId, true>> = {
   sparkplugread: true,
 };
 
-/** Every language id: the module languages, then each language a shipped declaration states as data, kafkaread. */
+/** Every language id: the module languages, then each language a shipped declaration states as data. */
 const LANGUAGE_IDS: Readonly<Record<string, true>> = {
   ...MODULE_LANGUAGE_IDS,
   [shippedDeclaredLanguage("kafkaread")]: true,
@@ -630,7 +632,18 @@ describe("the client packs", () => {
 
   test("a type's granted agent statement language is its grant read as the agent's language, and null for a type granted none and for a name that is no own key", () => {
     expect(grantedAgentStatementLanguage("mongodb")).toBe("mongo");
-    expect(grantedAgentStatementLanguage("kafka")).toBe(shippedDeclaredLanguage("kafkaread"));
+    // Each shipped engine whose declaration states agent data for its language is granted that language.
+    const declaring = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const data = BUNDLED_STATEMENT_LANGUAGE_DATA[type];
+      return data?.agent ? [{ type, name: data.name }] : [];
+    });
+    expect(declaring.length).toBeGreaterThan(0);
+    for (const { type, name } of declaring) {
+      expect({ type, granted: grantedAgentStatementLanguage(type) }).toEqual({
+        type,
+        granted: shippedDeclaredLanguage(name),
+      });
+    }
     expect(grantedAgentStatementLanguage("bigquery")).toBeNull();
     expect(grantedAgentStatementLanguage("toString" as DatabaseType)).toBeNull();
   });

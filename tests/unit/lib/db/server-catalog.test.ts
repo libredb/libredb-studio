@@ -1108,7 +1108,7 @@ describe("a package engine's register row", () => {
     expect(
       grantsOf(
         [acme],
-        registerOf(packageRow(acme, "acmelanguage", { ...LOOSEST_ROW, statementLanguage: "kafkaread" })),
+        registerOf(packageRow(acme, "acmelanguage", { ...LOOSEST_ROW, statementLanguage: "sql" })),
         "acmelanguage",
       ),
     ).toMatchObject({ statementLanguage: null, ownWords: "scrubbed" });

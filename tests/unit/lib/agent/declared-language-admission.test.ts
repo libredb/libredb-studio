@@ -9,16 +9,17 @@
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { AgentRequestForm, AgentRequestRefusal } from "@libredb/provider-sdk/manifest";
 import { admitDeclaredRequest } from "@/lib/db/operations/declared-request-form";
 import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
+import { composeDeclaredServerPack } from "@/lib/agent/languages/declared-server";
 import { languageServerPack } from "@/lib/agent/languages/server";
-import { readKafkaAgentStatement } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import {
   censusDisagreements,
-  kafkareadCorpus,
   type ProviderReading,
   READER_ENROLLMENTS,
   shippedLanguageData,
@@ -409,34 +410,52 @@ describe("the census of a declared request form", () => {
     expect(censusDisagreements("acmeread", FORM, () => ({ ok: true }), [overBound])).toEqual([]);
   });
 
-  test("kafkaread's composed repair fingerprint groups the corpus as the provider reader's plans do", () => {
-    // The server facet one run reads for kafkaread is the one composed from Kafka's declared data.
-    expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toContain("kafkaread");
-    const { fingerprint } = languageServerPack(shippedDeclaredLanguage("kafkaread")).adapter;
-    // The provider reader's identity of a request: the plan it reads, or the raw text of a request it refuses. Two
-    // requests share a fingerprint exactly when they share this identity, so the partitions are the same.
-    const identity = (text: string) => {
-      const reading = readKafkaAgentStatement(text);
-      return reading.ok ? `plan:${JSON.stringify(reading.plan)}` : `raw:${text}`;
-    };
-    const byFingerprint = new Map<string, string>();
-    const byIdentity = new Map<string, string>();
-    const clashes: string[] = [];
-    for (const text of kafkareadCorpus()) {
-      const print = fingerprint(text);
-      const own = identity(text);
-      if ((byFingerprint.get(print) ?? own) !== own) clashes.push(`${JSON.stringify(text)} joins another read's class`);
-      if ((byIdentity.get(own) ?? print) !== print) clashes.push(`${JSON.stringify(text)} splits its read's class`);
-      byFingerprint.set(print, own);
-      byIdentity.set(own, print);
+  test("each enrolled language's composed repair fingerprint groups its corpus as its provider reader's plans do", () => {
+    expect(READER_ENROLLMENTS.size).toBeGreaterThan(0);
+    for (const [language, { reader, corpus }] of READER_ENROLLMENTS) {
+      // The server facet one run reads for the language is the one composed from its declared data.
+      expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toContain(language);
+      const { fingerprint } = languageServerPack(shippedDeclaredLanguage(language)).adapter;
+      // The provider reader's identity of a request: the plan it reads, or the raw text of a request it refuses. Two
+      // requests share a fingerprint exactly when they share this identity, so the partitions are the same.
+      const identity = (text: string) => {
+        const reading = reader(text);
+        return reading.ok ? `plan:${reading.plan}` : `raw:${text}`;
+      };
+      const byFingerprint = new Map<string, string>();
+      const byIdentity = new Map<string, string>();
+      const clashes: string[] = [];
+      for (const text of corpus) {
+        const print = fingerprint(text);
+        const own = identity(text);
+        if ((byFingerprint.get(print) ?? own) !== own)
+          clashes.push(`${JSON.stringify(text)} joins another read's class`);
+        if ((byIdentity.get(own) ?? print) !== print) clashes.push(`${JSON.stringify(text)} splits its read's class`);
+        byFingerprint.set(print, own);
+        byIdentity.set(own, print);
+      }
+      expect({ language, clashes }).toEqual({ language, clashes: [] });
+      expect({ language, classes: byFingerprint.size }).toEqual({ language, classes: byIdentity.size });
+      // Vacuity: the corpus holds reads written in more than one spelling, and refused requests.
+      expect(byIdentity.size).toBeLessThan(corpus.length);
+      expect([...byIdentity.keys()].some((key) => key.startsWith("raw:"))).toBe(true);
     }
-    expect(clashes).toEqual([]);
-    expect(byFingerprint.size).toBe(byIdentity.size);
-    // Vacuity: the corpus holds reads written in more than one spelling, and refused requests.
-    expect(byIdentity.size).toBeLessThan(kafkareadCorpus().length);
-    expect([...byIdentity.keys()].some((key) => key.startsWith("raw:"))).toBe(true);
-    // Kafka's form admits no object value, so no admitted read gets one identity per key order of a value.
-    expect(fingerprint('{"read":"topics","limit":5}')).toBe(fingerprint('{ "limit": 5, "read": "topics" }'));
-    expect(fingerprint('{"read":"topics"}')).toBe(fingerprint('{"read":"topics","limit":50}'));
+  });
+
+  test("a declared form that admits no object value gives an admitted read one fingerprint whatever its key order and spacing", () => {
+    // The out-of-tree fixture's listget, read from its manifest: a form whose values are names, never objects.
+    const fixture = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../../fixtures/out-of-tree-provider/libredb-provider.json"), "utf8"),
+    );
+    const { fingerprint } = composeDeclaredServerPack(
+      "listget",
+      fixture.engines[0].statementLanguageData.agent,
+      "x",
+    ).adapter;
+
+    expect(fingerprint('{"read":"get","name":"beta"}')).toBe(fingerprint('{ "name": "beta", "read": "get" }'));
+    expect(fingerprint('{"read":"list"}')).toBe(fingerprint('{ "read": "list" }'));
+    // Vacuity: two reads of different names are two classes.
+    expect(fingerprint('{"read":"get","name":"beta"}')).not.toBe(fingerprint('{"read":"get","name":"gamma"}'));
   });
 });

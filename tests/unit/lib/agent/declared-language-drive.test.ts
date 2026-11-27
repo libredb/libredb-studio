@@ -16,10 +16,11 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
  * This file substitutes the statement language projection (`@/lib/db/engine-catalog/statement-language.generated`)
  * with the shipped one plus `acmeread`, stated under Spark, and `acmeplain`, a language with no agent part, stated under
  * Snowflake, and grants MQTT `acmeread`: in the browser tables by substituting the grant reader's
- * `GRANTED_AGENT_STATEMENT_LANGUAGE` row, and on the server by a crafted catalog. MQTT rather than Kafka, so no Kafka
- * test reads a substituted language. Spark and Snowflake state no statement language of their own and Studio holds no
- * code row for either, so the confirmation gate's resolver, which compiles a row from each engine's stated data and
- * refuses an engine holding both, loads in this process; both follow Kafka in the projection's id order, so `acmeread`
+ * `GRANTED_AGENT_STATEMENT_LANGUAGE` row, and on the server by a crafted catalog. MQTT rather than an engine whose
+ * declaration states its language as data, so no such engine's test reads a substituted language. Spark and Snowflake
+ * state no statement language of their own and Studio holds no code row for either, so the confirmation gate's
+ * resolver, which compiles a row from each engine's stated data and refuses an engine holding both, loads in this
+ * process; both follow every shipped engine stating its language as data in the projection's id order, so `acmeread`
  * is the last declared language. The real grant reader and projection are captured as plain objects before the
  * substitution, because a namespace follows its replacement.
  * `mock.module` is process-wide, so the substitutions are made before anything that reads them is loaded: every such
@@ -34,12 +35,13 @@ const AGENT = ACMEREAD.agent as NonNullable<typeof ACMEREAD.agent>;
 
 const REAL_CLAIM_GRANTS = { ...(await import("@/lib/db/claim-grants")) };
 const REAL_PROJECTION = { ...(await import("@/lib/db/engine-catalog/statement-language.generated")) };
+const SUBSTITUTED_PROJECTION = Object.freeze({
+  ...REAL_PROJECTION.BUNDLED_STATEMENT_LANGUAGE_DATA,
+  snowflake: ACMEPLAIN,
+  spark: ACMEREAD,
+});
 mock.module("@/lib/db/engine-catalog/statement-language.generated", () => ({
-  BUNDLED_STATEMENT_LANGUAGE_DATA: Object.freeze({
-    ...REAL_PROJECTION.BUNDLED_STATEMENT_LANGUAGE_DATA,
-    snowflake: ACMEPLAIN,
-    spark: ACMEREAD,
-  }),
+  BUNDLED_STATEMENT_LANGUAGE_DATA: SUBSTITUTED_PROJECTION,
 }));
 mock.module("@/lib/db/claim-grants", () => ({
   ...REAL_CLAIM_GRANTS,
@@ -166,9 +168,8 @@ describe("a data-declared language in the language registries", () => {
     expect<string | undefined>(MCP_STATEMENT_ARMS[ACME]?.tool).toBe("run_acme_read");
 
     // The load check, read on the module languages this build holds: every language but the declared ones.
-    const modules = Object.keys(AGENT_LANGUAGE_COPY).filter(
-      (language) => !["acmeread", "kafkaread"].includes(language),
-    );
+    const declaredNames = Object.values(SUBSTITUTED_PROJECTION).flatMap((data) => (data === null ? [] : [data.name]));
+    const modules = Object.keys(AGENT_LANGUAGE_COPY).filter((language) => !declaredNames.includes(language));
     expect(declaredAgentLanguages([ACMEREAD, ACMEPLAIN], modules).map(({ id }) => id as string)).toEqual(["acmeread"]);
     expect(() => declaredAgentLanguages([acmereadData("rabbitread")], modules)).toThrow(
       'The statement language "rabbitread" is declared as data and is also a module language of this build.',

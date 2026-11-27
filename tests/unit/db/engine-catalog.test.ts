@@ -109,6 +109,13 @@ import {
 } from "@/lib/db/engine-catalog/projection";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
 import type { DatabaseType, QueryTab } from "@/lib/types";
+import {
+  ACME_LANGUAGE_DATA,
+  admittedManifest,
+  type EditableEngine,
+  rawManifest,
+  withStatementLanguageData,
+} from "../../helpers/package-catalog";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-catalog.ts");
@@ -123,6 +130,67 @@ function admitted(id: string): BundledDeclaration {
   const declaration = ADMITTED.find((d) => d.id === id);
   if (declaration === undefined) throw new Error(`no admitted declaration of ${id}`);
   return declaration;
+}
+
+/**
+ * The engine of the SDK's minimal manifest planted under `id`, a name of no engine of Studio's, changed by `edit` and
+ * admitted by the host validator. The minimal manifest states every SQL-family member, as a bundled declaration does.
+ */
+function planted(id: string, edit: (engine: EditableEngine) => void = () => undefined): BundledDeclaration {
+  return admittedManifest(id, edit).engines[0] as BundledDeclaration;
+}
+
+/**
+ * A planted engine stating the query dialect `acmedial`, which offers SQL export and nothing else and masks no history,
+ * written in Studio's json editor language.
+ */
+function plantedDialect(): BundledDeclaration {
+  return planted("acmedial", (engine) => {
+    engine.editor = {
+      ...engine.editor,
+      dialect: {
+        name: "acmedial",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
+      language: { queryLanguage: "json", monacoId: "json", accent: "border-hue-cyan/40", console: false },
+    };
+  });
+}
+
+/** The refusal line of `plantedRefusedDdl`'s migration DDL. */
+const PLANTED_DDL_REFUSAL = "-- Acme: Cannot generate table DDL. A planted engine writes no table.";
+
+/** A planted engine whose migration DDL refuses table DDL with `PLANTED_DDL_REFUSAL`. */
+function plantedRefusedDdl(): BundledDeclaration {
+  return planted("acmeddl", (engine) => {
+    engine.migrationDdl = {
+      tableDdl: "refused",
+      refusal: PLANTED_DDL_REFUSAL,
+      transactionWrapper: null,
+      reasons: ["A planted engine writes no table."],
+    };
+  });
+}
+
+/**
+ * The first committed declaration, in id order, stating a query dialect that offers no count query and that is not
+ * `except`: the subject of a generator run that edits that offer, chosen by shape so the case names no engine.
+ *
+ * @throws {Error} When no committed declaration states such a dialect.
+ */
+function uncountedDialectDeclaration(except: readonly string[] = []): BundledDeclaration {
+  const declaration = ADMITTED.find((d) => !except.includes(d.id) && d.editor.dialect?.offersCountQuery === false);
+  if (declaration === undefined) throw new Error("no committed declaration states a dialect offering no count query");
+  return declaration;
+}
+
+/** The text of a declaration file planting the SDK's minimal manifest's engine under `id`. */
+function plantedDeclarationText(id: string): string {
+  return JSON.stringify(rawManifest(id).engines[0]);
 }
 
 /** A scratch copy of the committed declarations directory, removed by the returned function. */
@@ -600,14 +668,15 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("the query dialects, the tab type editors and the editor languages hold one entry per stated key, keyed in ascending order whatever order the declarations come in", () => {
-    const set = ["postgres", "neo4j", "milvus", "mongodb", "kubernetes", "kafka", "mysql"].map(admitted);
+    const set = ["postgres", "neo4j", "milvus", "mongodb", "kubernetes"].map(admitted);
+    set.push(plantedDialect(), admitted("mysql"));
     const facts = projectQueryEditorFacts(set);
 
     expect(Object.keys(facts)).toEqual(["queryDialects", "dialectEditors", "editorLanguages"]);
     // One dialect entry per stated dialect, its tab type the dialect's name and every member present, in one order.
     expect(facts.queryDialects).toEqual({
-      kafka: {
-        tabType: "kafka",
+      acmedial: {
+        tabType: "acmedial",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
@@ -631,7 +700,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         historyMask: null,
       },
     });
-    expect(Object.keys(facts.queryDialects)).toEqual(["kafka", "kubectl", "milvus"]);
+    expect(Object.keys(facts.queryDialects)).toEqual(["acmedial", "kubectl", "milvus"]);
     for (const entry of Object.values(facts.queryDialects)) {
       expect(Object.keys(entry)).toEqual([
         "tabType",
@@ -646,14 +715,14 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // One editor per tab type: a dialect engine's tabs open under the dialect's name, a dialect-less one's under its
     // query language's tab type, so MongoDB's JSON opens as mongodb and Neo4j's Cypher as cypher.
     expect(facts.dialectEditors).toEqual({
+      acmedial: { monacoId: "json" },
       cypher: { monacoId: "graph-cypher" },
-      kafka: { monacoId: "json" },
       kubectl: { monacoId: "kubectl" },
       milvus: { monacoId: "milvus" },
       mongodb: { monacoId: "json" },
       sql: { monacoId: "sql" },
     });
-    expect(Object.keys(facts.dialectEditors)).toEqual(["cypher", "kafka", "kubectl", "milvus", "mongodb", "sql"]);
+    expect(Object.keys(facts.dialectEditors)).toEqual(["acmedial", "cypher", "kubectl", "milvus", "mongodb", "sql"]);
     // One language entry per Monaco id, holding the accent and console the declarations state.
     expect(facts.editorLanguages).toEqual({
       "graph-cypher": { accent: "border-hue-purple/40", console: false },
@@ -707,23 +776,23 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("two declarations stating one dialect with different rows, one tab type in different editor languages, or one editor language with a different accent or console are refused by name", () => {
-    const kafka = admitted("kafka");
+    const acmedial = plantedDialect();
     const bigquery = admitted("bigquery");
     const restated = (
       base: BundledDeclaration,
       editor: (committed: BundledDeclaration["editor"]) => Partial<BundledDeclaration["editor"]>,
     ): BundledDeclaration => ({ ...base, id: "acmefoo", editor: { ...base.editor, ...editor(base.editor) } });
-    const dialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
+    const dialect = acmedial.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const json = admitted("mongodb").editor.language;
 
     // One dialect stated with different rows: both engines named, in ascending id order, whatever order they come in.
-    const counting = restated(kafka, () => ({ dialect: { ...dialect, offersCountQuery: true } }));
+    const counting = restated(acmedial, () => ({ dialect: { ...dialect, offersCountQuery: true } }));
     for (const set of [
-      [counting, kafka],
-      [kafka, counting],
+      [counting, acmedial],
+      [acmedial, counting],
     ]) {
       expect(() => projectQueryEditorFacts(set)).toThrow(
-        'The dialect "kafka" is stated with different rows by acmefoo and kafka.',
+        'The dialect "acmedial" is stated with different rows by acmedial and acmefoo.',
       );
     }
     // The flag list is compared in order.
@@ -756,9 +825,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectQueryEditorFacts([mongodb, jsonConsole])).toThrow(
       'The editor language "json" is stated with a different accent or console by acmefoo and mongodb.',
     );
-    // A second declaration stating kafka's exact row is admitted, with one entry.
-    const same = restated(kafka, () => ({}));
-    expect(Object.keys(projectQueryEditorFacts([kafka, same]).queryDialects)).toEqual(["kafka"]);
+    // A second declaration stating the planted dialect's exact row is admitted, with one entry.
+    const same = restated(acmedial, () => ({}));
+    expect(Object.keys(projectQueryEditorFacts([acmedial, same]).queryDialects)).toEqual(["acmedial"]);
     // None of the committed declarations is refused.
     expect(() => projectQueryEditorFacts(ADMITTED)).not.toThrow();
   });
@@ -777,12 +846,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       );
     }
     // A dialect names the tab type itself, so its query language reads no tab type.
-    const kafka = admitted("kafka");
+    const acmedial = plantedDialect();
     const dialected = {
-      ...kafka,
-      editor: { ...kafka.editor, language: { ...kafka.editor.language, queryLanguage: "exampleql" } },
+      ...acmedial,
+      editor: { ...acmedial.editor, language: { ...acmedial.editor.language, queryLanguage: "exampleql" } },
     };
-    expect(Object.keys(projectQueryEditorFacts([dialected]).dialectEditors)).toEqual(["kafka"]);
+    expect(Object.keys(projectQueryEditorFacts([dialected]).dialectEditors)).toEqual(["acmedial"]);
   });
 
   test("projectSqlText answers each declaration's SQL text but its redaction, frozen, in ascending id order", () => {
@@ -896,17 +965,17 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("projectMigrationDdl answers each declaration's migration DDL, frozen, in ascending id order", () => {
-    const set = ["postgres", "kafka", "mssql", "cassandra"].map(admitted);
+    const set = [admitted("postgres"), plantedRefusedDdl(), admitted("mssql"), admitted("cassandra")];
     const ddls = projectMigrationDdl(set);
 
-    expect(Object.keys(ddls)).toEqual(["cassandra", "kafka", "mssql", "postgres"]);
+    expect(Object.keys(ddls)).toEqual(["acmeddl", "cassandra", "mssql", "postgres"]);
     for (const declaration of set) {
       expect(ddls[declaration.id]).toEqual(declaration.migrationDdl);
       // Each member in the declaration's order, at every level.
       expect(JSON.stringify(ddls[declaration.id])).toBe(JSON.stringify(declaration.migrationDdl));
     }
     // A refused form as its line and reasons, a written one with its wrapper and each function as its name.
-    expect(ddls.kafka?.tableDdl).toBe("refused");
+    expect(ddls.acmeddl?.tableDdl).toBe("refused");
     expect(ddls.mssql?.tableDdl === "written" && ddls.mssql.transactionWrapper).toEqual({
       begin: "BEGIN TRANSACTION;",
       commit: "COMMIT;",
@@ -1128,25 +1197,28 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const scratch = scratchDirectory();
     try {
       const { directory } = scratch;
-      const kafka = readFileSync(path.join(directory, "kafka.json"), "utf8");
+      const file = path.join(directory, "acmedecl.json");
+      const text = plantedDeclarationText("acmedecl");
 
-      writeFileSync(path.join(directory, "kafka.json"), JSON.stringify({ ...JSON.parse(kafka), location: "nearby" }));
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(text), location: "nearby" }));
       expect(() => admittedDeclarations(directory)).toThrow(
-        /^kafka\.json is refused by the provider manifest schema: /,
+        /^acmedecl\.json is refused by the provider manifest schema: /,
       );
 
-      writeFileSync(path.join(directory, "kafka.json"), JSON.stringify({ ...JSON.parse(kafka), id: "mqtt" }));
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(text), id: "acmeother" }));
       expect(() => admittedDeclarations(directory)).toThrow(
-        'kafka.json declares the engine id "mqtt", which is not its file name',
+        'acmedecl.json declares the engine id "acmeother", which is not its file name',
       );
-      expect(() => authoredDeclarations(directory)).toThrow('kafka.json names the engine id "mqtt", not its file name');
+      expect(() => authoredDeclarations(directory)).toThrow(
+        'acmedecl.json names the engine id "acmeother", not its file name',
+      );
 
-      const unlocated = JSON.parse(kafka);
+      const unlocated = JSON.parse(text);
       delete unlocated.location;
-      writeFileSync(path.join(directory, "kafka.json"), JSON.stringify(unlocated));
-      expect(() => authoredDeclarations(directory)).toThrow("kafka.json lacks its authored member location");
+      writeFileSync(file, JSON.stringify(unlocated));
+      expect(() => authoredDeclarations(directory)).toThrow("acmedecl.json lacks its authored member location");
 
-      writeFileSync(path.join(directory, "kafka.json"), kafka);
+      writeFileSync(file, text);
       writeFileSync(path.join(directory, "notes.txt"), "kept\n");
       expect(() => admittedDeclarations(directory)).toThrow("notes.txt is not a declaration");
       expect(() => authoredDeclarations(directory)).toThrow("notes.txt is not a declaration");
@@ -1157,6 +1229,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(() => authoredDeclarations(directory)).toThrow(/^acmefoo\.json is not JSON: /);
 
       rmSync(path.join(directory, "acmefoo.json"));
+      expect(admittedDeclarations(directory).map(({ id }) => id)).toEqual([
+        "acmedecl",
+        ...ADMITTED.map(({ id }) => id),
+      ]);
+      rmSync(file);
       expect(admittedDeclarations(directory)).toEqual([...ADMITTED]);
     } finally {
       scratch.remove();
@@ -1167,14 +1244,14 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const scratch = scratchDirectory();
     try {
       const { directory } = scratch;
-      const kafka = readFileSync(path.join(directory, "kafka.json"), "utf8");
+      const text = plantedDeclarationText("acmedecl");
       const stating = (nullMembers: readonly string[]) => {
-        const declaration = JSON.parse(kafka);
+        const declaration = JSON.parse(text);
         for (const member of nullMembers) declaration[member] = null;
-        writeFileSync(path.join(directory, "kafka.json"), JSON.stringify(declaration));
+        writeFileSync(path.join(directory, "acmedecl.json"), JSON.stringify(declaration));
       };
       const refusal = (member: string) =>
-        `kafka.json, the declaration of the bundled engine "kafka", states ${member} as null: a bundled engine states every SQL-family member until it moves into its package, since Studio's generated SQL text, SQL writing and migration DDL modules hold a row for each`;
+        `acmedecl.json, the declaration of the bundled engine "acmedecl", states ${member} as null: a bundled engine states every SQL-family member until it moves into its package, since Studio's generated SQL text, SQL writing and migration DDL modules hold a row for each`;
 
       for (const member of ["sqlText", "sqlWriting", "migrationDdl"]) {
         stating([member]);
@@ -1186,10 +1263,15 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(() => admittedDeclarations(directory)).toThrow(refusal("sqlText"));
 
       // A null sqlGenerators is admitted: it means the engine writes Studio's shared SQL forms.
-      writeFileSync(path.join(directory, "kafka.json"), kafka);
-      expect(admitted("kafka").sqlGenerators).toBeNull();
-      expect(admittedDeclarations(directory)).toEqual([...ADMITTED]);
-      expect(authoredDeclarations(directory).map(({ id }) => id)).toEqual(ADMITTED.map(({ id }) => id));
+      stating(["sqlGenerators"]);
+      const admittedSet = admittedDeclarations(directory);
+      expect(admittedSet[0]?.id).toBe("acmedecl");
+      expect(admittedSet[0]?.sqlGenerators).toBeNull();
+      expect(admittedSet.slice(1)).toEqual([...ADMITTED]);
+      expect(authoredDeclarations(directory).map(({ id }) => id)).toEqual([
+        "acmedecl",
+        ...ADMITTED.map(({ id }) => id),
+      ]);
     } finally {
       scratch.remove();
     }
@@ -1452,7 +1534,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(committed).toContain(
       'transactionWrapper: Object.freeze({ begin: "BEGIN TRANSACTION;", commit: "COMMIT;" }),',
     );
-    expect(committed).toContain('"-- Apache Kafka: Cannot generate table DDL. ');
+    expect(renderMigrationDdl(projectMigrationDdl([plantedRefusedDdl()]))).toContain(
+      JSON.stringify(PLANTED_DDL_REFUSAL),
+    );
     expect(committed).toContain('createTableRefusal: "createTableRefusal"');
     // Type imports only, so a reader of the module loads no other module through it.
     const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
@@ -1513,7 +1597,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_CLAIM_REQUESTS)).toBe(true);
   });
 
-  test("the statement language projection holds each declaration's statement language data, Kafka's and null for every other engine", () => {
+  test("the statement language projection holds the statement language data each declaration states, and null for every other engine", () => {
     const committed = readFileSync(path.join(ROOT, ENGINE_STATEMENT_LANGUAGE_MODULE), "utf8");
     const data = projectStatementLanguageData(ADMITTED);
 
@@ -1522,12 +1606,15 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // A record total over the type ids, null for every engine that states none.
     expect(Object.keys(BUNDLED_STATEMENT_LANGUAGE_DATA)).toEqual([...SHIPPED_DATABASE_TYPES]);
     const stating = Object.entries(BUNDLED_STATEMENT_LANGUAGE_DATA).filter(([, entry]) => entry !== null);
+    // A census pin: the shipped engines whose declaration states statement language data, a set that leaves with them.
     expect(stating.map(([id]) => id)).toEqual(["kafka"]);
-    // Kafka's row is its declaration's member as the file states it, in its own member order.
-    const kafka = JSON.parse(readFileSync(path.join(DIRECTORY, "kafka.json"), "utf8")).statementLanguageData;
-    expect(kafka?.name).toBe("kafkaread");
-    expect(JSON.stringify(BUNDLED_STATEMENT_LANGUAGE_DATA.kafka)).toBe(JSON.stringify(kafka));
-    expect(JSON.stringify(data.kafka)).toBe(JSON.stringify(admitted("kafka").statementLanguageData));
+    // Each row is its declaration's member as the file states it, in its own member order.
+    for (const [id, entry] of stating) {
+      const stated = JSON.parse(readFileSync(path.join(DIRECTORY, `${id}.json`), "utf8")).statementLanguageData;
+      expect(typeof stated?.name).toBe("string");
+      expect(JSON.stringify(entry)).toBe(JSON.stringify(stated));
+      expect(JSON.stringify(data[id])).toBe(JSON.stringify(admitted(id).statementLanguageData));
+    }
     // The same answer for the declarations in any order.
     expect(JSON.stringify(projectStatementLanguageData([...ADMITTED].reverse()))).toBe(JSON.stringify(data));
     expect(committed).toContain("bun run engines:generate");
@@ -1544,13 +1631,16 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
     expect(frozen(BUNDLED_STATEMENT_LANGUAGE_DATA)).toBe(true);
     expect(frozen(data)).toBe(true);
-    const copy = structuredClone(admitted("kafka"));
+    const copy = structuredClone(
+      planted("acmelang", (engine) => withStatementLanguageData(engine, ACME_LANGUAGE_DATA)),
+    );
     const copied = projectStatementLanguageData([copy]);
-    (copy.statementLanguageData as { name: string }).name = "acmeread";
-    expect(copied.kafka?.name).toBe("kafkaread");
+    (copy.statementLanguageData as { name: string }).name = "acmeedited";
+    expect(copied.acmelang?.name).toBe(ACME_LANGUAGE_DATA.name);
     // Two declarations of one engine id are refused by name, as every projection refuses them.
-    expect(() => projectStatementLanguageData([admitted("kafka"), admitted("kafka")])).toThrow(
-      'The engine id "kafka" is declared twice.',
+    const languaged = planted("acmelang", (engine) => withStatementLanguageData(engine, ACME_LANGUAGE_DATA));
+    expect(() => projectStatementLanguageData([languaged, languaged])).toThrow(
+      'The engine id "acmelang" is declared twice.',
     );
   });
 
@@ -1893,14 +1983,19 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(readFileSync(editor, "utf8")).toBe(text);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
 
-      // Kafka's count query offer edited by hand in the generated query editor module is named, and only that module.
+      // A dialect's count query offer edited by hand in the generated query editor module is named, and only that
+      // module.
       const queryEditor = path.join(dir, "query-editor.generated.ts");
       const queryEditorText = readFileSync(queryEditor, "utf8");
-      const kafkaRow = /^ {2}kafka: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(queryEditorText)?.[0] ?? "";
-      expect(kafkaRow).toContain("offersCountQuery: false,");
+      const uncounted = uncountedDialectDeclaration().editor.dialect?.name;
+      const dialectRow =
+        new RegExp(`^ {2}${uncounted}: Object\\.freeze\\(\\{$[\\s\\S]*?^ {2}\\}\\),$`, "m").exec(
+          queryEditorText,
+        )?.[0] ?? "";
+      expect(dialectRow).toContain("offersCountQuery: false,");
       writeFileSync(
         queryEditor,
-        queryEditorText.replace(kafkaRow, kafkaRow.replace("offersCountQuery: false,", "offersCountQuery: true,")),
+        queryEditorText.replace(dialectRow, dialectRow.replace("offersCountQuery: false,", "offersCountQuery: true,")),
       );
       const staleQueryEditor = run("--check", "--out", dir);
       expect(staleQueryEditor.exitCode).toBe(1);
@@ -2285,7 +2380,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
         return edited;
       };
-      const kafka = edit("kafka", (editor) => ({
+      // The dialect's subject is chosen by shape, never milvus, whose editor language this run edits.
+      const subject = uncountedDialectDeclaration(["milvus"]);
+      const dialect = subject.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
+      const counted = edit(subject.id, (editor) => ({
         ...editor,
         dialect: { ...(editor.dialect as NonNullable<typeof editor.dialect>), offersCountQuery: true },
       }));
@@ -2301,12 +2399,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const regenerated = admittedDeclarations(directory);
       const of = (id: string) => regenerated.find((d) => d.id === id);
       // The declaration generator writes both members back unchanged.
-      expect(of("kafka")).toEqual(kafka);
+      expect(of(subject.id)).toEqual(counted);
       expect(of("milvus")).toEqual(milvus);
       const queryEditorModule = readFileSync(path.join(copy.root, ENGINE_QUERY_EDITOR_MODULE), "utf8");
       expect(queryEditorModule).toBe(renderQueryEditorFacts(projectQueryEditorFacts(regenerated)));
       expect(queryEditorModule).toContain('milvus: Object.freeze({ accent: "border-hue-orange/40", console: true }),');
-      expect(projectQueryEditorFacts(regenerated).queryDialects.kafka?.offersCountQuery).toBe(true);
+      expect(projectQueryEditorFacts(regenerated).queryDialects[dialect.name]?.offersCountQuery).toBe(true);
       for (const generated of [
         ENGINE_CATALOG_MODULE,
         ENGINE_CONNECTION_MODULE,
@@ -2320,7 +2418,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         );
       }
       // Every other declaration is the committed one, byte for byte.
-      for (const declaration of ADMITTED.filter((d) => !["kafka", "milvus"].includes(d.id))) {
+      for (const declaration of ADMITTED.filter((d) => ![subject.id, "milvus"].includes(d.id))) {
         const name = `${declaration.id}.json`;
         expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
       }

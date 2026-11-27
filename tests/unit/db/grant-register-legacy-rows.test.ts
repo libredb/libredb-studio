@@ -185,26 +185,23 @@ describe("the legacy rows' SQL text members", () => {
     expect(rows.length).toBeGreaterThan(40);
   });
 
-  test("kafka's legacy row states the digest of its declaration's statement language data, with the review of the boundary it reviewed", () => {
-    const kafka = legacyRows().find((row) => row.engine === "kafka") as RegisterRow;
-    const data = declaredLanguageData("kafka");
-    if (data === null) throw new Error("kafka's declaration states no statement language data");
+  test("a legacy row whose declaration states statement language data grants that language with a review note on its digest, and every other row states neither", () => {
+    const rows = legacyRows();
+    const stating = rows.filter(({ engine }) => declaredLanguageData(engine) !== null);
 
-    expect(kafka.grants.languageSha256).toBe(languageDataSha256(data));
-    expect(kafka.grants.statementLanguage).toBe(data.name);
-    // The review note is the read boundary the Kafka agent execution design review verified, which the data's one
-    // engine-neutral descriptor no longer states.
-    const note = kafka.reasons?.languageSha256 ?? "";
-    expect(note.startsWith("Kafka: the provider's structural closed table: one read of a closed table of four")).toBe(
-      true,
-    );
-    expect(note).toContain("every answer is projected to names, counts and offsets");
-    expect(note.endsWith("a result past the byte budget is refused, never truncated.")).toBe(true);
-    // Every other row states no language digest and no note on it: no other legacy declaration states data.
-    const others = legacyRows().filter((row) => row.engine !== "kafka");
-    expect(
-      others.filter((row) => row.grants.languageSha256 !== null || row.reasons?.languageSha256 !== undefined),
-    ).toEqual([]);
+    // A census pin: the legacy engines whose declaration states statement language data, a set that leaves with them.
+    expect(stating.map(({ engine }) => engine)).toEqual(["kafka"]);
+    for (const { engine, grants, reasons } of rows) {
+      const data = declaredLanguageData(engine);
+      expect({ engine, noted: reasons?.languageSha256 !== undefined }).toEqual({ engine, noted: data !== null });
+      if (data !== null) {
+        expect({ engine, statementLanguage: grants.statementLanguage }).toEqual({
+          engine,
+          statementLanguage: data.name,
+        });
+        expect({ engine, note: (reasons?.languageSha256 ?? "").length > 0 }).toEqual({ engine, note: true });
+      }
+    }
   });
 });
 

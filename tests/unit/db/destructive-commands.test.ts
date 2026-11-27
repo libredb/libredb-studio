@@ -346,24 +346,6 @@ describe("a code row's named operations (rowNamesAsked)", () => {
     expect(rowAsks(query, "prometheus")).toBe(false);
   });
 
-  // ── Kafka ────────────────────────────────────────────────────────────────
-
-  test.each<[string, string]>([
-    ["a read of a topic named like a SQL write", '{"topic": "delete", "from": "latest", "limit": 50}'],
-    ["the same, uppercased", '{"topic": "DROP", "from": "earliest"}'],
-    ["a topic named update, by offset", '{"topic": "update", "partition": 0, "from": {"offset": "120"}}'],
-    ["a topic named truncate, by timestamp", '{"topic": "truncate", "from": {"timestamp": "2026-09-23T00:00:00Z"}}'],
-    ["topics named insert and alter", '{"topic": "insert"} {"topic": "alter"}'],
-    ["SQL, which the parser refuses", "DELETE FROM orders"],
-    ["a request that never closes", '{"topic": "orders"'],
-    ["nothing at all", ""],
-  ])("names nothing for %s, because a Kafka read request can only read", (_label, query) => {
-    // Not "unreadable, so ask": whatever the text, the provider either parses it as one read of
-    // one topic's messages or refuses it before anything is sent, and it sends no request that
-    // writes (#1088, section 2).
-    expect(rowAsks(query, "kafka")).toBe(false);
-  });
-
   // ── Neo4j ────────────────────────────────────────────────────────────────
 
   test.each<[string, string]>([
@@ -511,12 +493,34 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.neo4j?.operations.size).toBe(0);
   });
 
-  test("names no Kafka operation, because a read request has none to name", () => {
-    // Not an omission: the editor text is one read request, and the provider refuses any key
-    // but the four it reads, so there is no operation a row could list. Kafka's row is compiled
-    // from its declaration's statement language data, so the code table holds none.
-    expect(Object.hasOwn(NON_SQL_DESTRUCTIVE_VOCABULARY, "kafka")).toBe(false);
-    expect(typeStatementLanguageRow("kafka")?.operations.size).toBe(0);
+  test("a row compiled from declared data whose reader names no operation names nothing and asks nothing typed, whatever the text, and the code table holds no row for its engine", () => {
+    // Not "unreadable, so ask": a reader that names no operation answers none for any text, a request named like a SQL
+    // write, SQL itself, a text that never closes and no text alike. The row is compiled from the engine's declaration,
+    // so the code table holds none.
+    const texts = [
+      '{"name": "delete", "limit": 50}',
+      '{"name": "DROP"}',
+      "DELETE FROM orders",
+      '{"name": "orders"',
+      "",
+    ];
+    const declared = SHIPPED_DATABASE_TYPES.filter((type) => {
+      const data = BUNDLED_STATEMENT_LANGUAGE_DATA[type];
+      return data !== null && data.confirmation.reader === "names-no-operation";
+    });
+    expect(declared.length).toBeGreaterThan(0);
+    for (const type of declared) {
+      expect({ type, coded: Object.hasOwn(NON_SQL_DESTRUCTIVE_VOCABULARY, type) }).toEqual({ type, coded: false });
+      expect({ type, operations: typeStatementLanguageRow(type)?.operations.size }).toEqual({ type, operations: 0 });
+      for (const text of texts) {
+        expect([type, text, rowAsks(text, type), vocabularyTypedConfirmation(type, text)]).toEqual([
+          type,
+          text,
+          false,
+          undefined,
+        ]);
+      }
+    }
   });
 
   // `readsSqlText` is the gate's other table. A type it reports as not SQL skips the SQL
@@ -551,17 +555,25 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
   });
 
   test("refuses a row from another language's family module, a row declared inline and a row from a family module other than destructive", () => {
+    // The row from a module other than destructive is keyed by the first shipped engine, in id order, granted a
+    // statement language and named by no other planted row: chosen by shape, so the case names no further engine.
+    const subject = SHIPPED_DATABASE_TYPES.find(
+      (type) => statementLanguage[type] !== null && !["mongodb", "prometheus", "neo4j", "etcd"].includes(type),
+    );
+    const language = subject === undefined ? null : statementLanguage[subject];
+    if (subject === undefined || language === null) throw new Error("no other shipped engine is granted a language");
+    const commandText = `@/${statementLanguageFamilyDirectory(language).replace(/^src\//, "")}/command-text`;
     const planted = ts.createSourceFile(
       "planted.ts",
       [
         'import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rediscli/destructive";',
-        'import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/command-text";',
+        `import { SUBJECT_DESTRUCTIVE_VOCABULARY } from "${commandText}";`,
         'import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/graph/cypher/destructive";',
         'import { ETCD_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/etcd/destructive";',
         "export const NON_SQL_DESTRUCTIVE_VOCABULARY = {",
         "  mongodb: MONGODB_DESTRUCTIVE_VOCABULARY,",
         "  prometheus: { operations: new Set() },",
-        "  kafka: KAFKA_DESTRUCTIVE_VOCABULARY,",
+        `  ${subject}: SUBJECT_DESTRUCTIVE_VOCABULARY,`,
         "  neo4j: NEO4J_DESTRUCTIVE_VOCABULARY,",
         "  etcd: ETCD_DESTRUCTIVE_VOCABULARY,",
         "};",
@@ -572,7 +584,7 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
     expect(rowsNotFromARowModule(planted)).toEqual([
       "mongodb @/lib/languages/rediscli/destructive",
       "prometheus inline",
-      "kafka @/lib/languages/kafkaread/command-text",
+      `${subject} ${commandText}`,
     ]);
   });
 
@@ -607,7 +619,6 @@ describe("vocabularyTypedConfirmation", () => {
     ["redis", "FLUSHALL"],
     ["mongodb", '{"collection":"users","operation":"deleteMany","filter":{}}'],
     ["prometheus", "up"],
-    ["kafka", '{"topic": "orders"}'],
     ["neo4j", "MATCH (n) DETACH DELETE n"],
   ])(
     "asks for nothing to be typed on %s, whose row declares no typed confirmation or which has no row",

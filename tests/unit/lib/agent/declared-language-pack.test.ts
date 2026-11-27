@@ -35,7 +35,6 @@ import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/stateme
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { admitDeclaredRequest, declaredRequestIdentity } from "@/lib/db/operations/declared-request-form";
 import { acmereadData, acmereadForm, acmereadMcp, acmereadText } from "../../../helpers/declared-agent-language";
-import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import { shippedStatementLanguages } from "../../../helpers/declared-language-census";
 
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
@@ -190,11 +189,14 @@ describe("the composer of a data-declared language", () => {
     expect(facet.words.reached).toBe(client.copy.reached);
     expect(issuesOf(facet.statementInput, "")).toEqual([["too_small", "statement cannot be empty"]]);
     expect(issuesOf(facet.statementInput, '{"read":"topics"}')).toEqual([]);
-    // Each member Studio fixes is what rabbitread's module states, and what the facet composed from Kafka's declared
-    // data holds, member for member.
-    const kafkaread = AGENT_LANGUAGE_MCP_FACETS[shippedDeclaredLanguage("kafkaread")];
-    if (kafkaread === null) throw new Error("kafka's declared data states no MCP statement tool");
-    for (const moduleFacet of [kafkaread, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
+    // Each member Studio fixes is what rabbitread's module states, and what the facet composed from another language's
+    // declared data holds, member for member: the out-of-tree fixture's listget, read from its manifest.
+    const fixture = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../../fixtures/out-of-tree-provider/libredb-provider.json"), "utf8"),
+    );
+    const listget = composeDeclaredMcpFacet(fixture.engines[0].statementLanguageData.agent);
+    if (listget === null) throw new Error("the fixture's listget states no MCP statement tool");
+    for (const moduleFacet of [listget, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
       for (const member of ["takesDatabase", "strictInput", "paging", "fence"] as const) {
         expect<{ member: string; value: unknown }>({ member, value: facet[member] }).toEqual({
           member,
@@ -280,9 +282,12 @@ describe("the composer of a data-declared language", () => {
       readFileSync(path.join(import.meta.dir, "../../../../packages/provider-sdk/src/manifest/manifest.schema.json")),
     );
     const engine = JSON.parse(
-      readFileSync(path.join(import.meta.dir, "../../../../src/lib/db/engine-declarations/kafka.json"), "utf8"),
-    );
-    engine.agent.statementLanguage = "acmeread";
+      readFileSync(
+        path.join(import.meta.dir, "../../../../packages/provider-sdk/tests/fixtures/minimal-manifest.json"),
+        "utf8",
+      ),
+    ).engines[0];
+    engine.agent = { statementLanguage: "acmeread", overlay: { dialect: null, grounding: null } };
     engine.statementLanguageData = acmereadData();
     expect(validator.validateEngine(engine).admitted).toBe(true);
     engine.statementLanguageData.agent.text.posture.title = ["Bounded to ", { fill: "allowed" }];
@@ -432,7 +437,25 @@ describe("the composer of a data-declared language", () => {
     expect(other.fingerprint('{"read":"topics"}')).not.toBe(fingerprint('{"read":"topics"}'));
   });
 
-  test("the declared statement languages are the projection's data, equal to the committed declarations', and hold kafkaread", () => {
+  test("the MCP facet the shipped registry serves for each bundled declared language is the one composed from its committed declaration", () => {
+    const declarations = shippedStatementLanguages().filter(({ source }) => source === "declaration");
+    let served = 0;
+    for (const { id } of DECLARED_AGENT_LANGUAGES) {
+      const declared = declarations.find(({ data }) => data.name === id);
+      if (declared?.data.agent == null) throw new Error(`no committed declaration states the agent part of ${id}`);
+      const composed = composeDeclaredMcpFacet(declared.data.agent);
+      const facet = AGENT_LANGUAGE_MCP_FACETS[id];
+      expect([id, facet === null ? null : servedShape(facet)]).toEqual([
+        id,
+        composed === null ? null : servedShape(composed),
+      ]);
+      if (facet !== null) served += 1;
+    }
+    // Vacuity: the registry serves some bundled declared language on MCP, so the census compares a facet.
+    expect(served).toBeGreaterThan(0);
+  });
+
+  test("the declared statement languages are the projection's data, equal to the committed declarations'", () => {
     const projected = Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null);
     // The projection is built from the committed declarations alone, so a provider package's language is not in it.
     expect(projected).toEqual(
@@ -440,6 +463,7 @@ describe("the composer of a data-declared language", () => {
         .filter(({ source }) => source === "declaration")
         .map(({ data }) => data),
     );
+    // A census pin: the languages the committed declarations state as data, a set that leaves with their engines.
     expect(projected.map(({ name }) => name)).toEqual(["kafkaread"]);
     // The registries compose exactly the projection's languages that state an agent part, in its order.
     expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toEqual(
@@ -457,6 +481,28 @@ function serverOf(text: AgentLanguageText) {
 /** The `[code, message]` of each issue `schema` finds in `value`, none where it admits the value. */
 function issuesOf(schema: z.ZodType, value: unknown): readonly (readonly [string, string])[] {
   return (schema.safeParse(value).error?.issues ?? []).map((issue) => [issue.code, issue.message] as const);
+}
+
+/**
+ * What an MCP facet serves, written out as data: its members by name, each function member read on fixed values, and
+ * its statement input's issues on a few values, so two facets compare member for member.
+ */
+function servedShape(facet: AgentLanguageMcpFacet) {
+  const { describe, statementInput, ...members } = facet;
+  const words =
+    facet.fence === "language-admission"
+      ? {
+          ...facet.words,
+          readPast: [facet.words.readPast(12, "max_rows", "x"), facet.words.readPast(12, "result_bytes", "y")],
+        }
+      : null;
+  return {
+    ...members,
+    members: Object.keys(facet).sort(),
+    describe: describe({ engines: "E", limits: "L" }),
+    statementInput: ["", "x", 5, null].map((value) => issuesOf(statementInput, value)),
+    words,
+  };
 }
 
 /** The MCP facet composed from the crafted agent part with its MCP texts `text`. */
