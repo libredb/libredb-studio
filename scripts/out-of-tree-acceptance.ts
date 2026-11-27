@@ -1456,7 +1456,7 @@ async function queryEngine(ctx: Context): Promise<string> {
     const refusedAnswer = await postJson(server, STUDIO.routes.query, { connection, sql: refused.statement }, cookie);
     assertNone(refusedProblems(refusedAnswer, refused));
     answered.push(
-      `"${refused.statement}" refused -> ${refusedAnswer.status} ${String(refusedAnswer.body.code)}: ${String(refusedAnswer.body.error)}`,
+      `"${refused.statement}" refused -> ${refusedAnswer.status} ${String(refusedAnswer.body.code)} ${JSON.stringify(refusedAnswer.body)}`,
     );
     // A field the engine's record does not offer is refused by name, read from the record.
     const first = (fixture.acceptance.statements[0] as Expectation).statement;
