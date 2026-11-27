@@ -437,6 +437,24 @@ describe("the composer of a data-declared language", () => {
     expect(other.fingerprint('{"read":"topics"}')).not.toBe(fingerprint('{"read":"topics"}'));
   });
 
+  test("the MCP facet the shipped registry serves for each bundled declared language is the one composed from its committed declaration", () => {
+    const declarations = shippedStatementLanguages().filter(({ source }) => source === "declaration");
+    let served = 0;
+    for (const { id } of DECLARED_AGENT_LANGUAGES) {
+      const declared = declarations.find(({ data }) => data.name === id);
+      if (declared?.data.agent == null) throw new Error(`no committed declaration states the agent part of ${id}`);
+      const composed = composeDeclaredMcpFacet(declared.data.agent);
+      const facet = AGENT_LANGUAGE_MCP_FACETS[id];
+      expect([id, facet === null ? null : servedShape(facet)]).toEqual([
+        id,
+        composed === null ? null : servedShape(composed),
+      ]);
+      if (facet !== null) served += 1;
+    }
+    // Vacuity: the registry serves some bundled declared language on MCP, so the census compares a facet.
+    expect(served).toBeGreaterThan(0);
+  });
+
   test("the declared statement languages are the projection's data, equal to the committed declarations'", () => {
     const projected = Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null);
     // The projection is built from the committed declarations alone, so a provider package's language is not in it.
@@ -463,6 +481,28 @@ function serverOf(text: AgentLanguageText) {
 /** The `[code, message]` of each issue `schema` finds in `value`, none where it admits the value. */
 function issuesOf(schema: z.ZodType, value: unknown): readonly (readonly [string, string])[] {
   return (schema.safeParse(value).error?.issues ?? []).map((issue) => [issue.code, issue.message] as const);
+}
+
+/**
+ * What an MCP facet serves, written out as data: its members by name, each function member read on fixed values, and
+ * its statement input's issues on a few values, so two facets compare member for member.
+ */
+function servedShape(facet: AgentLanguageMcpFacet) {
+  const { describe, statementInput, ...members } = facet;
+  const words =
+    facet.fence === "language-admission"
+      ? {
+          ...facet.words,
+          readPast: [facet.words.readPast(12, "max_rows", "x"), facet.words.readPast(12, "result_bytes", "y")],
+        }
+      : null;
+  return {
+    ...members,
+    members: Object.keys(facet).sort(),
+    describe: describe({ engines: "E", limits: "L" }),
+    statementInput: ["", "x", 5, null].map((value) => issuesOf(statementInput, value)),
+    words,
+  };
 }
 
 /** The MCP facet composed from the crafted agent part with its MCP texts `text`. */
