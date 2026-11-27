@@ -182,7 +182,9 @@ describe("the object model of every shipped engine", () => {
     expect(differing.length).toBeGreaterThan(0);
     for (const variant of Object.keys(VARIANTS)) expect(projections.some((p) => p.variant === variant)).toBe(true);
     // Vacuity: the shipped models state every container level list the level order rule admits, each one admitted.
-    const levelLists = new Set(projections.map(({ model }) => model.containerLevels.map((level) => level.id).join(",")));
+    const levelLists = new Set(
+      projections.map(({ model }) => model.containerLevels.map((level) => level.id).join(",")),
+    );
     expect([...levelLists].sort()).toEqual(["", "catalog", "catalog,schema", "schema"]);
   });
 
@@ -289,7 +291,9 @@ describe("the object model of every shipped engine", () => {
       `object-row-activation-duplicate at /objects/rowActions/${model.rowActions.length + 1}/activates`,
     ]);
     // The level order rule, planted by reversing a shipped two-level model: the schema then the catalog.
-    const twoLevels = projections.find(({ variant, model }) => variant === "census" && model.containerLevels.length === 2);
+    const twoLevels = projections.find(
+      ({ variant, model }) => variant === "census" && model.containerLevels.length === 2,
+    );
     if (twoLevels === undefined) throw new Error("no shipped engine states two container levels");
     const reversed = copy(twoLevels.model);
     reversed.containerLevels = [...twoLevels.model.containerLevels].reverse() as ObjectModel["containerLevels"];
