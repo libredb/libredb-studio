@@ -1,9 +1,10 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, each engine's
- * SQL text, SQL writing, migration DDL and SQL generator forms, and each engine's policy, MCP, connection and agent
- * mode claim requests as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses
- * M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83).
+ * SQL text, SQL writing, migration DDL and SQL generator forms, each engine's policy, MCP, connection and agent mode
+ * claim requests, and each engine's statement language data as projections of a set of admitted engine declarations
+ * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82, M-83 and
+ * M-85).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -74,6 +75,12 @@
  * which src/lib/db/claim-grants.ts states (clauses M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the evidence the write reach
  * request summarizes, is authored with them and never projected: no gate reads it.
  *
+ * The statement language data answers, per engine, its whole `statementLanguageData` as the declaration states it, or
+ * null where it states none (clause M-85): the confirmation row the gate compiles from it, and the request form, text
+ * and MCP statement tool the agent's registries compose its language from. Its claims count only through the engine's
+ * grants: the row's decides-alone only where the record grants it, and the language only where the engine's register
+ * row reviewed the digest of exactly this data (clause M-87), so a reader never reads the data as granted.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
  * policy, MCP, connection and agent mode claims, which only the grant reader reads, and the confirmation gate's two,
@@ -92,10 +99,10 @@
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
  * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`, `query-editor.generated.ts`,
- * `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts`, `sql-generators.generated.ts` and
- * `claims.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the set it
- * admits through the SDK's validator. A loader that admits a provider package at run time projects its set through
- * these same functions.
+ * `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts`, `sql-generators.generated.ts`,
+ * `claims.generated.ts` and `statement-language.generated.ts`, the modules Studio's readers read, and holds each
+ * module to the projection of the set it admits through the SDK's validator. A loader that admits a provider package
+ * at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
@@ -113,6 +120,7 @@ import type {
   SqlGenerators,
   SqlText,
   SqlWriting,
+  StatementLanguageData,
 } from "@libredb/provider-sdk/manifest";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
@@ -155,6 +163,7 @@ export interface AuthoredDeclaration {
   };
   readonly facets: FacetClaims;
   readonly agent: AgentClaims;
+  readonly statementLanguageData: StatementLanguageEntry;
   readonly editor: {
     readonly commitKeyword: Editor["commitKeyword"];
     readonly consentDeadline: Editor["consentDeadline"];
@@ -255,6 +264,15 @@ export interface ClaimRequestEntry {
 
 /** The claim requests: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type ClaimRequests = Readonly<Record<string, ClaimRequestEntry>>;
+
+/**
+ * One engine's statement language data as its declaration authors it, the SDK's `StatementLanguageData`: its
+ * confirmation row's data and its agent part, or null where the engine states none.
+ */
+export type StatementLanguageEntry = StatementLanguageData;
+
+/** The statement language data: one frozen entry per engine id, null included, keyed in ascending code-unit order. */
+export type StatementLanguageDatas = Readonly<Record<string, StatementLanguageEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -762,5 +780,18 @@ export function projectClaimRequests(declarations: readonly AuthoredDeclaration[
       facets: { agentReadings: facets.agentReadings },
       agent: { statementLanguage: agent.statementLanguage },
     }),
+  );
+}
+
+/**
+ * The statement language data of `declarations`, each entry the declaration's `statementLanguageData` as it states it,
+ * a member every declaration authors, null where it states none, so the record holds every admitted id, in its own
+ * member order at every level.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectStatementLanguageData(declarations: readonly AuthoredDeclaration[]): StatementLanguageDatas {
+  return recordOf(inIdOrder(declarations), ({ statementLanguageData }) =>
+    frozenCopy<StatementLanguageEntry>(statementLanguageData),
   );
 }

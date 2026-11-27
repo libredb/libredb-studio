@@ -122,7 +122,6 @@ const HANDOVER_CHIPS: Readonly<Record<AgentModuleLanguageId, readonly HandoverCh
   etcdctl: [],
   oxiacli: [],
   rabbitread: [],
-  kafkaread: [],
   s3api: [],
   fsquery: [],
   snmpget: [],

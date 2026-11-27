@@ -1,7 +1,8 @@
 /**
  * A crafted statement language an engine declares as data, `acmeread`, for the tests of the agent's composer and of the
  * registries that hold a data-declared language (src/lib/agent/languages/declared-client.ts, declared-server.ts,
- * declared-mcp.ts). No shipped declaration states agent data yet, so these tests read this one.
+ * declared-mcp.ts). Its data is read in place of a shipped declaration's wherever a test plants a language, so this
+ * module loads no registry of Studio's: tests/helpers/shipped-declared-language.ts names a shipped declared language.
  *
  * Every string of its text carries a marker generated at run time, so an assertion that finds a text in a composed
  * member finds the declared text and nothing else by accident; each text Studio fills a value into names its fills as

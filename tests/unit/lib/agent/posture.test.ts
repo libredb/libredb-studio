@@ -664,7 +664,10 @@ describe("what a language pack supplies to the posture", () => {
     const modules = readdirSync(LANGUAGES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && entry.name !== "engines")
       .map((entry) => entry.name);
-    expect([...modules].sort()).toEqual([...LANGUAGES].sort());
+    // Every language has a pack module but one a declaration states as data, which has no module of its own.
+    const dataDeclared = new Set<string>(clientPacks.DECLARED_AGENT_LANGUAGES.map(({ id }) => id));
+    expect(dataDeclared.size).toBeGreaterThan(0);
+    expect([...modules].sort()).toEqual(LANGUAGES.filter((language) => !dataDeclared.has(language)).sort());
     for (const language of modules) {
       const source = readFileSync(join(LANGUAGES_DIR, language, "client.ts"), "utf8");
       expect(source, language).not.toMatch(/from "(?:\.\.\/\.\.\/|@\/lib\/agent\/)posture"/);

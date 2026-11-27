@@ -58,6 +58,13 @@ function agentLeg(type: string, language: string): Record<string, string> {
   };
 }
 
+/** The declaration of `type` (src/lib/db/engine-declarations/<type>.json), stating `data` as its statement language data. */
+function declaration(type: string, data: { readonly name: string } | null): Record<string, string> {
+  return {
+    [`src/lib/db/engine-declarations/${type}.json`]: `${JSON.stringify({ id: type, statementLanguageData: data })}\n`,
+  };
+}
+
 function without(files: Record<string, string>, ...removed: string[]): Record<string, string> {
   return Object.fromEntries(Object.entries(files).filter(([file]) => !removed.includes(file)));
 }
@@ -273,32 +280,65 @@ describe("a package serves one type-id", () => {
 });
 
 describe("the agent leg", () => {
-  const kafka = legacyTriad("kafka", "src/lib/db/providers/stream/kafka/index.ts");
-  const overlay = "src/lib/agent/languages/kafkaread/engines/kafka.ts";
-  const client = "src/lib/agent/languages/kafkaread/engines/client.ts";
+  const redis = {
+    ...legacyTriad("redis", "src/lib/db/providers/keyvalue/redis.ts"),
+    ...declaration("redis", null),
+  };
+  const overlay = "src/lib/agent/languages/rediscli/engines/redis.ts";
+  const client = "src/lib/agent/languages/rediscli/engines/client.ts";
 
   test("refuses a legacy provider without its overlay module", () => {
-    expect(refusal(root({ ...kafka, [client]: CODE }), "kafka")).toContain(overlay);
+    expect(refusal(root({ ...redis, [client]: CODE }), "redis")).toContain(overlay);
   });
 
   test("refuses a legacy provider without its language's client overlays module", () => {
-    expect(refusal(root({ ...kafka, [overlay]: CODE }), "kafka")).toContain(client);
+    expect(refusal(root({ ...redis, [overlay]: CODE }), "redis")).toContain(client);
   });
 
   test("resolves a legacy provider with both", () => {
-    const made = root({ ...kafka, ...agentLeg("kafka", "kafkaread") });
-    const engines = path.join(made, "src", "lib", "agent", "languages", "kafkaread", "engines");
+    const made = root({ ...redis, ...agentLeg("redis", "rediscli") });
+    const engines = path.join(made, "src", "lib", "agent", "languages", "rediscli", "engines");
 
-    expect(providerTriad(made, "kafka").agent).toEqual({
-      overlay: path.join(engines, "kafka.ts"),
+    expect(providerTriad(made, "redis").agent).toEqual({
+      overlay: path.join(engines, "redis.ts"),
       client: path.join(engines, "client.ts"),
     });
   });
 
-  test("refuses a provider package whose type-id speaks a statement language", () => {
-    const message = refusal(root({ ...providerPackage("kafka"), ...agentLeg("kafka", "kafkaread") }), "kafka");
+  test("refuses a legacy provider that speaks a statement language with no declaration to read it from", () => {
+    const message = refusal(root({ ...legacyTriad("redis", "src/lib/db/providers/keyvalue/redis.ts") }), "redis");
 
-    for (const part of ["kafka", "kafkaread", "no place for its agent leg"]) expect(message).toContain(part);
+    expect(message).toContain("src/lib/db/engine-declarations/redis.json is missing");
+  });
+
+  test("refuses a provider package whose type-id speaks a statement language", () => {
+    const message = refusal(root({ ...providerPackage("redis"), ...agentLeg("redis", "rediscli") }), "redis");
+
+    for (const part of ["redis", "rediscli", "no place for its agent leg"]) expect(message).toContain(part);
+  });
+});
+
+describe("the agent leg of a statement language declared as data", () => {
+  const kafka = {
+    ...legacyTriad("kafka", "src/lib/db/providers/stream/kafka/index.ts"),
+    ...declaration("kafka", { name: "kafkaread" }),
+  };
+
+  test("resolves with no agent leg, its overlay being its declaration's", () => {
+    expect(providerTriad(root(kafka), "kafka").agent).toBeNull();
+  });
+
+  test("refuses, by name, an overlay module or a client overlays module left for the declared language", () => {
+    for (const leg of [
+      "src/lib/agent/languages/kafkaread/engines/kafka.ts",
+      "src/lib/agent/languages/kafkaread/engines/client.ts",
+    ]) {
+      const message = refusal(root({ ...kafka, [leg]: CODE }), "kafka");
+
+      expect(message).toBe(
+        `kafka declares kafkaread as data, so ${leg} has no place: the change that writes a language as data deletes its agent leg.`,
+      );
+    }
   });
 });
 

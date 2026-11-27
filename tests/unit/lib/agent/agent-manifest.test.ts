@@ -26,6 +26,7 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import {
   legacyRegisterEngines,
   legacyRegisterTable,
@@ -161,7 +162,7 @@ describe("AGENT_LANGUAGE_COPY", () => {
 
 describe("the plan-estimate operation of each language", () => {
   test("names each language's plan operation, and null where a language has no plan", () => {
-    expect(AGENT_PLAN_ESTIMATE_OPERATION).toEqual({
+    expect<Readonly<Record<string, unknown>>>(AGENT_PLAN_ESTIMATE_OPERATION).toEqual({
       sql: "sql.explain.estimate",
       kubectl: null,
       mongo: "mongo.plan.estimate",
@@ -175,7 +176,6 @@ describe("the plan-estimate operation of each language", () => {
       etcdctl: null,
       oxiacli: null,
       rabbitread: null,
-      kafkaread: null,
       s3api: null,
       fsquery: null,
       snmpget: null,
@@ -186,6 +186,7 @@ describe("the plan-estimate operation of each language", () => {
       mtconnectread: null,
       mqttread: null,
       sparkplugread: null,
+      kafkaread: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });
@@ -857,7 +858,7 @@ describe("workflowAvailability", () => {
     if (!open.open) throw new Error("refused");
     expect(persistedRunFacts(mode, "operations", "kafka", open)).toEqual({
       engine: "kafka",
-      statementLanguage: "kafkaread",
+      statementLanguage: shippedDeclaredLanguage("kafkaread"),
     });
   });
 

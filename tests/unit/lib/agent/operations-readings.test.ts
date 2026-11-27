@@ -23,6 +23,7 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
 /**
  * The curated readings agent mode is offered (FND-4 slice 3): `inspect_operations` offers each run exactly the kinds
@@ -65,7 +66,7 @@ const OFFERED: readonly (readonly [DatabaseType, AgentRunRecord["statementLangua
   ["spark", undefined, ["health"]],
   ["duckdb", undefined, ["table-stats", "index-stats", "storage", "health"]],
   ["postgres", undefined, [...CURATED_OPERATION_KINDS]],
-  ["kafka", "kafkaread", ["health"]],
+  ["kafka", shippedDeclaredLanguage("kafkaread"), ["health"]],
 ];
 
 describe("the inspect_operations definition a run is offered", () => {

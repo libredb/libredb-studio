@@ -30,6 +30,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { withRecordingHostCore } from "../../helpers/recording-host-core";
+import { shippedDeclaredLanguage, shippedDeclaredMcpTool } from "../../helpers/shipped-declared-language";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
@@ -43,8 +44,8 @@ pinMcpTestEnvironment();
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-kafka-"));
 const serve = handlerServe(testAuthInfo());
-const server = languageServer("kafkaread");
-const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const server = languageServer(shippedDeclaredLanguage("kafkaread"));
+const RUN_KAFKA_READ_ARM = mcpStatementArm(shippedDeclaredMcpTool("kafkaread"));
 const HOST = "advertised-broker.internal";
 const PORT = 29_093;
 /** A seed is plain data; this one names a broker the fake client stands in for. */

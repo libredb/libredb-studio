@@ -13,7 +13,6 @@ import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages
 import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
 import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
 import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
-import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
 import { fingerprintS3api, s3apiRowCapAdvice } from "@/lib/agent/languages/s3api/adapter";
 import { fingerprintFsquery, fsqueryRowCapAdvice } from "@/lib/agent/languages/fsquery/adapter";
 import { fingerprintSnmpget, snmpgetRowCapAdvice } from "@/lib/agent/languages/snmpget/adapter";
@@ -76,12 +75,9 @@ import {
   rabbitreadAgentReadInput,
 } from "@/lib/db/operations/rabbitread-admission";
 import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
-import {
-  admitKafkareadStatement,
-  KAFKAREAD_AGENT_MAX_STATEMENT_CHARS,
-  kafkareadAgentReadInput,
-} from "@/lib/db/operations/kafkaread-admission";
-import { KAFKA_AGENT_SENTENCES } from "@/lib/languages/kafkaread/agent-statement";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import {
   admitS3apiStatement,
   S3API_AGENT_MAX_STATEMENT_CHARS,
@@ -1103,7 +1099,18 @@ describe("the rabbitread language's server adapter and admission", () => {
 });
 
 describe("the kafkaread language's server adapter and admission", () => {
+  // Kafka's language is declared as data: its adapter and its descriptor are composed from its declaration's data, and
+  // its sentences are the provider reader's, which the declared form states word for word.
+  const KAFKAREAD = shippedDeclaredLanguage("kafkaread");
   const READ = '{"read": "offsets", "topic": "orders", "limit": 5}';
+  const MAX_STATEMENT_CHARS = 4096;
+  const fingerprintKafkaread = (text: string) => languageServer(KAFKAREAD).fingerprint(text);
+  const admitKafkareadStatement = (text: string) => languageServer(KAFKAREAD).admit?.(text);
+  const kafkareadAgentReadInput = (() => {
+    const resolution = createCanonicalOperationRegistry().resolve("kafkaread.query.read");
+    if (resolution.kind !== "resolved") throw new Error("kafkaread.query.read is not registered");
+    return resolution.descriptor.inputSchema;
+  })();
 
   test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
     const one = fingerprintKafkaread(READ);
@@ -1122,11 +1129,11 @@ describe("the kafkaread language's server adapter and admission", () => {
   });
 
   test("a read answers one row per topic, broker or partition, and the advice names the limit and the cursor", () => {
-    expect(AGENT_LANGUAGE_COPY.kafkaread.adviceKeys).toEqual([]);
-    expect(kafkareadRowCapAdvice(READ, "2")).toBe(
+    expect(AGENT_LANGUAGE_COPY[KAFKAREAD].adviceKeys).toEqual([]);
+    expect(languageServer(KAFKAREAD).rowCapAdvice(READ, "2")).toBe(
       'Ask for at most 2 rows: a read answers one row per topic, broker or partition, up to its "limit", so write "limit": 2 or less, and read on with "after" set to the last name or id you read.',
     );
-    expect(languageServer("kafkaread").shapeAdvice).toContain("a valid read request");
+    expect(languageServer(KAFKAREAD).shapeAdvice).toContain("a valid read request");
   });
 
   test("the admission is the provider's reader, plus a length the agent's contract names", () => {
@@ -1136,21 +1143,20 @@ describe("the kafkaread language's server adapter and admission", () => {
       code: "metadata-only",
       message: KAFKA_AGENT_SENTENCES.notARead,
     });
-    const long = JSON.stringify({ read: "topics", after: "a".repeat(KAFKAREAD_AGENT_MAX_STATEMENT_CHARS) });
+    const long = JSON.stringify({ read: "topics", after: "a".repeat(MAX_STATEMENT_CHARS) });
     expect(admitKafkareadStatement(long)).toEqual({
       code: "agent-too-large",
-      message: `The read request is longer than ${KAFKAREAD_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+      message: `The read request is longer than ${MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
     });
-    expect(languageServer("kafkaread").admit?.(READ)).toBeNull();
   });
 
   test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
-    const ungrounded = languageServerPack("kafkaread").grounding.ungrounded;
+    const ungrounded = languageServerPack(KAFKAREAD).grounding.ungrounded;
     expect(ungrounded?.("The capture failed.", { singular: "topic", plural: "topics" })).toBe(
       'The capture failed.\nSo nothing about this cluster has been established for you: not one topic name. List the topics with run_read_query, {"read": "topics"}; answers carry names, counts and offsets only.',
     );
-    expect(languageServerPack("kafkaread").grounding.planningRules).toBeUndefined();
-    expect(languageServerPack("kafkaread").grounding.omissionAdvice).toContain("by its partitions and offsets only");
+    expect(languageServerPack(KAFKAREAD).grounding.planningRules).toBeUndefined();
+    expect(languageServerPack(KAFKAREAD).grounding.omissionAdvice).toContain("by its partitions and offsets only");
   });
 
   test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
@@ -1163,8 +1169,8 @@ describe("the kafkaread language's server adapter and admission", () => {
   });
 
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
-    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.kafkaread).sort()).toEqual(["investigation", "operations"]);
-    expect(AGENT_WORKFLOW_VARIANTS.kafkaread.investigation?.canAutoExecute).toBe(false);
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS[KAFKAREAD]).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS[KAFKAREAD].investigation?.canAutoExecute).toBe(false);
   });
 });
 

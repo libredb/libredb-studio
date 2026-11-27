@@ -47,6 +47,7 @@ import {
   ENGINE_SQL_GENERATORS_MODULE,
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
+  ENGINE_STATEMENT_LANGUAGE_MODULE,
   renderCatalog,
   renderClaimRequests,
   renderConnectionFlags,
@@ -59,6 +60,7 @@ import {
   renderSqlGenerators,
   renderSqlText,
   renderSqlWriting,
+  renderStatementLanguageData,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
@@ -86,6 +88,7 @@ import {
 import { BUNDLED_SQL_GENERATORS } from "@/lib/db/engine-catalog/sql-generators.generated";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
 import { BUNDLED_SQL_WRITING } from "@/lib/db/engine-catalog/sql-writing.generated";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import {
   type ConnectionFormEntry,
   type ConnectionForms,
@@ -102,6 +105,7 @@ import {
   projectSqlGenerators,
   projectSqlText,
   projectSqlWriting,
+  projectStatementLanguageData,
 } from "@/lib/db/engine-catalog/projection";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
 import type { DatabaseType, QueryTab } from "@/lib/types";
@@ -1509,6 +1513,47 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_CLAIM_REQUESTS)).toBe(true);
   });
 
+  test("the statement language projection holds each declaration's statement language data, Kafka's and null for every other engine", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_STATEMENT_LANGUAGE_MODULE), "utf8");
+    const data = projectStatementLanguageData(ADMITTED);
+
+    expect(committed).toBe(renderStatementLanguageData(data));
+    expect<unknown>(BUNDLED_STATEMENT_LANGUAGE_DATA).toEqual(data);
+    // A record total over the type ids, null for every engine that states none.
+    expect(Object.keys(BUNDLED_STATEMENT_LANGUAGE_DATA)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    const stating = Object.entries(BUNDLED_STATEMENT_LANGUAGE_DATA).filter(([, entry]) => entry !== null);
+    expect(stating.map(([id]) => id)).toEqual(["kafka"]);
+    // Kafka's row is its declaration's member as the file states it, in its own member order.
+    const kafka = JSON.parse(readFileSync(path.join(DIRECTORY, "kafka.json"), "utf8")).statementLanguageData;
+    expect(kafka?.name).toBe("kafkaread");
+    expect(JSON.stringify(BUNDLED_STATEMENT_LANGUAGE_DATA.kafka)).toBe(JSON.stringify(kafka));
+    expect(JSON.stringify(data.kafka)).toBe(JSON.stringify(admitted("kafka").statementLanguageData));
+    // The same answer for the declarations in any order.
+    expect(JSON.stringify(projectStatementLanguageData([...ADMITTED].reverse()))).toBe(JSON.stringify(data));
+    expect(committed).toContain("bun run engines:generate");
+    expect(committed).toContain("  postgres: null,");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_STATEMENT_LANGUAGE_DATA",
+    ]);
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_STATEMENT_LANGUAGE_DATA)).toBe(true);
+    expect(frozen(data)).toBe(true);
+    const copy = structuredClone(admitted("kafka"));
+    const copied = projectStatementLanguageData([copy]);
+    (copy.statementLanguageData as { name: string }).name = "acmeread";
+    expect(copied.kafka?.name).toBe("kafkaread");
+    // Two declarations of one engine id are refused by name, as every projection refuses them.
+    expect(() => projectStatementLanguageData([admitted("kafka"), admitted("kafka")])).toThrow(
+      'The engine id "kafka" is declared twice.',
+    );
+  });
+
   test("the claim requests module checks its record against the entry type with satisfies, so each request keeps its literal type", () => {
     const rendered = renderClaimRequests(projectClaimRequests(ADMITTED));
 
@@ -1691,8 +1736,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const migrationDdl = path.join(dir, "migration-ddl.generated.ts");
       const sqlGenerators = path.join(dir, "sql-generators.generated.ts");
       const claims = path.join(dir, "claims.generated.ts");
+      const statementLanguage = path.join(dir, "statement-language.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\nWrote ${migrationDdl}\nWrote ${sqlGenerators}\nWrote ${claims}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\nWrote ${migrationDdl}\nWrote ${sqlGenerators}\nWrote ${claims}\nWrote ${statementLanguage}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -1700,7 +1746,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n${migrationDdl} is up to date\n${sqlGenerators} is up to date\n${claims} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n${migrationDdl} is up to date\n${sqlGenerators} is up to date\n${claims} is up to date\n${statementLanguage} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -1821,6 +1867,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_MIGRATION_DDL_MODULE,
         ENGINE_SQL_GENERATORS_MODULE,
         ENGINE_CLAIMS_MODULE,
+        ENGINE_STATEMENT_LANGUAGE_MODULE,
       ]) {
         expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -2523,6 +2570,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_SQL_TEXT_MODULE,
         ENGINE_SQL_WRITING_MODULE,
         ENGINE_CLAIMS_MODULE,
+        ENGINE_STATEMENT_LANGUAGE_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -2688,6 +2736,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_MIGRATION_DDL_MODULE,
         ENGINE_SQL_GENERATORS_MODULE,
         ENGINE_CLAIMS_MODULE,
+        ENGINE_STATEMENT_LANGUAGE_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),

@@ -6,9 +6,9 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 
 /**
  * The generated connection tables, the generated editor record, the generated query editor records, the generated
- * SQL text, SQL writing, migration DDL and SQL generator records and the generated claim requests: frozen literals and
- * type imports only, so loading one loads nothing else. The query editor module imports nothing, since its records carry
- * no annotation.
+ * SQL text, SQL writing, migration DDL and SQL generator records, the generated claim requests and the generated
+ * statement language data: frozen literals and type imports only, so loading one loads nothing else. The query editor
+ * module imports nothing, since its records carry no annotation.
  */
 const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
@@ -22,6 +22,7 @@ const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/migration-ddl.generated.ts",
   "src/lib/db/engine-catalog/sql-generators.generated.ts",
   "src/lib/db/engine-catalog/claims.generated.ts",
+  "src/lib/db/engine-catalog/statement-language.generated.ts",
 ] as const;
 
 /**

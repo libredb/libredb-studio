@@ -2,9 +2,9 @@
  * Core's agent admission and composer of a statement language an engine declares as data read the language's data
  * alone: the engine-neutral admission (src/lib/db/operations/declared-request-form.ts), the generic read descriptor
  * builder (src/lib/db/operations/declared-language-read.ts), the composer of the language's client, server and MCP
- * facets (src/lib/agent/languages/declared-client.ts, declared-server.ts, declared-mcp.ts) and the list of the
- * declared languages' data (src/lib/db/declared-statement-languages.ts) reach, by value import, no module of any
- * statement language and no provider module. A language's module is one under src/lib/languages/<language>/ or
+ * facets (src/lib/agent/languages/declared-client.ts, declared-server.ts, declared-mcp.ts) and the projection of the
+ * declared languages' data (src/lib/db/engine-catalog/statement-language.generated.ts) reach, by value import, no
+ * module of any statement language and no provider module. A language's module is one under src/lib/languages/<language>/ or
  * src/lib/agent/languages/<language>/, or its admission src/lib/db/operations/<language>-admission.ts; the languages
  * are read from the tree, joined by every language a shipped declaration states data for and by a crafted one, so the
  * check names each of today's language modules and still holds once a language's modules are gone.
@@ -21,7 +21,7 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 const ENTRIES = [
   "src/lib/db/operations/declared-request-form.ts",
   "src/lib/db/operations/declared-language-read.ts",
-  "src/lib/db/declared-statement-languages.ts",
+  "src/lib/db/engine-catalog/statement-language.generated.ts",
   "src/lib/agent/languages/declared-client.ts",
   "src/lib/agent/languages/declared-server.ts",
   "src/lib/agent/languages/declared-mcp.ts",
@@ -71,6 +71,9 @@ describe("the agent admission's imports", () => {
   test("the agent admission and the composer import no module of a statement language some engine declares as data", () => {
     const languages = statementLanguages();
     expect(languages).toContain("acmeread");
+    // Kafka's language is read from its shipped declaration's data alone: no module of it is left in the tree.
+    expect(shippedLanguageData().map((data) => data.name)).toContain("kafkaread");
+    expect(subdirectories("src/lib/agent/languages")).not.toContain("kafkaread");
     expect(languages).toContain("kafkaread");
 
     for (const entry of ENTRIES) {
@@ -80,8 +83,8 @@ describe("the agent admission's imports", () => {
     }
 
     // The control: a language's own admission reaches its language module, so the check is not vacuous.
-    expect(languageModulesReached("src/lib/db/operations/kafkaread-admission.ts", languages)).toContain(
-      "src/lib/languages/kafkaread/agent-statement.ts",
+    expect(languageModulesReached("src/lib/db/operations/oxiacli-admission.ts", languages)).toContain(
+      "src/lib/languages/oxiacli/agent-statement.ts",
     );
   });
 });

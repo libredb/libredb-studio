@@ -51,6 +51,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { snapshotDiff, snapshotLines } from "./kafka-snapshot";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+import { shippedDeclaredMcpTool } from "../helpers/shipped-declared-language";
 
 // An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
 installHostCore(createHostCore(), "test");
@@ -83,7 +84,7 @@ const DATA_TOPICS = ["orders", "payroll", "app-orders", "app-audit"] as const;
 const PLATFORM_TOPICS = ["_schemas", "_confluent-metrics", "connect-configs", "connect-offsets", "connect-status"];
 const MISSING = "missing-mcp-read";
 
-const RUN_KAFKA_READ = mcpStatementArm("run_kafka_read");
+const RUN_KAFKA_READ = mcpStatementArm(shippedDeclaredMcpTool("kafkaread"));
 const UNFENCED: McpStatementArm = { ...RUN_KAFKA_READ, fence: () => null };
 
 function run(command: string, args: readonly string[], input?: string): { code: number; out: string } {

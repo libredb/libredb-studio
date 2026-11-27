@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { composeEstimatingExplain } from "@/lib/agent/composed-sql";
-import { languageClientPack } from "@/lib/agent/languages/client";
-import { engineClientPack, enginesSupporting } from "@/lib/agent/languages/engines/client";
+import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "@/lib/agent/languages/client";
+import { engineClientPack, engineFamily, enginesSupporting } from "@/lib/agent/languages/engines/client";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
-import { engineServerDialect, engineServerOverlay } from "@/lib/agent/languages/engines/server";
+import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
+import { agentLanguagePack } from "@/lib/agent/languages/index";
 import * as INFLUXQL_CLIENT_OVERLAYS from "@/lib/agent/languages/influxql/engines/client";
 import * as INFLUXDB from "@/lib/agent/languages/influxql/engines/influxdb";
 import { INFLUXQL_PACK } from "@/lib/agent/languages/influxql/index";
@@ -31,9 +34,6 @@ import { OXIACLI_PACK } from "@/lib/agent/languages/oxiacli/index";
 import * as RABBITREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/rabbitread/engines/client";
 import * as RABBITMQ from "@/lib/agent/languages/rabbitread/engines/rabbitmq";
 import { RABBITREAD_PACK } from "@/lib/agent/languages/rabbitread/index";
-import * as KAFKAREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/kafkaread/engines/client";
-import * as KAFKA from "@/lib/agent/languages/kafkaread/engines/kafka";
-import { KAFKAREAD_PACK } from "@/lib/agent/languages/kafkaread/index";
 import * as S3API_CLIENT_OVERLAYS from "@/lib/agent/languages/s3api/engines/client";
 import * as S3 from "@/lib/agent/languages/s3api/engines/s3";
 import { S3API_PACK } from "@/lib/agent/languages/s3api/index";
@@ -102,6 +102,7 @@ import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
 const statementLanguage = legacyStatementLanguageTable();
 
@@ -173,8 +174,6 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "oxiacli/engines/client": OXIACLI_CLIENT_OVERLAYS,
   "rabbitread/engines/rabbitmq": RABBITMQ,
   "rabbitread/engines/client": RABBITREAD_CLIENT_OVERLAYS,
-  "kafkaread/engines/kafka": KAFKA,
-  "kafkaread/engines/client": KAFKAREAD_CLIENT_OVERLAYS,
   "s3api/engines/s3": S3,
   "s3api/engines/client": S3API_CLIENT_OVERLAYS,
   "fsquery/engines/firestore": FIRESTORE,
@@ -298,7 +297,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(78);
+    expect(exported).toHaveLength(76);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -355,6 +354,27 @@ describe("the engine registry", () => {
 });
 
 describe("the engine packs", () => {
+  test("kafka, whose language is declared as data, holds no overlay row, and its engine pack is its declared family's pack itself", () => {
+    // Its granted language is the one its declaration states as data, composed by the registries, not a module's.
+    const kafkaread = shippedDeclaredLanguage("kafkaread");
+    expect(statementLanguage.kafka).toBe(kafkaread);
+    expect(DECLARED_AGENT_LANGUAGES.some(({ id }) => id === kafkaread)).toBe(true);
+    expect(existsSync(path.join(import.meta.dir, "../../../../src/lib/agent/languages/kafkaread"))).toBe(false);
+    // No overlay row: the family is its grant, the client facet and the pack are the family's own objects, and the
+    // server overlay is empty, so the server facet one run reads is the family's own.
+    expect(engineFamily("kafka")).toBe(kafkaread);
+    expect(engineClientPack("kafka")).toBe(languageClientPack(kafkaread));
+    expect(agentEnginePack("kafka")).toBe(agentLanguagePack(kafkaread));
+    expect(Object.keys(engineServerOverlay("kafka"))).toEqual([]);
+    expect(runServerPack(kafkaread, "kafka")).toBe(languageServerPack(kafkaread));
+    expect(enginesSupporting("catalogRead")).not.toContain("kafka");
+    // A name that is no engine, and a type with no language, are refused exactly as before.
+    expect(engineFamily("toString" as DatabaseType)).toBeNull();
+    expect(engineFamily("bigquery")).toBeNull();
+    expect(() => engineClientPack("bigquery")).toThrow(new Error("no engine pack for bigquery"));
+    expect(() => agentEnginePack("bigquery")).toThrow(new Error("no engine pack for bigquery"));
+  });
+
   test("an engine whose overlays are empty is its family's pack itself", () => {
     expect(agentEnginePack("mongodb")).toBe(MONGO_PACK);
     expect(agentEnginePack("kubernetes")).toBe(KUBECTL_PACK);
@@ -370,7 +390,6 @@ describe("the engine packs", () => {
     expect(agentEnginePack("etcd")).toBe(ETCDCTL_PACK);
     expect(agentEnginePack("oxia")).toBe(OXIACLI_PACK);
     expect(agentEnginePack("rabbitmq")).toBe(RABBITREAD_PACK);
-    expect(agentEnginePack("kafka")).toBe(KAFKAREAD_PACK);
     expect(agentEnginePack("s3")).toBe(S3API_PACK);
     expect(agentEnginePack("firestore")).toBe(FSQUERY_PACK);
     expect(agentEnginePack("snmp")).toBe(SNMPGET_PACK);

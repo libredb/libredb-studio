@@ -12,6 +12,7 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { codeText } from "../../helpers/comment-text";
@@ -109,8 +110,12 @@ describe("the string literals of MCP's own sources and statement facets", () => 
 
   test("the scan reads the MCP context and every declared statement facet", () => {
     expect(sources).toContain("src/lib/mcp/context.ts");
+    // A language an engine's declaration states as data has no facet module: its texts are data, which the served
+    // texts above read as MCP serves them.
+    const dataDeclared = new Set<string>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id));
+    expect(dataDeclared.size).toBeGreaterThan(0);
     const declared = Object.entries(AGENT_LANGUAGE_MCP_FACETS)
-      .filter(([, facet]) => facet !== null)
+      .filter(([language, facet]) => facet !== null && !dataDeclared.has(language))
       .map(([language]) => `src/lib/agent/languages/${language}/mcp.ts`);
     expect(declared.length).toBeGreaterThan(0);
     for (const file of declared) expect(sources).toContain(file);

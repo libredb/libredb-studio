@@ -21,7 +21,6 @@ import { DECLARED_AGENT_LANGUAGES } from "./client";
 import { CYPHER_MCP_FACET } from "./cypher/mcp";
 import { declaredMcpFacets } from "./declared-mcp";
 import { ETCDCTL_MCP_FACET } from "./etcdctl/mcp";
-import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MILVUSRPC_MCP_FACET } from "./milvusrpc/mcp";
@@ -124,7 +123,6 @@ const MODULE_MCP_FACETS = Object.freeze({
   // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
   oxiacli: null,
   rabbitread: RABBITREAD_MCP_FACET,
-  kafkaread: KAFKAREAD_MCP_FACET,
   s3api: S3API_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Firestore until a change of its own declares one and opens it.
   fsquery: null,

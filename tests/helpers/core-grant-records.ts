@@ -49,7 +49,11 @@ export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     removedBy: [
       {
         milestone: "M7",
-        readers: ["src/components/agent/AgentRail.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
+        readers: [
+          "src/components/agent/AgentRail.tsx",
+          "src/lib/agent/languages/client.ts",
+          "src/lib/agent/posture.ts",
+        ],
       },
     ],
   },

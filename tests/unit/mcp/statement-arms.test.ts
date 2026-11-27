@@ -47,6 +47,7 @@ import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { legacyRegisterTable, legacyStatementLanguageTable } from "../../helpers/legacy-register";
+import { shippedDeclaredLanguage, shippedDeclaredMcpTool } from "../../helpers/shipped-declared-language";
 
 const statementRead = legacyRegisterTable("statementRead");
 const statementLanguage = legacyStatementLanguageTable();
@@ -58,7 +59,7 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
-const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const RUN_KAFKA_READ_ARM = mcpStatementArm(shippedDeclaredMcpTool("kafkaread"));
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
@@ -797,7 +798,7 @@ describe("the etcdctl arm", () => {
 });
 
 describe("the Kafka arm", () => {
-  const server = languageServer("kafkaread");
+  const server = languageServer(shippedDeclaredLanguage("kafkaread"));
   const topics = '{"read": "topics"}';
 
   test("takes one read request, no offset and no database, and sends it as written", () => {

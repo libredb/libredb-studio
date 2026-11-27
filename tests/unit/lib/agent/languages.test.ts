@@ -4,6 +4,7 @@ import {
   AGENT_PLAN_ESTIMATE_OPERATION,
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
+  type AgentModuleLanguageId,
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
 import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
@@ -15,6 +16,7 @@ import {
   AGENT_PACK_SHORTFALL_SENTENCES,
   evidenceEventSpec,
   agentLanguageOfGrant,
+  grantedAgentStatementLanguage,
   isPackEvidenceEvent,
   languageClientPack,
   projectClientPacks,
@@ -34,9 +36,11 @@ import { OPERATIONS_TOOL_RULE } from "@/lib/agent/languages/shared";
 import { LANGUAGE_READING_REFUSAL_TEXT } from "@/lib/agent/languages/refusals";
 import { LANGUAGE_GOAL_RULES } from "@/lib/agent/languages/verifiers";
 import { READING_REFUSAL_TEXT, UNAVAILABLE_TEXT } from "@/lib/agent/tool-contracts";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "@/lib/agent/workflow-tool-sets";
 import type { AgentArtifactReference, AgentReadingDenyCode, AgentRunEvent } from "@/lib/agent/types";
+import type { DatabaseType } from "@/lib/types";
 
 /**
  * The language packs (#1821): the shared tables the core and the packs build together.
@@ -117,8 +121,8 @@ describe("the refusal tables", () => {
   });
 });
 
-/* Total over the language ids, so the compiler fails here when a language is added without a row. */
-const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
+/* Total over the module language ids, so the compiler fails here when a module language is added without a row. */
+const MODULE_LANGUAGE_IDS: Readonly<Record<AgentModuleLanguageId, true>> = {
   sql: true,
   kubectl: true,
   mongo: true,
@@ -132,7 +136,6 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   etcdctl: true,
   oxiacli: true,
   rabbitread: true,
-  kafkaread: true,
   s3api: true,
   fsquery: true,
   snmpget: true,
@@ -143,6 +146,12 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   mtconnectread: true,
   mqttread: true,
   sparkplugread: true,
+};
+
+/** Every language id: the module languages, then each language a shipped declaration states as data, kafkaread. */
+const LANGUAGE_IDS: Readonly<Record<string, true>> = {
+  ...MODULE_LANGUAGE_IDS,
+  [shippedDeclaredLanguage("kafkaread")]: true,
 };
 
 describe("the server packs", () => {
@@ -281,7 +290,6 @@ describe("the language packs", () => {
       "etcdctl",
       "oxiacli",
       "rabbitread",
-      "kafkaread",
       "s3api",
       "fsquery",
       "snmpget",
@@ -292,6 +300,7 @@ describe("the language packs", () => {
       "mtconnectread",
       "mqttread",
       "sparkplugread",
+      "kafkaread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -444,7 +453,6 @@ describe("the prompt tables the packs hold", () => {
       "etcdctl",
       "oxiacli",
       "rabbitread",
-      "kafkaread",
       "s3api",
       "fsquery",
       "snmpget",
@@ -455,6 +463,7 @@ describe("the prompt tables the packs hold", () => {
       "mtconnectread",
       "mqttread",
       "sparkplugread",
+      "kafkaread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -560,7 +569,6 @@ describe("the client packs", () => {
         "etcdctl",
         "oxiacli",
         "rabbitread",
-        "kafkaread",
         "s3api",
         "fsquery",
         "snmpget",
@@ -571,6 +579,7 @@ describe("the client packs", () => {
         "mtconnectread",
         "mqttread",
         "sparkplugread",
+        "kafkaread",
       ]);
     }
   });
@@ -578,7 +587,7 @@ describe("the client packs", () => {
   test("a language with no plan keeps its key in the plan projection, with null as its value", () => {
     expect(Object.hasOwn(AGENT_PLAN_ESTIMATE_OPERATION, "kubectl")).toBe(true);
     expect(AGENT_PLAN_ESTIMATE_OPERATION.kubectl).toBeNull();
-    expect(projectClientPacks(() => null)).toEqual({
+    expect<Readonly<Record<string, null>>>(projectClientPacks(() => null)).toEqual({
       sql: null,
       kubectl: null,
       mongo: null,
@@ -592,7 +601,6 @@ describe("the client packs", () => {
       etcdctl: null,
       oxiacli: null,
       rabbitread: null,
-      kafkaread: null,
       s3api: null,
       fsquery: null,
       snmpget: null,
@@ -603,6 +611,7 @@ describe("the client packs", () => {
       mtconnectread: null,
       mqttread: null,
       sparkplugread: null,
+      kafkaread: null,
     });
   });
 
@@ -617,6 +626,13 @@ describe("the client packs", () => {
         `acme is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
       );
     }
+  });
+
+  test("a type's granted agent statement language is its grant read as the agent's language, and null for a type granted none and for a name that is no own key", () => {
+    expect(grantedAgentStatementLanguage("mongodb")).toBe("mongo");
+    expect(grantedAgentStatementLanguage("kafka")).toBe(shippedDeclaredLanguage("kafkaread"));
+    expect(grantedAgentStatementLanguage("bigquery")).toBeNull();
+    expect(grantedAgentStatementLanguage("toString" as DatabaseType)).toBeNull();
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

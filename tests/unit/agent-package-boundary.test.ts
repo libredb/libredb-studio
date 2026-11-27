@@ -312,7 +312,6 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/industrial/sparkplug/agent-surface.ts",
   "src/lib/languages/influxql/agent-statement.ts",
   "src/lib/languages/oxiacli/agent-statement.ts",
-  "src/lib/languages/kafkaread/agent-statement.ts",
 ]);
 
 // ---------------------------------------------------------------------------

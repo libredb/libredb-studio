@@ -15,6 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentRequestForm, StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { admitDeclaredRequest, type DeclaredRequestRefusal } from "@/lib/db/operations/declared-request-form";
+import { readKafkaAgentStatement } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 
 /** What a provider's reader answers for one request: admitted, or refused with a code and a sentence. */
 export type ProviderReading =
@@ -30,8 +31,83 @@ export interface ReaderEnrollment {
   readonly corpus: readonly string[];
 }
 
+/**
+ * The requests Kafka's read request form is read over: the Kafka reader tests' own requests, and the cross product of
+ * every key's values, admitted and refused, each written twice, with its keys in order and compact, and with its keys
+ * reversed and spaced, so a request is read in more than one spelling. Built in code, never read from a file.
+ */
+export function kafkareadCorpus(): readonly string[] {
+  const corpus = new Set<string>([
+    '{"read": "topics"}',
+    '{"read": "topics", "after": "orders", "limit": 7}',
+    '{"read":"brokers"}',
+    '{"read":"brokers","after":0,"limit":2}',
+    '{"read": "partitions", "topic": "orders"}',
+    '{"read": "offsets", "topic": "a.b_c-1", "after": 3, "limit": 500}',
+    '{"read": "offsets", "topic": "orders", "after": 1, "limit": 2, "from": "earliest"}',
+    "  \n",
+    "",
+    "topics",
+    '["topics"]',
+    "null",
+    '"topics"',
+    '{"read": "topics"} {"read": "brokers"}',
+    '{"topic": "orders"}',
+    '{"read": "topics", "read": "offsets", "topic": "orders"}',
+    '{"read": "offsets", "topic": "a", "t\\u006fpic": "b"}',
+    '{"read": "topics", "after": "a"}',
+    '{"read": "partitions", "topic": "__Consumer_offsets"}',
+    "not json",
+    '{"read": "topics", "extra-key": 1}',
+    '{"__proto__": 1, "read": "topics"}',
+    '{"read": "topics", "constructor": 1}',
+    '{"read": "topics", "limit": 1e400}',
+    '{"read": "topics", "limit": -0}',
+    '{"read": "topics", "limit": 5.0}',
+    '{"limit":5,"topic":"orders","read":"offsets"}',
+    '{"read": "offsets", "topic": "orders", "limit": 5}',
+    '{"read": "offsets", "topic": "orders", "limit": 50}',
+    "{}",
+    "[]",
+    "1",
+    "true",
+    " ",
+    '{"read": "t\u00f6pics"}',
+    '{"read": "brokers", "after": "\\ud800"}',
+    "x".repeat(4096),
+    JSON.stringify({ read: "topics", after: "a".repeat(4000) }),
+  ]);
+  const reads = ["topics", "brokers", "partitions", "offsets", "records", "", 1, null, true, ["topics"], { a: 1 }];
+  const topics = [
+    ...[undefined, ".", "..", "...", "", "a b", "a/b", "\u00e9", "x".repeat(249), "x".repeat(250), 7, null],
+    ...[["o"], { n: "o" }, "__consumer_offsets", "__transaction_state", "__share_group_state", "__Consumer_offsets"],
+    ...["_schemas", "connect-configs", "orders_", "Connect-orders", "connector-logs", "orders", "\u{1F600}"],
+  ];
+  const afters = [undefined, "orders", "a b", "_schemas", 0, 3, -1, 1.5, 2147483647, 2147483648, "3", null, ".", ".."];
+  const limits = [undefined, 0, 1, 50, 500, 501, -1, 1.5, "5", null, true];
+  for (const read of [...reads, undefined])
+    for (const topic of topics)
+      for (const after of afters)
+        for (const limit of limits) {
+          const request = Object.fromEntries(
+            Object.entries({ read, topic, after, limit }).filter(([, value]) => value !== undefined),
+          );
+          corpus.add(JSON.stringify(request));
+          corpus.add(JSON.stringify(Object.fromEntries(Object.entries(request).reverse()), null, 1));
+        }
+  return [...corpus];
+}
+
+/** Kafka's own reader of a request, the one its provider reads before it sends anything, as the census reads it. */
+function kafkaReader(text: string): ProviderReading {
+  const reading = readKafkaAgentStatement(text);
+  return reading.ok ? { ok: true } : { ok: false, code: reading.code, message: reading.message };
+}
+
 /** Each language a shipped declaration states an agent part for, by name: its reader and its corpus. */
-export const READER_ENROLLMENTS: ReadonlyMap<string, ReaderEnrollment> = new Map();
+export const READER_ENROLLMENTS: ReadonlyMap<string, ReaderEnrollment> = new Map([
+  ["kafkaread", { reader: kafkaReader, corpus: kafkareadCorpus() }],
+]);
 
 const DECLARATIONS = path.join(import.meta.dir, "../../src/lib/db/engine-declarations");
 

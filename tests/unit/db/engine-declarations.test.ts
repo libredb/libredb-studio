@@ -88,6 +88,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
+import { providerTriad } from "../../helpers/provider-layout";
 import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
@@ -107,6 +108,7 @@ import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import * as claimGrants from "@/lib/db/claim-grants";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
@@ -492,24 +494,24 @@ const LANGUAGE_ENGINES: readonly (readonly [DatabaseType, AgentStatementLanguage
 
 /**
  * Each engine's agent server overlay as its own module exports it, the module found by the agent leg's triad path
- * (`src/lib/agent/languages/<family>/engines/<type-id>.ts`, the rule tests/helpers/provider-layout.ts checks) and
- * imported by its absolute path, never through the registry the generator reads: every agent overlay slot the census's
- * slot table names is resolved on this overlay. Only the engines that speak a statement language have one.
+ * (`src/lib/agent/languages/<family>/engines/<type-id>.ts`, which tests/helpers/provider-layout.ts resolves and checks)
+ * and imported by its absolute path, never through the registry the generator reads: every agent overlay slot the
+ * census's slot table names is resolved on this overlay. Only the engines that speak a module language have one: an
+ * engine whose declaration states its language as data keeps no agent leg.
  */
 const MODULE_AGENT_OVERLAYS: ReadonlyMap<DatabaseType, unknown> = new Map(
   await Promise.all(
-    LANGUAGE_ENGINES.map(
-      async ([type, family]) =>
-        [
-          type,
-          (
-            (await import(path.join(ROOT, `src/lib/agent/languages/${family}/engines/${type}.ts`))) as Record<
-              string,
-              unknown
-            >
-          )[`${type.toUpperCase()}_SERVER_OVERLAY`],
-        ] as const,
-    ),
+    LANGUAGE_ENGINES.flatMap(([type]) => {
+      const leg = providerTriad(ROOT, type).agent;
+      if (leg === null) return [];
+      return [
+        (async () =>
+          [
+            type,
+            ((await import(leg.overlay)) as Record<string, unknown>)[`${type.toUpperCase()}_SERVER_OVERLAY`],
+          ] as const)(),
+      ];
+    }),
   ),
 );
 
@@ -1483,19 +1485,25 @@ describe("the committed declarations", () => {
     );
   });
 
-  test("every legacy declaration states its statement language data as null, which no projection reads", () => {
+  test("every declaration states its statement language data, Kafka's as data and every other as null, and only the statement language module projects it", () => {
     const stating = SHIPPED_DATABASE_TYPES.filter((type) => declared(type).statementLanguageData !== null);
     const lacking = SHIPPED_DATABASE_TYPES.filter((type) => !Object.hasOwn(declared(type), "statementLanguageData"));
 
     expect(lacking).toEqual([]);
-    expect(stating).toEqual([]);
-    // No generated module of the engine catalog names the member, so nothing projects it.
+    expect(stating).toEqual(["kafka"]);
+    // One generated module of the engine catalog projects the member, each engine's row the member as declared.
     const catalog = path.join(ROOT, "src/lib/db/engine-catalog");
     const generated = readdirSync(catalog).filter((file) => file.endsWith(".generated.ts"));
     const projecting = generated.filter((file) =>
-      readFileSync(path.join(catalog, file), "utf8").includes("statementLanguageData"),
+      readFileSync(path.join(catalog, file), "utf8").includes("StatementLanguageEntry"),
     );
-    expect(projecting).toEqual([]);
+    expect(projecting).toEqual(["statement-language.generated.ts"]);
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect({ type, data: BUNDLED_STATEMENT_LANGUAGE_DATA[type] }).toEqual({
+        type,
+        data: declared(type).statementLanguageData,
+      });
+    }
     // Vacuity: the catalog's generated modules are read.
     expect(generated).toContain("claims.generated.ts");
   });
@@ -2324,7 +2332,10 @@ describe("the census", () => {
     };
 
     expect(SHIPPED_DATABASE_TYPES.filter(differs)).toEqual([]);
-    expect(MODULE_AGENT_OVERLAYS.size).toBe(LANGUAGE_ENGINES.length);
+    // Every engine that speaks a language has a module overlay but Kafka, whose language its declaration states as data.
+    expect([...MODULE_AGENT_OVERLAYS.keys()]).toEqual(
+      LANGUAGE_ENGINES.map(([type]) => type).filter((t) => t !== "kafka"),
+    );
     expect(SHIPPED_DATABASE_TYPES.length).toBeGreaterThan(LANGUAGE_ENGINES.length);
   });
 

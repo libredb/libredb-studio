@@ -30,7 +30,6 @@ import { REDISCLI_SERVER_PACK } from "./rediscli/server";
 import { ETCDCTL_SERVER_PACK } from "./etcdctl/server";
 import { OXIACLI_SERVER_PACK } from "./oxiacli/server";
 import { RABBITREAD_SERVER_PACK } from "./rabbitread/server";
-import { KAFKAREAD_SERVER_PACK } from "./kafkaread/server";
 import { S3API_SERVER_PACK } from "./s3api/server";
 import { FSQUERY_SERVER_PACK } from "./fsquery/server";
 import { SNMPGET_SERVER_PACK } from "./snmpget/server";
@@ -68,7 +67,6 @@ const MODULE_SERVER_PACKS = Object.freeze({
   etcdctl: ETCDCTL_SERVER_PACK,
   oxiacli: OXIACLI_SERVER_PACK,
   rabbitread: RABBITREAD_SERVER_PACK,
-  kafkaread: KAFKAREAD_SERVER_PACK,
   s3api: S3API_SERVER_PACK,
   fsquery: FSQUERY_SERVER_PACK,
   snmpget: SNMPGET_SERVER_PACK,
@@ -139,7 +137,6 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     ETCDCTL_SERVER_PACK.baseDefinitions,
     OXIACLI_SERVER_PACK.baseDefinitions,
     RABBITREAD_SERVER_PACK.baseDefinitions,
-    KAFKAREAD_SERVER_PACK.baseDefinitions,
     S3API_SERVER_PACK.baseDefinitions,
     FSQUERY_SERVER_PACK.baseDefinitions,
     SNMPGET_SERVER_PACK.baseDefinitions,
@@ -180,7 +177,6 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   etcdctl: ETCDCTL_SERVER_PACK.workflowToolRules,
   oxiacli: OXIACLI_SERVER_PACK.workflowToolRules,
   rabbitread: RABBITREAD_SERVER_PACK.workflowToolRules,
-  kafkaread: KAFKAREAD_SERVER_PACK.workflowToolRules,
   s3api: S3API_SERVER_PACK.workflowToolRules,
   fsquery: FSQUERY_SERVER_PACK.workflowToolRules,
   snmpget: SNMPGET_SERVER_PACK.workflowToolRules,
@@ -213,7 +209,6 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     ETCDCTL_SERVER_PACK.shortfallNotices,
     OXIACLI_SERVER_PACK.shortfallNotices,
     RABBITREAD_SERVER_PACK.shortfallNotices,
-    KAFKAREAD_SERVER_PACK.shortfallNotices,
     S3API_SERVER_PACK.shortfallNotices,
     FSQUERY_SERVER_PACK.shortfallNotices,
     SNMPGET_SERVER_PACK.shortfallNotices,

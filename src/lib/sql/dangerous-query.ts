@@ -2,7 +2,7 @@
 // the VS Code extension's child answers `query/target` with its verdict.
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { assertDatabaseType, quoteTypeId } from "@/lib/db/type-id";
-import { codeStatementLanguageRow } from "@/lib/db/destructive-commands";
+import { typeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { type GateGrants, rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
@@ -686,11 +686,11 @@ const NO_CONNECTION_GRANTS: GateGrants = Object.freeze({
 });
 
 /**
- * The reading of `databaseType`, a connection type the browser and the by-type readers name: Studio's code row of the
- * type (`codeStatementLanguageRow`), the type's grammar, the grants Studio holds for the engine from its register row
- * (`legacyEngineGrants` in `@/lib/db/claim-grants`), each read on this call, and the grammar's declared explain value.
- * No type at all reads the no-connection grammar with no row and no claim that loosens the gate. A value that is not a
- * type id is refused by name before anything is read.
+ * The reading of `databaseType`, a connection type the browser and the by-type readers name: the type's statement
+ * language row (`typeStatementLanguageRow`), compiled from its declared data or Studio's code row, the type's grammar,
+ * the grants Studio holds for the engine from its register row (`legacyEngineGrants` in `@/lib/db/claim-grants`), each
+ * read on this call, and the grammar's declared explain value. No type at all reads the no-connection grammar with no
+ * row and no claim that loosens the gate. A value that is not a type id is refused by name before anything is read.
  *
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
@@ -707,7 +707,7 @@ export function readingOfType(databaseType?: DatabaseType): StatementReading {
   assertDatabaseType(databaseType);
   return {
     engine: databaseType,
-    row: codeStatementLanguageRow(databaseType),
+    row: typeStatementLanguageRow(databaseType),
     grammar: resolveSqlGrammar(databaseType),
     grants: legacyEngineGrants(databaseType),
     explainReading: "declared",

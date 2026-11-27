@@ -125,11 +125,6 @@ type RabbitreadOperationId =
   /** One RabbitMQ stream read the model wrote, on a `rabbitmq` connection; see `rabbitreadQueryReadDescriptor`. */
   "rabbitread.query.read";
 
-/** The kafkaread request language's operation: its one read. */
-type KafkareadOperationId =
-  /** One Kafka metadata read the model wrote, on a `kafka` connection; see `kafkareadQueryReadDescriptor`. */
-  "kafkaread.query.read";
-
 /** The fsquery statement language's operation: its one read. */
 type FsqueryOperation =
   /** One Firestore metadata read the model wrote, on a `firestore` connection; see `fsqueryQueryReadDescriptor`. */
@@ -198,7 +193,6 @@ export interface AgentFamilyOperationIds {
   readonly etcdctl: EtcdctlOperationId;
   readonly oxiacli: OxiacliOperationId;
   readonly rabbitread: RabbitreadOperationId;
-  readonly kafkaread: KafkareadOperationId;
   readonly s3api: S3apiOperation;
   readonly fsquery: FsqueryOperation;
   readonly snmpget: SnmpgetOperation;
@@ -267,8 +261,6 @@ export interface AgentFamilyVerifierIds {
   readonly oxiacli: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly rabbitread: never;
-  /** None: its workflows are judged by the core's own rules. */
-  readonly kafkaread: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly s3api: never;
   /** None: its workflows are judged by the core's own rules. */
@@ -572,7 +564,6 @@ export interface AgentFamilyEvidenceTools {
   readonly etcdctl: never;
   readonly oxiacli: never;
   readonly rabbitread: never;
-  readonly kafkaread: never;
   readonly s3api: never;
   readonly fsquery: never;
   readonly snmpget: never;
@@ -603,7 +594,6 @@ export interface AgentFamilyReadingDenyCodes {
   readonly etcdctl: never;
   readonly oxiacli: never;
   readonly rabbitread: never;
-  readonly kafkaread: never;
   readonly s3api: never;
   readonly fsquery: never;
   readonly snmpget: never;
@@ -634,7 +624,6 @@ export interface AgentFamilyShortfalls {
   readonly etcdctl: never;
   readonly oxiacli: never;
   readonly rabbitread: never;
-  readonly kafkaread: never;
   readonly s3api: never;
   readonly fsquery: never;
   readonly snmpget: never;
@@ -665,7 +654,6 @@ export interface AgentFamilyVariantRequirements {
   readonly etcdctl: never;
   readonly oxiacli: never;
   readonly rabbitread: never;
-  readonly kafkaread: never;
   readonly s3api: never;
   readonly fsquery: never;
   readonly snmpget: never;
@@ -730,7 +718,6 @@ export interface AgentFamilyEvidenceEvents {
   readonly etcdctl: never;
   readonly oxiacli: never;
   readonly rabbitread: never;
-  readonly kafkaread: never;
   readonly s3api: never;
   readonly fsquery: never;
   readonly snmpget: never;
@@ -902,9 +889,13 @@ export type MemberOverride<V> =
 /** What an overlay may give of a facet: any of its members, each as a `MemberOverride`. Read by `defineOverlay`. */
 export type FacetOverrides<Facet> = { readonly [K in keyof Facet]?: MemberOverride<Facet[K]> };
 
-/** The engines that speak a statement language: those whose generated claim request names one, as its literal type. */
+/**
+ * The engines that speak a module language: those whose generated claim request names a language that is a module of
+ * Studio's (`AgentModuleLanguageId`), as its literal type. An engine whose language its declaration states as data
+ * has no overlay row: it reads its family's facets themselves.
+ */
 export type AgentEngineType = {
-  [T in DatabaseType]: StatementLanguageRequest<T> extends null ? never : T;
+  [T in DatabaseType]: StatementLanguageRequest<T> extends AgentModuleLanguageId ? T : never;
 }[DatabaseType];
 
 /** The statement language an engine speaks, its family: its generated claim request's language, as its literal type. */
@@ -965,7 +956,6 @@ export interface AgentFamilyDialectRows {
   etcdctl: { client: Record<never, never>; server: Record<never, never> };
   oxiacli: { client: Record<never, never>; server: Record<never, never> };
   rabbitread: { client: Record<never, never>; server: Record<never, never> };
-  kafkaread: { client: Record<never, never>; server: Record<never, never> };
   s3api: { client: Record<never, never>; server: Record<never, never> };
   fsquery: { client: Record<never, never>; server: Record<never, never> };
   snmpget: { client: Record<never, never>; server: Record<never, never> };

@@ -57,7 +57,7 @@ import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { EngineDeclaration, GrammarFacts } from "@libredb/provider-sdk/manifest";
-import { codeStatementLanguageRow, consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { consoleTextByteLimit, typeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { rowTextByteLimit } from "@/lib/db/statement-language-row";
 import { readingOfRecord, readingOfType } from "@/lib/sql/dangerous-query";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
@@ -342,15 +342,16 @@ describe("one engine record for every engine", () => {
   });
 
   test("an engine record offers no statementVocabulary and no consoleTextBound; its console bound is its statement language row's", () => {
-    // A legacy record holds Studio's code row of its id, by identity, and the gate reads it as the reading of the type.
+    // A legacy record holds its type's row, compiled from its declared data or Studio's code row of its id, by
+    // identity, and the gate reads it as the reading of the type.
     for (const id of declaredIds()) {
       assertDatabaseType(id);
       const type: DatabaseType = id;
       const engine = servedRecord(id);
       expect(engine.offers).not.toHaveProperty("statementVocabulary");
       expect(engine.offers).not.toHaveProperty("consoleTextBound");
-      expect([id, engine.statementLanguageRow]).toEqual([id, codeStatementLanguageRow(type)]);
-      expect(engine.statementLanguageRow).toBe(codeStatementLanguageRow(type));
+      expect([id, engine.statementLanguageRow]).toEqual([id, typeStatementLanguageRow(type)]);
+      expect(engine.statementLanguageRow).toBe(typeStatementLanguageRow(type));
       expect([id, rowTextByteLimit(engine.statementLanguageRow)]).toEqual([id, consoleTextByteLimit(type)]);
       expect(engine.explainReading).toBe("declared");
       const byRecord = readingOfRecord(engine);

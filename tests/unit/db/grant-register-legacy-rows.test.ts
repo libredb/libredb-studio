@@ -26,7 +26,7 @@ import {
   SQL_NAME_QUOTES,
   STATEMENT_LANGUAGE_NAME_FORM,
 } from "@/lib/db/claim-grants";
-import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
+import { typeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { languageDataSha256 } from "@/lib/db/language-digest";
 import {
@@ -37,6 +37,7 @@ import {
 } from "@/lib/provider-host/providers-lock-format";
 import { LEGACY_ENGINE_IDS, LEGACY_SOURCE_NAME } from "@/lib/provider-host/legacy-adapter/identity";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
+import type { DatabaseType } from "@/lib/types";
 import { namingPattern } from "../../../scripts/isolation-ratchet";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -97,13 +98,13 @@ const oneSentence = (note: string | undefined): boolean =>
 /**
  * What is wrong with `row`'s confirmation claims: each must be the one its engine's shipped rows make, text-not-SQL
  * exactly where its declaration states `readsSqlText: false`, its declaration's exempt forms, and decides-alone exactly
- * where its statement vocabulary row decides alone; and each claim it makes carries a one-sentence review note, which
+ * where its statement language row decides alone, the row compiled from its declared data or its code row; and each claim it makes carries a one-sentence review note, which
  * a member it does not claim lacks.
  */
 function confirmationClaimProblems(row: RegisterRow): string[] {
   const { engine, grants, reasons = {} } = row;
   const declared = declaredSqlText(engine);
-  const vocabulary = (NON_SQL_DESTRUCTIVE_VOCABULARY as Readonly<Record<string, { decidesAlone?: boolean }>>)[engine];
+  const vocabulary = typeStatementLanguageRow(engine as DatabaseType);
   const claims = [
     ["readsSqlText", !grants.readsSqlText, !declared.readsSqlText],
     ["decidesAlone", grants.decidesAlone, vocabulary?.decidesAlone === true],
@@ -182,6 +183,28 @@ describe("the legacy rows' SQL text members", () => {
     // Vacuity: the walk read every engine the legacy adapter serves.
     expect(rows).toHaveLength(LEGACY_ENGINE_IDS.length);
     expect(rows.length).toBeGreaterThan(40);
+  });
+
+  test("kafka's legacy row states the digest of its declaration's statement language data, with the review of the boundary it reviewed", () => {
+    const kafka = legacyRows().find((row) => row.engine === "kafka") as RegisterRow;
+    const data = declaredLanguageData("kafka");
+    if (data === null) throw new Error("kafka's declaration states no statement language data");
+
+    expect(kafka.grants.languageSha256).toBe(languageDataSha256(data));
+    expect(kafka.grants.statementLanguage).toBe(data.name);
+    // The review note is the read boundary the Kafka agent execution design review verified, which the data's one
+    // engine-neutral descriptor no longer states.
+    const note = kafka.reasons?.languageSha256 ?? "";
+    expect(note.startsWith("Kafka: the provider's structural closed table: one read of a closed table of four")).toBe(
+      true,
+    );
+    expect(note).toContain("every answer is projected to names, counts and offsets");
+    expect(note.endsWith("a result past the byte budget is refused, never truncated.")).toBe(true);
+    // Every other row states no language digest and no note on it: no other legacy declaration states data.
+    const others = legacyRows().filter((row) => row.engine !== "kafka");
+    expect(
+      others.filter((row) => row.grants.languageSha256 !== null || row.reasons?.languageSha256 !== undefined),
+    ).toEqual([]);
   });
 });
 

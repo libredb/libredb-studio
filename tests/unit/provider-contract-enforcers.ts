@@ -1128,7 +1128,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "no statement language data refusal carries the name or the operation it refuses",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
-        "every legacy declaration states its statement language data as null, which no projection reads",
+        "every declaration states its statement language data, Kafka's as data and every other as null, and only the statement language module projects it",
       ],
     },
     schema: [

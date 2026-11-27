@@ -29,7 +29,6 @@ import { REDIS_SERVER_OVERLAY } from "../rediscli/engines/redis";
 import { ETCD_SERVER_OVERLAY } from "../etcdctl/engines/etcd";
 import { OXIA_SERVER_OVERLAY } from "../oxiacli/engines/oxia";
 import { RABBITMQ_SERVER_OVERLAY } from "../rabbitread/engines/rabbitmq";
-import { KAFKA_SERVER_OVERLAY } from "../kafkaread/engines/kafka";
 import { S3_SERVER_OVERLAY } from "../s3api/engines/s3";
 import { FIRESTORE_SERVER_OVERLAY } from "../fsquery/engines/firestore";
 import { SNMP_SERVER_OVERLAY } from "../snmpget/engines/snmp";
@@ -99,7 +98,6 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   etcd: Object.freeze({ ...ETCD_SERVER_OVERLAY }),
   oxia: Object.freeze({ ...OXIA_SERVER_OVERLAY }),
   rabbitmq: Object.freeze({ ...RABBITMQ_SERVER_OVERLAY }),
-  kafka: Object.freeze({ ...KAFKA_SERVER_OVERLAY }),
   s3: Object.freeze({ ...S3_SERVER_OVERLAY }),
   firestore: Object.freeze({ ...FIRESTORE_SERVER_OVERLAY }),
   snmp: Object.freeze({ ...SNMP_SERVER_OVERLAY }),
