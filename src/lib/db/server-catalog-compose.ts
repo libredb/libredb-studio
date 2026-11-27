@@ -27,12 +27,11 @@
  * so no row reviews a grammar for it and its record holds no statement grammar, and its statement language and the
  * claims that loosen the confirmation gate with the digest of the statement language data it declares
  * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, and gives each the package's
- * source, its digest and the session its declaration states, and the
- * offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register,
- * `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a refused package's lock entry
- * names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is transposed into each
- * engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is read by a client's
- * value.
+ * source, its digest and the session its declaration states, and the offers of an engine served through the provider
+ * contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a
+ * register of its own. It maps each engine a refused package's lock entry names, but a legacy one, to the codes it was
+ * refused with. Every table keyed by engine id is transposed into each engine's own frozen record and the engines are
+ * kept in Maps, so no engine-keyed plain object is read by a client's value.
  */
 import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";

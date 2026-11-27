@@ -10,8 +10,9 @@
  * engine, `packageConfirmationVerdict`, the statement read under the grammar the record holds
  * (`EngineRecord.statementGrammar`, the one a package's declaration states, or none where it states no SQL text) with
  * the claims that loosen the gate the record grants (`EngineRecord.grants`), every statement asked where no register
- * row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3 and S-8). It then decides what the request gets, by the request's
- * `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
+ * row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3 and
+ * S-8). It then decides what the request gets, by the request's `confirmation` field and the mode
+ * (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |
  * |---|---|---|---|---|
@@ -186,7 +187,8 @@ export async function gateRun(request: RunGateRequest, clock: () => number = Dat
     const { type } = legacyConnection(engine, connection);
     verdict = () => confirmationVerdict(sql, type, name, environment);
   } else {
-    verdict = () => packageConfirmationVerdict(sql, engine.statementGrammar, engine.grants, name, environment);
+    verdict = () =>
+      packageConfirmationVerdict(sql, engine.id, engine.statementGrammar, engine.grants, name, environment);
   }
   return gate({ ...request, verdict }, clock);
 }

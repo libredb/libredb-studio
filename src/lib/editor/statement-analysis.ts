@@ -231,26 +231,31 @@ export function confirmationVerdict(
 }
 
 /**
- * The confirmation verdict of `statement` on an engine a provider package serves, read under `grammar`, the grammar its
- * declaration states, or null where it states no SQL text, with `grants`, the SQL text grants of the engine's record
- * (docs/providers/CONTRACT.md, clauses S-3 and S-8): `confirmationVerdict`'s answer, with the reading
+ * The confirmation verdict of `statement` on `engine`, an engine a provider package serves, read under `grammar`, the
+ * grammar its declaration states, or null where it states no SQL text, with `grants`, the SQL text grants of the
+ * engine's record (docs/providers/CONTRACT.md, clauses S-3 and S-8): `confirmationVerdict`'s answer, with the reading
  * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`, so every statement asks
- * where no register row reviewed the grammar, as none can for an engine that states no SQL text, and each throws a host
- * defect for grants that say a row reviewed a grammar the record does not hold. No
- * vocabulary row of Studio's applies to such an engine, so no typed ask comes from one; on a production connection the
- * connection's name is asked (`escalatedAsk`), and refused where it has none.
+ * where no register row reviewed the grammar, as none can for an engine that states no SQL text, and each throws the
+ * host defect naming `engine` for grants that say a row reviewed a grammar the record does not hold. No vocabulary row
+ * of Studio's applies to such an engine, so no typed ask comes from one; on a production connection the connection's
+ * name is asked (`escalatedAsk`), and refused where it has none.
  */
 export function packageConfirmationVerdict(
   statement: string,
+  engine: string,
   grammar: SqlGrammar | null,
   grants: PackageGateGrants,
   connectionName: string | undefined,
   connectionEnvironment: ConnectionEnvironment | undefined,
 ): ConfirmationVerdict {
-  if (!packageStatementAsks(statement, grammar, grants)) return { decision: "run" };
+  if (!packageStatementAsks(statement, engine, grammar, grants)) return { decision: "run" };
   const typedConfirmation = resolvedTypedConfirmation(escalatedAsk(undefined, connectionEnvironment), connectionName);
   if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
-  return { decision: "confirm", unreadable: packageUnreadableRun(statement, grammar, grants), typedConfirmation };
+  return {
+    decision: "confirm",
+    unreadable: packageUnreadableRun(statement, engine, grammar, grants),
+    typedConfirmation,
+  };
 }
 
 /**

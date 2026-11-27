@@ -421,8 +421,9 @@ function declarationFiles(directory: string): { readonly file: string; readonly 
  * previous ones gave until the declaration generator rewrites them, and the validator refuses that mix. The whole set
  * is admitted afterwards, by `--check`, which `bun run engines:generate` runs last.
  *
- * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a file that states
- * an SQL-family member as null, a file that lacks an authored member and a file whose `id` is not its file name.
+ * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a file that
+ * states an SQL-family member as null, a file that lacks an authored member and a file whose `id` is not its file
+ * name.
  */
 export function authoredDeclarations(
   directory: string = path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY),

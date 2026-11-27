@@ -173,9 +173,9 @@ export interface AuthoredDeclaration {
 
 /**
  * A declaration that states every SQL-family member, its `sqlText`, `sqlWriting` and `migrationDdl`, none of them
- * null: what the SQL text, SQL writing and migration DDL projections read. Every bundled declaration is one, the catalog
- * generator refusing a null member in it by engine and member; a package engine may state each as null, and gets no
- * entry in these projections (docs/providers/CONTRACT.md, clauses S-3, S-11 and S-17).
+ * null: what the SQL text, SQL writing and migration DDL projections read. Every bundled declaration is one, the
+ * catalog generator refusing a null member in it by engine and member; a package engine may state each as null, and
+ * gets no entry in these projections (docs/providers/CONTRACT.md, clauses S-3, S-11 and S-17).
  */
 export type SqlFamilyDeclaration = AuthoredDeclaration & {
   readonly sqlText: SqlTextEntry;

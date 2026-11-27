@@ -705,8 +705,9 @@ type BrowserGrantTables<K extends string> = Pick<ClaimGrants<K>, (typeof GRANT_M
  * `readsSqlText`, `confirmExemptForms` (`sqlText.grammar.confirmExemptForms`) and `redaction` as the declaration
  * states them, and `grammarSha256`, the digest of the grammar the declaration states (src/lib/db/grammar-digest.ts),
  * or null for none. The server catalog's composer hands a package engine's from its admitted declaration, the digest
- * computed on the server, or the restrictive request with a null digest where its `sqlText` is null; a legacy engine's is its bundled readsSqlText and exempt forms with its legacy row's
- * redaction and digest (`legacySqlTextRequest`).
+ * computed on the server, or the restrictive request with a null digest where its `sqlText` is null; a legacy
+ * engine's is its bundled readsSqlText and exempt forms with its legacy row's redaction and digest
+ * (`legacySqlTextRequest`).
  */
 export interface SqlTextRequest {
   readonly readsSqlText: boolean;

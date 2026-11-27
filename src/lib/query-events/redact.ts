@@ -43,6 +43,7 @@ import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redact
 import type { SqlRedaction } from "@/lib/db/sql-grammar/types";
 import { quoteTypeId } from "@/lib/db/type-id";
 import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
+import { grantsWithoutGrammarDefect } from "@/lib/sql/dangerous-query";
 import { IDENTIFIER_PART, readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 
@@ -304,15 +305,6 @@ const NO_CONNECTION_REDACTION: SqlRedaction = Object.freeze({ kind: "none" });
  */
 function recordOf(engine: string | undefined): EngineRecord | undefined {
   return engine === undefined ? undefined : servedEngineRecord(engine);
-}
-
-/**
- * The host defect a query event reader raises for the record of engine `id` whose grants say a register row reviewed
- * its grammar while it holds none, which no composed record does: an engine that states no SQL text requests no
- * grammar digest for a row to review.
- */
-export function grantsWithoutGrammarDefect(id: string): string {
-  return `The engine ${quoteTypeId(id)}'s record grants a grammar its register row reviewed but holds no grammar: a host defect, since an engine that states no SQL text requests no grammar digest for a row to review.`;
 }
 
 /**

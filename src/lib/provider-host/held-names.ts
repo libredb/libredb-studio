@@ -1,8 +1,8 @@
 /**
  * The names an engine declaration states that only Studio's own tables give meaning to: its explain format, its query
  * dialect, its query language, its Monaco language and, where it states SQL text, its formatter language
- * (docs/providers/CONTRACT.md, M-48, M-50, S-4 and S-23). The SDK's schema admits each by its form alone, so the schema names no engine; Studio holds the
- * membership rule here, on its own side.
+ * (docs/providers/CONTRACT.md, M-48, M-50, S-4 and S-23). The SDK's schema admits each by its form alone, so the
+ * schema names no engine; Studio holds the membership rule here, on its own side.
  *
  * `unheldNamePointers` is pure and engine-neutral: it reads the tables it is handed (`HeldNames`), never one of
  * Studio's, so admission's import closure stays free of every table keyed by engine id. Boot hands admission Studio's

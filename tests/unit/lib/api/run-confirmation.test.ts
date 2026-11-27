@@ -859,7 +859,9 @@ describe("one gate for every engine, reading the record's confirmation reader", 
         const { name, environment } = connectionOf(engine.id);
         const expected = engine.offers.statementVocabulary
           ? outcomeOf(() => confirmationVerdict(sql, engine.id as DatabaseConnection["type"], name, environment))
-          : outcomeOf(() => packageConfirmationVerdict(sql, engine.statementGrammar, engine.grants, name, environment));
+          : outcomeOf(() =>
+              packageConfirmationVerdict(sql, engine.id, engine.statementGrammar, engine.grants, name, environment),
+            );
         // oxlint-disable-next-line no-await-in-loop -- each gate call runs after the one before.
         expect([engine.id, sql, await run(engine, sql)]).toEqual([engine.id, sql, expected]);
       }

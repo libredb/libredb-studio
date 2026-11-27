@@ -35,7 +35,8 @@ import { analyzeQuery, analyzeUnderGrammar } from "@/lib/db/utils/query-limiter"
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
-import { grantsWithoutGrammarDefect, maskRecordCredentials, redactRecordStatement } from "./redact";
+import { grantsWithoutGrammarDefect } from "@/lib/sql/dangerous-query";
+import { maskRecordCredentials, redactRecordStatement } from "./redact";
 import type {
   QueryEventContext,
   QueryEventInput,
