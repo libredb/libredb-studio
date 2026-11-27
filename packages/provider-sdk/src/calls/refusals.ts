@@ -101,6 +101,41 @@ export const CALL_REFUSAL_RULES = Object.freeze([
    * hole, or a value whose reading throws; the pointer is into the answer.
    */
   "source-answer-unreadable",
+  /**
+   * A monitoring panel answer the host reads that is not its request's panel's form: not a plain record of the
+   * request's panel alone, a member missing where the SDK requires it or behind an accessor, a key the form cannot
+   * have, a list's key that is no index included (`name` the key), a value not of the SDK's type there, a list whose
+   * length is no count or that is longer than its bound (its `ANSWER_LIST_MAX`, or the request's `limit` for the slow
+   * queries and the sessions), a list's first hole, or a value whose reading throws; the pointer is into the answer.
+   */
+  "panel-answer-unreadable",
+  /**
+   * A pool statistics answer the host reads that is not the SDK's `PoolStats`: a member missing, behind an accessor or
+   * not a count, a key the form cannot have (`name` the key), or a reading that throws; the pointer is into the answer.
+   */
+  "pool-stats-answer-unreadable",
+  /**
+   * A health answer the host reads that is not the SDK's `HealthInfo`: a member missing where the SDK requires it or
+   * behind an accessor, a key the form cannot have, a list's key that is no index included (`name` the key), a value
+   * not of the SDK's type there, a list whose length is no count or past its `ANSWER_LIST_MAX`, a list's first hole, or
+   * a value whose reading throws; the pointer is into the answer.
+   */
+  "health-answer-unreadable",
+  /**
+   * A maintenance run answer the host reads that is not the SDK's `MaintenanceRunAnswer`: a member missing where the
+   * SDK requires it or behind an accessor, a key the form cannot have (`name` the key), a value not of the SDK's type
+   * there, rows without fields, a row key outside its fields (`name` the key), a row value outside the value codec's
+   * domain, a list whose length is no count or past its `ANSWER_LIST_MAX`, a list's first hole, or a value whose
+   * reading throws; the pointer is into the answer.
+   */
+  "maintenance-run-answer-unreadable",
+  /**
+   * A maintenance preview answer the host reads that is not the SDK's `MaintenancePreview`: a member missing where the
+   * SDK requires it or behind an accessor, a key the form cannot have (`name` the key), a value not of the SDK's type
+   * there, a list whose length is no count or past its `ANSWER_LIST_MAX`, a list's first hole, or a value whose
+   * reading throws; the pointer is into the answer.
+   */
+  "maintenance-preview-answer-unreadable",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -112,7 +147,8 @@ export interface CallRefusal {
   readonly pointer: string;
   /**
    * The request field, for a field not honoured or sent empty, the facet's call name, for a facet not offered, or the key, for a key
-   * a refinement, a transaction answer, an execute answer's warning, a tree answer or a source answer cannot have.
+   * a refinement, a transaction answer, an execute answer's warning, a tree answer, a source answer, a monitoring panel,
+   * pool statistics, health, maintenance run or maintenance preview answer, or a maintenance run's row cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -218,5 +254,41 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return refusal.name === undefined
         ? `The source answer value at ${at} is missing, an accessor, empty, longer than the SDK's bound, or not what the provider contract allows there for the request, so Studio did not read it.`
         : `The source answer has the key ${name} at ${at}, which the provider contract does not define there, so Studio did not read it.`;
+    case "panel-answer-unreadable":
+      return answerSentence(
+        "monitoring panel answer",
+        " for the request",
+        at,
+        refusal.name === undefined ? undefined : name,
+      );
+    case "pool-stats-answer-unreadable":
+      return answerSentence("pool statistics answer", "", at, refusal.name === undefined ? undefined : name);
+    case "health-answer-unreadable":
+      return answerSentence("health answer", "", at, refusal.name === undefined ? undefined : name);
+    case "maintenance-run-answer-unreadable":
+      return answerSentence(
+        "maintenance run answer",
+        " for the request",
+        at,
+        refusal.name === undefined ? undefined : name,
+      );
+    case "maintenance-preview-answer-unreadable":
+      return answerSentence(
+        "maintenance preview answer",
+        " for the request",
+        at,
+        refusal.name === undefined ? undefined : name,
+      );
   }
+}
+
+/**
+ * The sentence of a refusal of `answer`, a monitoring, health or maintenance answer, at `at`: the key `name`, quoted,
+ * which the provider contract does not define there, where one is given, and otherwise a value that is missing, an
+ * accessor, or not what the contract allows there, `forRequest` naming the request where the call has one.
+ */
+function answerSentence(answer: string, forRequest: string, at: string, name: string | undefined): string {
+  return name === undefined
+    ? `The ${answer} value at ${at} is missing, an accessor, or not what the provider contract allows there${forRequest}, so Studio did not read it.`
+    : `The ${answer} has the key ${name} at ${at}, which the provider contract does not define there, so Studio did not read it.`;
 }

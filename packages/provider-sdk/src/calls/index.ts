@@ -16,11 +16,13 @@
  * statement inside the transaction answered that the host cannot read, `checkExecuteAnswer`, which refuses a member of
  * an execute answer the host reads that is not of the SDK's type there, `checkTreeAnswer`, which refuses a tree answer
  * that is not its action's form, `checkSourceAnswer`, which refuses a source answer that is not the SDK's closed source
- * document, each answering the answer itself, typed, where it refuses nothing (`AnswerCheck`), and each holding every
- * list to its bound, `ANSWER_LIST_MAX`, the source bounds `SOURCE_PART_LIMIT` and `SOURCE_CHARACTER_LIMIT` with the
- * bound helper `applySourceBound`, its sentence `sourceBoundTruncationReason`, and `boundSourceAnswer`, the host's cut
- * of a source answer, `checkRefinement` and `sessionCalls`, which narrow a session's calls by the refinement `open`
- * answers, `sessionMaintenance`, which narrows a session's maintenance by the placements its
+ * document, `checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer` and
+ * `checkMaintenancePreviewAnswer`, which refuse a monitoring panel, pool statistics, health, maintenance run or
+ * maintenance preview answer outside the SDK's type, each answering the answer itself, typed, where it refuses nothing
+ * (`AnswerCheck`), and each holding every list to its bound, `ANSWER_LIST_MAX`, the source bounds `SOURCE_PART_LIMIT`
+ * and `SOURCE_CHARACTER_LIMIT` with the bound helper `applySourceBound`, its sentence `sourceBoundTruncationReason`, and
+ * `boundSourceAnswer`, the host's cut of a source answer, `checkRefinement` and `sessionCalls`, which narrow a session's
+ * calls by the refinement `open` answers, `sessionMaintenance`, which narrows a session's maintenance by the placements its
  * server accepts, and `freezeContext` and `freezeData`, which deep-freeze the contexts and requests the host passes;
  * and the byte budgets of a result, `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES`, with `encodedRowBytes`, the row measure,
  * `rowsSource`, a batch holder for rows already in memory, and `pumpPage`, the host's pump that cuts a page by size and
@@ -49,7 +51,18 @@ export {
   deadlineSignal,
   type LateOutcome,
 } from "./deadline";
-export { ANSWER_LIST_MAX, type AnswerCheck, checkExecuteAnswer, checkSourceAnswer, checkTreeAnswer } from "./answers";
+export {
+  ANSWER_LIST_MAX,
+  type AnswerCheck,
+  checkExecuteAnswer,
+  checkHealthAnswer,
+  checkMaintenancePreviewAnswer,
+  checkMaintenanceRunAnswer,
+  checkPanelAnswer,
+  checkPoolStatsAnswer,
+  checkSourceAnswer,
+  checkTreeAnswer,
+} from "./answers";
 export { type EnvReader, envReader, UndeclaredEnvironmentError } from "./env";
 export { freezeContext, freezeData } from "./freeze";
 export {

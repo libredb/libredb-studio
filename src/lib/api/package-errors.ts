@@ -82,6 +82,11 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "execute-answer-unreadable": "package",
   "tree-answer-unreadable": "package",
   "source-answer-unreadable": "package",
+  "panel-answer-unreadable": "package",
+  "pool-stats-answer-unreadable": "package",
+  "health-answer-unreadable": "package",
+  "maintenance-run-answer-unreadable": "package",
+  "maintenance-preview-answer-unreadable": "package",
 });
 
 /** The words that open the message of the error logged for a refusal of what a provider package answered. */

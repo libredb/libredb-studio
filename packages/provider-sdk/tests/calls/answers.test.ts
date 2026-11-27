@@ -15,10 +15,17 @@ import {
   type AnswerCheck,
   type CallRefusal,
   CallRefusalError,
+  type CallRefusalRule,
   callRefusalSentence,
   checkExecuteAnswer,
+  checkHealthAnswer,
+  checkMaintenancePreviewAnswer,
+  checkMaintenanceRunAnswer,
+  checkPanelAnswer,
+  checkPoolStatsAnswer,
   checkSourceAnswer,
   checkTreeAnswer,
+  type MonitoringPanelRequest,
   SOURCE_CHARACTER_LIMIT,
   SOURCE_PART_LIMIT,
   type SourceRequest,
@@ -1339,3 +1346,450 @@ describe("checkSourceAnswer", () => {
     expect(reads.count).toBe(0);
   });
 });
+
+/** A refusal of `rule` at `pointer`, naming `name` where the answer has a key it cannot have. */
+function refusalOf(rule: CallRefusalRule): (pointer: string, name?: string) => CallRefusal {
+  return (pointer, name) => (name === undefined ? { rule, pointer } : { rule, pointer, name });
+}
+
+const panelUnreadable = refusalOf("panel-answer-unreadable");
+const poolUnreadable = refusalOf("pool-stats-answer-unreadable");
+const healthUnreadable = refusalOf("health-answer-unreadable");
+const runUnreadable = refusalOf("maintenance-run-answer-unreadable");
+const previewUnreadable = refusalOf("maintenance-preview-answer-unreadable");
+
+/** The refusals of `check`, none where it read the answer. */
+function refusalsOf(check: AnswerCheck<unknown>): readonly CallRefusal[] {
+  return check.kind === "read" ? [] : check.refusals;
+}
+
+/** One request of each panel, the two lists bounded at `limit`. */
+function panelRequestsOf(limit = 2): Readonly<Record<MonitoringPanelRequest["panel"], MonitoringPanelRequest>> {
+  return {
+    overview: { panel: "overview" },
+    performance: { panel: "performance" },
+    slowQueries: { panel: "slowQueries", limit },
+    activeSessions: { panel: "activeSessions", limit },
+    tables: { panel: "tables" },
+    indexes: { panel: "indexes", schema: marker() },
+    storage: { panel: "storage" },
+  };
+}
+
+const overviewOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  version: marker(),
+  uptime: marker(),
+  startTime: new Date(1_700_000_000_000),
+  activeConnections: 2,
+  maxConnections: 100,
+  databaseSize: marker(),
+  databaseSizeBytes: 8_388_608,
+  tableCount: 3,
+  tableCountSampledFrom: marker(),
+  indexCount: 4,
+  ...over,
+});
+const slowQueryOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  queryId: marker(),
+  query: marker(),
+  calls: 7,
+  totalTime: 12.5,
+  avgTime: 1.75,
+  minTime: 0,
+  maxTime: 4.2,
+  rows: 70,
+  sharedBlksHit: 9,
+  sharedBlksRead: 1,
+  ...over,
+});
+const sessionOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  pid: 4242,
+  user: marker(),
+  database: marker(),
+  applicationName: marker(),
+  clientAddr: marker(),
+  state: marker(),
+  activity: "idle-in-transaction",
+  query: marker(),
+  queryStart: new Date(1_700_000_000_000),
+  duration: marker(),
+  durationMs: 1500,
+  waitEventType: marker(),
+  waitEvent: marker(),
+  blocked: false,
+  terminable: true,
+  ...over,
+});
+const tableOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schemaName: marker(),
+  tableName: marker(),
+  rowCount: 10,
+  liveRowCount: 9,
+  deadRowCount: 1,
+  tableSize: marker(),
+  tableSizeBytes: 8192,
+  indexSize: marker(),
+  indexSizeBytes: 16_384,
+  totalSize: marker(),
+  totalSizeBytes: 24_576,
+  lastVacuum: new Date(1_700_000_000_000),
+  lastAnalyze: new Date(1_700_000_000_000),
+  bloatRatio: 0.25,
+  ...over,
+});
+const indexOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schemaName: marker(),
+  tableName: marker(),
+  indexName: marker(),
+  indexType: marker(),
+  columns: [marker()],
+  isUnique: true,
+  isPrimary: false,
+  indexSize: marker(),
+  indexSizeBytes: 8192,
+  scans: 3,
+  usageRatio: 0.5,
+  ...over,
+});
+const storageOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  name: marker(),
+  location: marker(),
+  size: marker(),
+  sizeBytes: 8192,
+  usagePercent: 12.5,
+  walSize: marker(),
+  walSizeBytes: 4096,
+  ...over,
+});
+
+/** A well-formed answer of each panel, every optional member present. */
+function panelAnswersOf(): Readonly<Record<MonitoringPanelRequest["panel"], Record<string, unknown>>> {
+  return {
+    overview: { overview: overviewOf() },
+    performance: {
+      performance: {
+        cacheHitRatio: 99.5,
+        cacheHitAdvice: marker(),
+        transactionsPerSecond: 12.5,
+        queriesPerSecond: 40,
+        bufferPoolUsage: 80,
+        deadlocks: 0,
+        checkpointWriteTime: marker(),
+      },
+    },
+    slowQueries: { slowQueries: [slowQueryOf(), slowQueryOf({ queryId: undefined })] },
+    activeSessions: { activeSessions: [sessionOf(), sessionOf({ pid: marker() })] },
+    tables: { tables: [tableOf()] },
+    indexes: { indexes: [indexOf()] },
+    storage: { storage: [storageOf()] },
+  };
+}
+
+const poolOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  total: 4,
+  idle: 2,
+  active: 2,
+  waiting: 0,
+  max: 10,
+  ...over,
+});
+const healthSessionOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  pid: 4242,
+  user: marker(),
+  database: marker(),
+  state: marker(),
+  query: marker(),
+  duration: marker(),
+  ...over,
+});
+const healthOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  activeConnections: 3,
+  databaseSize: marker(),
+  cacheHitRatio: marker(),
+  slowQueries: [{ query: marker(), calls: 2, avgTime: marker() }],
+  activeSessions: [healthSessionOf()],
+  ...over,
+});
+const runOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  success: true,
+  executionTime: 12.5,
+  message: marker(),
+  rows: [{ a: 1, b: marker() }],
+  fields: ["a", "b"],
+  ...over,
+});
+const previewOf = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  summary: marker(),
+  facts: [{ label: marker(), value: marker() }],
+  refusal: marker(),
+  note: marker(),
+  ...over,
+});
+
+/** Each value that is no count: negative, a fraction, NaN, text and past the safe integers. */
+const NON_COUNTS: readonly unknown[] = [-1, 1.5, Number.NaN, "3", 2 ** 53];
+
+/** Each value that is no measure: negative, infinite, NaN and text. */
+const NON_MEASURES: readonly unknown[] = [-1, Number.POSITIVE_INFINITY, Number.NaN, "1.5"];
+
+describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMaintenanceRunAnswer and checkMaintenancePreviewAnswer", () => {
+  test("a monitoring panel answer outside its panel's form, or a list past the request's limit, is refused as panel-answer-unreadable at its pointer, a key it cannot have named and no value carried", () => {
+    const requests = panelRequestsOf();
+    const panel = (request: MonitoringPanelRequest, answer: unknown) => refusalsOf(checkPanelAnswer(request, answer));
+
+    // The answer holds exactly one key, its request's panel.
+    for (const answer of [null, [], new Map(), marker(), 3]) {
+      expect(panel(requests.overview, answer)).toEqual([panelUnreadable("")]);
+    }
+    expect(panel(requests.overview, { overview: overviewOf(), performance: {} })).toEqual([
+      panelUnreadable("/performance", "performance"),
+    ]);
+    expect(panel(requests.overview, { performance: {} })).toEqual([
+      panelUnreadable("/performance", "performance"),
+      panelUnreadable("/overview"),
+    ]);
+
+    // Each member of its type: a required one missing, a key the form cannot have, and each value kind.
+    const { maxConnections: _, ...noCeiling } = overviewOf();
+    expect(panel(requests.overview, { overview: noCeiling })).toEqual([panelUnreadable("/overview/maxConnections")]);
+    const planted = marker();
+    expect(panel(requests.overview, { overview: overviewOf({ [planted]: marker() }) })).toEqual([
+      panelUnreadable(`/overview/${planted}`, planted),
+    ]);
+    for (const value of NON_COUNTS) {
+      expect(panel(requests.overview, { overview: overviewOf({ tableCount: value }) })).toEqual([
+        panelUnreadable("/overview/tableCount"),
+      ]);
+      expect(panel(requests.performance, { performance: { deadlocks: value } })).toEqual([
+        panelUnreadable("/performance/deadlocks"),
+      ]);
+    }
+    for (const value of NON_MEASURES) {
+      expect(panel(requests.performance, { performance: { cacheHitRatio: value } })).toEqual([
+        panelUnreadable("/performance/cacheHitRatio"),
+      ]);
+      expect(panel(requests.tables, { tables: [tableOf({ bloatRatio: value })] })).toEqual([
+        panelUnreadable("/tables/0/bloatRatio"),
+      ]);
+    }
+    for (const value of [new Date(Number.NaN), new Date(0).toISOString(), 0]) {
+      expect(panel(requests.overview, { overview: overviewOf({ startTime: value }) })).toEqual([
+        panelUnreadable("/overview/startTime"),
+      ]);
+    }
+    expect(panel(requests.activeSessions, { activeSessions: [sessionOf({ pid: true })] })).toEqual([
+      panelUnreadable("/activeSessions/0/pid"),
+    ]);
+    expect(panel(requests.activeSessions, { activeSessions: [sessionOf({ activity: marker() })] })).toEqual([
+      panelUnreadable("/activeSessions/0/activity"),
+    ]);
+    expect(panel(requests.indexes, { indexes: [indexOf({ columns: marker() })] })).toEqual([
+      panelUnreadable("/indexes/0/columns"),
+    ]);
+    expect(panel(requests.storage, { storage: [storageOf({ sizeBytes: "8192" })] })).toEqual([
+      panelUnreadable("/storage/0/sizeBytes"),
+    ]);
+
+    // A record that is not plain, and a list's hole, accessor and own key that is no index.
+    expect(panel(requests.tables, { tables: [new Map()] })).toEqual([panelUnreadable("/tables/0")]);
+    const sparse: unknown[] = new Array(2);
+    sparse[1] = storageOf();
+    expect(panel(requests.storage, { storage: sparse })).toEqual([panelUnreadable("/storage/0")]);
+    const reads = { count: 0 };
+    expect(panel(requests.tables, { tables: withAccessor([tableOf()], "0", reads, tableOf()) })).toEqual([
+      panelUnreadable("/tables/0"),
+    ]);
+    expect(reads.count).toBe(0);
+    expect(panel(requests.tables, { tables: Object.assign([tableOf()], { [planted]: 1 }) })).toEqual([
+      panelUnreadable(`/tables/${planted}`, planted),
+    ]);
+
+    // The slow queries and the sessions are at most the request's limit long, refused at the list past it.
+    expect(panel(requests.slowQueries, { slowQueries: [slowQueryOf(), slowQueryOf()] })).toEqual([]);
+    expect(panel(requests.slowQueries, { slowQueries: [slowQueryOf(), slowQueryOf(), slowQueryOf()] })).toEqual([
+      panelUnreadable("/slowQueries"),
+    ]);
+    expect(panel(requests.activeSessions, { activeSessions: [sessionOf(), sessionOf(), sessionOf()] })).toEqual([
+      panelUnreadable("/activeSessions"),
+    ]);
+
+    // No refusal, and no sentence of one, carries a value of the answer.
+    const value = marker();
+    const refusals = panel(requests.overview, { overview: overviewOf({ version: 3, uptime: value, [value]: value }) });
+    expect(JSON.stringify(refusals.filter((refusal) => refusal.name === undefined))).not.toContain(value);
+    expect(refusals.map(callRefusalSentence)).toEqual([
+      'The monitoring panel answer value at "/overview/version" is missing, an accessor, or not what the provider contract allows there for the request, so Studio did not read it.',
+      `The monitoring panel answer has the key ${JSON.stringify(value)} at ${JSON.stringify(`/overview/${value}`)}, which the provider contract does not define there, so Studio did not read it.`,
+    ]);
+  });
+
+  test("a pool statistics or health answer outside the SDK's types is refused by its rule at its pointer, a count held to a safe integer", () => {
+    const pool = (answer: unknown) => refusalsOf(checkPoolStatsAnswer(answer));
+    const health = (answer: unknown) => refusalsOf(checkHealthAnswer(answer));
+
+    expect(pool(poolOf())).toEqual([]);
+    const { waiting: _, ...noWaiting } = poolOf();
+    expect(pool(noWaiting)).toEqual([poolUnreadable("/waiting")]);
+    for (const value of NON_COUNTS) {
+      expect(pool(poolOf({ total: value, max: value }))).toEqual([poolUnreadable("/total"), poolUnreadable("/max")]);
+    }
+    const planted = marker();
+    expect(pool(poolOf({ [planted]: 1 }))).toEqual([poolUnreadable(`/${planted}`, planted)]);
+    expect(pool([])).toEqual([poolUnreadable("")]);
+
+    expect(health(healthOf())).toEqual([]);
+    // Three keys beside the shared shape, each named.
+    expect(health(healthOf({ uptime: marker(), description: marker(), roundTripMs: 3 }))).toEqual([
+      healthUnreadable("/uptime", "uptime"),
+      healthUnreadable("/description", "description"),
+      healthUnreadable("/roundTripMs", "roundTripMs"),
+    ]);
+    const { slowQueries: __, ...noSlowQueries } = healthOf();
+    expect(health(noSlowQueries)).toEqual([healthUnreadable("/slowQueries")]);
+    for (const value of NON_COUNTS) {
+      expect(health(healthOf({ activeConnections: value }))).toEqual([healthUnreadable("/activeConnections")]);
+      expect(health(healthOf({ slowQueries: [{ query: marker(), calls: value, avgTime: marker() }] }))).toEqual([
+        healthUnreadable("/slowQueries/0/calls"),
+      ]);
+    }
+    const { user: ___, ...noUser } = healthSessionOf();
+    expect(health(healthOf({ activeSessions: [noUser], databaseSize: 8 }))).toEqual([
+      healthUnreadable("/databaseSize"),
+      healthUnreadable("/activeSessions/0/user"),
+    ]);
+    expect(health(healthOf({ activeSessions: [healthSessionOf({ pid: null, durationMs: 3 })] }))).toEqual([
+      healthUnreadable("/activeSessions/0/pid"),
+      healthUnreadable("/activeSessions/0/durationMs", "durationMs"),
+    ]);
+  });
+
+  test("a maintenance run answer whose rows have no fields, a key outside them or a value outside the value codec, and a preview outside its form, are refused by their rules", () => {
+    const run = (answer: unknown) => refusalsOf(checkMaintenanceRunAnswer(answer));
+    const preview = (answer: unknown) => refusalsOf(checkMaintenancePreviewAnswer(answer));
+
+    expect(run(runOf())).toEqual([]);
+    expect(run(runOf({ rows: undefined, fields: undefined }))).toEqual([]);
+    const { rows: _, fields: __, ...bare } = runOf();
+    expect(run(bare)).toEqual([]);
+    // Every value of the codec's domain passes: a bigint, bytes, a valid date, a nested record, a non-finite number.
+    const cells = {
+      a: BigInt("9223372036854775808"),
+      b: Uint8Array.of(1, 2),
+      c: new Date(0),
+      d: { $: marker(), v: [1, null] },
+    };
+    expect(run(runOf({ rows: [cells, { a: Number.NaN }], fields: ["a", "b", "c", "d"] }))).toEqual([]);
+
+    // Rows need their fields, and every row key is one of them.
+    expect(run(runOf({ fields: undefined }))).toEqual([runUnreadable("/fields")]);
+    const planted = marker();
+    expect(run(runOf({ rows: [{ a: 1, [planted]: 2 }] }))).toEqual([runUnreadable(`/rows/0/${planted}`, planted)]);
+    // A cell outside the value codec's domain.
+    expect(run(runOf({ rows: [{ a: () => 1, b: new Map() }, { a: Symbol(planted) }] }))).toEqual([
+      runUnreadable("/rows/0/a"),
+      runUnreadable("/rows/0/b"),
+      runUnreadable("/rows/1/a"),
+    ]);
+    expect(run(runOf({ rows: [new Map()], fields: [3] }))).toEqual([
+      runUnreadable("/fields/0"),
+      runUnreadable("/rows/0"),
+    ]);
+    for (const value of NON_MEASURES) {
+      expect(run(runOf({ executionTime: value, success: "true" }))).toEqual([
+        runUnreadable("/success"),
+        runUnreadable("/executionTime"),
+      ]);
+    }
+    expect(run(runOf({ [planted]: 1 }))).toEqual([runUnreadable(`/${planted}`, planted)]);
+
+    expect(preview(previewOf())).toEqual([]);
+    expect(preview(previewOf({ facts: [] }))).toEqual([]);
+    expect(preview(previewOf({ facts: [{ label: marker() }], refusal: 3 }))).toEqual([
+      previewUnreadable("/facts/0/value"),
+      previewUnreadable("/refusal"),
+    ]);
+    expect(preview(previewOf({ facts: { label: marker(), value: marker() } }))).toEqual([previewUnreadable("/facts")]);
+    expect(preview(previewOf({ facts: [{ label: marker(), value: marker(), [planted]: 1 }] }))).toEqual([
+      previewUnreadable(`/facts/0/${planted}`, planted),
+    ]);
+    const sentences = [...run(runOf({ fields: undefined })), ...preview(previewOf({ [planted]: 1 }))].map(
+      callRefusalSentence,
+    );
+    expect(sentences).toEqual([
+      'The maintenance run answer value at "/fields" is missing, an accessor, or not what the provider contract allows there for the request, so Studio did not read it.',
+      `The maintenance preview answer has the key ${JSON.stringify(planted)} at ${JSON.stringify(`/${planted}`)}, which the provider contract does not define there, so Studio did not read it.`,
+    ]);
+  });
+
+  test("a getter in any of the five answers is refused and never called, an optional member present with no value reads as absent, and an inherited key name does not throw", () => {
+    const reads = { count: 0 };
+    const requests = panelRequestsOf();
+    const panel = (request: MonitoringPanelRequest, answer: unknown) => refusalsOf(checkPanelAnswer(request, answer));
+
+    expect(panel(requests.overview, { overview: withAccessor(overviewOf(), "version", reads) })).toEqual([
+      panelUnreadable("/overview/version"),
+    ]);
+    expect(panel(requests.overview, withAccessor({}, "overview", reads, overviewOf()))).toEqual([
+      panelUnreadable("/overview"),
+    ]);
+    expect(refusalsOf(checkPoolStatsAnswer(withAccessor(poolOf(), "total", reads, 1)))).toEqual([
+      poolUnreadable("/total"),
+    ]);
+    expect(refusalsOf(checkHealthAnswer(healthOf({ slowQueries: withAccessor([], "0", reads) })))).toEqual([
+      healthUnreadable("/slowQueries/0"),
+    ]);
+    expect(refusalsOf(checkMaintenanceRunAnswer(runOf({ rows: [withAccessor({}, "a", reads, 1)] })))).toEqual([
+      runUnreadable("/rows/0/a"),
+    ]);
+    expect(refusalsOf(checkMaintenancePreviewAnswer(withAccessor(previewOf(), "summary", reads)))).toEqual([
+      previewUnreadable("/summary"),
+    ]);
+    expect(reads.count).toBe(0);
+
+    // An optional member present with no value reads as absent in each answer.
+    const answers = panelAnswersOf();
+    for (const [name, request] of Object.entries(requests)) {
+      expect(panel(request, answers[name as MonitoringPanelRequest["panel"]])).toEqual([]);
+    }
+    expect(
+      panel(requests.overview, { overview: overviewOf({ startTime: undefined, activeConnections: undefined }) }),
+    ).toEqual([]);
+    expect(panel(requests.performance, { performance: { cacheHitRatio: undefined } })).toEqual([]);
+    expect(
+      panel(requests.activeSessions, {
+        activeSessions: [sessionOf({ queryStart: undefined, applicationName: undefined, activity: undefined })],
+      }),
+    ).toEqual([]);
+    expect(panel(requests.tables, { tables: [tableOf({ lastVacuum: undefined, rowCount: undefined })] })).toEqual([]);
+    expect(refusalsOf(checkPoolStatsAnswer(poolOf({ max: undefined })))).toEqual([]);
+    expect(refusalsOf(checkHealthAnswer(healthOf({ activeConnections: undefined })))).toEqual([]);
+    expect(refusalsOf(checkMaintenancePreviewAnswer(previewOf({ refusal: undefined, note: undefined })))).toEqual([]);
+    // A required member present with no value is missing.
+    expect(refusalsOf(checkPoolStatsAnswer(poolOf({ total: undefined })))).toEqual([poolUnreadable("/total")]);
+
+    // An inherited key name is a key like any other, named, and a record with no prototype is plain.
+    const inherited: object = Object.assign(JSON.parse('{"__proto__": 1}'), { constructor: 1, toString: 1 });
+    expect(refusalsOf(checkPoolStatsAnswer(Object.assign(inherited, poolOf())))).toEqual([
+      poolUnreadable("/__proto__", "__proto__"),
+      poolUnreadable("/constructor", "constructor"),
+      poolUnreadable("/toString", "toString"),
+    ]);
+    expect(refusalsOf(checkHealthAnswer(Object.assign(Object.create(null), healthOf())))).toEqual([]);
+
+    // A reading that throws is refused at the pointer being read, and no check throws.
+    expect(refusalsOf(checkHealthAnswer(revoked()))).toEqual([healthUnreadable("")]);
+    expect(refusalsOf(checkMaintenanceRunAnswer(runOf({ rows: [revoked()] })))).toEqual([runUnreadable("/rows/0")]);
+    expect(panel(requests.overview, { overview: overviewOf({ startTime: revoked() }) })).toEqual([
+      panelUnreadable("/overview/startTime"),
+    ]);
+    const well = poolOf();
+    const read: AnswerCheck<unknown> = checkPoolStatsAnswer(well);
+    expect(read.kind === "read" && read.answer).toBe(well);
+    expect(Object.keys(checkPoolStatsAnswer(noThrow()))).toEqual(["kind", "refusals"]);
+  });
+});
+
+/** A record whose own keys answer a trap that throws: the check refuses it rather than throwing. */
+function noThrow(): object {
+  return new Proxy({}, { ownKeys: thrower });
+}
