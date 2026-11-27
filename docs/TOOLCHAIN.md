@@ -711,7 +711,7 @@ The builder asserts that `.next/standalone/packages` does not exist, and `script
 
 ### The package import rule
 
-A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a Bun runtime module; nothing in a package imports an `@/` path or a path out of its directory.
+A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a `bun:` module; nothing in a package imports an `@/` path or a path out of its directory.
 Core, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name.
 Core never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
 `tests/unit/package-imports.test.ts` reads the specifiers with the TypeScript compiler's `preProcessFile`, through the provider import scanner, and plants a package and core files that break each rule.
