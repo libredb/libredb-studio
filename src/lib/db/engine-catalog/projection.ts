@@ -106,15 +106,13 @@ import type {
   HistoryMask,
   McpClaims,
   MigrationDdl,
-  MonacoLanguageId,
   PolicyClaims,
-  QueryDialect,
-  QueryLanguage,
   Safeguards,
   SqlGenerators,
   SqlText,
   SqlWriting,
 } from "@libredb/provider-sdk/manifest";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 type Connection = EngineDeclaration["connection"];
 type ConnectionStringOffer = Connection["connectionString"];
@@ -331,10 +329,11 @@ export interface EditorFacts {
 
 /**
  * One query dialect's row: the tab type its tabs open as, the dialect's name, and what the editor offers for it, every
- * member present, the history mask null where history keeps a statement as typed.
+ * member present, the history mask null where history keeps a statement as typed. The tab type is a plain name here;
+ * `QUERY_DIALECTS` (src/lib/db/query-dialects.ts) types the generated record over core's own tab types.
  */
 export interface QueryDialectEntry {
-  readonly tabType: QueryDialect;
+  readonly tabType: string;
   readonly offersColumnProfiling: boolean;
   readonly offersCodeGeneration: boolean;
   readonly offersCountQuery: boolean;
@@ -342,9 +341,12 @@ export interface QueryDialectEntry {
   readonly historyMask: HistoryMask;
 }
 
-/** One tab type's editor: the Monaco language its tabs render in. */
+/**
+ * One tab type's editor: the Monaco language its tabs render in, a plain name here; `DIALECT_EDITORS`
+ * (src/lib/editor/dialect-editors.ts) types the generated record over core's own editor languages.
+ */
 export interface DialectEditorEntry {
-  readonly monacoId: MonacoLanguageId;
+  readonly monacoId: string;
 }
 
 /** One Monaco language's facts: the accent an agent answer's statement block takes, and whether it is a console. */
@@ -365,15 +367,32 @@ export interface QueryEditorFacts {
 
 /**
  * The tab type a declaration with no query dialect opens its tabs under, per query language
- * (docs/providers/CONTRACT.md, clause S-23); a declaration with a dialect opens them under the dialect's name.
+ * (docs/providers/CONTRACT.md, clause S-23); a declaration with a dialect opens them under the dialect's name. Its keys
+ * are the query languages Studio holds, the names admission holds a declared query language to
+ * (src/lib/db/studio-held-names.ts).
  */
-const QUERY_LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, string>> = Object.freeze({
+export const QUERY_LANGUAGE_TAB_TYPES: Readonly<Record<ProviderCapabilities["queryLanguage"], string>> = Object.freeze({
   sql: "sql",
   json: "mongodb",
   promql: "promql",
   cypher: "cypher",
   influxql: "influxql",
 });
+
+/**
+ * The tab type engine `id` opens its tabs under for `queryLanguage`, read as an own key of `QUERY_LANGUAGE_TAB_TYPES`.
+ *
+ * @throws {Error} Naming the engine and the query language, when Studio holds no tab type for it.
+ */
+function languageTabType(id: string, queryLanguage: string): string {
+  const tabTypes: Readonly<Record<string, string>> = QUERY_LANGUAGE_TAB_TYPES;
+  if (!Object.hasOwn(tabTypes, queryLanguage)) {
+    throw new Error(
+      `${id}: the query language ${JSON.stringify(queryLanguage)} is not one Studio holds a tab type for.`,
+    );
+  }
+  return tabTypes[queryLanguage] as string;
+}
 
 /**
  * `declarations` in ascending code-unit order of their ids.
@@ -625,7 +644,8 @@ function dialectEntryOf(dialect: NonNullable<Editor["dialect"]>): QueryDialectEn
  *
  * @throws {Error} When two declarations state the same `id`, naming it; and, declarations taken in ascending id order,
  * when a later one states a dialect with another row, a tab type in another language or a language with another accent
- * or console than an earlier one, naming the dialect, tab type or language and both engines.
+ * or console than an earlier one, naming the dialect, tab type or language and both engines; and when a declaration
+ * with no dialect states a query language Studio holds no tab type for, naming the engine and the language.
  */
 export function projectQueryEditorFacts(declarations: readonly AuthoredDeclaration[]): QueryEditorFacts {
   const dialects: Statements<QueryDialectEntry> = new Map();
@@ -636,7 +656,7 @@ export function projectQueryEditorFacts(declarations: readonly AuthoredDeclarati
     if (dialect !== null) {
       stateOnce(dialects, { key: dialect.name, value: dialectEntryOf(dialect), id }, "dialect", "with different rows");
     }
-    const tabType = dialect === null ? QUERY_LANGUAGE_TAB_TYPES[language.queryLanguage] : dialect.name;
+    const tabType = dialect === null ? languageTabType(id, language.queryLanguage) : dialect.name;
     const tabEditor = Object.freeze({ monacoId: language.monacoId });
     stateOnce(editors, { key: tabType, value: tabEditor, id }, "tab type", "in different editor languages");
     const facts = Object.freeze({ accent: language.accent, console: language.console });

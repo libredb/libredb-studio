@@ -12,7 +12,8 @@ import type { QueryTab } from "@/lib/types";
  * (`src/lib/editor/dialect-editors.ts`), both projected from the `editor.dialect` and `editor.language` the engine
  * declarations state (docs/providers/CONTRACT.md, clause M-77), and one in the query generators' `DIALECT_GENERATORS`,
  * and each is a `Record` over the union, so a new member of `ProviderCapabilities.queryDialect` does not compile until
- * all three exist. `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of the two fields to a closed
+ * all three exist. The generated records carry no annotation and keep each value's literal type, so the type of
+ * `QUERY_DIALECTS` and `DIALECT_EDITORS` holds them. `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of the two fields to a closed
  * list with its owner.
  *
  * Pure and browser-safe: the row menus, the editor and the server routes all read it. Not published:

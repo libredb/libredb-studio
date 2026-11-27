@@ -20,7 +20,9 @@
  * when at least one package passed it, records the directory of each such package for the uncaught-exception line
  * (./package-directories, clause C-108), compiles the manifest validator once from the SDK's schema text, whose digest
  * the validator checks, then admits each verified package in package-name order, the order the lock's read answers,
- * one at a time, each import under `deadlineMs` (`admitPackage`, ./admission). The catalog's set rules
+ * one at a time, each import under `deadlineMs` (`admitPackage`, ./admission), each manifest's explain formats, query
+ * dialects, query languages, Monaco languages and formatter languages held to Studio's own tables, `STUDIO_HELD_NAMES`
+ * (src/lib/db/studio-held-names.ts). The catalog's set rules
  * (`catalogConflicts`) then run over every admitted package, each package they refuse is logged with
  * `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are registered (`registerAdmission`), so the loader's
  * registry and the server's catalog name the same packages.
@@ -42,6 +44,7 @@ import {
   composeServerCatalog,
   type RefusedForCatalog,
 } from "@/lib/db/server-catalog-compose";
+import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import { logger } from "@/lib/logger";
 import * as admission from "./admission";
 import { recordPackageDirectories } from "./package-directories";
@@ -125,6 +128,7 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
       // oxlint-disable-next-line no-await-in-loop -- each import runs after the one before, on purpose (C-105).
       const answer = await admission.admitPackage(pkg, {
         validator,
+        heldNames: STUDIO_HELD_NAMES,
         deadlineMs,
         onLateSettle: (settle) => logLateSettle(pkg, settle),
       });

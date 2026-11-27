@@ -20,6 +20,8 @@ export interface DialectEditor {
  * declaration states in its `editor.language` for the tab type its tabs open under, projected from the admitted
  * declarations into the generated query editor module (docs/providers/CONTRACT.md, clause M-77), which holds every
  * declaration of one tab type to one language. Tab types that render in one language share its formatter, since the
- * formatter is the language's. Each engine's reasons for its tab type's language are in its provider document.
+ * formatter is the language's. Each engine's reasons for its tab type's language are in its provider document. The
+ * generated record carries no annotation and keeps each value's literal type, so this record's type holds it: a tab
+ * type with no row, or a Monaco id the editor language registry holds no code for, fails the typecheck here.
  */
 export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> = BUNDLED_DIALECT_EDITORS;

@@ -374,9 +374,27 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "each engine's SQL writing row, composed from the generated SQL writing and Studio's SQL writing function table, which binds each named function",
   },
   {
+    path: "src/lib/db/studio-held-names.ts",
+    members: ["editor.dialect.name", "editor.language.monacoId", "sqlText.grammar.formatterLanguage"],
+    reason:
+      "the names Studio holds that admission and the declaration generator hold a declaration to: the dialects' names, read as the keys of QUERY_DIALECTS, the Monaco languages, read as the keys of the generated editor language record, and the formatter languages, read from the SQL grammar's FORMATTER_LANGUAGES",
+  },
+  {
     path: "src/lib/editor/dialect-editors.ts",
     members: QUERY_EDITOR_MEMBERS,
     reason: "each tab type's editor language, read from the generated tab type editor record",
+  },
+  {
+    path: "src/lib/provider-host/held-names.ts",
+    members: [
+      "editor.explainFormat",
+      "editor.dialect.name",
+      "editor.language.queryLanguage",
+      "editor.language.monacoId",
+      "sqlText.grammar.formatterLanguage",
+    ],
+    reason:
+      "the check that each name a declaration states only Studio's tables give meaning to is one of the names it is handed, which admission and the declaration generator run",
   },
   {
     path: "src/lib/provider-host/legacy-adapter/records.ts",

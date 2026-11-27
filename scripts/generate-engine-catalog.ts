@@ -12,8 +12,8 @@
  * src/lib/db/engine-catalog/editor.generated.ts, each engine's execution UI and the fence aliases (clause M-75), which
  * src/lib/db/execution-ui/index.ts and src/lib/sql/fence-tags.ts read, so no connection reader loads them; and
  * src/lib/db/engine-catalog/query-editor.generated.ts, the query dialects, the tab type editors and the editor languages
- * (clause M-77), which src/lib/db/query-dialects.ts, src/lib/editor/dialect-editors.ts and
- * src/lib/db/editor-language/index.ts read, so neither the server routes that read a dialect row nor the execution UI's
+ * (clause M-77), which src/lib/db/query-dialects.ts, src/lib/editor/dialect-editors.ts,
+ * src/lib/db/editor-language/index.ts and src/lib/db/studio-held-names.ts read, so neither the server routes that read a dialect row nor the execution UI's
  * readers load another's records; and src/lib/db/engine-catalog/sql-text.generated.ts, each engine's SQL text (clause
  * M-78), which only src/lib/db/sql-grammar/index.ts reads, so no other module's readers load its grammar data; and
  * src/lib/db/engine-catalog/sql-writing.generated.ts, each engine's SQL writing (clause M-79), which only
@@ -46,8 +46,10 @@
  * command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
- * of the union with no declaration fails the typecheck at the record; the query editor module's records are typed over
- * the query dialects, the tab types and the Monaco languages instead. The connection and editor modules are laid out
+ * of the union with no declaration fails the typecheck at the record; the query editor module's records carry no
+ * annotation instead, since the names they are keyed by are Studio's own, and each reader types its record over
+ * Studio's key set: a frozen record keeps each value's literal type, so a key the reader's set lacks, or a value its
+ * type refuses, fails the typecheck at the reader. The connection and editor modules are laid out
  * as the repository's formatter lays them out: a value that fits within the line width stays on one line, one that
  * does not breaks one element or member per line, and a member whose string does not fit puts the string on the next
  * line. A string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as
@@ -704,35 +706,33 @@ export function renderEditorFacts(facts: EditorFacts): string {
 }
 
 /**
- * The text of the generated query editor module for `facts`: a header, type imports only, and three frozen records, the
+ * The text of the generated query editor module for `facts`: a header and three frozen records with no annotation, the
  * query dialects, read by src/lib/db/query-dialects.ts, the tab type editors, read by src/lib/editor/dialect-editors.ts,
- * and the editor languages, read by src/lib/db/editor-language/index.ts.
+ * and the editor languages, read by src/lib/db/editor-language/index.ts; each reader types its record over Studio's own
+ * key set, and src/lib/db/studio-held-names.ts reads the dialects' and the editor languages' keys.
  */
 export function renderQueryEditorFacts(facts: QueryEditorFacts): string {
   return [
     ...HEADER,
-    'import type { MonacoLanguageId, QueryDialect } from "@libredb/provider-sdk/manifest";',
-    'import type { QueryTab } from "@/lib/types";',
-    'import type { DialectEditorEntry, EditorLanguageEntry, QueryDialectEntry } from "./projection";',
     "",
     ...renderedRecord(
       ENGINE_QUERY_EDITOR_MODULE,
       "Each query dialect's row, `editor.dialect`, read by `QUERY_DIALECTS` (CONTRACT.md, M-77).",
-      "export const BUNDLED_QUERY_DIALECTS: Readonly<Record<QueryDialect, QueryDialectEntry>> =",
+      "export const BUNDLED_QUERY_DIALECTS =",
       facts.queryDialects,
     ),
     "",
     ...renderedRecord(
       ENGINE_QUERY_EDITOR_MODULE,
       "Each tab type's editor language, `editor.language.monacoId`, read by `DIALECT_EDITORS` (CONTRACT.md, M-77).",
-      'export const BUNDLED_DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditorEntry>> =',
+      "export const BUNDLED_DIALECT_EDITORS =",
       facts.dialectEditors,
     ),
     "",
     ...renderedRecord(
       ENGINE_QUERY_EDITOR_MODULE,
       "Each editor language's accent and console, `editor.language`, read by `EDITOR_LANGUAGES` (CONTRACT.md, M-77).",
-      "export const BUNDLED_EDITOR_LANGUAGES: Readonly<Record<MonacoLanguageId, EditorLanguageEntry>> =",
+      "export const BUNDLED_EDITOR_LANGUAGES =",
       facts.editorLanguages,
     ),
     "",

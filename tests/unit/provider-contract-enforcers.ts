@@ -542,6 +542,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declarations.test.ts": [
         "editor.fenceAliases are the aliases ALIAS_ENGINES maps to the engine",
         "ALIAS_ENGINES and QUERY_FENCE_ALIASES are the declarations' aliases and the schema's generic fence tags",
+        "the generic fence tags are Studio's",
         "a reader built from the declarations names and admits every fence tag as fenceTagEngine and isQueryFenceTag do",
       ],
       "tests/unit/lib/sql/fence-tags.test.ts": [
@@ -556,15 +557,27 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "M-48": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
-        "an explain format outside Studio's strategies is one refusal at the editor's explain format",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer",
+      ],
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "admission refuses a declared query dialect, Monaco language, formatter language, explain format or query language Studio does not hold, by name at its pointer",
+        "admission admits every such name a legacy declaration states",
+      ],
+      "tests/unit/lib/db/studio-held-names.test.ts": [
+        "Studio's held names are its dialect rows, its editor languages, the formatter languages its declarations state, its explain strategies and its query languages' tab types",
+        "every name a committed declaration states is one Studio holds",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "editor.explainFormat is the format the engine's unconnected provider declares, null exactly where it supports no explain",
         "a variable a provider reads before it connects, set where the generator runs, changes no declaration",
         "the census reads each provider's capabilities in its stated environment, so a variable set where it runs changes none",
         "every declared explain format has Studio's strategy for it",
-        "the explain formats, the query dialects and the generic fence tags are Studio's",
+        "the declaration generator refuses, by engine and pointer, a declaration stating an explain format, query dialect, query language, Monaco language or formatter language Studio does not hold",
       ],
       "tests/unit/lib/explain/registry.test.ts": ["returns null for undefined (provider without explain support)"],
     },
@@ -572,15 +585,28 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "M-50": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
-        "a dialect outside Studio's dialects is refused as value-not-allowed",
         "a history mask with no flag is refused as too-few, and a flag that is not a long option as pattern-mismatch",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer",
+      ],
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "admission refuses a declared query dialect, Monaco language, formatter language, explain format or query language Studio does not hold, by name at its pointer",
+        "admission admits every such name a legacy declaration states",
+      ],
+      "tests/unit/lib/db/studio-held-names.test.ts": [
+        "Studio's held names are its dialect rows, its editor languages, the formatter languages its declarations state, its explain strategies and its query languages' tab types",
+        "every name a committed declaration states is one Studio holds",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "editor.dialect is the provider's query dialect with its QUERY_DIALECTS row",
         "QUERY_DIALECTS is the dialect rows the declarations state, one per dialect, each opening tabs of its own name",
         "history keeps no value of a flag the declarations name, as it keeps none of the registry's",
         "every member of a dialect row has its member in the declaration",
+        "the declaration generator refuses, by engine and pointer, a declaration stating an explain format, query dialect, query language, Monaco language or formatter language Studio does not hold",
       ],
       "tests/unit/lib/history-mask.test.ts": ["a registered dialect answers its record's mask"],
       "tests/unit/db/kubernetes/history-mask.test.ts": ["the dialect declares exactly the console's credential flags"],
@@ -591,7 +617,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a record that offers profiling, code generation and a count is offered all three",
       ],
     },
-    schema: ["/$defs/queryDialectRow", "/$defs/historyMask"],
+    schema: ["/$defs/queryDialectRow", "/$defs/queryDialect", "/$defs/historyMask"],
   },
   "M-51": {
     tests: {
@@ -1238,6 +1264,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "S-4": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags",
         "a grammar read from the declaration reads every statement of the census corpus as the row's grammar does",
@@ -1246,8 +1275,19 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/sql/spans.test.ts": [
         "absent, with backslashAlwaysEscapes true: the backslash escapes the quote and the run does not close",
       ],
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer",
+      ],
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "admission refuses a declared query dialect, Monaco language, formatter language, explain format or query language Studio does not hold, by name at its pointer",
+        "admission admits every such name a legacy declaration states",
+      ],
+      "tests/unit/editor/editor-language-registry.test.ts": [
+        "the SQL formatter refuses, by name, a formatter language sql-formatter does not format",
+      ],
     },
-    schema: ["/$defs/grammarFacts/properties/confirmConfigKeys"],
+    schema: ["/$defs/grammarFacts/properties/confirmConfigKeys", "/$defs/formatterLanguage"],
   },
   "S-5": {
     tests: {
@@ -1482,9 +1522,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "S-23": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too",
-        "a query language or a Monaco language outside Studio's is refused as value-not-allowed",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
+        "an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer",
         "an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch",
         "an editor language that states a tab type or a console dialect id is refused as unknown-key",
         "an engine declaration's editor language is refused at its own pointer under validateEngine",
@@ -1496,7 +1540,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "editor.language.accent and console are the EDITOR_LANGUAGES row's, a console registered under its own Monaco id",
         "EDITOR_LANGUAGES and DIALECT_EDITORS are the editor language facts the declarations state, one per language and one per tab type",
         "every member of an editor language row and of a tab type's editor row has its member in the declaration, or stays browser code",
-        "the query languages and the editor languages are Studio's",
+        "the declaration generator refuses, by engine and pointer, a declaration stating an explain format, query dialect, query language, Monaco language or formatter language Studio does not hold",
+      ],
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "admission refuses a declared query dialect, Monaco language, formatter language, explain format or query language Studio does not hold, by name at its pointer",
+        "admission admits every such name a legacy declaration states",
+      ],
+      "tests/unit/lib/db/studio-held-names.test.ts": [
+        "Studio's held names are its dialect rows, its editor languages, the formatter languages its declarations state, its explain strategies and its query languages' tab types",
+        "every name a committed declaration states is one Studio holds",
       ],
       "tests/unit/editor/editor-language-registry.test.ts": [
         "each language takes an accent of its own, and none is a status hue",

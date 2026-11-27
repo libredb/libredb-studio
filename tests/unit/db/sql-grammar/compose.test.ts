@@ -18,7 +18,13 @@ import { MONGODB_REDACTION_READER } from "@/lib/db/providers/document/mongodb/sq
 import { REDIS_REDACTION_READER } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
 import { POSTGRES_FORMAT_SEGMENT, POSTGRES_READ_QUOTED_QUALIFIER } from "@/lib/db/providers/sql/postgres-sql-grammar";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { composeSqlGrammar, SQL_GRAMMAR, SQL_GRAMMAR_FUNCTIONS } from "@/lib/db/sql-grammar";
+import {
+  byCodeUnit,
+  composeSqlGrammar,
+  FORMATTER_LANGUAGES,
+  SQL_GRAMMAR,
+  SQL_GRAMMAR_FUNCTIONS,
+} from "@/lib/db/sql-grammar";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 
@@ -231,5 +237,22 @@ describe("Studio's SQL grammar, composed from the declarations", () => {
     expect(SQL_GRAMMAR.postgres.completion.formatSegment).toBe(POSTGRES_FORMAT_SEGMENT);
     expect(SQL_GRAMMAR.postgres.completion.readQuotedQualifier).toBe(POSTGRES_READ_QUOTED_QUALIFIER);
     expect(frozenThrough(SQL_GRAMMAR_FUNCTIONS)).toBe(true);
+  });
+});
+
+describe("FORMATTER_LANGUAGES", () => {
+  test("byCodeUnit orders by UTF-16 code unit, not by locale, and holds equal names equal", () => {
+    expect(byCodeUnit("Z", "a")).toBe(-1);
+    expect(byCodeUnit("a", "Z")).toBe(1);
+    expect(byCodeUnit("mysql", "mysql")).toBe(0);
+  });
+
+  test("the formatter languages are the distinct names the rows state, in code-unit order and frozen", () => {
+    const stated = new Set(IDS.map((id) => BUNDLED_SQL_TEXT[id].grammar.formatterLanguage));
+
+    expect(new Set(FORMATTER_LANGUAGES)).toEqual(stated);
+    expect(FORMATTER_LANGUAGES.length).toBe(stated.size);
+    expect(FORMATTER_LANGUAGES.every((name, index) => index === 0 || FORMATTER_LANGUAGES[index - 1] < name)).toBe(true);
+    expect(Object.isFrozen(FORMATTER_LANGUAGES)).toBe(true);
   });
 });

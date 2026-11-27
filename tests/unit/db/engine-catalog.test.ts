@@ -102,7 +102,8 @@ import {
   projectSqlText,
   projectSqlWriting,
 } from "@/lib/db/engine-catalog/projection";
-import type { DatabaseType } from "@/lib/types";
+import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
+import type { DatabaseType, QueryTab } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-catalog.ts");
@@ -757,6 +758,28 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectQueryEditorFacts(ADMITTED)).not.toThrow();
   });
 
+  test("the query editor facts refuse, by engine and name, a query language with no tab type", () => {
+    const bigquery = admitted("bigquery");
+    const stating = (queryLanguage: string): EngineDeclaration => ({
+      ...bigquery,
+      id: "acmefoo",
+      editor: { ...bigquery.editor, language: { ...bigquery.editor.language, queryLanguage } },
+    });
+
+    for (const queryLanguage of ["exampleql", "constructor"]) {
+      expect(() => projectQueryEditorFacts([stating(queryLanguage)])).toThrow(
+        `acmefoo: the query language "${queryLanguage}" is not one Studio holds a tab type for.`,
+      );
+    }
+    // A dialect names the tab type itself, so its query language reads no tab type.
+    const kafka = admitted("kafka");
+    const dialected = {
+      ...kafka,
+      editor: { ...kafka.editor, language: { ...kafka.editor.language, queryLanguage: "exampleql" } },
+    };
+    expect(Object.keys(projectQueryEditorFacts([dialected]).dialectEditors)).toEqual(["kafka"]);
+  });
+
   test("projectSqlText answers each declaration's SQL text but its redaction, frozen, in ascending id order", () => {
     const set = ["postgres", "mongodb", "snowflake", "cassandra"].map(admitted);
     const texts = projectSqlText(set);
@@ -1301,16 +1324,35 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     ]);
     // A key that is not an identifier is written in the formatter's quotes, as the formatter keeps it.
     expect(committed).toContain('  "graph-cypher": Object.freeze({ accent: "border-hue-purple/40", console: false }),');
-    // Type imports only, so a reader of the module loads no other module through it.
-    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
-    expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // No import and no annotation: a reader of the module loads no other module through it, and each reader types its
+    // record over Studio's own key set.
+    expect([...committed.matchAll(/^import .*$/gm)]).toEqual([]);
+    expect([...committed.matchAll(/^export const .*$/gm)].map((match) => match[0])).toEqual([
+      "export const BUNDLED_QUERY_DIALECTS = Object.freeze({",
+      "export const BUNDLED_DIALECT_EDITORS = Object.freeze({",
+      "export const BUNDLED_EDITOR_LANGUAGES = Object.freeze({",
+    ]);
     // Frozen at every level, as the projection answers it.
     const frozen = (value: unknown): boolean =>
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
     expect(frozen(BUNDLED_QUERY_DIALECTS)).toBe(true);
     expect(frozen(BUNDLED_DIALECT_EDITORS)).toBe(true);
     expect(frozen(BUNDLED_EDITOR_LANGUAGES)).toBe(true);
+  });
+
+  test("the query editor records keep each value's literal type, so a reader's annotation refuses a name Studio holds no code for", () => {
+    type Value<T> = T[keyof T];
+    type MonacoIds = Value<typeof BUNDLED_DIALECT_EDITORS>["monacoId"];
+    type TabTypes = Value<typeof BUNDLED_QUERY_DIALECTS>["tabType"];
+    // Neither is widened to string, which every name would satisfy.
+    const literal: [string extends MonacoIds ? false : true, string extends TabTypes ? false : true] = [true, true];
+    const stray = Object.freeze({ ...BUNDLED_DIALECT_EDITORS, sql: Object.freeze({ monacoId: "exampleeditor" }) });
+    // @ts-expect-error A Monaco id Studio holds no code for fails the typecheck at the reader's annotation.
+    const typed: Readonly<Record<QueryTab["type"], DialectEditor>> = stray;
+
+    expect(literal).toEqual([true, true]);
+    expect<string>(typed.sql.monacoId).toBe("exampleeditor");
+    expect(DIALECT_EDITORS.sql.monacoId).toBe("sql");
   });
 
   test("the committed SQL text module is what the generator renders from the admitted declarations", () => {

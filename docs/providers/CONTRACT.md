@@ -576,6 +576,8 @@ A fact the `SqlGrammar` type may leave out is written at the reading its absence
 - the two backslash overrides are null where the quote takes the reading `backslashAlwaysEscapes` gives both quotes;
 - the session keys are null where no SET or RESET asks, and a list, even an empty one, makes a RESET with no key ask.
 
+A formatter language is one of the sql-formatter languages Studio's own engines state.
+
 ### S-5 (normative): Trailing limit clauses
 
 A trailing limit clause is a pattern of a `source`, of 1 to 512 characters, which opens with `\s+` and closes with `\s*$`, and its `flags`, `i` or `iu`, compiled as JavaScript's `RegExp` reads them.
@@ -687,7 +689,7 @@ How a package's generator functions are called is decided with the first package
 
 ### S-23 (normative): The editor language
 
-An engine states, in `editor.language`, the query language it speaks, the Monaco language its query tabs are written in (one of Studio's editor languages), that language's accent, and whether it is a console dialect, whose id is its Monaco id.
+An engine states, in `editor.language`, the query language it speaks, one of Studio's query languages, the Monaco language its query tabs are written in (one of Studio's editor languages), that language's accent, and whether it is a console dialect, whose id is its Monaco id.
 An accent is a border class of one hue of Studio's palette at 40 percent, optionally its `-alt` step, and is none of the three status hues, amber, rose and emerald.
 Two engines that name one editor language state the same accent and console, and an engine's tabs open under its dialect's name (M-50) or, with no dialect, its query language's tab type, so a manifest states no tab type.
 

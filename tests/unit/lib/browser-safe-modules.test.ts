@@ -7,7 +7,8 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 /**
  * The generated connection tables, the generated editor record, the generated query editor records, the generated
  * SQL text, SQL writing, migration DDL and SQL generator records and the generated claim requests: frozen literals and
- * type imports only, so loading one loads nothing else.
+ * type imports only, so loading one loads nothing else. The query editor module imports nothing, since its records carry
+ * no annotation.
  */
 const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
@@ -56,8 +57,18 @@ describe("browser-safe modules import types only", () => {
   test.each(GENERATED_MODULES)("the generated module %s imports types only", (file) => {
     const source = readFileSync(path.join(ROOT, file), "utf8");
     const imports = source.split("\n").filter((line) => line.startsWith("import "));
-    expect(imports.length).toBeGreaterThan(0);
+    expect(source).toContain("Object.freeze(");
     for (const line of imports) expect(line).toMatch(/^import type \{[^}]+\} from "[^"]+";$/);
     expect(source).not.toMatch(/\brequire\(|\bimport\(/);
+  });
+
+  test("the generated modules' imports are read: every one but the query editor module imports a type", () => {
+    const importing = GENERATED_MODULES.filter((file) =>
+      readFileSync(path.join(ROOT, file), "utf8")
+        .split("\n")
+        .some((line) => line.startsWith("import type ")),
+    );
+
+    expect(importing).toEqual(GENERATED_MODULES.filter((file) => !file.endsWith("/query-editor.generated.ts")));
   });
 });

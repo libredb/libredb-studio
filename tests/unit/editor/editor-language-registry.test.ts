@@ -225,6 +225,19 @@ describe("the formatters", () => {
     expect(() => formatterForLanguage("sql")?.("SELECT $1 FROM @stage t", resolveSqlGrammar("snowflake"))).toThrow();
   });
 
+  test("the SQL formatter refuses, by name, a formatter language sql-formatter does not format", () => {
+    const sql = formatterForLanguage("sql");
+    const typed = "select a from t";
+    const grammar = resolveSqlGrammar("postgres");
+
+    for (const language of ["exampleformat", "constructor"]) {
+      expect(() => sql?.(typed, { ...grammar, formatterLanguage: language })).toThrow(
+        `The SQL formatter language "${language}" is not one sql-formatter formats.`,
+      );
+    }
+    expect(sql?.(typed, { ...grammar, formatterLanguage: "postgresql" })).toBe(sql?.(typed));
+  });
+
   test("every dialect but Snowflake formats SQL exactly as before", () => {
     const typed = "select a, b from t where a = 1 group by 1 qualify x = 1 order by 2";
     const sql = formatterForLanguage("sql");
