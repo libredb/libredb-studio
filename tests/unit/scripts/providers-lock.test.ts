@@ -411,6 +411,24 @@ describe("the lock command", () => {
     expect(fs.readdirSync(providers).filter((name) => name.includes(LOCK_FILE_NAME))).toEqual([]);
   });
 
+  test("the entry cap counts every package directory whatever its layout refusal, so both refusals print in one run", () => {
+    const providers = freshProviders();
+    for (let index = 0; index <= LOCK_ENTRY_CAP; index += 1) writeArtifact(providers, numbered(index));
+    writeArtifact(providers, { ...numbered(0), version: "1.1.0" });
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+      1,
+      "",
+      [
+        "providers:lock: acme-p000: two versions of one package",
+        `providers:lock: the lock would hold ${LOCK_ENTRY_CAP + 1} entries, more than the 256 Studio reads`,
+        "providers:lock wrote nothing",
+        "",
+      ].join("\n"),
+    ]);
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
   test("every lock the command writes is admitted by the reader, at each cap", () => {
     // Each cap the format module exports has its case here; a new cap fails this until it gets one.
     expect(
