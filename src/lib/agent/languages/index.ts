@@ -5,11 +5,14 @@
  * `tools.ts`, and only the run loop imports it. `tools.ts` reads the server facet alone, through `languageServerPack`
  * in `server.ts`, which returns the very object a pack here holds.
  *
- * The record is total over `AgentStatementLanguageId`, so a later language does not compile until it registers its
- * pack here. A language id the record does not hold can still arrive from a ledger, and reaching one is a named error
- * rather than a quiet fall back to SQL.
+ * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
+ * it registers its pack here, and then every language the bundled declarations state agent data for
+ * (`DECLARED_AGENT_LANGUAGES` in `client.ts`), whole: the very client and server facets `client.ts` and `server.ts`
+ * hold, and an execution facet with no tool arm and no evidence tool, since a declared language's variants offer the
+ * read and the report only. A language id the record does not hold can still arrive from a ledger, and reaching one
+ * is a named error rather than a quiet fall back to SQL.
  */
-import type { AgentStatementLanguageId } from "../agent-manifest";
+import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import { INFLUXQL_PACK } from "./influxql/index";
 import { KUBECTL_PACK } from "./kubectl/index";
@@ -34,10 +37,12 @@ import { OPCUAREAD_PACK } from "./opcuaread/index";
 import { MTCONNECTREAD_PACK } from "./mtconnectread/index";
 import { MQTTREAD_PACK } from "./mqttread/index";
 import { SPARKPLUGREAD_PACK } from "./sparkplugread/index";
+import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "./client";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
+import { languageServerPack } from "./server";
 import { SQL_PACK } from "./sql/index";
 
-const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Object.freeze({
+const MODULE_PACKS = Object.freeze({
   sql: SQL_PACK,
   kubectl: KUBECTL_PACK,
   mongo: MONGO_PACK,
@@ -62,7 +67,25 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   mtconnectread: MTCONNECTREAD_PACK,
   mqttread: MQTTREAD_PACK,
   sparkplugread: SPARKPLUGREAD_PACK,
-} satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
+} satisfies Record<AgentModuleLanguageId, AgentLanguagePack>);
+
+/** Each declared language's pack: its registered facets, and no tool arm or evidence tool. */
+const DECLARED_PACKS: Readonly<Record<string, AgentLanguagePack>> = Object.fromEntries(
+  DECLARED_AGENT_LANGUAGES.map(({ id }) => [
+    id,
+    Object.freeze({
+      id,
+      client: languageClientPack(id),
+      server: languageServerPack(id),
+      execution: Object.freeze({ arms: Object.freeze({}), evidenceTools: Object.freeze({}) }),
+    }),
+  ]),
+);
+
+const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Object.freeze({
+  ...MODULE_PACKS,
+  ...DECLARED_PACKS,
+});
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
 export function agentLanguagePack(language: AgentStatementLanguageId): AgentLanguagePack {
@@ -97,7 +120,8 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   mtconnectread: MTCONNECTREAD_PACK.execution.arms,
   mqttread: MQTTREAD_PACK.execution.arms,
   sparkplugread: SPARKPLUGREAD_PACK.execution.arms,
-} satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
+  ...Object.fromEntries(Object.entries(DECLARED_PACKS).map(([id, pack]) => [id, pack.execution.arms])),
+} satisfies Record<AgentModuleLanguageId, LanguageToolArms>);
 
 /**
  * Every pack's evidence tools. Global by tool name, because the run loop dispatches a call by its name before it

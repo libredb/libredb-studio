@@ -214,7 +214,12 @@ import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
 import { AGENT_EVIDENCE_EVENTS, statementFamilyOf } from "./languages/client";
 import { engineServerDialect, runServerPack } from "./languages/engines/server";
-import type { AgentFamilyOperationIds, AgentRecommendationCard, EvidenceToolName } from "./languages/pack";
+import type {
+  AgentDeclaredReadOperation,
+  AgentFamilyOperationIds,
+  AgentRecommendationCard,
+  EvidenceToolName,
+} from "./languages/pack";
 import {
   CURATED_CALL_LANGUAGE,
   LANGUAGE_BASE_DEFINITIONS,
@@ -310,8 +315,10 @@ export type AgentOperationId =
    * because a model can ask for it.
    */
   | "db.schema.read"
-  /** Every family's own operations, one row per family in `AgentFamilyOperationIds`. */
-  | AgentFamilyOperationIds[AgentStatementLanguageId];
+  /** Every module family's own operations, one row per family in `AgentFamilyOperationIds`. */
+  | AgentFamilyOperationIds[keyof AgentFamilyOperationIds]
+  /** The read of each statement language an engine declares as data, which has no row. */
+  | AgentDeclaredReadOperation;
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;

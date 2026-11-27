@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "0dda191d7239b4e2b903e5676922dc077a4c1c93a8cad53f211bfad95cc18ec0";
+export const MANIFEST_SCHEMA_SHA256 = "d66b25c488bfcf87edd932e3ba862cfa3788e4794d6204d2b2a76f99d7a8c2e8";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -700,10 +700,71 @@ export interface StatementConfirmation {
   readonly maxTextBytes: number | null;
 }
 
-/** What agent mode reads of a statement in the language, as data only, or null where agent mode sends the language no statement. request: the form core admits a model-written request by before the provider reads it. The form is the agent's admission, never the boundary: the provider reads every request with its own reader before it sends anything, and the engine's structural boundary bounds what it sends. */
+/** What agent mode reads of a statement in the language, as data only, or null where agent mode sends the language no statement. request: the form core admits a model-written request by before the provider reads it. text: the words agent mode says the language in. The form is the agent's admission, never the boundary: the provider reads every request with its own reader before it sends anything, and the engine's structural boundary bounds what it sends. */
 export type StatementLanguageAgent = {
   readonly request: AgentRequestForm;
+  readonly text: AgentLanguageText;
 } | null;
+
+/** The words agent mode says a language in, each a text: copy, the words its rules name the language's parts by; investigation, the investigation workflow's words; posture, what the safety strip says of a run; grounding, what a run is told of what it holds; advice, what a refused read is told. A text holds a value Studio fills only where its description names it. */
+export interface AgentLanguageText {
+  readonly copy: AgentTextCopy;
+  readonly investigation: AgentTextInvestigation;
+  readonly posture: AgentTextPosture;
+  readonly grounding: AgentTextGrounding;
+  readonly advice: AgentTextAdvice;
+}
+
+/** The words the run's rules name the language's parts by, each filled with no value: subject, what a run investigates; noun, what one request is called; writes, what the boundary refuses; reached, what a refused request never reaches; defect, what a policy refusal is not a defect in. */
+export interface AgentTextCopy {
+  readonly subject: AgentText;
+  readonly noun: AgentText;
+  readonly writes: AgentText;
+  readonly reached: AgentText;
+  readonly defect: AgentText;
+}
+
+/** The investigation workflow's words, each filled with no value: classifierDescription, the question the workflow answers, as the classifier reads it; objective, the run's objective; toolDescription, the description of the run_read_query tool; toolRule, the workflow's rules for its tools. */
+export interface AgentTextInvestigation {
+  readonly classifierDescription: AgentText;
+  readonly objective: AgentText;
+  readonly toolDescription: AgentText;
+  readonly toolRule: AgentText;
+}
+
+/** What the safety strip says of an agent-mode run, each filled with rows, the most rows a read answers, and seconds, the most seconds a read runs: qualifier, the words beside the pill; title, the popover's heading; body, the popover's text; handover, what the editor hand-over consents to. */
+export interface AgentTextPosture {
+  readonly qualifier: AgentText;
+  readonly title: AgentText;
+  readonly body: AgentText;
+  readonly handover: AgentText;
+}
+
+/** What a run is told of what it holds: omissionAdvice, how to read what the inventory left out, filled with no value; ungrounded, what a run with no inventory is told after the reason, filled with noun, what the inventory calls one of its objects. */
+export interface AgentTextGrounding {
+  readonly omissionAdvice: AgentText;
+  readonly ungrounded: AgentText;
+}
+
+/** What a refused read is told: rowCap, for a read refused past the row budget, filled with allowed, the most rows it may ask for; shape, for a read whose shape the policy refuses, filled with no value. */
+export interface AgentTextAdvice {
+  readonly rowCap: AgentText;
+  readonly shape: AgentText;
+}
+
+/** One text, sent to the model and shown to users as written: a string, or a list of parts joined with nothing between them, a part being a string or a fill that Studio replaces with the value it names. */
+export type AgentText = AgentTextString | readonly AgentTextPart[];
+
+/** One part of a text: a string, or a fill. */
+export type AgentTextPart = AgentTextString | AgentTextFill;
+
+/** The words of a text or of a part, as written: up to 8192 UTF-16 code units with no control character (U+0000 to U+001F, U+007F to U+009F), so no line break, no line or paragraph separator (U+2028, U+2029), no bidi embedding, override or isolate (U+202A to U+202E, U+2066 to U+2069) and no direction mark (U+200E, U+200F, U+061C). */
+export type AgentTextString = string;
+
+/** A value Studio fills into a text: fill, the value's name, one the text's description names. */
+export interface AgentTextFill {
+  readonly fill: string;
+}
 
 /** A request written as one JSON object, admitted in one fixed order, the first failing step answering its refusal: longer than maxCharacters UTF-16 code units; blank; no JSON object; a repeated key; a key outside keys; with a selector, no read whose value is the selector key's own value; each common check in order; each key the read refuses, present; each check of the read in order. No refusal quotes the request, and a default is never applied to the answer. */
 export interface AgentRequestForm {

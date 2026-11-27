@@ -8,12 +8,15 @@
  * every statement tool from this registry and names no language; neither this module nor any facet imports from
  * `src/lib/mcp/`, since the MCP module depends on the language packs and never the reverse.
  *
- * The record is total over `AgentStatementLanguageId`, as `SERVER_PACKS` in `server.ts` is, so a language that joins
- * agent mode does not compile until it declares its facet: a tool, or null while it has none. The tool names MCP's own
- * unions (the audit actions, `list_connections`' `read_tool`, the route's schema map) are derived from it.
+ * The record holds every module language (`AgentModuleLanguageId`), as `SERVER_PACKS` in `server.ts` does, so a module
+ * language that joins agent mode does not compile until it declares its facet: a tool, or null while it has none. A
+ * language the bundled declarations state agent data for (`DECLARED_AGENT_LANGUAGES` in `client.ts`) is held as null:
+ * it has no MCP statement tool until its MCP facet is composed from its data. The tool names MCP's own unions (the
+ * audit actions, `list_connections`' `read_tool`, the route's schema map) are derived from the module facets.
  */
 import type { z } from "zod";
-import type { AgentStatementLanguageId } from "../agent-manifest";
+import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
+import { DECLARED_AGENT_LANGUAGES } from "./client";
 import { CYPHER_MCP_FACET } from "./cypher/mcp";
 import { ETCDCTL_MCP_FACET } from "./etcdctl/mcp";
 import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
@@ -102,8 +105,8 @@ export type AgentLanguageMcpFacet = AgentLanguageMcpFacetBase &
     | { readonly paging: "none"; readonly fence: "language-admission"; readonly words: AgentLanguageMcpWords }
   );
 
-/** Each statement language's MCP facet, or null where the language has no MCP tool. */
-export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
+/** Each module language's MCP facet, or null where the language has no MCP tool. */
+const MODULE_MCP_FACETS = Object.freeze({
   sql: SQL_MCP_FACET,
   kubectl: KUBECTL_MCP_FACET,
   mongo: MONGO_MCP_FACET,
@@ -134,10 +137,21 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   mtconnectread: MTCONNECTREAD_MCP_FACET,
   mqttread: MQTTREAD_MCP_FACET,
   sparkplugread: SPARKPLUGREAD_MCP_FACET,
-} satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
+} satisfies Record<AgentModuleLanguageId, AgentLanguageMcpFacet | null>);
 
-/** A facet some language declares, with its tool's name as a literal. */
-export type AgentLanguageMcpDeclaredFacet = NonNullable<(typeof AGENT_LANGUAGE_MCP_FACETS)[AgentStatementLanguageId]>;
+/** A facet some module language declares, with its tool's name as a literal. */
+export type AgentLanguageMcpDeclaredFacet = NonNullable<(typeof MODULE_MCP_FACETS)[AgentModuleLanguageId]>;
+
+/**
+ * Each statement language's MCP facet, or null where the language has no MCP tool: the module languages' facets, then
+ * each language declared as data as null, since no MCP statement tool reads one until its MCP facet is composed.
+ */
+export const AGENT_LANGUAGE_MCP_FACETS: Readonly<
+  Record<AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null>
+> = Object.freeze({
+  ...MODULE_MCP_FACETS,
+  ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map(({ id }) => [id, null])),
+});
 
 /** The statement tools' names, from the facets: each is an MCP tool and an audit action of its own. */
 export type AgentLanguageMcpTool = AgentLanguageMcpDeclaredFacet["tool"];

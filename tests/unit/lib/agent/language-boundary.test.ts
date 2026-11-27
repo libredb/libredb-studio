@@ -159,7 +159,8 @@ const SHARED_ENTRIES = new Set(
 
 /**
  * The findings the core keeps on purpose, each an exact count. None is a pack id read as a branch or an engine branch:
- * - the spec's own id union, `AgentStatementLanguageId`, the statement languages an engine's grant may name;
+ * - the spec's own id union of the module languages, `AgentModuleLanguageId`, the statement languages an engine's grant
+ *   may name that Studio holds as modules;
  * - `sql` as the name of the model's argument, and as a `ProviderCapabilities.queryLanguage` value;
  * - the reference variant record and the ledger's "the default language is not written" rule (R5c
  *   `DEFAULT_STATEMENT_LANGUAGE`), and a curated call, which is no statement in any language (R5c
@@ -177,30 +178,30 @@ const SHARED_ENTRIES = new Set(
  * in `languages/pack.ts`.
  */
 const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "kubectl"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mongo"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "libredbkv"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "influxql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "weaviateapi"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "qdrantapi"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "cypher"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "milvusrpc"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "rediscli"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "etcdctl"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "oxiacli"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "rabbitread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "kafkaread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "s3api"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "fsquery"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "snmpget"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "netconfrpc"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "modbusread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "promql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "opcuaread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mtconnectread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mqttread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "sparkplugread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R5a "sql"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "kubectl"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "mongo"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "libredbkv"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "influxql"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "weaviateapi"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "qdrantapi"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "cypher"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "milvusrpc"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "rediscli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "etcdctl"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "oxiacli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "rabbitread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "kafkaread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "s3api"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "fsquery"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "snmpget"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "netconfrpc"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "modbusread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "promql"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "opcuaread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "mtconnectread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "mqttread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "sparkplugread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R5a "sql"`]: 1,
   // The provider capability `queryLanguage`, whose value "influxql" names the editor's language and is spelled as the
   // pack id; the inventory reads it to write an InfluxQL measurement as "db".."m", the spelling the server reads.
   [`${AGENT}/context-snapshot.ts#qualifiedName: R1a "influxql"`]: 1,
@@ -1351,8 +1352,8 @@ describe("planted violations yield exactly their findings", () => {
   test("an allowlisted id written twice fails R4 as a surplus, and one removed fails it as stale", () => {
     const manifest = `${AGENT}/agent-manifest.ts`;
     const id = '"kubectl"';
-    const key = `${manifest}#AgentStatementLanguageId: R1a ${id}`;
-    expect(boundaryFindings(plantInTypeAlias(manifest, "AgentStatementLanguageId", id))).toEqual([
+    const key = `${manifest}#AgentModuleLanguageId: R1a ${id}`;
+    expect(boundaryFindings(plantInTypeAlias(manifest, "AgentModuleLanguageId", id))).toEqual([
       `R4 surplus: ${key} (found 2, allowed 1)`,
     ]);
     const removed = { [manifest]: read(manifest).replace(` | ${id}`, "") };
@@ -1395,6 +1396,8 @@ describe("planted violations yield exactly their findings", () => {
     const toTools = `${manifest} -> ${clients} -> ${client} -> ${TOOLS}`;
     // The manifest loads the client packs, and the verifiers load the manifest, so the verifier closure fails too.
     // `tools.ts` reads the engine server dialects, whose run resolver reads `statementFamilyOf`: a cycle closes there.
+    // `tools.ts` reads the server registry, which reads the declared languages off the client registry: a cycle closes
+    // there too.
     // `tools.ts` reads `statementFamilyOf` itself too, so the shortest cycle through the client packs closes on it.
     // The SQL statement card reads the manifest's plan operations, so a cycle closes there from both of its importers.
     const toCard = `${manifest} -> ${clients} -> ${client} -> ${TOOLS} -> ${LANGUAGES}/server.ts`;
@@ -1407,6 +1410,7 @@ describe("planted violations yield exactly their findings", () => {
       `R3 cycle: ${manifest} -> ${engines} -> ${clients} -> ${client} -> ${TOOLS} -> ${manifest}`,
       `R3 cycle: ${clients} -> ${client} -> ${TOOLS} -> ${clients}`,
       `R3 cycle: ${clients} -> ${client} -> ${TOOLS} -> ${LANGUAGES}/engines/server.ts -> ${clients}`,
+      `R3 cycle: ${clients} -> ${client} -> ${TOOLS} -> ${LANGUAGES}/server.ts -> ${clients}`,
       `R3 verifier: ${claims} reaches ${TOOLS} through ${claims} -> ${toTools}`,
       `R3 verifier: ${GOAL_VERIFIER} reaches ${TOOLS} through ${GOAL_VERIFIER} -> ${toTools}`,
       `R3 verifier: ${LANGUAGES}/kubectl/verifiers.ts reaches ${TOOLS} through ${LANGUAGES}/kubectl/verifiers.ts -> ${claims} -> ${toTools}`,

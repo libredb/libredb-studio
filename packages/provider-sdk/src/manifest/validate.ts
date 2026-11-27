@@ -21,7 +21,9 @@ import { AGENT_READING_PANELS } from "../calls/types";
 import {
   type AgentCredentialForm,
   type AgentCredentialFormClaim,
+  type AgentLanguageText,
   type AgentRequestForm,
+  type AgentText,
   type AgentRequestKeyCheck,
   type CaptureKindWord,
   type EngineDeclaration,
@@ -122,6 +124,8 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "request-name-range-reversed",
   "request-name-range-not-one-character",
   "request-name-length-empty",
+  "request-name-refused-unreachable",
+  "agent-text-fill-unknown",
   "statistics-without-catalog-read",
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
@@ -834,7 +838,8 @@ function isOneCharacter(text: string): boolean {
 /**
  * The rules of one key check's value rule the schema cannot state, at pointers under `at`, the check's pointer: an
  * integer rule's range holds a value and its default; a name rule's character range runs from one well-formed code
- * point up to another, and its length range holds a length.
+ * point up to another, and its length range holds a length; and where all of those hold, each name it refuses is one
+ * it could admit (`refusedNameRefusals`).
  */
 function requestRuleRefusals(check: AgentRequestKeyCheck, at: string): SchemaRefusal[] {
   const { rule } = check;
@@ -863,6 +868,95 @@ function requestRuleRefusals(check: AgentRequestKeyCheck, at: string): SchemaRef
     });
     if (rule.minLength > rule.maxLength)
       refusals.push(schemaRefusal("request-name-length-empty", `${pointer}/minLength`));
+    if (refusals.length === 0) refusals.push(...refusedNameRefusals(rule, pointer));
+  }
+  return refusals;
+}
+
+/**
+ * The refused names and prefixes of a name rule whose ranges and length hold a name, at pointers under `at`, the rule's
+ * pointer, that no name the rule admits could hold: a refused name that is not well-formed, holds a code point outside
+ * every range, or whose length in code points is outside the rule's length range; and a refused prefix that is not
+ * well-formed, holds a code point outside every range, or is longer than the longest name. Such an entry never refuses
+ * anything, so a form that lists one reads as refusing what it never refuses.
+ */
+function refusedNameRefusals(
+  rule: Extract<AgentRequestKeyCheck["rule"], { kind: "name" }>,
+  at: string,
+): SchemaRefusal[] {
+  const within = (text: string) =>
+    text.isWellFormed() &&
+    [...text].every((character) => {
+      const point = character.codePointAt(0) as number;
+      return rule.characters.some(
+        ({ from, to }) => point >= (from.codePointAt(0) as number) && point <= (to.codePointAt(0) as number),
+      );
+    });
+  const refusals: SchemaRefusal[] = [];
+  rule.refused.forEach(({ names, prefixes }, group) => {
+    names.forEach((name, index) => {
+      const length = [...name].length;
+      if (!within(name) || length < rule.minLength || length > rule.maxLength) {
+        refusals.push(schemaRefusal("request-name-refused-unreachable", `${at}/refused/${group}/names/${index}`));
+      }
+    });
+    prefixes.forEach((prefix, index) => {
+      if (!within(prefix) || [...prefix].length > rule.maxLength) {
+        refusals.push(schemaRefusal("request-name-refused-unreachable", `${at}/refused/${group}/prefixes/${index}`));
+      }
+    });
+  });
+  return refusals;
+}
+
+/** One text's list of the values Studio fills into it, frozen, with each name kept as its literal type. */
+function fills<const Names extends readonly string[]>(...names: Names): Readonly<Names> {
+  return Object.freeze(names);
+}
+
+/**
+ * The values Studio fills into each text of a statement language's agent part, by the text's group and name under
+ * `statementLanguageData.agent.text`: rows, the most rows a read answers; seconds, the most seconds a read runs; noun,
+ * what the inventory calls one of its objects; allowed, the most rows a refused read may ask for. A text names only its
+ * own values in a fill, which `agentTextRefusals` holds; core fills each text from this table. The table is frozen
+ * whole, each text's list of fills included.
+ */
+export const AGENT_TEXT_FILLS = Object.freeze({
+  copy: Object.freeze({ subject: fills(), noun: fills(), writes: fills(), reached: fills(), defect: fills() }),
+  investigation: Object.freeze({
+    classifierDescription: fills(),
+    objective: fills(),
+    toolDescription: fills(),
+    toolRule: fills(),
+  }),
+  posture: Object.freeze({
+    qualifier: fills("rows", "seconds"),
+    title: fills("rows", "seconds"),
+    body: fills("rows", "seconds"),
+    handover: fills("rows", "seconds"),
+  }),
+  grounding: Object.freeze({ omissionAdvice: fills(), ungrounded: fills("noun") }),
+  advice: Object.freeze({ rowCap: fills("allowed"), shape: fills() }),
+} as const satisfies {
+  readonly [Group in keyof AgentLanguageText]: { readonly [Name in keyof AgentLanguageText[Group]]: readonly string[] };
+});
+
+/**
+ * The fills of an agent text, at pointers under `at`, the text's pointer, that name a value Studio does not fill into
+ * that text (`AGENT_TEXT_FILLS`).
+ */
+function agentTextRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  for (const [group, members] of Object.entries(AGENT_TEXT_FILLS)) {
+    for (const [name, fills] of Object.entries(members as Readonly<Record<string, readonly string[]>>)) {
+      const parts = (text as unknown as Record<string, Record<string, AgentText>>)[group][name];
+      if (typeof parts === "string") continue;
+      parts.forEach((part, index) => {
+        if (typeof part !== "string" && !fills.includes(part.fill)) {
+          refusals.push(schemaRefusal("agent-text-fill-unknown", `${at}/${group}/${name}/${index}/fill`));
+        }
+      });
+    }
   }
   return refusals;
 }
@@ -922,7 +1016,8 @@ function requestFormRefusals(form: AgentRequestForm, at: string): SchemaRefusal[
  * the engine's agent statement language where both are stated; it is never the SQL family's name, since an engine that
  * speaks SQL states null; a reader kind that names no operation lists none, since no reader could ever answer one it
  * lists; and an agent part is stated only for an engine whose agent mode sends a statement, with a request form read
- * whole (`requestFormRefusals`).
+ * whole (`requestFormRefusals`) and a text whose fills each name a value Studio fills into that text
+ * (`agentTextRefusals`).
  */
 function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const data = engine.statementLanguageData;
@@ -941,6 +1036,7 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
   if (data.agent !== null) {
     if (requested === null) refusals.push(schemaRefusal("statement-language-agent-unspoken", `${pointer}/agent`));
     refusals.push(...requestFormRefusals(data.agent.request, `${pointer}/agent/request`));
+    refusals.push(...agentTextRefusals(data.agent.text, `${pointer}/agent/text`));
   }
   return refusals;
 }
@@ -1290,6 +1386,10 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The character range's end at ${at} is not exactly one well-formed character.`;
     case "request-name-length-empty":
       return `The name rule's minimum length at ${at} is above its maximum length, so no name is admitted.`;
+    case "request-name-refused-unreachable":
+      return `The refused name or prefix at ${at} is or opens no name the rule admits, so it refuses nothing.`;
+    case "agent-text-fill-unknown":
+      return `The fill at ${at} names a value Studio does not fill into that text.`;
     case "statistics-without-catalog-read":
       return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
     case "catalog-capture-without-catalog-read":

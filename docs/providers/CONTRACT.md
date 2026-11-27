@@ -445,11 +445,11 @@ A grant to an admitted package's engine is a row of Studio's register, keyed by 
 A row grants claims as M-54 reads them, and may also grant the engine its own words through core's scrub (C-112), never by default.
 A row is LibreDB's review, kept in Studio's repository until the providers move to repositories of their own, and no manifest member, lock entry or admission step writes one.
 
-### M-85 (informative): An engine's statement language is data of its declaration
+### M-85 (normative): An engine's statement language is data of its declaration
 
 An engine that speaks a statement language of its own, not SQL, states that language as data in its declaration, and states null there where it speaks SQL or no statement language.
-The data names the language and states its confirmation part (M-86), the request form agent mode admits and the text agent mode shows, every member required as M-8 says, with the manifest schema as its vocabulary.
-Not every part of the data is in the schema yet, so nothing checks this.
+The data names the language and states its confirmation part (M-86) and its agent part, the request form agent mode admits and the text agent mode shows, or null where agent mode sends the language no statement, every member required as M-8 says, with the manifest schema as its vocabulary.
+A text is a string or a list of parts, a part naming a value Studio fills only where the schema lists that value for the text, and it reaches the model and the user only as the register row grants the language (M-87).
 
 ### M-86 (normative): The confirmation part of a statement language
 

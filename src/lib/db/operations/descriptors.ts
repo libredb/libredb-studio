@@ -22,9 +22,11 @@
 
 import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
+import { DECLARED_STATEMENT_LANGUAGES } from "@/lib/db/declared-statement-languages";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
 import { cypherAgentReadInput } from "./cypher-admission";
+import { declaredLanguageReadDescriptor } from "./declared-language-read";
 import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
@@ -1370,6 +1372,10 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mtconnectreadQueryReadDescriptor,
   mqttreadQueryReadDescriptor,
   sparkplugreadQueryReadDescriptor,
+  // The read of each language the bundled declarations state agent data for: one generic descriptor per language.
+  ...DECLARED_STATEMENT_LANGUAGES.filter((data) => data.agent !== null).map((data) =>
+    declaredLanguageReadDescriptor(data),
+  ),
 ]);
 
 /**

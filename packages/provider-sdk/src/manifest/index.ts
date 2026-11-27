@@ -5,6 +5,7 @@
  */
 export * from "./manifest-types.generated";
 export {
+  AGENT_TEXT_FILLS,
   compileManifestValidator,
   type ContractRefusal,
   type EngineVerdict,

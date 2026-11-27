@@ -5,7 +5,12 @@ import type { CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { ClusterUsageInput } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import type { StatementLanguageRequest } from "@/lib/db/claim-grants";
-import type { AgentLanguageCopy, AgentStatementLanguageId, AgentWorkflowVariant } from "../agent-manifest";
+import type {
+  AgentLanguageCopy,
+  AgentModuleLanguageId,
+  AgentStatementLanguageId,
+  AgentWorkflowVariant,
+} from "../agent-manifest";
 import type { AgentCatalogCapture } from "../catalog-rows";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../composed-sql-primitives";
 import type { AgentGoalShortfall, VerifiableAgentRun } from "../goal-verifier";
@@ -291,9 +296,17 @@ type AgentFamilyReadOperation = {
   [F in keyof AgentFamilyOperationIds]: Extract<AgentFamilyOperationIds[F], `${F}.query.read`>;
 }[keyof AgentFamilyOperationIds];
 
+declare const declaredRead: unique symbol;
+
+/**
+ * The read of a statement language an engine declares as data, `<language>.query.read`, branded so only the composer
+ * of its server facet (`composeDeclaredServerPack` in `declared-server.ts`) builds one.
+ */
+export type AgentDeclaredReadOperation = `${string}.query.read` & { readonly [declaredRead]: true };
+
 export interface AgentLanguageServerAdapter {
   /** The descriptor this language's model-written reads are evaluated under. */
-  readonly readOperation: AgentFamilyReadOperation;
+  readonly readOperation: AgentFamilyReadOperation | AgentDeclaredReadOperation;
   /**
    * The model's argument as the one statement text every server layer reads: the fence, the provider, the ledger
    * and the repair identity. Null for any value that carries no statement, which the caller refuses rather than
@@ -934,7 +947,10 @@ export interface SqlClientDialect {
   readonly catalogCapture: Supported;
 }
 
-/** One explicit row per family, no default branch: a fourth `AgentStatementLanguageId` fails to compile until its row exists. */
+/**
+ * One explicit row per module family, no default branch: a further `AgentModuleLanguageId` fails to compile until its
+ * row exists. A language declared as data has no dialect-bound member and no engine overlay, so it has no row.
+ */
 export interface AgentFamilyDialectRows {
   sql: { client: SqlClientDialect; server: SqlServerDialect };
   mongo: { client: Record<never, never>; server: Record<never, never> };
@@ -963,7 +979,7 @@ export interface AgentFamilyDialectRows {
 }
 
 /** The dialect-bound members of each family, client and server. */
-export type AgentFamilyDialect = { readonly [F in AgentStatementLanguageId]: AgentFamilyDialectRows[F] };
+export type AgentFamilyDialect = { readonly [F in AgentModuleLanguageId]: AgentFamilyDialectRows[F] };
 
 /** A family with no dialect-bound member gives its engines no `dialect` at all. */
 type DialectSlot<D> = keyof D extends never ? { readonly dialect?: never } : { readonly dialect: D };
@@ -980,11 +996,11 @@ export type AgentEngineOverridableServer = Pick<
  * those are overridable, because only those are read through the run resolver everywhere they are read; an override
  * of any other member would compile and reach no reader, so it does not compile.
  */
-export type AgentEngineServerOverlay<F extends AgentStatementLanguageId> =
-  FacetOverrides<AgentEngineOverridableServer> & DialectSlot<AgentFamilyDialect[F]["server"]>;
+export type AgentEngineServerOverlay<F extends AgentModuleLanguageId> = FacetOverrides<AgentEngineOverridableServer> &
+  DialectSlot<AgentFamilyDialect[F]["server"]>;
 
 /** The client counterpart of `AgentEngineServerOverlay`. */
-export type AgentEngineClientOverlay<F extends AgentStatementLanguageId> = DialectSlot<AgentFamilyDialect[F]["client"]>;
+export type AgentEngineClientOverlay<F extends AgentModuleLanguageId> = DialectSlot<AgentFamilyDialect[F]["client"]>;
 
 /** Every engine's server overlay, total over `AgentEngineType`: the registry in `engines/server.ts`. */
 export type AgentEngineServerOverlays = {

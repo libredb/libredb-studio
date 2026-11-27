@@ -1079,6 +1079,35 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
   },
+  "M-85": {
+    tests: {
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "an engine declaration states its statement language data or null, and the data's name equals its agent statement language",
+        "a statement language's agent part states its request form as data: a bound in characters, the closed key set, each key's value rule, the keys each read requires or refuses, and each refusal's code and sentence, and names no function",
+        "a statement language's agent part states its text as data: the copy, the investigation's words, the posture, the grounding and the advice, each a text or its parts with the values Studio fills, and names no function",
+        "a declared text naming a value Studio does not fill into it is refused by name at the fill's pointer",
+        "an agent text holds no control character and no character that makes text read other than it is written",
+        "an agent part on an engine whose agent mode sends no statement is refused at the agent part",
+      ],
+      "tests/unit/lib/agent/declared-language-admission.test.ts": [
+        "a data-declared language's statement is admitted or refused by its declared request form, with its declared sentence and code, and never quoted",
+      ],
+      "tests/unit/lib/agent/declared-language-pack.test.ts": [
+        "a data-declared language's client and server facets are composed from its data, with no module of its own",
+        "a declared text naming a placeholder Studio does not fill is refused by name",
+      ],
+      "tests/unit/db/language-digest.test.ts": [
+        "the agent part's text is digested with the rest of the data: any changed byte, fill or part boundary changes the digest, and member order does not",
+      ],
+    },
+    schema: [
+      "/$defs/statementLanguageData",
+      "/$defs/statementLanguageAgent",
+      "/$defs/agentRequestForm",
+      "/$defs/agentLanguageText",
+      "/$defs/agentText",
+    ],
+  },
   "M-86": {
     tests: {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [

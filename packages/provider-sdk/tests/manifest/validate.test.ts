@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  AGENT_TEXT_FILLS,
   compileManifestValidator,
   type ManifestRefusal,
   refusalSentence,
@@ -544,7 +545,11 @@ function requestForm(): Json {
             absent: requestRefusal("topic-required"),
             rule: {
               kind: "name",
-              characters: [{ from: "a", to: "z" }],
+              characters: [
+                { from: "a", to: "z" },
+                { from: "_", to: "_" },
+                { from: "-", to: "-" },
+              ],
               minLength: 1,
               maxLength: 249,
               refused: [
@@ -571,16 +576,68 @@ function requestForm(): Json {
   };
 }
 
+/** The pointer of the text of the fixture's one engine's statement language data. */
+const TEXT = `${LANGUAGE_DATA}/agent/text`;
+
 /**
- * The Kafka fixture speaking `acmeread`, whose statement language data states the request form of `requestForm`,
- * changed by `change`.
+ * An agent text in both shapes a text takes: plain strings, and each text Studio fills a value into written as parts,
+ * every part naming a fill its text takes.
  */
-function requestManifest(change: (form: Json) => void = () => {}): Json {
+function agentText(): Json {
+  return {
+    copy: {
+      subject: "an Acme cluster",
+      noun: "read request",
+      writes: "every write and every read of a record",
+      reached: "the broker",
+      defect: "your read request",
+    },
+    investigation: {
+      classifierDescription: "a question about the cluster's topics that is answered from what the run establishes",
+      objective: "Your objective is a question about this cluster. Answer it from what you establish.",
+      toolDescription: 'Run one bounded read, written as one JSON object such as {"read": "topics"}.',
+      toolRule: 'Read the cluster with run_read_query, one JSON request at a time: {"read": "topics"}.',
+    },
+    posture: {
+      qualifier: ["metadata only, ", { fill: "rows" }, " rows and ", { fill: "seconds" }, " s per read"],
+      title: "Agent mode reads the cluster's topics",
+      body: ["Each read is bounded to ", { fill: "rows" }, " rows and ", { fill: "seconds" }, " seconds."],
+      handover: ["An answer is never run in your editor, however many of its ", { fill: "rows" }, " rows it holds."],
+    },
+    grounding: {
+      omissionAdvice: 'Read any topic with run_read_query, for example {"read": "offsets", "topic": "orders"}.',
+      ungrounded: ["So nothing about this cluster has been established for you: not one ", { fill: "noun" }, " name."],
+    },
+    advice: {
+      rowCap: ["Ask for at most ", { fill: "allowed" }, ' rows: write "limit": ', { fill: "allowed" }, " or less."],
+      shape: "The request's shape falls outside what a bounded read may be.",
+    },
+  };
+}
+
+/** The fixture's statement language data `acmeread`, whose agent part states the form and the text, changed by `change`. */
+function agentManifest(change: (agent: Json) => void = () => {}): Json {
   const changed = kafkaManifest();
   agentOf(changed).statementLanguage = "acmeread";
-  changed.engines[0].statementLanguageData = { ...languageData("acmeread"), agent: { request: requestForm() } };
-  change(changed.engines[0].statementLanguageData.agent.request);
+  changed.engines[0].statementLanguageData = {
+    ...languageData("acmeread"),
+    agent: { request: requestForm(), text: agentText() },
+  };
+  change(changed.engines[0].statementLanguageData.agent);
   return changed;
+}
+
+/**
+ * The Kafka fixture speaking `acmeread`, whose statement language data states the request form of `requestForm`,
+ * changed by `change`, and the text of `agentText`.
+ */
+function requestManifest(change: (form: Json) => void = () => {}): Json {
+  return agentManifest((agent) => change(agent.request));
+}
+
+/** The Kafka fixture speaking `acmeread`, whose statement language data states the text of `agentText`, changed by `change`. */
+function textManifest(change: (text: Json) => void): Json {
+  return agentManifest((agent) => change(agent.text));
 }
 
 /**
@@ -4027,7 +4084,12 @@ describe("rules the schema cannot state", () => {
 
     for (const admitted of [
       requestManifest(),
-      requestManifest((r) => (r.reads[1].checks[0].rule.characters = [{ from: "\u{1F600}", to: "\u{1F64F}" }])),
+      requestManifest((r) =>
+        Object.assign(r.reads[1].checks[0].rule, {
+          characters: [{ from: "\u{1F600}", to: "\u{1F64F}" }],
+          refused: [{ names: ["\u{1F600}"], prefixes: ["\u{1F64F}\u{1F600}"], refusal: requestRefusal("withheld") }],
+        }),
+      ),
       requestManifest((r) => Object.assign(r, { maxCharacters: 65536, selector: null, reads: [], keys: ["limit"] })),
       requestManifest((r) => (r.common[0].rule.minimum = -9007199254740991)),
       requestManifest((r) => (r.common[0].rule = { ...r.common[0].rule, minimum: 7, maximum: 7, default: 7 })),
@@ -4299,7 +4361,10 @@ describe("rules the schema cannot state", () => {
 
   test("an agent part on an engine whose agent mode sends no statement is refused at the agent part", () => {
     const unspoken = manifest((m) => {
-      m.engines[0].statementLanguageData = { ...languageData("acmeread"), agent: { request: requestForm() } };
+      m.engines[0].statementLanguageData = {
+        ...languageData("acmeread"),
+        agent: { request: requestForm(), text: agentText() },
+      };
     });
 
     expect(refusalsFor(unspoken)).toEqual([refusal("statement-language-agent-unspoken", `${LANGUAGE_DATA}/agent`)]);
@@ -4308,6 +4373,230 @@ describe("rules the schema cannot state", () => {
       refusals: [refusal("statement-language-agent-unspoken", "/statementLanguageData/agent")],
     });
     expect(refusalsFor(manifest((m) => (m.engines[0].statementLanguageData = languageData("acmeread"))))).toEqual([]);
+  });
+
+  test("a statement language's agent part states its text as data: the copy, the investigation's words, the posture, the grounding and the advice, each a text or its parts with the values Studio fills, and names no function", () => {
+    const AGENT = `${LANGUAGE_DATA}/agent`;
+    const members: readonly (readonly [string, readonly string[]])[] = [
+      ["copy", ["subject", "noun", "writes", "reached", "defect"]],
+      ["investigation", ["classifierDescription", "objective", "toolDescription", "toolRule"]],
+      ["posture", ["qualifier", "title", "body", "handover"]],
+      ["grounding", ["omissionAdvice", "ungrounded"]],
+      ["advice", ["rowCap", "shape"]],
+    ];
+    const plain = (text: Json) => {
+      for (const [group, names] of members) for (const name of names) text[group][name] = `The ${group} ${name}.`;
+    };
+
+    for (const admitted of [
+      agentManifest(),
+      textManifest(plain),
+      textManifest((t) => (t.copy.subject = "s".repeat(8192))),
+      textManifest((t) => (t.copy.subject = Array.from({ length: 64 }, (_, index) => `part ${index} `))),
+      textManifest((t) => (t.posture.title = [{ fill: "rows" }])),
+    ]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+
+    const lackingText = agentManifest((a) => delete a.text);
+    expect(refusalsFor(lackingText)).toEqual([refusal("missing-key", AGENT, "text")]);
+    expect(validator.validateEngine(lackingText.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("missing-key", "/statementLanguageData/agent", "text")],
+    });
+    for (const [group, names] of members) {
+      expect(refusalsFor(textManifest((t) => delete t[group]))).toEqual([refusal("missing-key", TEXT, group)]);
+      for (const name of names) {
+        expect(refusalsFor(textManifest((t) => delete t[group][name]))).toEqual([
+          refusal("missing-key", `${TEXT}/${group}`, name),
+        ]);
+      }
+    }
+
+    // No member names a function or a value Studio composes: a stray one is refused, never read.
+    for (const [group, stray] of [
+      ["copy", "readPast"],
+      ["copy", "argument"],
+      ["advice", "fingerprint"],
+      ["investigation", "verifier"],
+    ] as const) {
+      expect(refusalsFor(textManifest((t) => (t[group][stray] = "readPastRows")))).toEqual([
+        refusal("unknown-key", `${TEXT}/${group}`, stray),
+      ]);
+    }
+    expect(refusalsFor(textManifest((t) => (t.describe = "describeTool")))).toEqual([
+      refusal("unknown-key", TEXT, "describe"),
+    ]);
+
+    // A text is a string or a list of parts, so anything else in either shape has neither shape.
+    const SUBJECT = `${TEXT}/copy/subject`;
+    for (const unlike of [
+      "",
+      "s".repeat(8193),
+      [],
+      Array.from({ length: 65 }, () => "part"),
+      [""],
+      ["s".repeat(8193)],
+      [5],
+      [{ read: "topics" }],
+      [{ fill: "rows", read: "topics" }],
+      [{}],
+      [{ fill: "Rows" }],
+      [{ fill: "1rows" }],
+      [{ fill: "row_count" }],
+      [{ fill: `r${"o".repeat(32)}` }],
+      [{ fill: 5 }],
+      5,
+      null,
+      { fill: "rows" },
+    ]) {
+      expect(refusalsFor(textManifest((t) => (t.copy.subject = unlike)))).toEqual([refusal("no-variant", SUBJECT)]);
+    }
+  });
+
+  test("a declared text naming a value Studio does not fill into it is refused by name at the fill's pointer", () => {
+    expect(AGENT_TEXT_FILLS).toEqual({
+      copy: { subject: [], noun: [], writes: [], reached: [], defect: [] },
+      investigation: { classifierDescription: [], objective: [], toolDescription: [], toolRule: [] },
+      posture: {
+        qualifier: ["rows", "seconds"],
+        title: ["rows", "seconds"],
+        body: ["rows", "seconds"],
+        handover: ["rows", "seconds"],
+      },
+      grounding: { omissionAdvice: [], ungrounded: ["noun"] },
+      advice: { rowCap: ["allowed"], shape: [] },
+    });
+    // The exported table is frozen whole: the table, each group and each text's list of fills.
+    expect(Object.isFrozen(AGENT_TEXT_FILLS)).toBe(true);
+    for (const texts of Object.values(AGENT_TEXT_FILLS)) {
+      expect(Object.isFrozen(texts)).toBe(true);
+      for (const fills of Object.values(texts as Record<string, readonly string[]>)) {
+        expect(Object.isFrozen(fills)).toBe(true);
+      }
+    }
+    // The table names every text of the schema, and no other.
+    const definitions = JSON.parse(SCHEMA_BYTES.toString("utf8")).$defs;
+    const groups = definitions.agentLanguageText.properties as Record<string, { $ref: string }>;
+    expect(Object.keys(groups)).toEqual(Object.keys(AGENT_TEXT_FILLS));
+    for (const [group, { $ref }] of Object.entries(groups)) {
+      const definition = definitions[$ref.slice("#/$defs/".length)];
+      expect(Object.keys(definition.properties)).toEqual(
+        Object.keys(AGENT_TEXT_FILLS[group as keyof typeof AGENT_TEXT_FILLS]),
+      );
+    }
+
+    // Every fill a text takes is admitted in it.
+    for (const [group, texts] of Object.entries(AGENT_TEXT_FILLS)) {
+      for (const [name, fills] of Object.entries(texts as Record<string, readonly string[]>)) {
+        const filled = textManifest((t) => (t[group][name] = ["Read ", ...fills.map((fill) => ({ fill })), "."]));
+        expect(refusalsFor(filled)).toEqual([]);
+      }
+    }
+
+    expect(refusalsFor(textManifest((t) => (t.copy.subject = [{ fill: "rows" }])))).toEqual([
+      refusal("agent-text-fill-unknown", `${TEXT}/copy/subject/0/fill`),
+    ]);
+    expect(
+      refusalsFor(
+        textManifest((t) => (t.posture.body = ["Bounded to ", { fill: "rows" }, " by ", { fill: "allowed" }])),
+      ),
+    ).toEqual([refusal("agent-text-fill-unknown", `${TEXT}/posture/body/3/fill`)]);
+    expect(
+      refusalsFor(
+        textManifest((t) => {
+          t.grounding.ungrounded = [{ fill: "engines" }, " and ", { fill: "noun" }];
+          t.advice.rowCap = [{ fill: "seconds" }];
+          t.investigation.toolDescription = ["Limits: ", { fill: "limits" }];
+        }),
+      ),
+    ).toEqual([
+      refusal("agent-text-fill-unknown", `${TEXT}/advice/rowCap/0/fill`),
+      refusal("agent-text-fill-unknown", `${TEXT}/grounding/ungrounded/0/fill`),
+      refusal("agent-text-fill-unknown", `${TEXT}/investigation/toolDescription/1/fill`),
+    ]);
+    const unknown = textManifest((t) => (t.copy.noun = [{ fill: "shown" }]));
+    expect(validator.validateEngine(unknown.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-text-fill-unknown", "/statementLanguageData/agent/text/copy/noun/0/fill")],
+    });
+    expect(refusalSentence(refusalsFor(unknown)[0] as ManifestRefusal)).toBe(
+      `The fill at ${TEXT}/copy/noun/0/fill names a value Studio does not fill into that text.`,
+    );
+  });
+
+  test("an agent text holds no control character and no character that makes text read other than it is written", () => {
+    const SUBJECT = `${TEXT}/copy/subject`;
+    const BODY = `${TEXT}/posture/body`;
+
+    for (const [name, character] of [
+      ["a line feed", "\u000a"],
+      ["a tab", "\u0009"],
+      ["NUL", "\u0000"],
+      ["DEL", "\u007f"],
+      ["the next line control", "\u0085"],
+      ["the line separator", "\u2028"],
+      ["the paragraph separator", "\u2029"],
+      ["the right-to-left override", "\u202e"],
+      ["the left-to-right isolate", "\u2066"],
+      ["the right-to-left mark", "\u200f"],
+      ["the Arabic letter mark", "\u061c"],
+    ]) {
+      expect(refusalsFor(textManifest((t) => (t.copy.subject = `The subject holds ${name}: ${character}.`)))).toEqual([
+        refusal("no-variant", SUBJECT),
+      ]);
+      expect(
+        refusalsFor(textManifest((t) => (t.posture.body = ["Bounded to ", { fill: "rows" }, ` rows${character}`]))),
+      ).toEqual([refusal("no-variant", BODY)]);
+    }
+
+    for (const ordinary of [
+      "Die Anfrage für „Straße“ ist abgelehnt.",
+      "No-break space, ‧ and   and ⁥ and ⁪ sit beside the refused ranges.",
+      'A JSON request such as {"read": "topics", "limit": 50} is written as it reads.',
+    ]) {
+      expect(refusalsFor(textManifest((t) => (t.copy.subject = ordinary)))).toEqual([]);
+    }
+  });
+
+  test("a name rule's refused name or prefix that no admitted name could hold is refused at its pointer", () => {
+    const NAME = `${REQUEST}/reads/1/checks/0/rule`;
+    const refusedOf = (r: Json): Json => r.reads[1].checks[0].rule.refused;
+
+    for (const [names, prefixes, pointer] of [
+      [["Internal"], [], "names/0"],
+      [["internal", "a\ud800"], [], "names/1"],
+      [["\u{1F600}"], [], "names/0"],
+      [["x".repeat(250)], [], "names/0"],
+      [[], ["\ud800"], "prefixes/0"],
+      [[], ["_", "A"], "prefixes/1"],
+      [[], ["x".repeat(250)], "prefixes/0"],
+    ] as const) {
+      expect(
+        refusalsFor(
+          requestManifest((r) => (refusedOf(r)[0] = { names, prefixes, refusal: requestRefusal("internal") })),
+        ),
+      ).toEqual([refusal("request-name-refused-unreachable", `${NAME}/refused/0/${pointer}`)]);
+    }
+    // A name of the least length and a prefix of the greatest are reachable, so both are admitted.
+    expect(
+      refusalsFor(
+        requestManifest((r) => {
+          r.reads[1].checks[0].rule.minLength = 2;
+          refusedOf(r)[0] = { names: ["ab"], prefixes: ["x".repeat(249)], refusal: requestRefusal("internal") };
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.minLength = 9))).map(
+        (item) => (item as SchemaRefusal).pointer,
+      ),
+    ).toEqual([`${NAME}/refused/0/names/0`]);
+    // A rule whose ranges or length are already refused is not read for its refused names as well.
+    expect(
+      refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.characters[0] = { from: "z", to: "a" }))),
+    ).toEqual([refusal("request-name-range-reversed", `${NAME}/characters/0`)]);
   });
 
   test("the rules run only on a manifest the schema admits", () => {
@@ -4976,6 +5265,7 @@ describe("refusals carry no value", () => {
     const code = `c${randomUUID().replaceAll("-", "").slice(0, 24)}`;
     const sentence = `S${randomUUID()}.`;
     const planted = { code, sentence };
+    const fill = `f${randomUUID().replaceAll("-", "").slice(0, 24)}`;
     const formed = requestManifest((r) => {
       r.reads[0].value = read;
       r.reads[1].value = read;
@@ -4987,8 +5277,10 @@ describe("refusals carry no value", () => {
       ];
       r.reads[1].checks[0].rule.minLength = 300;
       r.reads[1].checks.push({ key: "after", absent: planted, rule: r.common[0].rule });
+      r.reads[0].checks[0].rule.refused[0].names = [".", `${key}.`];
     });
     formed.engines[0].statementLanguageData.name = declared;
+    formed.engines[0].statementLanguageData.agent.text.copy.subject = [sentence, { fill }];
     Object.assign(agentOf(formed), { statementLanguage: null, overlay: null });
 
     const formRefusals = refusalsFor(formed);
@@ -5004,11 +5296,13 @@ describe("refusals carry no value", () => {
         "request-name-range-reversed",
         "request-name-range-not-one-character",
         "request-name-length-empty",
+        "request-name-refused-unreachable",
+        "agent-text-fill-unknown",
         "statement-language-agent-unspoken",
       ]),
     );
     for (const item of formRefusals) {
-      for (const value of [key, read, code, sentence, declared]) {
+      for (const value of [key, read, code, sentence, declared, fill]) {
         expect(JSON.stringify(item)).not.toContain(value);
         expect(refusalSentence(item)).not.toContain(value);
       }

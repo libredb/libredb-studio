@@ -25,6 +25,9 @@
  * form may declare (65,536 code units, at most 32,768 nested arrays) parses or refuses it as JSON (measured, bun
  * 1.4.4), so only its `SyntaxError` is answered and any other error is thrown as it is.
  *
+ * The repair identity of an admitted request (`declaredRequestIdentity`) is read by the same admission, so one reader
+ * decides both what is admitted and which requests are one read.
+ *
  * Not the boundary. The provider reads every request with its own reader before it sends anything, and the engine's
  * structural boundary bounds what it sends; this is what lets the model read why a request was refused before anything
  * is sent. The census (tests/helpers/declared-language-census.ts) holds a declared form and its provider's reader to
@@ -113,31 +116,71 @@ function firstRefusal(
   return null;
 }
 
-/**
- * The refusal an agent's request `text` in a data-declared language meets under `form`, or null where it is admitted.
- * Never throws on any text, and never quotes it.
- */
-export function admitDeclaredRequest(form: AgentRequestForm, text: string): DeclaredRequestRefusal | null {
+/** What the admission reads of a request: its refusal, or the admitted request and the read its selector names. */
+type Admission =
+  | { readonly refusal: AgentRequestRefusal }
+  | {
+      readonly refusal: null;
+      readonly request: Readonly<Record<string, unknown>>;
+      readonly read: AgentRequestRead | null;
+    };
+
+/** The admission of `text` under `form`, in the order the module's docblock states. */
+function admission(form: AgentRequestForm, text: string): Admission {
   const { refusals } = form;
-  if (text.length > form.maxCharacters) return answer(refusals.tooLong);
-  if (text.trim() === "") return answer(refusals.empty);
+  if (text.length > form.maxCharacters) return { refusal: refusals.tooLong };
+  if (text.trim() === "") return { refusal: refusals.empty };
   const request = parsedObject(text);
-  if (request === null) return answer(refusals.notAnObject);
-  if (repeatsAKey(text)) return answer(refusals.repeatedKey);
-  if (Object.keys(request).some((key) => !form.keys.includes(key))) return answer(refusals.unknownKey);
+  if (request === null) return { refusal: refusals.notAnObject };
+  if (repeatsAKey(text)) return { refusal: refusals.repeatedKey };
+  if (Object.keys(request).some((key) => !form.keys.includes(key))) return { refusal: refusals.unknownKey };
   const { selector } = form;
   let read: AgentRequestRead | null = null;
   if (selector !== null) {
     const named = Object.hasOwn(request, selector.key) ? request[selector.key] : undefined;
     const found = form.reads.find(({ value }) => value === named);
-    if (found === undefined) return answer(selector.refusal);
+    if (found === undefined) return { refusal: selector.refusal };
     read = found;
   }
   const common = firstRefusal(form.common, request);
-  if (common !== null) return answer(common);
-  if (read === null) return null;
+  if (common !== null) return { refusal: common };
+  if (read === null) return { refusal: null, request, read };
   const refused = read.refuses.find(({ key }) => Object.hasOwn(request, key));
-  if (refused !== undefined) return answer(refused.refusal);
+  if (refused !== undefined) return { refusal: refused.refusal };
   const checked = firstRefusal(read.checks, request);
-  return checked === null ? null : answer(checked);
+  return checked === null ? { refusal: null, request, read } : { refusal: checked };
+}
+
+/**
+ * The refusal an agent's request `text` in a data-declared language meets under `form`, or null where it is admitted.
+ * Never throws on any text, and never quotes it.
+ */
+export function admitDeclaredRequest(form: AgentRequestForm, text: string): DeclaredRequestRefusal | null {
+  const { refusal } = admission(form, text);
+  return refusal === null ? null : answer(refusal);
+}
+
+/**
+ * The repair identity of an admitted request `text` under `form`: the JSON text of one object holding the request's
+ * keys in the order of the form's `keys`, each written key with its value as JSON reads it, and each absent key whose
+ * integer rule for the request (a common check, or a check of the read its selector names) states a default with that
+ * default. So one read written with its keys in another order or another spacing, with a default written out or left
+ * out, or with a number spelled `5.0` or `-0`, has one identity. Null for a request the form refuses, which its caller
+ * identifies by its text. Total over any text, as the admission is.
+ */
+export function declaredRequestIdentity(form: AgentRequestForm, text: string): string | null {
+  const admitted = admission(form, text);
+  if (admitted.refusal !== null) return null;
+  const { request, read } = admitted;
+  const checks = [...form.common, ...(read === null ? [] : read.checks)];
+  const entries: [string, unknown][] = [];
+  for (const key of form.keys) {
+    if (Object.hasOwn(request, key)) {
+      entries.push([key, request[key]]);
+      continue;
+    }
+    const rule = checks.find((check) => check.key === key)?.rule;
+    if (rule?.kind === "integer" && rule.default !== null) entries.push([key, rule.default]);
+  }
+  return JSON.stringify(Object.fromEntries(entries));
 }

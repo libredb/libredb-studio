@@ -1,7 +1,9 @@
 /**
- * Core's agent admission of a statement language an engine declares as data reads the language's data alone: the
- * engine-neutral admission (src/lib/db/operations/declared-request-form.ts) and the generic read descriptor builder
- * (src/lib/db/operations/declared-language-read.ts) reach, by value import, no module of any statement language and no
+ * Core's agent admission and composer of a statement language an engine declares as data read the language's data
+ * alone: the engine-neutral admission (src/lib/db/operations/declared-request-form.ts), the generic read descriptor
+ * builder (src/lib/db/operations/declared-language-read.ts), the composer of the language's client and server facets
+ * (src/lib/agent/languages/declared-client.ts, declared-server.ts) and the list of the declared languages' data
+ * (src/lib/db/declared-statement-languages.ts) reach, by value import, no module of any statement language and no
  * provider module. A language's module is one under src/lib/languages/<language>/ or src/lib/agent/languages/<language>/,
  * or its admission src/lib/db/operations/<language>-admission.ts; the languages are read from the tree, joined by every
  * language a shipped declaration states data for and by a crafted one, so the check names each of today's language
@@ -16,7 +18,13 @@ import { valueImportClosure } from "../../../helpers/value-import-closure";
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
 /** The modules whose value import closures this test holds. */
-const ENTRIES = ["src/lib/db/operations/declared-request-form.ts", "src/lib/db/operations/declared-language-read.ts"];
+const ENTRIES = [
+  "src/lib/db/operations/declared-request-form.ts",
+  "src/lib/db/operations/declared-language-read.ts",
+  "src/lib/db/declared-statement-languages.ts",
+  "src/lib/agent/languages/declared-client.ts",
+  "src/lib/agent/languages/declared-server.ts",
+];
 
 /** The subdirectories of the repository directory `directory`. */
 function subdirectories(directory: string): string[] {

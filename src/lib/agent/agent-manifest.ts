@@ -36,8 +36,11 @@ import type { AgentOperationId, AgentToolName } from "./tools";
 import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 import { OPERATIONS_VARIANT } from "./workflow-tool-sets";
 
-/** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId =
+/**
+ * The statement languages Studio holds as modules, each with a pack under `languages/<id>/`. A later engine reuses one,
+ * or declares its language as data (`AgentDeclaredLanguageId`).
+ */
+export type AgentModuleLanguageId =
   | "sql"
   | "kubectl"
   | "mongo"
@@ -62,6 +65,22 @@ export type AgentStatementLanguageId =
   | "mtconnectread"
   | "mqttread"
   | "sparkplugread";
+
+declare const declaredLanguage: unique symbol;
+
+/**
+ * A statement language an engine declares as data (`statementLanguageData` of its declaration), with no module of its
+ * own: its name, branded so a bare string is not one. Only `declaredAgentLanguages` in `languages/declared-client.ts`
+ * brands a name, at load, and `isAgentStatementLanguage` in `languages/client.ts` narrows any other string to one.
+ */
+export type AgentDeclaredLanguageId = string & { readonly [declaredLanguage]: true };
+
+/**
+ * The statement languages agent mode can send: the module languages, and the languages the bundled declarations state
+ * as data. A record over this type is total over the module languages at compile time; it holds a declared language
+ * only where the registry building it adds one, which `languages/client.ts` does for every registry it feeds.
+ */
+export type AgentStatementLanguageId = AgentModuleLanguageId | AgentDeclaredLanguageId;
 
 /** The name of the model argument a language's statement arrives in: one type for every reader of it. */
 export type AgentStatementArgument = "sql" | "statement" | "command";

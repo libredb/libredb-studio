@@ -32,9 +32,16 @@ function languageData(change: (data: Editable) => void = () => {}): Data {
   return data;
 }
 
-/** An agent part whose request form has no selector, an optional name `topic` and an optional integer `limit`, changed by `change`. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft form each case changes one fact of.
-function requestForm(change: (form: Record<string, any>) => void = () => {}): NonNullable<Data["agent"]> {
+/**
+ * An agent part whose request form has no selector, an optional name `topic` and an optional integer `limit`, changed
+ * by `change`, and whose text is `agentText`'s, changed by `changeText`.
+ */
+function requestForm(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft form each case changes one fact of.
+  change: (form: Record<string, any>) => void = () => {},
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft text each case changes one fact of.
+  changeText: (text: Record<string, any>) => void = () => {},
+): NonNullable<Data["agent"]> {
   const refusal = (code: string) => ({ code, sentence: `Refused as ${code}.` });
   const form = {
     kind: "json-object",
@@ -70,7 +77,36 @@ function requestForm(change: (form: Record<string, any>) => void = () => {}): No
     reads: [],
   };
   change(form);
-  return { request: form } as NonNullable<Data["agent"]>;
+  const text = agentText();
+  changeText(text);
+  return { request: form, text } as NonNullable<Data["agent"]>;
+}
+
+/** An agent text whose posture body and row-cap advice are parts naming their fills, and every other text a string. */
+function agentText() {
+  return {
+    copy: {
+      subject: "a cluster",
+      noun: "read request",
+      writes: "every write",
+      reached: "the broker",
+      defect: "a read",
+    },
+    investigation: {
+      classifierDescription: "a question about topics",
+      objective: "Answer from what you establish.",
+      toolDescription: "Run one read.",
+      toolRule: "Read with run_read_query.",
+    },
+    posture: {
+      qualifier: "metadata only",
+      title: "Agent mode reads topics",
+      body: ["Bounded to ", { fill: "rows" }, " rows and ", { fill: "seconds" }, " seconds."],
+      handover: "Never run in your editor.",
+    },
+    grounding: { omissionAdvice: "Read any topic.", ungrounded: ["Not one ", { fill: "noun" }, " name."] },
+    advice: { rowCap: ["Ask for at most ", { fill: "allowed" }, " rows."], shape: "Outside a bounded read." },
+  };
 }
 
 describe("the language data digest", () => {
@@ -120,9 +156,10 @@ describe("the language data digest", () => {
 
   test("the agent part's request form is digested with the rest of the data: any changed sentence, code, bound or range changes the digest, and member order does not", () => {
     const stated = languageDataSha256(languageData((d) => (d.agent = requestForm())));
-    const { request } = requestForm();
+    const { request, text } = requestForm();
     const reordered = languageData((d) => {
       d.agent = {
+        text,
         request: {
           reads: request.reads,
           common: request.common.map((check) => ({ rule: check.rule, absent: check.absent, key: check.key })),
@@ -146,6 +183,41 @@ describe("the language data digest", () => {
       languageData((d) => (d.agent = requestForm((f) => (f.common[1].rule.maximum = 499)))),
       languageData((d) => (d.agent = requestForm((f) => (f.common[1].rule.default = null)))),
       languageData((d) => (d.agent = requestForm((f) => (f.keys = ["limit", "topic"])))),
+    ];
+    const digests = changed.map((item) => languageDataSha256(item));
+    expect(digests).not.toContain(stated);
+    expect(new Set(digests).size).toBe(changed.length);
+  });
+
+  test("the agent part's text is digested with the rest of the data: any changed byte, fill or part boundary changes the digest, and member order does not", () => {
+    const stated = languageDataSha256(languageData((d) => (d.agent = requestForm())));
+    const { request, text } = requestForm();
+    const reordered = languageData((d) => {
+      d.agent = {
+        text: {
+          advice: { shape: text.advice.shape, rowCap: text.advice.rowCap },
+          grounding: text.grounding,
+          posture: {
+            handover: text.posture.handover,
+            body: text.posture.body,
+            title: text.posture.title,
+            qualifier: text.posture.qualifier,
+          },
+          investigation: text.investigation,
+          copy: text.copy,
+        },
+        request,
+      };
+    });
+
+    expect(languageDataSha256(reordered)).toBe(stated);
+    const changed = [
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.copy.subject = "a cluster!")))),
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.copy.subject = ["a cluster"])))),
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.copy.subject = ["a ", "cluster"])))),
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.posture.body[1] = { fill: "seconds" })))),
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.posture.body[0] = "Bounded to")))),
+      languageData((d) => (d.agent = requestForm(undefined, (t) => (t.advice.rowCap = "Ask for fewer rows.")))),
     ];
     const digests = changed.map((item) => languageDataSha256(item));
     expect(digests).not.toContain(stated);
