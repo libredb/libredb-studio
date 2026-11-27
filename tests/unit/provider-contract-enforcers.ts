@@ -144,6 +144,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the repository's packages import only what they declare",
         "core reaches no workspace package by path",
         "a package source import of a name only Bun treats as a built-in fails as undeclared",
+        "a provider package's build files import only what the package declares",
+        "a provider package's build script runs a file the package holds",
+        "a provider package's build path holds only letters, digits, '.', '_', '-' and '/', with no '..' segment",
       ],
     },
   },
@@ -2180,6 +2183,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/package-imports.test.ts": [
         "no workspace package imports or declares another provider package",
         "a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only",
+        "a provider package's build modules import no other provider package, and not the kit",
       ],
     },
   },

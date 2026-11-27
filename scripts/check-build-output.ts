@@ -39,7 +39,9 @@
  * (src, bin, scripts, vscode-extension/src), exist, and import a module of the driver, read by the TypeScript
  * compiler's public `preProcessFile` (static and dynamic imports, `require` and re-exports alike); a stale entry is
  * refused naming it, and so is an entry whose driver no checked package declares, since it would except nothing. The
- * list is empty while no core module imports a provider package's driver.
+ * list is empty while no core module imports a provider package's driver. The core import refusal of
+ * tests/unit/package-imports.test.ts reads the same list, `DRIVER_FIELDS` and `exceptionProblem`, so a core import of a
+ * declared driver fails there unless an entry here names its importer.
  *
  * Output: every problem on standard error, one per line, exit 1; or, on a pass, one line per package on standard
  * output naming its counts and its drivers, plus one line per exception used, exit 0. Any command line but
@@ -81,7 +83,11 @@ const SCAN_CHUNK_BYTES = 1024 * 1024;
 const CORE_ROOTS: readonly string[] = Object.freeze(["src", "bin", "scripts", "vscode-extension/src"]);
 
 /** The package.json members whose names are a package's drivers. */
-const DRIVER_FIELDS: readonly string[] = Object.freeze(["dependencies", "optionalDependencies", "peerDependencies"]);
+export const DRIVER_FIELDS: readonly string[] = Object.freeze([
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+]);
 
 /** A driver of a provider package that a core module still imports, and that module, relative to the repository. */
 export interface CoreImportedDriver {
@@ -305,7 +311,7 @@ const exceptionRefusal = (entry: CoreImportedDriver, why: string): string =>
   `${PREFIX}: the exception for ${entry.driver} imported by ${entry.importer}: ${why}`;
 
 /** The problem with an exception, or null when its importer is a core module that imports a module of its driver. */
-function exceptionProblem(entry: CoreImportedDriver, repositoryRoot: string): string | null {
+export function exceptionProblem(entry: CoreImportedDriver, repositoryRoot: string): string | null {
   const refuse = (why: string) => exceptionRefusal(entry, why);
   const normal = path.posix.normalize(entry.importer);
   if (normal !== entry.importer || !CORE_ROOTS.some((root) => under(normal, root))) {

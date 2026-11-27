@@ -2,7 +2,9 @@
  * The workspace package layout, in one place (packages/README.md, "Layout").
  *
  * A workspace package is a directory `packages/<name>/` holding a `package.json`. Its
- * source is under `packages/<name>/src/` and its tests under `packages/<name>/tests/`.
+ * source is under `packages/<name>/src/` and its tests under `packages/<name>/tests/`. A
+ * provider package also holds the build modules its `build` script runs, outside `src/` and
+ * `tests/`, which the package import rule (`tests/unit/package-imports.test.ts`) reads as code.
  * Nothing else under `packages/` is code: a file such as `packages/README.md` is not a
  * package, and a directory without a `package.json` is refused by name, because a gate
  * that skipped it would leave its tests unrun and its source unmeasured without a word.
