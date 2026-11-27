@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
+  ANSWER_LIST_MAX,
   type AnswerCheck,
   type CallRefusal,
   CallRefusalError,
@@ -21,6 +22,32 @@ import {
 } from "@libredb/provider-sdk/calls";
 
 const marker = (): string => randomUUID();
+
+/** A revoked Proxy: every reading of it throws. */
+function revoked(): object {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  return proxy;
+}
+
+/** Throws an error of its own. */
+function thrower(): never {
+  throw new Error(marker());
+}
+
+/**
+ * A list that says it is `length` long and holds no item, counting in `reads` each reading of an item's descriptor; its
+ * length is a Proxy's answer, so it holds no memory for it.
+ */
+function longList(length: number, reads: { count: number }): unknown[] {
+  return new Proxy([] as unknown[], {
+    get: (target, key) => (key === "length" ? length : Reflect.get(target, key)),
+    getOwnPropertyDescriptor: (target, key) => {
+      if (key !== "length") reads.count += 1;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+}
 
 function unreadable(pointer: string, name?: string): CallRefusal {
   return name === undefined
@@ -230,6 +257,81 @@ describe("checkExecuteAnswer", () => {
     const refused = checkExecuteAnswer(answerOf({ executionTimeMs: marker() }));
     expect(refused).toEqual({ kind: "refused", refusals: [unreadable("/executionTimeMs")] });
     expect(Object.keys(refused)).toEqual(["kind", "refusals"]);
+  });
+
+  test("an execute answer whose reading throws is refused at the pointer being read, and the check never throws", () => {
+    // A revoked Proxy throws on every reading: as the answer, its result list, its first result, the first result's
+    // columns, a column, the warning list and a warning.
+    expect(executeRefusals(revoked())).toEqual([
+      unreadable("/results"),
+      unreadable("/executionTimeMs"),
+      unreadable("/warnings"),
+    ]);
+    expect(executeRefusals(answerOf({ results: revoked() }))).toEqual([unreadable("/results")]);
+    expect(executeRefusals(answerOf({ results: [revoked()] }))).toEqual([
+      unreadable("/results/0/columns"),
+      unreadable("/results/0/rowCount"),
+    ]);
+    expect(executeRefusals(answerOf({ results: [sourceOf(revoked())] }))).toEqual([unreadable("/results/0/columns")]);
+    expect(executeRefusals(answerOf({ results: [sourceOf([{ name: "a" }, revoked()])] }))).toEqual([
+      unreadable("/results/0/columns/1/name"),
+    ]);
+    expect(executeRefusals(answerOf({ warnings: revoked() }))).toEqual([unreadable("/warnings")]);
+    expect(executeRefusals(answerOf({ warnings: [{ message: "m" }, revoked()] }))).toEqual([unreadable("/warnings/1")]);
+
+    // A trap that throws while one member is read is refused at that member, and the answer's other members are read.
+    const answer = new Proxy(answerOf({ executionTimeMs: marker() }), {
+      getOwnPropertyDescriptor: (target, key) =>
+        key === "results" ? thrower() : Reflect.getOwnPropertyDescriptor(target, key),
+    });
+    expect(executeRefusals(answer)).toEqual([unreadable("/results"), unreadable("/executionTimeMs")]);
+    const warning = new Proxy(
+      { message: "m", code: 1 },
+      {
+        getOwnPropertyDescriptor: (target, key) =>
+          key === "code" ? thrower() : Reflect.getOwnPropertyDescriptor(target, key),
+      },
+    );
+    expect(executeRefusals(answerOf({ warnings: [warning, { message: 1 }] }))).toEqual([
+      unreadable("/warnings/0/code"),
+      unreadable("/warnings/1/message"),
+    ]);
+    const results = new Proxy([sourceOf()], {
+      getOwnPropertyDescriptor: (target, key) =>
+        key === "0" ? thrower() : Reflect.getOwnPropertyDescriptor(target, key),
+    });
+    expect(executeRefusals(answerOf({ results }))).toEqual([unreadable("/results/0")]);
+    const warnings = new Proxy([], { get: (target, key) => (key === "length" ? thrower() : Reflect.get(target, key)) });
+    expect(executeRefusals(answerOf({ warnings }))).toEqual([unreadable("/warnings")]);
+  });
+
+  test("an execute answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it", () => {
+    const reads = { count: 0 };
+
+    expect(executeRefusals(answerOf({ results: longList(ANSWER_LIST_MAX.results + 1, reads) }))).toEqual([
+      unreadable("/results"),
+    ]);
+    expect(executeRefusals(answerOf({ warnings: longList(ANSWER_LIST_MAX.warnings + 1, reads) }))).toEqual([
+      unreadable("/warnings"),
+    ]);
+    expect(executeRefusals(answerOf({ results: [sourceOf(longList(ANSWER_LIST_MAX.columns + 1, reads))] }))).toEqual([
+      unreadable("/results/0/columns"),
+    ]);
+    expect(reads.count).toBe(0);
+    // A list as long as its bound is read.
+    const columns = Array.from({ length: ANSWER_LIST_MAX.columns }, (_, index) => ({ name: `c${index}` }));
+    expect(executeRefusals(answerOf({ results: [sourceOf(columns)] }))).toEqual([]);
+
+    // The first hole is refused at its index, and nothing after it is read.
+    const warningsHoled: unknown[] = [{ message: "m" }];
+    warningsHoled[2] = null;
+    warningsHoled.length = 1000;
+    expect(executeRefusals(answerOf({ warnings: warningsHoled }))).toEqual([unreadable("/warnings/1")]);
+    const columnsHoled: unknown[] = [{ name: "a" }];
+    columnsHoled[2] = null;
+    expect(executeRefusals(answerOf({ results: [sourceOf(columnsHoled)] }))).toEqual([
+      unreadable("/results/0/columns/1"),
+    ]);
   });
 });
 
@@ -667,15 +769,6 @@ describe("checkTreeAnswer", () => {
   test("a tree answer whose reading throws is refused at the pointer being read, and the check never throws", () => {
     const requests = requestsOf();
     const name = marker();
-    const revoked = (): object => {
-      const { proxy, revoke } = Proxy.revocable({}, {});
-      revoke();
-      return proxy;
-    };
-    const thrower = (): never => {
-      throw new Error(marker());
-    };
-
     // A revoked Proxy throws on every reading: as the answer, a record in it and a list in it.
     for (const action of Object.keys(requests) as TreeRequest["action"][]) {
       expect(treeRefusals(requests[action], revoked())).toEqual([treeUnreadable("")]);
@@ -705,24 +798,6 @@ describe("checkTreeAnswer", () => {
       treeUnreadable("/objects/0/path"),
     ]);
 
-    // A top-level member read again past its form, a second reading that throws, is refused at its own pointer.
-    let readings = 0;
-    const answer = new Proxy(
-      { containers: [], needsConfiguration: name },
-      {
-        getOwnPropertyDescriptor: (target, key) => {
-          if (key === "needsConfiguration" && ++readings > 1) thrower();
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-      },
-    );
-    expect(treeRefusals(requests.containers, answer)).toEqual([treeUnreadable("/needsConfiguration")]);
-    // A list's length read again past its form, a second reading that throws, is refused at the list once.
-    let lengths = 0;
-    const details = new Proxy([detailOf()], {
-      get: (target, key) => (key === "length" && ++lengths > 1 ? thrower() : Reflect.get(target, key)),
-    });
-    expect(treeRefusals(requests.describeMany, { details })).toEqual([treeUnreadable("/details")]);
     // A list whose every reading of its length throws is refused at the list once, its form's refusal.
     const containers = new Proxy([], {
       get: (target, key) => (key === "length" ? thrower() : Reflect.get(target, key)),
@@ -761,5 +836,109 @@ describe("checkTreeAnswer", () => {
       treeUnreadable(`/objects/${extra}`, extra),
     ]);
     expect(reads.count).toBe(0);
+  });
+
+  test("each member of a tree answer is read once, so a trap that answers anew on a later reading never makes the check throw", () => {
+    const requests = requestsOf();
+    const name = marker();
+
+    /**
+     * `answer` behind a trap that answers each of its own members as it is on its first reading and as a revoked Proxy
+     * on every later one, counting the readings of each member in `readings`.
+     */
+    const stateful = (answer: Record<string, unknown>, readings: Record<string, number>): object =>
+      new Proxy(answer, {
+        getOwnPropertyDescriptor: (target, key) => {
+          const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+          if (typeof key !== "string" || descriptor === undefined) return descriptor;
+          readings[key] = (readings[key] ?? 0) + 1;
+          return readings[key] === 1 ? descriptor : { ...descriptor, value: revoked() };
+        },
+      });
+
+    const many: Record<string, number> = {};
+    expect(treeRefusals(requests.describeMany, stateful({ details: [] }, many))).toEqual([]);
+    expect(many).toEqual({ details: 1 });
+    const containers: Record<string, number> = {};
+    expect(
+      treeRefusals(requests.containers, stateful({ containers: [], needsConfiguration: name }, containers)),
+    ).toEqual([]);
+    expect(containers).toEqual({ containers: 1, needsConfiguration: 1 });
+    const beside: Record<string, number> = {};
+    expect(
+      treeRefusals(
+        requests.containers,
+        stateful({ containers: [{ path: [name], name, level: 0 }], needsConfiguration: name }, beside),
+      ),
+    ).toEqual([treeUnreadable("/needsConfiguration")]);
+    expect(beside).toEqual({ containers: 1, needsConfiguration: 1 });
+
+    // A list's length is read once: a length whose second reading throws is never read twice.
+    let lengths = 0;
+    const details = new Proxy([detailOf()], {
+      get: (target, key) => (key === "length" && ++lengths > 1 ? thrower() : Reflect.get(target, key)),
+    });
+    expect(treeRefusals(requests.describeMany, { details })).toEqual([]);
+    expect(lengths).toBe(1);
+  });
+
+  test("a tree answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it", () => {
+    const requests = requestsOf();
+    const name = marker();
+    const reads = { count: 0 };
+
+    // A describeMany request's limit bounds its details; every other list takes its member's bound.
+    expect(treeRefusals(requests.describeMany, { details: longList(3, reads) })).toEqual([treeUnreadable("/details")]);
+    expect(
+      treeRefusals(requests.containers, {
+        containers: [{ path: longList(ANSWER_LIST_MAX.path + 1, reads), name, level: 0 }],
+      }),
+    ).toEqual([treeUnreadable("/containers/0/path")]);
+    expect(
+      treeRefusals(requests.containers, {
+        containers: [{ path: [name], name, level: 0, kinds: longList(ANSWER_LIST_MAX.kinds + 1, reads) }],
+      }),
+    ).toEqual([treeUnreadable("/containers/0/kinds")]);
+    expect(
+      treeRefusals(requests.list, {
+        objects: [{ path: [name], name, kind: "table", readRanges: longList(ANSWER_LIST_MAX.readRanges + 1, reads) }],
+      }),
+    ).toEqual([treeUnreadable("/objects/0/readRanges")]);
+    expect(
+      treeRefusals(requests.describe, {
+        detail: detailOf({
+          columns: longList(ANSWER_LIST_MAX.columns + 1, reads),
+          indexes: longList(ANSWER_LIST_MAX.indexes + 1, reads),
+          foreignKeys: longList(ANSWER_LIST_MAX.foreignKeys + 1, reads),
+          exclusionConstraints: longList(ANSWER_LIST_MAX.exclusionConstraints + 1, reads),
+        }),
+      }),
+    ).toEqual([
+      treeUnreadable("/detail/columns"),
+      treeUnreadable("/detail/indexes"),
+      treeUnreadable("/detail/foreignKeys"),
+      treeUnreadable("/detail/exclusionConstraints"),
+    ]);
+    expect(
+      treeRefusals(requests.describe, {
+        detail: detailOf({ indexes: [{ name, columns: longList(ANSWER_LIST_MAX.columns + 1, reads), unique: true }] }),
+      }),
+    ).toEqual([treeUnreadable("/detail/indexes/0/columns")]);
+    expect(reads.count).toBe(0);
+    // A list as long as its bound is read.
+    const path = Array.from({ length: ANSWER_LIST_MAX.path }, () => name);
+    expect(treeRefusals(requests.containers, { containers: [{ path, name, level: 0 }] })).toEqual([]);
+
+    // The first hole is refused at its index, and nothing after it is read.
+    const object = { path: [name], name, kind: "table" };
+    const holed: unknown[] = [object];
+    holed[2] = null;
+    holed.length = 1000;
+    expect(treeRefusals(requests.list, { objects: holed })).toEqual([treeUnreadable("/objects/1")]);
+    const pathHoled: unknown[] = [name];
+    pathHoled[2] = 1;
+    expect(treeRefusals(requests.list, { objects: [{ ...object, path: pathHoled }] })).toEqual([
+      treeUnreadable("/objects/0/path/1"),
+    ]);
   });
 });

@@ -2591,6 +2591,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a member of another arm of a union present with no value reads as absent, so the arm its defined keys name is read",
         "a tree answer whose reading throws is refused at the pointer being read, and the check never throws",
         "an answer list with an own key that is neither an index nor its length is refused at that key, by name",
+        "each member of a tree answer is read once, so a trap that answers anew on a later reading never makes the check throw",
+        "a tree answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it",
+      ],
+      "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
+        "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served tree answer outside its action's form is refused on the host side with the core's refusals",
@@ -3219,6 +3224,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an execute answer's result list, first row count, execution time, warning list or warning outside the SDK's types is refused as execute-answer-unreadable at its pointer, a getter never called",
         "an execute answer's refusal sentence names the pointer and the key, never a value",
         "an optional execute answer member present with no value reads as absent, as it does in a tree answer",
+        "an execute answer whose reading throws is refused at the pointer being read, and the check never throws",
+        "an execute answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it",
+      ],
+      "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
+        "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",

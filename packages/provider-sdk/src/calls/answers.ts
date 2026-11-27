@@ -14,8 +14,13 @@
  * tree types state, a key outside them refused by name, and a value of another type, more details than the request's
  * limit or `needsConfiguration` where clause C-61 does not allow it refused at its pointer as `tree-answer-unreadable`.
  * Each record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
- * typecheck here until its form names it, as the frame reader's shapes do. A reading of the tree answer that throws, a
- * revoked Proxy or a trap that throws, is refused at the pointer being read, so the tree check never throws.
+ * typecheck here until its form names it, as the frame reader's shapes do.
+ *
+ * Both checks read every member once, with one set of readers. Each list's length is read once and a list longer than
+ * its bound, `ANSWER_LIST_MAX` for its member or a `describeMany` request's `limit`, is refused at the list before any
+ * item is read; a list's first hole is refused at its index and ends the list's reading, so a sparse list of any
+ * length is read in as many steps as it holds items before its first hole. A reading that throws, a revoked Proxy or
+ * a trap that throws, is refused at the pointer being read, so neither check ever throws.
  *
  * Each check answers an `AnswerCheck`: the answer itself, by reference, typed as the form it was read as, where it
  * refuses nothing, and its refusals alone otherwise, so a caller past the check reads the answer typed with no cast of
@@ -67,14 +72,67 @@ function checked<Answer>(answer: unknown, refusals: readonly CallRefusal[]): Ans
   return { kind: "read", answer: answer as Answer };
 }
 
+/**
+ * The most items each list of an answer may hold, by the member that holds it (clauses C-62 and C-112): a list longer
+ * than its bound is refused at the list before any of its items is read. A list of a database's containers, objects or
+ * details may hold 2^20 items, and every other list, one within an answer, an object or a path, 2^16. A `describeMany`
+ * request that sends a `limit` bounds its `details` by that limit instead. An index's `columns` takes the bound of
+ * `columns`.
+ */
+export const ANSWER_LIST_MAX = Object.freeze({
+  results: 65_536,
+  warnings: 65_536,
+  columns: 65_536,
+  containers: 1_048_576,
+  path: 65_536,
+  kinds: 65_536,
+  objects: 1_048_576,
+  readRanges: 65_536,
+  indexes: 65_536,
+  foreignKeys: 65_536,
+  exclusionConstraints: 65_536,
+  details: 1_048_576,
+});
+
 /** The members a warning can have: its message, and its optional code and severity. */
 const WARNING_MEMBERS: readonly string[] = Object.freeze(["message", "code", "severity"]);
 
-/** The refusal of the member at `pointer`. */
-function unreadable(pointer: string, name?: string): CallRefusal {
-  return name === undefined
-    ? { rule: "execute-answer-unreadable", pointer }
-    : { rule: "execute-answer-unreadable", pointer, name };
+/** Where a reading of an answer puts what it refuses: the rule its check names, and the refusals found so far. */
+interface Refusals {
+  readonly rule: "execute-answer-unreadable" | "tree-answer-unreadable";
+  readonly list: CallRefusal[];
+}
+
+/** Refuses the member at `pointer`, or, where `name` is given, the key `name` there, a key its form cannot have. */
+function refuse(out: Refusals, pointer: string, name?: string): void {
+  out.list.push(name === undefined ? { rule: out.rule, pointer } : { rule: out.rule, pointer, name });
+}
+
+/** How one value of an answer is read: each way it is not its form refused into `out`, pointed at `pointer`. */
+type Form = (value: unknown, pointer: string, out: Refusals) => void;
+
+/**
+ * `form`, with a throw while it reads its value, a revoked Proxy or a trap that throws, refused at the value's pointer,
+ * so no reading of an answer throws past its check. Every form that reads more than the value's type is guarded.
+ */
+function guarded(form: Form): Form {
+  return (value, pointer, out) => {
+    try {
+      form(value, pointer, out);
+    } catch {
+      refuse(out, pointer);
+    }
+  };
+}
+
+/** The own property `key` of `target` (`readOwn`), or undefined, its pointer `at` refused, when reading it throws. */
+function readAt(target: unknown, key: string, at: string, out: Refusals): OwnRead | undefined {
+  try {
+    return readOwn(target, key);
+  } catch {
+    refuse(out, at);
+    return undefined;
+  }
 }
 
 /** Whether `value` is a count: a non-negative safe integer. */
@@ -82,227 +140,228 @@ function isCount(value: unknown): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/**
- * Every way the warning at `pointer` is not the SDK's `Warning`: no plain record, refused once at its pointer; any own
- * key but its message, code and severity, named; a message that is missing, an accessor or not text; a code that is an
- * accessor or neither text nor a number; a severity that is an accessor or not text.
- */
-function warningRefusals(warning: unknown, pointer: string): readonly CallRefusal[] {
-  if (!isPlainRecord(warning)) return [unreadable(pointer)];
-  const refusals: CallRefusal[] = [];
-  for (const key of Object.getOwnPropertyNames(warning)) {
-    if (!WARNING_MEMBERS.includes(key)) refusals.push(unreadable(pointerTo(pointer, key), key));
-  }
-  const message = readOwn(warning, "message");
-  if (message.kind !== "data" || typeof message.value !== "string") {
-    refusals.push(unreadable(pointerTo(pointer, "message")));
-  }
-  const code = readOwn(warning, "code");
-  if (
-    code.kind === "accessor" ||
-    (code.kind === "data" &&
-      code.value !== undefined &&
-      typeof code.value !== "string" &&
-      typeof code.value !== "number")
-  ) {
-    refusals.push(unreadable(pointerTo(pointer, "code")));
-  }
-  const severity = readOwn(warning, "severity");
-  if (
-    severity.kind === "accessor" ||
-    (severity.kind === "data" && severity.value !== undefined && typeof severity.value !== "string")
-  ) {
-    refusals.push(unreadable(pointerTo(pointer, "severity")));
-  }
-  return refusals;
-}
-
-/**
- * Every way the first result's columns at `pointer` cannot key a row: no own data array, refused once at its pointer;
- * a column that is no object, or whose name is missing, an accessor, not text or empty, refused at the name's pointer;
- * and a name an earlier column of the result already has, refused at the later column's name.
- */
-function columnRefusals(columns: unknown, pointer: string): readonly CallRefusal[] {
-  if (!Array.isArray(columns)) return [unreadable(pointer)];
-  const refusals: CallRefusal[] = [];
-  const seen = new Set<string>();
-  for (let index = 0; index < columns.length; index++) {
-    const name = readOwn(readOwnData(columns, String(index)), "name");
-    const at = pointerTo(pointerTo(pointer, index), "name");
-    if (name.kind !== "data" || typeof name.value !== "string" || name.value === "" || seen.has(name.value)) {
-      refusals.push(unreadable(at));
-      continue;
-    }
-    seen.add(name.value);
-  }
-  return refusals;
-}
-
-/**
- * Every way the first result of `results`, an own data array, cannot be read: its columns (`columnRefusals`), and an
- * own row count that is an accessor or not a count. A row count it does not have is not refused: a provider gives one
- * only where its engine answered it. A first result that is no object has no columns.
- */
-function firstResultRefusals(results: readonly unknown[]): readonly CallRefusal[] {
-  if (results.length === 0) return [];
-  const source = readOwnData(results, "0");
-  const refusals: CallRefusal[] = [...columnRefusals(readOwnData(source, "columns"), "/results/0/columns")];
-  const rowCount = readOwn(source, "rowCount");
-  if (
-    rowCount.kind === "accessor" ||
-    (rowCount.kind === "data" && rowCount.value !== undefined && !isCount(rowCount.value))
-  ) {
-    refusals.push(unreadable("/results/0/rowCount"));
-  }
-  return refusals;
-}
-
-/** The own data property `key` of `target`, or undefined when it is absent or an accessor. */
-function readOwnData(target: unknown, key: string): unknown {
-  const read = readOwn(target, key);
-  return read.kind === "data" ? read.value : undefined;
-}
-
-/**
- * Every way `answer`, what a console execute answered, is not readable where the host reads it, in this order: the
- * result list at `/results`, an own data array; its first result's columns and row count (`firstResultRefusals`), no
- * later result read; the execution time at `/executionTimeMs`, a finite non-negative number; the warning list at
- * `/warnings`, an own data array, and each warning in it (`warningRefusals`). A member that is missing, an accessor or
- * not of its type is refused at its pointer, a key a warning cannot have is named, and no refusal carries a value.
- * An answer that is no object has none of its members.
- */
-function executeAnswerRefusals(answer: unknown): readonly CallRefusal[] {
-  const refusals: CallRefusal[] = [];
-  const results = readOwn(answer, "results");
-  if (results.kind === "data" && Array.isArray(results.value)) {
-    refusals.push(...firstResultRefusals(results.value));
-  } else {
-    refusals.push(unreadable("/results"));
-  }
-  const executionTimeMs = readOwn(answer, "executionTimeMs");
-  if (
-    executionTimeMs.kind !== "data" ||
-    typeof executionTimeMs.value !== "number" ||
-    !Number.isFinite(executionTimeMs.value) ||
-    executionTimeMs.value < 0
-  ) {
-    refusals.push(unreadable("/executionTimeMs"));
-  }
-  const warnings = readOwn(answer, "warnings");
-  if (warnings.kind !== "data" || !Array.isArray(warnings.value)) {
-    refusals.push(unreadable("/warnings"));
-    return refusals;
-  }
-  const list: readonly unknown[] = warnings.value;
-  for (let index = 0; index < list.length; index++) {
-    refusals.push(...warningRefusals(readOwnData(list, String(index)), pointerTo("/warnings", index)));
-  }
-  return refusals;
-}
-
-/**
- * `answer`, what a console execute answered, read where the host reads it (`executeAnswerRefusals`): the answer itself,
- * typed as the SDK's `ExecuteAnswer`, where no member the host reads here is refused, and the refusals otherwise. The
- * members it does not read are read where the module's docblock says. A reading that throws, a Proxy's trap, passes to
- * the caller.
- */
-export function checkExecuteAnswer(answer: unknown): AnswerCheck<ExecuteAnswer> {
-  return checked(answer, executeAnswerRefusals(answer));
-}
-
-/** The refusal of the tree answer member at `pointer`, or of its key `name`, a key the form cannot have. */
-function treeUnreadable(pointer: string, name?: string): CallRefusal {
-  return name === undefined
-    ? { rule: "tree-answer-unreadable", pointer }
-    : { rule: "tree-answer-unreadable", pointer, name };
-}
-
-/** How one value of a tree answer is read: each way it is not its form, appended to `out`, pointed at `pointer`. */
-type TreeForm = (value: unknown, pointer: string, out: CallRefusal[]) => void;
-
-/**
- * `form`, with a throw while it reads its value, a revoked Proxy or a trap that throws, refused at the value's pointer,
- * so no reading of an answer throws past the check. Every form that reads more than the value's type is guarded.
- */
-function guarded(form: TreeForm): TreeForm {
-  return (value, pointer, out) => {
-    try {
-      form(value, pointer, out);
-    } catch {
-      out.push(treeUnreadable(pointer));
-    }
-  };
-}
-
-/** The own property `key` of `target` (`readOwn`), or undefined, its pointer `at` refused, when reading it throws. */
-function readAt(target: unknown, key: string, at: string, out: CallRefusal[]): OwnRead | undefined {
-  try {
-    return readOwn(target, key);
-  } catch {
-    out.push(treeUnreadable(at));
-    return undefined;
-  }
-}
-
-/** Text. */
-const textForm: TreeForm = (value, pointer, out) => {
-  if (typeof value !== "string") out.push(treeUnreadable(pointer));
-};
-
-/** A boolean. */
-const flagForm: TreeForm = (value, pointer, out) => {
-  if (typeof value !== "boolean") out.push(treeUnreadable(pointer));
-};
-
-/** A count: a non-negative safe integer, as an execute answer's row count is read. */
-const countForm: TreeForm = (value, pointer, out) => {
-  if (!isCount(value)) out.push(treeUnreadable(pointer));
-};
-
-/** A column's provenance: the one word the SDK states, `"sampled"`. */
-const provenanceForm: TreeForm = (value, pointer, out) => {
-  if (value !== "sampled") out.push(treeUnreadable(pointer));
-};
-
 /** Whether `key` is an index of a list of `length` items: a canonical array index below the length. */
 function isIndexOf(key: string, length: number): boolean {
   return /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < length;
 }
 
 /**
- * A list of `item`: an own data array, each index an own data element read as `item`; a hole or an accessor is refused
- * at its index, and an own key that is neither an index nor `length` is refused by name, as a record's key outside its
- * form is.
+ * A list of `item` at most `bound` long: an own data array, refused at the list otherwise, whose length is read once
+ * and refused at the list past `bound` before any item is read. Each index is then read in order as an own data
+ * element of `item`, an accessor refused at its index, and the first hole is refused at its index and ends the
+ * reading of the list. Where `closed`, an own key that is neither an index nor `length` is refused by name, as a
+ * record's key outside its form is. `counted`, where given, is told the length of a list within its bound.
  */
-function listForm(item: TreeForm): TreeForm {
+function listForm(item: Form, bound: number, closed: boolean, counted?: (length: number) => void): Form {
   return guarded((value, pointer, out) => {
     if (!Array.isArray(value)) {
-      out.push(treeUnreadable(pointer));
+      refuse(out, pointer);
       return;
     }
     const items: readonly unknown[] = value;
     const length = items.length;
+    if (length > bound) {
+      refuse(out, pointer);
+      return;
+    }
+    counted?.(length);
     for (let index = 0; index < length; index++) {
       const at = pointerTo(pointer, index);
       const read = readAt(items, String(index), at, out);
       if (read === undefined) continue;
+      if (read.kind === "absent") {
+        refuse(out, at);
+        return;
+      }
       if (read.kind === "data") item(read.value, at, out);
-      else out.push(treeUnreadable(at));
+      else refuse(out, at);
     }
+    if (!closed) return;
     for (const key of Object.getOwnPropertyNames(items)) {
-      if (key !== "length" && !isIndexOf(key, length)) out.push(treeUnreadable(pointerTo(pointer, key), key));
+      if (key !== "length" && !isIndexOf(key, length)) refuse(out, pointerTo(pointer, key), key);
     }
   });
 }
 
+/**
+ * The warning at `pointer`, the SDK's `Warning`: no plain record, refused once at its pointer; any own key but its
+ * message, code and severity, named; a message that is missing, an accessor or not text; a code that is an accessor or
+ * neither text nor a number; a severity that is an accessor or not text.
+ */
+const warningForm: Form = guarded((warning, pointer, out) => {
+  if (!isPlainRecord(warning)) {
+    refuse(out, pointer);
+    return;
+  }
+  for (const key of Object.getOwnPropertyNames(warning)) {
+    if (!WARNING_MEMBERS.includes(key)) refuse(out, pointerTo(pointer, key), key);
+  }
+  const messageAt = pointerTo(pointer, "message");
+  const message = readAt(warning, "message", messageAt, out);
+  if (message !== undefined && (message.kind !== "data" || typeof message.value !== "string")) {
+    refuse(out, messageAt);
+  }
+  const codeAt = pointerTo(pointer, "code");
+  const code = readAt(warning, "code", codeAt, out);
+  if (
+    code !== undefined &&
+    (code.kind === "accessor" ||
+      (code.kind === "data" &&
+        code.value !== undefined &&
+        typeof code.value !== "string" &&
+        typeof code.value !== "number"))
+  ) {
+    refuse(out, codeAt);
+  }
+  const severityAt = pointerTo(pointer, "severity");
+  const severity = readAt(warning, "severity", severityAt, out);
+  if (
+    severity !== undefined &&
+    (severity.kind === "accessor" ||
+      (severity.kind === "data" && severity.value !== undefined && typeof severity.value !== "string"))
+  ) {
+    refuse(out, severityAt);
+  }
+});
+
+/**
+ * The first result's columns, a list that can key a row (`listForm`, bounded by `ANSWER_LIST_MAX.columns`): a column
+ * that is no object, or whose name is missing, an accessor, not text or empty, refused at the name's pointer, and a
+ * name an earlier column of the result already has, refused at the later column's name. A fresh form for each answer,
+ * since it holds the names it has read.
+ */
+function columnListForm(): Form {
+  const seen = new Set<string>();
+  const column: Form = (value, pointer, out) => {
+    const at = pointerTo(pointer, "name");
+    const name = readAt(value, "name", at, out);
+    if (name === undefined) return;
+    if (name.kind !== "data" || typeof name.value !== "string" || name.value === "" || seen.has(name.value)) {
+      refuse(out, at);
+      return;
+    }
+    seen.add(name.value);
+  };
+  return listForm(column, ANSWER_LIST_MAX.columns, false);
+}
+
+/**
+ * The result list at `pointer`: an own data array, refused at the list otherwise, whose length is read once and
+ * refused at the list past `ANSWER_LIST_MAX.results`. Only its first result is read, as an own data element: its
+ * columns (`columnListForm`), and an own row count that is an accessor or not a count. A row count it does not have is
+ * not refused: a provider gives one only where its engine answered it. A first result that is no object, a hole or an
+ * accessor, has no columns. No later result is read.
+ */
+const resultsForm: Form = guarded((value, pointer, out) => {
+  if (!Array.isArray(value)) {
+    refuse(out, pointer);
+    return;
+  }
+  const results: readonly unknown[] = value;
+  const length = results.length;
+  if (length > ANSWER_LIST_MAX.results) {
+    refuse(out, pointer);
+    return;
+  }
+  if (length === 0) return;
+  const first = readAt(results, "0", pointerTo(pointer, 0), out);
+  if (first === undefined) return;
+  const source = first.kind === "data" ? first.value : undefined;
+  const columnsAt = pointerTo(pointerTo(pointer, 0), "columns");
+  const columns = readAt(source, "columns", columnsAt, out);
+  if (columns !== undefined) {
+    if (columns.kind === "data") columnListForm()(columns.value, columnsAt, out);
+    else refuse(out, columnsAt);
+  }
+  const rowCountAt = pointerTo(pointerTo(pointer, 0), "rowCount");
+  const rowCount = readAt(source, "rowCount", rowCountAt, out);
+  if (
+    rowCount !== undefined &&
+    (rowCount.kind === "accessor" ||
+      (rowCount.kind === "data" && rowCount.value !== undefined && !isCount(rowCount.value)))
+  ) {
+    refuse(out, rowCountAt);
+  }
+});
+
+/** The warning list: each warning (`warningForm`), bounded by `ANSWER_LIST_MAX.warnings` (`listForm`). */
+const warningListForm = listForm(warningForm, ANSWER_LIST_MAX.warnings, false);
+
+/**
+ * Every way `answer`, what a console execute answered, is not readable where the host reads it, in this order: the
+ * result list at `/results` (`resultsForm`); the execution time at `/executionTimeMs`, a finite non-negative number;
+ * the warning list at `/warnings` (`warningListForm`). A member that is missing, an accessor or not of its type is
+ * refused at its pointer, a key a warning cannot have is named, and no refusal carries a value. An answer that is no
+ * object has none of its members. A reading that throws, a revoked Proxy or a trap that throws, is refused at the
+ * pointer being read, so this never throws.
+ */
+function executeAnswerRefusals(answer: unknown): readonly CallRefusal[] {
+  const out: Refusals = { rule: "execute-answer-unreadable", list: [] };
+  const results = readAt(answer, "results", "/results", out);
+  if (results !== undefined) {
+    if (results.kind === "data") resultsForm(results.value, "/results", out);
+    else refuse(out, "/results");
+  }
+  const executionTimeMs = readAt(answer, "executionTimeMs", "/executionTimeMs", out);
+  if (
+    executionTimeMs !== undefined &&
+    (executionTimeMs.kind !== "data" ||
+      typeof executionTimeMs.value !== "number" ||
+      !Number.isFinite(executionTimeMs.value) ||
+      executionTimeMs.value < 0)
+  ) {
+    refuse(out, "/executionTimeMs");
+  }
+  const warnings = readAt(answer, "warnings", "/warnings", out);
+  if (warnings !== undefined) {
+    if (warnings.kind === "data") warningListForm(warnings.value, "/warnings", out);
+    else refuse(out, "/warnings");
+  }
+  return out.list;
+}
+
+/**
+ * `answer`, what a console execute answered, read where the host reads it (`executeAnswerRefusals`): the answer itself,
+ * typed as the SDK's `ExecuteAnswer`, where no member the host reads here is refused, and the refusals otherwise. The
+ * members it does not read are read where the module's docblock says. Never throws.
+ */
+export function checkExecuteAnswer(answer: unknown): AnswerCheck<ExecuteAnswer> {
+  return checked(answer, executeAnswerRefusals(answer));
+}
+
+/** Text. */
+const textForm: Form = (value, pointer, out) => {
+  if (typeof value !== "string") refuse(out, pointer);
+};
+
+/** A boolean. */
+const flagForm: Form = (value, pointer, out) => {
+  if (typeof value !== "boolean") refuse(out, pointer);
+};
+
+/** A count: a non-negative safe integer, as an execute answer's row count is read. */
+const countForm: Form = (value, pointer, out) => {
+  if (!isCount(value)) refuse(out, pointer);
+};
+
+/** A column's provenance: the one word the SDK states, `"sampled"`. */
+const provenanceForm: Form = (value, pointer, out) => {
+  if (value !== "sampled") refuse(out, pointer);
+};
+
+/** A tree answer's list of `item`, closed over its indexes and `length`, at most `bound` long (`listForm`). */
+function treeListForm(item: Form, bound: number, counted?: (length: number) => void): Form {
+  return listForm(item, bound, true, counted);
+}
+
 /** A member a record form reads where the SDK type requires it. */
 interface RequiredMember {
-  readonly required: TreeForm;
+  readonly required: Form;
 }
 
 /** A member a record form reads where the SDK type admits a value without it. */
 interface OptionalMember {
-  readonly optional: TreeForm;
+  readonly optional: Form;
 }
 
 /**
@@ -317,8 +376,8 @@ type TreeShape<T> = {
 /** The members of a record form, by key, whatever SDK type they were declared against. */
 type Members = Readonly<Record<string, RequiredMember | OptionalMember>>;
 
-const required = (form: TreeForm): RequiredMember => ({ required: form });
-const optional = (form: TreeForm): OptionalMember => ({ optional: form });
+const required = (form: Form): RequiredMember => ({ required: form });
+const optional = (form: Form): OptionalMember => ({ optional: form });
 
 /** `shape`, declared against the SDK type `T`, as the members of one arm of a union (`chosenForm`). */
 function armOf<T>(shape: TreeShape<T>): Members {
@@ -332,10 +391,10 @@ function armOf<T>(shape: TreeShape<T>): Members {
  * member is read as its form, except an optional member whose value is `undefined`, which reads as absent. A required
  * member the record does not have is then refused at its pointer, in the members' order.
  */
-function closedForm(members: Members, absentKeys: readonly string[]): TreeForm {
+function closedForm(members: Members, absentKeys: readonly string[]): Form {
   return guarded((value, pointer, out) => {
     if (!isPlainRecord(value)) {
-      out.push(treeUnreadable(pointer));
+      refuse(out, pointer);
       return;
     }
     const keys = Object.getOwnPropertyNames(value);
@@ -345,21 +404,19 @@ function closedForm(members: Members, absentKeys: readonly string[]): TreeForm {
       const read = readAt(value, key, at, out);
       if (read === undefined) continue;
       if (member === undefined) {
-        if (!(absentKeys.includes(key) && read.kind === "data" && read.value === undefined)) {
-          out.push(treeUnreadable(at, key));
-        }
-      } else if (read.kind !== "data") out.push(treeUnreadable(at));
+        if (!(absentKeys.includes(key) && read.kind === "data" && read.value === undefined)) refuse(out, at, key);
+      } else if (read.kind !== "data") refuse(out, at);
       else if ("required" in member) member.required(read.value, at, out);
       else if (read.value !== undefined) member.optional(read.value, at, out);
     }
     for (const [key, member] of Object.entries(members)) {
-      if ("required" in member && !keys.includes(key)) out.push(treeUnreadable(pointerTo(pointer, key)));
+      if ("required" in member && !keys.includes(key)) refuse(out, pointerTo(pointer, key));
     }
   });
 }
 
 /** A closed record of the SDK type `T`, read as `shape` names its members (`closedForm`). */
-function recordForm<T>(shape: TreeShape<T>): TreeForm {
+function recordForm<T>(shape: TreeShape<T>): Form {
   return closedForm(shape, []);
 }
 
@@ -370,7 +427,7 @@ function recordForm<T>(shape: TreeShape<T>): TreeForm {
  * undefined member chooses an arm or is refused in one; one with a value is refused by name, as any key the arm cannot
  * have.
  */
-function chosenForm(arms: readonly (readonly [string, Members])[], otherwise: Members): TreeForm {
+function chosenForm(arms: readonly (readonly [string, Members])[], otherwise: Members): Form {
   const all = [...arms.map(([, members]) => members), otherwise];
   const keysOf = (members: Members): readonly string[] => [
     ...new Set(all.flatMap((other) => Object.keys(other)).filter((key) => !Object.hasOwn(members, key))),
@@ -386,15 +443,16 @@ function chosenForm(arms: readonly (readonly [string, Members])[], otherwise: Me
   });
 }
 
-const textListForm = listForm(textForm);
+/** A path: its segments, each text. */
+const pathForm = treeListForm(textForm, ANSWER_LIST_MAX.path);
 
 /** The SDK's `Container`. */
 const containerForm = recordForm<Container>({
-  path: required(textListForm),
+  path: required(pathForm),
   name: required(textForm),
   level: required(countForm),
   isSessionDefault: optional(flagForm),
-  kinds: optional(textListForm),
+  kinds: optional(treeListForm(textForm, ANSWER_LIST_MAX.kinds)),
 });
 
 /** A kind count read from a bounded sample, the form that says what bounded it. */
@@ -410,9 +468,9 @@ const kindCountForm = chosenForm(
 );
 
 /** A count answer's counts: a plain record whose every own key is a kind, any text, and every value a `KindCount`. */
-const countsForm: TreeForm = guarded((value, pointer, out) => {
+const countsForm: Form = guarded((value, pointer, out) => {
   if (!isPlainRecord(value)) {
-    out.push(treeUnreadable(pointer));
+    refuse(out, pointer);
     return;
   }
   for (const key of Object.getOwnPropertyNames(value)) {
@@ -420,7 +478,7 @@ const countsForm: TreeForm = guarded((value, pointer, out) => {
     const read = readAt(value, key, at, out);
     if (read === undefined) continue;
     if (read.kind === "data") kindCountForm(read.value, at, out);
-    else out.push(treeUnreadable(at));
+    else refuse(out, at);
   }
 });
 
@@ -438,13 +496,13 @@ const readRangeForm = chosenForm(
 
 /** The SDK's `DatabaseObject`. */
 const objectForm = recordForm<DatabaseObject>({
-  path: required(textListForm),
+  path: required(pathForm),
   name: required(textForm),
   kind: required(textForm),
   status: optional(textForm),
   rowCount: optional(countForm),
   sizeBytes: optional(countForm),
-  readRanges: optional(listForm(readRangeForm)),
+  readRanges: optional(treeListForm(readRangeForm, ANSWER_LIST_MAX.readRanges)),
 });
 
 /** The SDK's `ColumnSchema`. */
@@ -461,121 +519,106 @@ const columnForm = recordForm<ColumnSchema>({
   projectable: optional(flagForm),
 });
 
-const indexListForm = listForm(
-  recordForm<IndexSchema>({ name: required(textForm), columns: required(textListForm), unique: required(flagForm) }),
+const indexListForm = treeListForm(
+  recordForm<IndexSchema>({
+    name: required(textForm),
+    columns: required(treeListForm(textForm, ANSWER_LIST_MAX.columns)),
+    unique: required(flagForm),
+  }),
+  ANSWER_LIST_MAX.indexes,
 );
 const indexesUnavailableForm = recordForm<Extract<ObjectDetail["indexes"], { readonly unavailable: string }>>({
   unavailable: required(textForm),
 });
 
 /** An object's indexes: a list of the SDK's `IndexSchema`, or the engine's sentence where the read was refused. */
-const indexesForm: TreeForm = guarded((value, pointer, out) => {
+const indexesForm: Form = guarded((value, pointer, out) => {
   (Array.isArray(value) ? indexListForm : indexesUnavailableForm)(value, pointer, out);
 });
 
 /** The SDK's `ObjectDetail`. */
 const detailForm = recordForm<ObjectDetail>({
-  path: required(textListForm),
-  columns: required(listForm(columnForm)),
+  path: required(pathForm),
+  columns: required(treeListForm(columnForm, ANSWER_LIST_MAX.columns)),
   indexes: required(indexesForm),
   foreignKeys: required(
-    listForm(
+    treeListForm(
       recordForm<ForeignKeySchema>({
         columnName: required(textForm),
         referencedTable: required(textForm),
         referencedColumn: required(textForm),
       }),
+      ANSWER_LIST_MAX.foreignKeys,
     ),
   ),
   exclusionConstraints: optional(
-    listForm(recordForm<ExclusionConstraintSchema>({ name: required(textForm), definition: required(textForm) })),
+    treeListForm(
+      recordForm<ExclusionConstraintSchema>({ name: required(textForm), definition: required(textForm) }),
+      ANSWER_LIST_MAX.exclusionConstraints,
+    ),
   ),
 });
 
-const containersAnswerForm = recordForm<TreeContainersAnswer>({
-  containers: required(listForm(containerForm)),
-  needsConfiguration: optional(textForm),
-});
 const countAnswerForm = recordForm<TreeCountAnswer>({ counts: required(countsForm) });
-const listAnswerForm = recordForm<TreeListAnswer>({ objects: required(listForm(objectForm)) });
-const describeAnswerForm = recordForm<TreeDescribeAnswer>({ detail: required(detailForm) });
-const batchForm = recordForm<ObjectDetailBatch>({
-  details: required(listForm(detailForm)),
-  truncated: optional(
-    recordForm<NonNullable<ObjectDetailBatch["truncated"]>>({ limit: required(countForm), reason: required(textForm) }),
-  ),
+const listAnswerForm = recordForm<TreeListAnswer>({
+  objects: required(treeListForm(objectForm, ANSWER_LIST_MAX.objects)),
 });
-
-/**
- * The own data property `key` of `answer`, a record its form already read, read again past the form; undefined, its
- * pointer refused, when this reading throws.
- */
-function readAgain(answer: unknown, key: string, out: CallRefusal[]): unknown {
-  const read = readAt(answer, key, pointerTo("", key), out);
-  return read?.kind === "data" ? read.value : undefined;
-}
-
-/**
- * The length of `answer`'s own data array `key`, read again past the form, or undefined when it holds none there or,
- * its pointer refused, when reading the length throws.
- */
-function lengthAgain(answer: unknown, key: string, out: CallRefusal[]): number | undefined {
-  const value = readAgain(answer, key, out);
-  if (!Array.isArray(value)) return undefined;
-  try {
-    return value.length;
-  } catch {
-    out.push(treeUnreadable(pointerTo("", key)));
-    return undefined;
-  }
-}
+const describeAnswerForm = recordForm<TreeDescribeAnswer>({ detail: required(detailForm) });
+const truncatedForm = recordForm<NonNullable<ObjectDetailBatch["truncated"]>>({
+  limit: required(countForm),
+  reason: required(textForm),
+});
 
 /**
  * Every way `answer`, what an `objects.tree` call answered `request`, is not its action's form (clause C-62), as
  * `tree-answer-unreadable` at a pointer into the answer: a `containers` request answers `TreeContainersAnswer`, a
  * `count` request `TreeCountAnswer`, a `list` request `TreeListAnswer`, a `describe` request `TreeDescribeAnswer` and a
  * `describeMany` request `ObjectDetailBatch`, each record and each list closed over the members the SDK's object tree
- * types state, every count a non-negative safe integer. Past the form it refuses `needsConfiguration` sent with a
- * `parent` or beside a container (clause C-61), and more details than a `describeMany` request's `limit`, reading
- * neither of an answer that is no record nor a list the form refused, so no pointer is refused twice. An optional member present as an own `undefined` reads as absent, as does a
- * member of another arm of a union; a getter is refused, never called, an inherited property is never read, and no
- * refusal carries a value. A reading that throws, a revoked Proxy or a trap that throws, is refused at the pointer
- * being read, so this never throws. An action no form exists for is not this check's, and answers no refusal.
+ * types state, every count a non-negative safe integer, and every list at most its bound long: a `describeMany`
+ * request's `limit` for its details where it sends one, and its member's `ANSWER_LIST_MAX` otherwise. It also refuses
+ * `needsConfiguration` sent with a `parent` or beside a container (clause C-61), from the sentence and the container
+ * list's length its forms read, so every member is read once. An optional member present as an own `undefined` reads
+ * as absent, as does a member of another arm of a union; a getter is refused, never called, an inherited property is
+ * never read, and no refusal carries a value. A reading that throws, a revoked Proxy or a trap that throws, is refused
+ * at the pointer being read, so this never throws. An action no form exists for is not this check's, and answers no
+ * refusal.
  */
 function treeAnswerRefusals(request: TreeRequest, answer: unknown): readonly CallRefusal[] {
-  const refusals: CallRefusal[] = [];
-  const refusedAt = (pointer: string): boolean => refusals.some((refusal) => refusal.pointer === pointer);
+  const out: Refusals = { rule: "tree-answer-unreadable", list: [] };
   switch (request.action) {
     case "containers": {
-      containersAnswerForm(answer, "", refusals);
-      if (refusedAt("")) break;
-      const needsConfiguration = readAgain(answer, "needsConfiguration", refusals);
-      const listed = refusedAt("/containers") ? 0 : (lengthAgain(answer, "containers", refusals) ?? 0);
-      if (typeof needsConfiguration === "string" && (request.parent !== undefined || listed > 0)) {
-        refusals.push(treeUnreadable("/needsConfiguration"));
-      }
+      const read = { listed: 0, sentence: false };
+      recordForm<TreeContainersAnswer>({
+        containers: required(
+          treeListForm(containerForm, ANSWER_LIST_MAX.containers, (length) => {
+            read.listed = length;
+          }),
+        ),
+        needsConfiguration: optional((value, pointer, into) => {
+          textForm(value, pointer, into);
+          read.sentence = typeof value === "string";
+        }),
+      })(answer, "", out);
+      if (read.sentence && (request.parent !== undefined || read.listed > 0)) refuse(out, "/needsConfiguration");
       break;
     }
     case "count":
-      countAnswerForm(answer, "", refusals);
+      countAnswerForm(answer, "", out);
       break;
     case "list":
-      listAnswerForm(answer, "", refusals);
+      listAnswerForm(answer, "", out);
       break;
     case "describe":
-      describeAnswerForm(answer, "", refusals);
+      describeAnswerForm(answer, "", out);
       break;
-    case "describeMany": {
-      batchForm(answer, "", refusals);
-      if (refusedAt("") || refusedAt("/details")) break;
-      const described = lengthAgain(answer, "details", refusals);
-      if (request.limit !== undefined && described !== undefined && described > request.limit) {
-        refusals.push(treeUnreadable("/details"));
-      }
+    case "describeMany":
+      recordForm<ObjectDetailBatch>({
+        details: required(treeListForm(detailForm, request.limit ?? ANSWER_LIST_MAX.details)),
+        truncated: optional(truncatedForm),
+      })(answer, "", out);
       break;
-    }
   }
-  return refusals;
+  return out.list;
 }
 
 /**
