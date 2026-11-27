@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import * as grants from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
@@ -714,9 +715,14 @@ describe("the engine names follow the enforcing list", () => {
     // Captured as a plain object before the substitution: the namespace itself follows the replacement.
     const real = { ...grants };
     try {
+      const planted: Readonly<Record<string, Partial<EngineGrants>>> = {
+        mongodb: { statementLanguage: "sql" },
+        postgres: { statementLanguage: null },
+      };
       mock.module("@/lib/db/claim-grants", () => ({
         ...real,
-        GRANTED_AGENT_STATEMENT_LANGUAGE: { ...real.GRANTED_AGENT_STATEMENT_LANGUAGE, mongodb: "sql", postgres: null },
+        legacyEngineGrants: (id: string) =>
+          Object.hasOwn(planted, id) ? { ...real.legacyEngineGrants(id), ...planted[id] } : real.legacyEngineGrants(id),
       }));
       const { agentPosture: fromGrant } = await import("@/lib/agent/posture");
 
@@ -911,13 +917,37 @@ describe("core decides the tone and the headline from the arm and the review rec
     );
   });
 
-  test("an engine with a statement language that the review record does not list is blocked, in the start route's words", async () => {
+  test("the not-reviewed arm on an engine that offers no reading names only plan mode as the way forward", async () => {
     // Captured as a plain object before the substitution: the namespace itself follows the replacement.
     const real = { ...grants };
     try {
       mock.module("@/lib/db/claim-grants", () => ({
         ...real,
-        GRANTED_AGENT_EXECUTION_ENGINES: real.GRANTED_AGENT_EXECUTION_ENGINES.filter((engine) => engine !== "mongodb"),
+        legacyEngineGrants: (id: string) =>
+          id === "mqtt" ? { ...real.legacyEngineGrants(id), agentExecution: false } : real.legacyEngineGrants(id),
+      }));
+      const { agentPosture: unreviewed } = await import("@/lib/agent/posture");
+      expect(real.legacyEngineGrants("mqtt").agentReadings).toEqual([]);
+      expect(unreviewed({ mode: "agent", engine: "mqtt", engineLabel: "MQTT", handover: false })).toEqual({
+        tone: "blocked",
+        headline: "Cannot execute on MQTT",
+        qualifier: "plan mode drafts here",
+        title: "Studio has not reviewed agent mode's read-only statement path on MQTT",
+        body: manifest.notReviewedSentence("MQTT", false),
+      });
+    } finally {
+      mock.module("@/lib/db/claim-grants", () => real);
+    }
+  });
+
+  test("an engine with a statement language whose grants hold no agent execution is blocked, in the start route's words", async () => {
+    // Captured as a plain object before the substitution: the namespace itself follows the replacement.
+    const real = { ...grants };
+    try {
+      mock.module("@/lib/db/claim-grants", () => ({
+        ...real,
+        legacyEngineGrants: (id: string) =>
+          id === "mongodb" ? { ...real.legacyEngineGrants(id), agentExecution: false } : real.legacyEngineGrants(id),
       }));
       const { agentPosture: unreviewed } = await import("@/lib/agent/posture");
       for (const handover of [false, true]) {
@@ -927,7 +957,7 @@ describe("core decides the tone and the headline from the arm and the review rec
           headline: "Cannot execute on MongoDB",
           qualifier: "plan mode drafts here, and the operations workflow still runs",
           title: "Studio has not reviewed agent mode's read-only statement path on MongoDB",
-          body: manifest.notReviewedSentence("MongoDB"),
+          body: manifest.notReviewedSentence("MongoDB", true),
         });
         // The engine's refusal comes before the connection's, as the start route reads them.
         expect(

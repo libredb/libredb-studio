@@ -26,7 +26,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
-import { AGENT_LANGUAGE_COPY, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_LANGUAGE_COPY,
+  legacyAgentEngine,
+  persistedRunFacts,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -186,7 +191,7 @@ async function drive(
   const connection = CENSUS_CONNECTION[engine];
   const { capabilities, labels, listedKind } = await declarationsOf(engine);
   const provider = providerDouble(engine, capabilities, listedKind, answers);
-  const availability = workflowAvailability(mode, workflowType, engine);
+  const availability = workflowAvailability(mode, workflowType, legacyAgentEngine(engine));
   if (!availability.open) throw new Error(`${mode} ${workflowType} does not open on ${engine}`);
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-language-surface-"));
@@ -373,7 +378,7 @@ async function classifierPrompt(statementLanguage: "kubectl" | "mongo"): Promise
 function openOn(engine: DatabaseType): { mode: AgentRunMode; workflowType: AgentRunWorkflowType }[] {
   return MODES.flatMap((mode) =>
     WORKFLOWS.flatMap((workflowType) =>
-      workflowAvailability(mode, workflowType, engine).open ? [{ mode, workflowType }] : [],
+      workflowAvailability(mode, workflowType, legacyAgentEngine(engine)).open ? [{ mode, workflowType }] : [],
     ),
   );
 }

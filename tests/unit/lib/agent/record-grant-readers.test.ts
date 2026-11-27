@@ -3,20 +3,24 @@
  * src/lib/db/server-catalog.ts), never a table of Studio's keyed by the engine's type: the engine pack resolver's
  * statement language (`agentEnginePack`), the run ledger's reading check (`RUN_HEADER_VOCABULARY.hasReading`), the
  * readings a run is offered (`agentReadingsOf`) and the review record every statement-sending gate asserts
- * (`assertStatementsReviewed`). So a package engine's grant reaches each of them through its register row
- * (docs/providers/CONTRACT.md, clause M-54), while the resolver still refuses every engine the overlay registry holds no
- * overlay of, which opens with M5.
+ * (`assertStatementsReviewed`), the language grant (`grantedAgentLanguage`) and the server overlay registry
+ * (`runServerPack`). So a package engine's grant reaches each of them through its register row
+ * (docs/providers/CONTRACT.md, clause M-54): an engine its row grants a statement language reads that language's
+ * family pack, since Studio holds no code overlay of a package's engine.
  *
  * Every catalog here is composed in memory (tests/helpers/package-catalog.ts) and installed by the case that reads it,
  * then forgotten in `finally`, so no case leaves a catalog behind for the next.
  */
 import { describe, expect, test } from "bun:test";
 import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
+import { grantedAgentLanguage } from "@/lib/agent/granted-language";
+import { agentLanguagePack } from "@/lib/agent/languages";
 import { agentEnginePack } from "@/lib/agent/languages/engines";
+import { runServerPack } from "@/lib/agent/languages/engines/server";
 import { RUN_HEADER_VOCABULARY } from "@/lib/agent/run-ledger-ids";
 import { agentReadingsOf } from "@/lib/agent/tools";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
-import { ExecutionProfileError } from "@/lib/db/errors";
+import { ExecutionProfileError, ProviderUnavailableError, UnknownProviderError } from "@/lib/db/errors";
 import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { assertStatementsReviewed } from "@/lib/db/statement-review";
@@ -90,7 +94,7 @@ describe("the agent readers of a grant", () => {
     expect(serverCatalogInstalled()).toBe(false);
   });
 
-  test("an admitted package's engine is read at its register row's grant by the statement review and the agent readings readers, and at each claim's restrictive value where no row or another digest's row exists; the engine pack resolver refuses it", async () => {
+  test("an admitted package's engine is read at its register row's grant by the statement review, the agent readings, the language grant and the engine pack resolvers, and at each claim's restrictive value where no row or another digest's row exists", async () => {
     const rowed = admittedFor("acme-rowed", admittedManifest("acmerowed", withLoosestClaims));
     const bare = admittedFor("acme-bare", admittedManifest("acmebare", withLoosestClaims));
     const stale = admittedFor("acme-stale", admittedManifest("acmestale", withLoosestClaims));
@@ -125,10 +129,26 @@ describe("the agent readers of a grant", () => {
         expect(RUN_HEADER_VOCABULARY.hasReading(type)).toBe(false);
       }
 
-      // The overlay registry holds no package's engine, so the resolver refuses each before its record is read (M5).
-      for (const type of ["acmerowed", "acmebare"]) {
-        expect(thrownBy(() => agentEnginePack(type as DatabaseType))).toEqual(new Error(`no engine pack for ${type}`));
+      // The row's language grant: the family pack itself, since Studio holds no code overlay of a package's engine.
+      const sql = agentLanguagePack("sql");
+      expect(grantedAgentLanguage("acmerowed")).toBe("sql");
+      expect(agentEnginePack("acmerowed")).toBe(sql);
+      expect(runServerPack(undefined, "acmerowed")).toBe(sql.server);
+      // No row, or a row for another digest: no language, so no engine pack.
+      for (const type of ["acmebare", "acmestale"]) {
+        expect(grantedAgentLanguage(type)).toBeNull();
+        expect(thrownBy(() => agentEnginePack(type))).toEqual(
+          new Error(`no engine pack for ${type}: Studio grants it no statement language`),
+        );
       }
+      // An engine the catalog does not serve is refused by the catalog's refusal.
+      expect(thrownBy(() => agentEnginePack("acmegone"))).toBeInstanceOf(UnknownProviderError);
+      expect(thrownBy(() => runServerPack(undefined, "acmegone"))).toBeInstanceOf(UnknownProviderError);
+    });
+    const refused = [{ name: "acme-rowed", version: "1.0.0", engines: ["acmerowed"], code: "PROVIDER_LOAD_FAILED" }];
+    await withCatalog(composeServerCatalog([bare], refused, register), () => {
+      expect(thrownBy(() => agentEnginePack("acmerowed"))).toBeInstanceOf(ProviderUnavailableError);
+      expect(thrownBy(() => grantedAgentLanguage("acmerowed"))).toBeInstanceOf(ProviderUnavailableError);
     });
     expect(serverCatalogInstalled()).toBe(false);
   });

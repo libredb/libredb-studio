@@ -103,6 +103,8 @@ const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
   [GRANT_READER]: "the grant reader, which grants each engine's request against its legacy row in the grant register",
   "src/lib/db/engine-catalog/projection.ts":
     "the claim projection, which reads each declaration's request and never Studio's row, a CLAIM_READERS entry of tests/unit/db/engine-declaration-readers.test.ts",
+  "src/lib/agent/agent-manifest.ts":
+    "reads a legacy engine's grant, `legacyEngineGrants(...).agentReadings`, and an agent engine's `grants.agentReadings`, which the grant reader answers",
   "src/lib/agent/run-ledger-ids.ts":
     "reads the engine record's grant, `servedEngineRecord(...).grants.agentReadings`, which the grant reader answers",
   "src/lib/agent/tools.ts":

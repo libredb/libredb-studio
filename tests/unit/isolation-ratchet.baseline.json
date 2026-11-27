@@ -7,7 +7,7 @@
     "coreHandwritten.linesNamingAnEngine": 1221,
     "coreHandwritten.linesNamingASingleEngineLanguage": 400,
     "coreGenerated.lines": 11099,
-    "statementLanguages.lines": 19036,
+    "statementLanguages.lines": 19032,
     "legacyProviders.files": 783,
     "agentLanguages.filesInLanguageDirs": 204,
     "languages.files": 37,
@@ -15,7 +15,7 @@
     "providerDocsInCore": 43,
     "providerIntegrationTestsInCore": 43,
     "inwardImportPairs": 259,
-    "engineKeyedTypePositions": 55,
+    "engineKeyedTypePositions": 51,
     "nonEnginePackages.linesNamingAnEngine": 0,
     "grantRegister.legacyRows": 43
   },

@@ -1,4 +1,6 @@
+import { legacyAgentEngine } from "@/lib/agent/agent-manifest";
 import { describe, expect, test } from "bun:test";
+import { parseGrantRegister } from "@libredb/grant-register";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { composeEstimatingExplain } from "@/lib/agent/composed-sql";
@@ -94,14 +96,24 @@ import * as ORACLE from "@/lib/agent/languages/sql/engines/oracle";
 import * as POSTGRES from "@/lib/agent/languages/sql/engines/postgres";
 import * as SQLITE from "@/lib/agent/languages/sql/engines/sqlite";
 import { SQL_PACK } from "@/lib/agent/languages/sql/index";
-import { UnknownProviderError } from "@/lib/db/errors";
+import { ProviderUnavailableError, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
+import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal } from "@/lib/db/type-id";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { getExplainStrategy } from "@/lib/explain";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
+import {
+  admittedFor,
+  admittedManifest,
+  packageRow,
+  withCatalog,
+  withLoosestClaims,
+} from "../../../helpers/package-catalog";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
 const statementLanguage = legacyStatementLanguageTable();
@@ -273,10 +285,10 @@ describe("the engine registry", () => {
   test.each(ALL_TYPES)("%s has a client pack exactly when it speaks a language, over that language's facet", (type) => {
     const language = statementLanguage[type];
     if (language === null) {
-      expect(() => engineClientPack(type)).toThrow(new Error(`no engine pack for ${type}`));
+      expect(() => engineClientPack(legacyAgentEngine(type))).toThrow(new Error(`no engine pack for ${type}`));
     } else if (language === "sql") {
       // A SQL engine's client overlay holds its client dialect, laid over SQL's own facet member for member.
-      const pack = engineClientPack(type);
+      const pack = engineClientPack(legacyAgentEngine(type));
       const client = languageClientPack(language);
       expect(Object.keys(without(pack, "dialect"))).toEqual(Object.keys(client));
       for (const [member, value] of Object.entries(without(pack, "dialect"))) {
@@ -285,14 +297,19 @@ describe("the engine registry", () => {
       expect(pack.dialect).toBeDefined();
     } else {
       // A family with no client dialect gives its engines an empty overlay, so the facet is the family's own object.
-      expect(engineClientPack(type)).toBe(languageClientPack(language));
+      expect(engineClientPack(legacyAgentEngine(type))).toBe(languageClientPack(language));
     }
   });
 
   test("a name that is no engine has no pack, inherited names included", () => {
-    expect(() => engineClientPack("toString" as DatabaseType)).toThrow(new Error("no engine pack for toString"));
-    expect(() => agentEnginePack("toString" as DatabaseType)).toThrow(new Error("no engine pack for toString"));
-    expect(() => agentEnginePack("spark")).toThrow(new Error("no engine pack for spark"));
+    expect(() => engineClientPack({ id: "toString", grants: { statementLanguage: null } })).toThrow(
+      new Error("no engine pack for toString"),
+    );
+    // The resolver reads the engine's record first: a name the server catalog serves no record of is refused by it.
+    expect(() => agentEnginePack("toString")).toThrow(UnknownProviderError);
+    expect(() => agentEnginePack("spark")).toThrow(
+      new Error("no engine pack for spark: Studio grants it no statement language"),
+    );
   });
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
@@ -366,18 +383,20 @@ describe("the engine packs", () => {
       expect(existsSync(path.join(import.meta.dir, "../../../../src/lib/agent/languages", declared))).toBe(false);
       // No overlay row: the family is its grant, the client facet and the pack are the family's own objects, and the
       // server overlay is empty, so the server facet one run reads is the family's own.
-      expect(engineFamily(type)).toBe(declared);
-      expect(engineClientPack(type)).toBe(languageClientPack(declared));
+      expect(engineFamily(legacyAgentEngine(type))).toBe(declared);
+      expect(engineClientPack(legacyAgentEngine(type))).toBe(languageClientPack(declared));
       expect(agentEnginePack(type)).toBe(agentLanguagePack(declared));
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
       expect(runServerPack(declared, type)).toBe(languageServerPack(declared));
       expect(enginesSupporting("catalogRead")).not.toContain(type);
     }
-    // A name that is no engine, and a type with no language, are refused exactly as before.
-    expect(engineFamily("toString" as DatabaseType)).toBeNull();
-    expect(engineFamily("bigquery")).toBeNull();
-    expect(() => engineClientPack("bigquery")).toThrow(new Error("no engine pack for bigquery"));
-    expect(() => agentEnginePack("bigquery")).toThrow(new Error("no engine pack for bigquery"));
+    // A name that is no own key holds no row, and a type with no language has no pack.
+    expect(engineFamily({ id: "toString", grants: { statementLanguage: null } })).toBeNull();
+    expect(engineFamily(legacyAgentEngine("bigquery"))).toBeNull();
+    expect(() => engineClientPack(legacyAgentEngine("bigquery"))).toThrow(new Error("no engine pack for bigquery"));
+    expect(() => agentEnginePack("bigquery")).toThrow(
+      new Error("no engine pack for bigquery: Studio grants it no statement language"),
+    );
   });
 
   test("an engine whose overlays are empty is its family's pack itself", () => {
@@ -425,7 +444,7 @@ describe("the engine packs", () => {
       expect(value).toBe((client as unknown as Record<string, unknown>)[member]);
     }
     expect(pack.server.dialect).toBe(engineServerDialect(type));
-    expect(pack.client.dialect).toBe(engineClientPack(type).dialect);
+    expect(pack.client.dialect).toBe(engineClientPack(legacyAgentEngine(type)).dialect);
     expect(Object.isFrozen(pack)).toBe(true);
     expect(Object.isFrozen(pack.server)).toBe(true);
     expect(Object.isFrozen(pack.client)).toBe(true);
@@ -449,6 +468,47 @@ describe("engineServerDialect", () => {
         expect((thrown as UnknownProviderError).message).toBe(refusal?.sentence as string);
       }
     }
+  });
+
+  test("the server overlay registry answers a package's engine its family pack and refuses an engine the server catalog serves no record of by the catalog's refusal", async () => {
+    const rowed = admittedFor("acme-rowed", admittedManifest("acmerowed", withLoosestClaims));
+    const bare = admittedFor("acme-bare", admittedManifest("acmebare"));
+    const register = parseGrantRegister(
+      [packageRow(rowed, "acmerowed", { statementLanguage: "sql" })],
+      LEGACY_ENGINE_IDS,
+    );
+    const sql = agentLanguagePack("sql");
+    const refusedBy = (read: () => unknown): unknown => {
+      try {
+        read();
+        return null;
+      } catch (error) {
+        return error;
+      }
+    };
+
+    await withCatalog(composeServerCatalog([rowed, bare], [], register), () => {
+      // Studio holds no code overlay of a package's engine: its facet is its family's own, its dialect none.
+      expect(engineServerOverlay("acmerowed")).toEqual({});
+      expect(engineServerDialect("acmerowed")).toEqual(engineServerDialect("spark"));
+      expect(runServerPack(undefined, "acmerowed")).toBe(sql.server);
+      expect(runServerPack(undefined, "acmebare")).toBe(sql.server);
+      // A legacy engine still reads its own overlay with a catalog installed.
+      expect(runServerPack(undefined, "postgres")).toBe(agentEnginePack("postgres").server);
+    });
+    const refused = [{ name: "acme-rowed", version: "1.0.0", engines: ["acmerowed"], code: "PROVIDER_LOAD_FAILED" }];
+    await withCatalog(composeServerCatalog([bare], refused, register), () => {
+      for (const read of [
+        () => engineServerOverlay("acmerowed"),
+        () => engineServerDialect("acmerowed"),
+        () => runServerPack(undefined, "acmerowed"),
+      ]) {
+        expect(refusedBy(read)).toBeInstanceOf(ProviderUnavailableError);
+      }
+    });
+    // With nothing installed, a package's engine is no engine the server knows.
+    expect(refusedBy(() => runServerPack(undefined, "acmerowed"))).toBeInstanceOf(UnknownProviderError);
+    expect(serverCatalogInstalled()).toBe(false);
   });
 
   test.each(ALL_TYPES)("%s answers a frozen dialect with every member", (type) => {
@@ -682,7 +742,7 @@ describe("engineServerDialect", () => {
 
 describe("the client dialect", () => {
   const clientDialect = (type: DatabaseType): AgentEngineClientDialect => {
-    const dialect = engineClientPack(type).dialect;
+    const dialect = engineClientPack(legacyAgentEngine(type)).dialect;
     if (dialect === undefined) throw new Error(`${type} has no client dialect`);
     return dialect;
   };
@@ -732,7 +792,7 @@ describe("the client dialect", () => {
       "mqtt",
       "sparkplug",
     ] as const) {
-      expect(engineClientPack(type).dialect).toBeUndefined();
+      expect(engineClientPack(legacyAgentEngine(type)).dialect).toBeUndefined();
     }
   });
 
@@ -741,7 +801,7 @@ describe("the client dialect", () => {
     const presence = Object.fromEntries(
       CLIENT_DIALECT_MEMBERS.map((member) => [member, server[member] === "unsupported" ? "unsupported" : "supported"]),
     );
-    const client = engineClientPack(type).dialect;
+    const client = engineClientPack(legacyAgentEngine(type)).dialect;
     if (client === undefined) {
       // An engine with no client dialect supplies no server member a client asks about.
       expect(Object.values(presence).every((value) => value === "unsupported")).toBe(true);

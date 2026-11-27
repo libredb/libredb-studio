@@ -19,7 +19,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realClassifier from "@/lib/agent/workflow-classifier";
 import * as realSeed from "@/lib/seed/resolve-connection";
-import { openWorkflows } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, openWorkflows } from "@/lib/agent/agent-manifest";
 import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 
@@ -190,7 +190,7 @@ describe("POST /api/agent/classify", () => {
     );
     expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", {
       statementLanguage: "kubectl",
-      workflows: openWorkflows("agent", "kubernetes"),
+      workflows: openWorkflows("agent", legacyAgentEngine("kubernetes")),
     });
   });
 
@@ -204,11 +204,13 @@ describe("POST /api/agent/classify", () => {
     );
 
     expect(res.status).toBe(200);
-    // The workflows are still read by the browser-safe agent manifest from Studio's projection (M7).
+    // The workflows are the ones availability opens on the same record: SQL's variants need a composed catalog read,
+    // which no SQL dialect of Kubernetes supplies, so only the operations workflow opens.
     expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", {
       statementLanguage: "sql",
-      workflows: openWorkflows("agent", "kubernetes"),
+      workflows: ["operations"],
     });
+    expect(openWorkflows("agent", legacyAgentEngine("kubernetes"))).toContain("investigation");
     expect(serverCatalogInstalled()).toBe(false);
   });
 
@@ -220,7 +222,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("why is checkout slow", {
       statementLanguage: "sql",
-      workflows: openWorkflows("agent", "postgres"),
+      workflows: openWorkflows("agent", legacyAgentEngine("postgres")),
     });
   });
 
@@ -234,7 +236,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", {
       statementLanguage: "libredbkv",
-      workflows: openWorkflows("agent", "libredb"),
+      workflows: openWorkflows("agent", legacyAgentEngine("libredb")),
     });
   });
 
@@ -248,7 +250,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", {
       statementLanguage: "influxql",
-      workflows: openWorkflows("agent", "influxdb"),
+      workflows: openWorkflows("agent", legacyAgentEngine("influxdb")),
     });
   });
 
@@ -266,7 +268,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("how many objects each collection holds", {
       statementLanguage: "weaviateapi",
-      workflows: openWorkflows("agent", "weaviate"),
+      workflows: openWorkflows("agent", legacyAgentEngine("weaviate")),
     });
   });
 
@@ -284,7 +286,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("how many points each collection holds", {
       statementLanguage: "qdrantapi",
-      workflows: openWorkflows("agent", "qdrant"),
+      workflows: openWorkflows("agent", legacyAgentEngine("qdrant")),
     });
   });
 
@@ -296,7 +298,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("who knows whom", {
       statementLanguage: "cypher",
-      workflows: openWorkflows("agent", "neo4j"),
+      workflows: openWorkflows("agent", legacyAgentEngine("neo4j")),
     });
   });
 
@@ -310,7 +312,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("which collections are loaded", {
       statementLanguage: "milvusrpc",
-      workflows: openWorkflows("agent", "milvus"),
+      workflows: openWorkflows("agent", legacyAgentEngine("milvus")),
     });
   });
 
@@ -324,7 +326,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("how many keys are there", {
       statementLanguage: "rediscli",
-      workflows: openWorkflows("agent", "redis"),
+      workflows: openWorkflows("agent", legacyAgentEngine("redis")),
     });
   });
 
@@ -338,7 +340,7 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("what is connected", {
       statementLanguage: undefined,
-      workflows: openWorkflows("agent", "spark"),
+      workflows: openWorkflows("agent", legacyAgentEngine("spark")),
     });
   });
 

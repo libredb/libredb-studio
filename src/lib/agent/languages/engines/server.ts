@@ -6,17 +6,15 @@
  * member `ENGINE_OVERRIDABLE_SERVER_MEMBERS` names, which `runServerPack` lays over the family pack. The type allows no
  * other member, since every other consumer reads the family pack and an override of it would reach no reader.
  *
- * `engineServerDialect` is total over the type ids: an engine with no statement language and an engine whose family has
- * no dialect each answer `NO_SERVER_DIALECT`, every member `"unsupported"`. That is what grounding and statistics need,
- * since they run on every engine in plan mode. A value that is not a type id, an inherited name such as `toString`
- * included, is refused with `UnknownProviderError` by `engineServerOverlay`, `engineServerDialect` and `runServerPack`
- * (FND-1).
+ * `engineServerDialect` is total over the served engines: one with no statement language or no overlay (a provider
+ * package's) or whose family has no dialect answers `NO_SERVER_DIALECT`, every member `"unsupported"`, as grounding and
+ * statistics need. Each reader reads the engine's record first (`servedEngineRecord`), so an id the catalog serves no
+ * record of, `toString` included, is refused as the catalog refuses it (FND-1).
  *
  * Each engine's overlay here is stated by its engine declaration at `agent.overlay`, generated from this registry and
  * read back to it by the census, tests/unit/db/engine-declarations.test.ts (docs/providers/CONTRACT.md, clause M-67).
  */
-import { assertDatabaseType } from "@/lib/db/type-id";
-import type { DatabaseType } from "@/lib/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { INFLUXDB_SERVER_OVERLAY } from "../influxql/engines/influxdb";
 import { KUBERNETES_SERVER_OVERLAY } from "../kubectl/engines/kubernetes";
 import { LIBREDB_SERVER_OVERLAY } from "../libredbkv/engines/libredb";
@@ -128,19 +126,18 @@ type EngineServerOverlay = FacetOverrides<AgentEngineOverridableServer> & {
 const NO_SERVER_OVERLAY: EngineServerOverlay = Object.freeze({});
 
 /**
- * The server overlay of `type` as the registry holds it, whole, or an empty one for a type id with no overlay. Read by
- * `agentEnginePack` in `engines/index.ts` and by `runServerPack`.
+ * The server overlay of engine `id` as the registry holds it, whole, or an empty one for a served engine with none.
  *
- * @throws {UnknownProviderError} When `type` is not a type id (FND-1).
+ * @throws {UnknownProviderError | ProviderUnavailableError} For an id the server's engine catalog serves no record of.
  */
-export function engineServerOverlay(type: DatabaseType): EngineServerOverlay {
-  assertDatabaseType(type);
-  return Object.hasOwn(SERVER_OVERLAYS, type) ? SERVER_OVERLAYS[type as AgentEngineType] : NO_SERVER_OVERLAY;
+export function engineServerOverlay(id: string): EngineServerOverlay {
+  servedEngineRecord(id);
+  return Object.hasOwn(SERVER_OVERLAYS, id) ? SERVER_OVERLAYS[id as AgentEngineType] : NO_SERVER_OVERLAY;
 }
 
-/** The server dialect of `type`: its overlay's own frozen `dialect`, or `NO_SERVER_DIALECT`. */
-export function engineServerDialect(type: DatabaseType): AgentEngineServerDialect {
-  return engineServerOverlay(type).dialect ?? NO_SERVER_DIALECT;
+/** The server dialect of engine `id`: its overlay's own frozen `dialect`, or `NO_SERVER_DIALECT`. */
+export function engineServerDialect(id: string): AgentEngineServerDialect {
+  return engineServerOverlay(id).dialect ?? NO_SERVER_DIALECT;
 }
 
 /** Every registered engine's server dialect, in registry order: what a rule derived across engines reads. */
@@ -154,28 +151,27 @@ export function everyEngineServerDialect(): readonly AgentEngineServerDialect[] 
 type EngineServerFacet = Readonly<AgentLanguageServerPack & { readonly dialect?: AgentEngineServerDialect }>;
 
 /**
- * Each engine's server facet, derived once, on its first read. A member an overlay derives from its base (`(base) =>
- * value`) is a new object every time its function runs, so a facet derived on every read would differ on every run,
- * and from the one `agentEnginePack` holds.
+ * Each overlaid engine's server facet, derived once, on its first read. A member an overlay derives from its base
+ * (`(base) => value`) is a new object every time its function runs, so a facet derived on every read would differ on
+ * every run. Only a registry id is cached, whose family is its row's, so no id caches two families' facets.
  */
-const ENGINE_SERVER_FACETS = new Map<DatabaseType, EngineServerFacet>();
+const ENGINE_SERVER_FACETS = new Map<string, EngineServerFacet>();
 
 /**
  * The server facet one run reads: the family its persisted `language` names (`statementFamilyOf`), with the overlay of
- * `type` applied only when `type` speaks that family. An engine with no family, or a connection re-typed after the
- * run opened, reads the family pack itself. A language this server does not know is the named error of
- * `languageServerPack`. `agentEnginePack` reads its server facet here too, so both hand out the same object. A `type`
- * that is not a type id is refused with `UnknownProviderError` before the language is read (FND-1).
+ * engine `id` applied only when it speaks that family. An engine with no family or no overlay, or a connection
+ * re-typed after the run opened, reads the family pack itself. A language this server does not know is the named error
+ * of `languageServerPack`. `agentEnginePack` reads its server facet here too, so both hand out the same object.
  */
-export function runServerPack(language: AgentStatementLanguageId | undefined, type: DatabaseType): EngineServerFacet {
-  assertDatabaseType(type);
+export function runServerPack(language: AgentStatementLanguageId | undefined, id: string): EngineServerFacet {
+  const engine = servedEngineRecord(id);
   const family = statementFamilyOf(language);
   const base = languageServerPack(family);
-  if (engineFamily(type) !== family) return base;
-  let facet = ENGINE_SERVER_FACETS.get(type);
+  if (engineFamily(engine) !== family || !Object.hasOwn(SERVER_OVERLAYS, id)) return base;
+  let facet = ENGINE_SERVER_FACETS.get(id);
   if (facet === undefined) {
-    facet = defineOverlay(base, engineServerOverlay(type));
-    ENGINE_SERVER_FACETS.set(type, facet);
+    facet = defineOverlay(base, SERVER_OVERLAYS[id as AgentEngineType] as EngineServerOverlay);
+    ENGINE_SERVER_FACETS.set(id, facet);
   }
   return facet;
 }

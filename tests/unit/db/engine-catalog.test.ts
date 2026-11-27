@@ -1083,7 +1083,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         agentCredential: declaration.connection.agentCredential,
       },
       facets: { agentReadings: declaration.facets.agentReadings },
-      agent: { statementLanguage: declaration.agent.statementLanguage },
+      agent: {
+        statementLanguage: declaration.agent.statementLanguage,
+        catalogReadCommandShaped: declaration.agent.overlay?.dialect?.catalogRead?.commandShaped === true,
+      },
     });
 
     expect(Object.keys(requests)).toEqual([
@@ -1103,10 +1106,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(JSON.stringify(requests[declaration.id])).toBe(JSON.stringify(expected(declaration)));
       expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp", "connection", "facets", "agent"]);
     }
-    // The agent mode claims as the declaration states them: a statement language or null, and the curated readings,
-    // the empty list included.
-    expect(requests.postgres?.agent).toEqual({ statementLanguage: "sql" });
-    expect(requests.bigquery?.agent).toEqual({ statementLanguage: null });
+    // The agent mode claims as the declaration states them: a statement language or null, whether its catalog read is
+    // a command, false where the declaration states no overlay, and the curated readings, the empty list included.
+    expect(requests.postgres?.agent).toEqual({ statementLanguage: "sql", catalogReadCommandShaped: false });
+    expect(requests.elasticsearch?.agent).toEqual({ statementLanguage: "sql", catalogReadCommandShaped: true });
+    expect(requests.bigquery?.agent).toEqual({ statementLanguage: null, catalogReadCommandShaped: false });
     expect(requests.postgres?.facets.agentReadings).toEqual(admitted("postgres").facets.agentReadings);
     expect(requests.mqtt?.facets).toEqual({ agentReadings: [] });
     // The connection claims in the declaration's vocabulary: a tunnel offered or refused with its sentence, the host
@@ -1153,8 +1157,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("the claim requests read only the members a declaration authors", () => {
-    // Every member but the authored policy and MCP segments, connection claims, agent readings and statement language
-    // replaced with postgres's, the rest of the facets and the agent overlay included: the
+    // Every member but the authored policy and MCP segments, connection claims, agent readings, statement language and
+    // agent overlay, whose one claim the requests read, replaced with postgres's, the rest of the facets included: the
     // requests the generator writes first, before the declaration generator rewrites the other members, are therefore
     // already the final ones, and the authored safeguards, which no gate reads, are not read either.
     const postgres = admitted("postgres");
@@ -1171,7 +1175,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
           agentCredential: d.connection.agentCredential,
         },
         facets: { ...postgres.facets, agentReadings: d.facets.agentReadings },
-        agent: { ...postgres.agent, statementLanguage: d.agent.statementLanguage },
+        agent: { statementLanguage: d.agent.statementLanguage, overlay: d.agent.overlay },
         policy: d.policy,
         mcp: d.mcp,
       }),
@@ -1185,7 +1189,6 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.facets.monitoring)).toBeGreaterThan(0);
     expect(differs((d) => d.facets.maintenance)).toBeGreaterThan(0);
     expect(differs((d) => d.connection)).toBeGreaterThan(0);
-    expect(differs((d) => d.agent.overlay)).toBeGreaterThan(0);
   });
 
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {

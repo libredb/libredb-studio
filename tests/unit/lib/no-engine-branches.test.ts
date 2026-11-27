@@ -88,12 +88,7 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: FIELDS,
   })),
-  ...[
-    "GRANTED_WRITE_REACH",
-    "GRANTED_SSH_TUNNEL_REFUSAL",
-    "GRANTED_AGENT_STATEMENT_LANGUAGE",
-    "GRANTED_AGENT_READINGS",
-  ].map((declaration) => ({
+  ...["GRANTED_WRITE_REACH", "GRANTED_SSH_TUNNEL_REFUSAL"].map((declaration) => ({
     path: "src/lib/db/claim-grants.ts",
     declaration,
     count: 1,
@@ -343,12 +338,6 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason:
       "the statements and paging clause run_read_query names for each engine, a total table compile-enforced over the type-id union",
-  },
-  {
-    path: "src/lib/agent/agent-manifest.ts",
-    declaration: "AgentAvailabilityTables",
-    count: 1,
-    reason: "the type of the agent-leg tables availability is decided from, the granted statement language among them",
   },
   {
     path: "src/lib/governance/config.ts",

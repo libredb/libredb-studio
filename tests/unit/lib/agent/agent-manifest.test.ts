@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { parseGrantRegister } from "@libredb/grant-register";
 import {
   AGENT_LANGUAGE_COPY,
   AGENT_PLAN_ESTIMATE_OPERATION,
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementArgument,
+  type AgentWorkflowAvailability,
   type AgentStatementLanguageId,
   agentVariant,
+  legacyAgentEngine,
   notReviewedSentence,
   openWorkflows,
-  PLAN_ESTIMATE_OPERATIONS,
+  operationsWorkflowOpens,
   persistedRunFacts,
+  PLAN_ESTIMATE_OPERATIONS,
   planDeliverableOf,
   planObjectiveOf,
   requiredVariant,
@@ -20,12 +24,16 @@ import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/co
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
+import { OPERATIONS_VARIANT } from "@/lib/agent/workflow-tool-sets";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { admittedFor, admittedManifest, packageRow, withLoosestClaims } from "../../../helpers/package-catalog";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import {
   legacyRegisterEngines,
@@ -446,8 +454,10 @@ describe("workflowAvailability", () => {
   // The workflow classifier is offered exactly these (F2), so a run is never classified into one Start refuses.
   test.each([...SHIPPED_DATABASE_TYPES])("openWorkflows lists exactly the workflows %s opens, in each mode", (type) => {
     for (const mode of ["agent", "planning"] as const) {
-      const expected = WORKFLOWS.filter((workflow) => workflowAvailability(mode, workflow, type).open);
-      const listed = openWorkflows(mode, type);
+      const expected = WORKFLOWS.filter(
+        (workflow) => workflowAvailability(mode, workflow, legacyAgentEngine(type)).open,
+      );
+      const listed = openWorkflows(mode, legacyAgentEngine(type));
       expect([...listed]).toEqual(expected);
       expect(Object.isFrozen(listed)).toBe(true);
     }
@@ -455,30 +465,32 @@ describe("workflowAvailability", () => {
 
   test("agent mode opens no operations workflow on MQTT, Sparkplug B, OPC UA and MTConnect, and plan mode opens all five there", () => {
     for (const type of ["mqtt", "sparkplug", "opcua", "mtconnect"] as const) {
-      expect(openWorkflows("agent", type)).not.toContain("operations");
-      expect([...openWorkflows("planning", type)]).toEqual([...WORKFLOWS]);
+      expect(openWorkflows("agent", legacyAgentEngine(type))).not.toContain("operations");
+      expect([...openWorkflows("planning", legacyAgentEngine(type))]).toEqual([...WORKFLOWS]);
     }
   });
 
   test("every engine opens at least one workflow in agent mode", () => {
-    const none = SHIPPED_DATABASE_TYPES.filter((type) => openWorkflows("agent", type).length === 0);
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => openWorkflows("agent", legacyAgentEngine(type)).length === 0);
     expect(none).toEqual([]);
   });
 
-  test("openWorkflows refuses a type that is not a type id by name", () => {
-    expect(() => openWorkflows("agent", "acmefoo" as DatabaseType)).toThrow(UnknownProviderError);
+  test("a browser type that is not a type id is refused by name before its open workflows are read", () => {
+    expect(() => openWorkflows("agent", legacyAgentEngine("acmefoo" as DatabaseType))).toThrow(UnknownProviderError);
   });
 
-  // A connection whose type names no provider (FND-1) reaches no table read: an unknown name, an inherited key, a
-  // missing type and one that is not text are each refused with the reason `typeIdRefusal` gives them, in both modes.
-  test("workflowAvailability refuses a type that is not a type id by name, in every mode and workflow", () => {
+  // A browser connection whose type names no provider (FND-1) reaches no grant read: an unknown name, an inherited key,
+  // a missing type and one that is not text are each refused by the legacy engine's reader with the reason
+  // `typeIdRefusal` gives them, before any availability is decided. The server reads an engine record instead, which
+  // the server catalog refuses the same way (`servedEngineRecord`).
+  test("legacyAgentEngine refuses a type that is not a type id by name, before any workflow's availability is read", () => {
     for (const type of ["acmefoo", undefined, "constructor", 5] as unknown[]) {
       const refusal = typeIdRefusal(type);
       for (const mode of ["agent", "planning"] as const) {
         for (const workflow of [...statementWorkflows, "operations"] as const) {
           let thrown: unknown;
           try {
-            workflowAvailability(mode, workflow, type as DatabaseType);
+            workflowAvailability(mode, workflow, legacyAgentEngine(type as DatabaseType));
           } catch (error) {
             thrown = error;
           }
@@ -492,33 +504,36 @@ describe("workflowAvailability", () => {
 
   test.each(["postgres", "mssql", "duckdb"] as const)("%s opens every workflow in both modes", (type) => {
     for (const workflow of [...statementWorkflows, "operations"] as const) {
-      expect(workflowAvailability("agent", workflow, type).open).toBe(true);
-      expect(workflowAvailability("planning", workflow, type).open).toBe(true);
+      expect(workflowAvailability("agent", workflow, legacyAgentEngine(type)).open).toBe(true);
+      expect(workflowAvailability("planning", workflow, legacyAgentEngine(type)).open).toBe(true);
     }
   });
 
   test.each(["spark"] as const)(
     "%s opens operations and planning, and refuses a statement workflow in agent mode",
     (type) => {
-      expect(workflowAvailability("agent", "operations", type).open).toBe(true);
+      expect(workflowAvailability("agent", "operations", legacyAgentEngine(type)).open).toBe(true);
       for (const workflow of statementWorkflows) {
-        expect(workflowAvailability("planning", workflow, type).open).toBe(true);
-        expect(workflowAvailability("agent", workflow, type)).toEqual({ open: false, cause: "no-adapter" });
+        expect(workflowAvailability("planning", workflow, legacyAgentEngine(type)).open).toBe(true);
+        expect(workflowAvailability("agent", workflow, legacyAgentEngine(type))).toEqual({
+          open: false,
+          cause: "no-adapter",
+        });
       }
     },
   );
 
   test("kubernetes speaks kubectl: every workflow opens in both modes", () => {
     expect(statementLanguage.kubernetes).toBe("kubectl");
-    expect(workflowAvailability("agent", "operations", "kubernetes").open).toBe(true);
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("kubernetes")).open).toBe(true);
     for (const workflow of statementWorkflows) {
-      expect(workflowAvailability("planning", workflow, "kubernetes").open).toBe(true);
-      expect(workflowAvailability("agent", workflow, "kubernetes").open).toBe(true);
+      expect(workflowAvailability("planning", workflow, legacyAgentEngine("kubernetes")).open).toBe(true);
+      expect(workflowAvailability("agent", workflow, legacyAgentEngine("kubernetes")).open).toBe(true);
     }
   });
 
   test("a kubernetes investigation opens in agent mode under the kubectl variant", () => {
-    const open = workflowAvailability("agent", "investigation", "kubernetes");
+    const open = workflowAvailability("agent", "investigation", legacyAgentEngine("kubernetes"));
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
@@ -533,7 +548,7 @@ describe("workflowAvailability", () => {
   });
 
   test("a kubernetes resource-efficiency run opens in agent mode and persists its language and its own verifier", () => {
-    const open = workflowAvailability("agent", "query-optimization", "kubernetes");
+    const open = workflowAvailability("agent", "query-optimization", legacyAgentEngine("kubernetes"));
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
@@ -546,7 +561,7 @@ describe("workflowAvailability", () => {
       verifier: "agent-query-optimization-kubectl.1",
     });
     // A plan is judged by the planning rule, so it persists the language and never the verifier.
-    const plan = workflowAvailability("planning", "query-optimization", "kubernetes");
+    const plan = workflowAvailability("planning", "query-optimization", legacyAgentEngine("kubernetes"));
     if (!plan.open) throw new Error("refused");
     expect(persistedRunFacts("planning", "query-optimization", "kubernetes", plan)).toEqual({
       engine: "kubernetes",
@@ -555,7 +570,7 @@ describe("workflowAvailability", () => {
   });
 
   test("a kubernetes cluster-health run opens in agent mode and persists its language and its own verifier", () => {
-    const open = workflowAvailability("agent", "database-assessment", "kubernetes");
+    const open = workflowAvailability("agent", "database-assessment", legacyAgentEngine("kubernetes"));
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
@@ -570,7 +585,7 @@ describe("workflowAvailability", () => {
   });
 
   test("an SQL run opens under its SQL variant and its language", () => {
-    expect(workflowAvailability("agent", "data-analysis", "postgres")).toEqual({
+    expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("postgres"))).toEqual({
       open: true,
       statementLanguage: "sql",
       variant: requiredVariant("sql", "data-analysis"),
@@ -578,7 +593,7 @@ describe("workflowAvailability", () => {
   });
 
   test("operations on an engine with no language opens under the one operations variant", () => {
-    expect(workflowAvailability("agent", "operations", "spark")).toEqual({
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("spark"))).toEqual({
       open: true,
       statementLanguage: null,
       variant: requiredVariant("sql", "operations"),
@@ -586,7 +601,7 @@ describe("workflowAvailability", () => {
   });
 
   test("a plan on an engine with no language opens under no variant", () => {
-    expect(workflowAvailability("planning", "investigation", "spark")).toEqual({
+    expect(workflowAvailability("planning", "investigation", legacyAgentEngine("spark"))).toEqual({
       open: true,
       statementLanguage: null,
       variant: null,
@@ -594,17 +609,17 @@ describe("workflowAvailability", () => {
   });
 
   test("a MongoDB run opens under its own language and variants (issue #1614)", () => {
-    expect(workflowAvailability("agent", "data-analysis", "mongodb")).toEqual({
+    expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
       variant: requiredVariant("mongo", "data-analysis"),
     });
-    expect(workflowAvailability("agent", "operations", "mongodb")).toEqual({
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
       variant: requiredVariant("mongo", "operations"),
     });
-    expect(workflowAvailability("planning", "investigation", "mongodb")).toEqual({
+    expect(workflowAvailability("planning", "investigation", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
       variant: requiredVariant("mongo", "investigation"),
@@ -612,7 +627,7 @@ describe("workflowAvailability", () => {
     // Every statement-sending workflow has a mongo variant: none of them may be the SQL
     // variant wearing a different name, and this is where that would show first.
     for (const workflow of ["investigation", "query-optimization", "database-assessment"] as const) {
-      const open = workflowAvailability("agent", workflow, "mongodb");
+      const open = workflowAvailability("agent", workflow, legacyAgentEngine("mongodb"));
       if (!open.open) throw new Error(`refused ${workflow}`);
       expect(open.statementLanguage).toBe("mongo");
     }
@@ -625,7 +640,6 @@ describe("workflowAvailability", () => {
   */
   const sqlInvestigation = requiredVariant("sql", "investigation");
   const partialLanguage = {
-    languages: { ...statementLanguage, kubernetes: "kubectl" },
     variants: {
       ...AGENT_WORKFLOW_VARIANTS,
       kubectl: {
@@ -635,7 +649,6 @@ describe("workflowAvailability", () => {
     },
     // Held empty here whatever the live mirror says, so the refusal is driven by the table and not by the census.
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": [] },
-    reviewed: AGENT_EXECUTION,
   } as const;
 
   const AGENT_READINGS_SENTENCE =
@@ -645,19 +658,19 @@ describe("workflowAvailability", () => {
   test.each(WITHOUT_READINGS)(
     "operations does not open in agent mode on %s, which offers agent mode no reading",
     (type) => {
-      expect(workflowAvailability("agent", "operations", type)).toEqual({
+      expect(workflowAvailability("agent", "operations", legacyAgentEngine(type))).toEqual({
         open: false,
         cause: "requirement-unmet",
         sentence: AGENT_READINGS_SENTENCE,
       });
-      expect(workflowAvailability("planning", "operations", type).open).toBe(true);
+      expect(workflowAvailability("planning", "operations", legacyAgentEngine(type)).open).toBe(true);
     },
   );
 
   test.each(["spark", "kubernetes", "kafka"] as const)(
     "operations still opens in agent mode on %s, which offers a reading",
     (type) => {
-      expect(workflowAvailability("agent", "operations", type)).toMatchObject({
+      expect(workflowAvailability("agent", "operations", legacyAgentEngine(type))).toMatchObject({
         open: true,
         variant: { requires: ["agent-readings"] },
       });
@@ -671,23 +684,21 @@ describe("workflowAvailability", () => {
     expect(WITHOUT_READINGS.filter((type) => AGENT_REQUIREMENT_ENGINES["agent-readings"].includes(type))).toEqual([]);
   });
 
-  test("the operations arm refuses an engine the tables leave out of the agent-readings requirement", () => {
-    const tables = {
-      languages: statementLanguage,
-      variants: AGENT_WORKFLOW_VARIANTS,
-      requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "agent-readings": [] },
-      reviewed: AGENT_EXECUTION,
-    } as const;
-    expect(workflowAvailability("agent", "operations", "spark", tables)).toEqual({
+  test("the operations arm refuses an engine whose grants hold no agent reading, whatever the tables hold", () => {
+    const spark = legacyAgentEngine("spark");
+    const unread = { id: spark.id, grants: { ...spark.grants, agentReadings: [] } };
+    expect(AGENT_REQUIREMENT_ENGINES["agent-readings"]).toContain("spark");
+    expect(workflowAvailability("agent", "operations", unread)).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence: AGENT_READINGS_SENTENCE,
     });
-    expect(workflowAvailability("planning", "operations", "spark", tables).open).toBe(true);
+    expect(workflowAvailability("planning", "operations", unread).open).toBe(true);
+    expect(workflowAvailability("agent", "operations", spark).open).toBe(true);
   });
 
   test("a workflow with no variant on an engine without a reading names only plan mode as the way forward", () => {
-    expect(workflowAvailability("agent", "query-optimization", "mqtt")).toEqual({
+    expect(workflowAvailability("agent", "query-optimization", legacyAgentEngine("mqtt"))).toEqual({
       open: false,
       cause: "no-variant",
       sentence: "Agent mode does not offer this workflow on this engine. Plan mode drafts here.",
@@ -702,7 +713,7 @@ describe("workflowAvailability", () => {
     for (const type of withoutReadings) {
       for (const mode of ["agent", "planning"] as const) {
         for (const workflow of Object.keys(AGENT_WORKFLOW_PRESENTS_ANSWER) as AgentRunWorkflowType[]) {
-          const availability = workflowAvailability(mode, workflow, type);
+          const availability = workflowAvailability(mode, workflow, legacyAgentEngine(type));
           if (availability.open) continue;
           // `not-reviewed` is answered with `notReviewedSentence`, which names the operations workflow as a way forward.
           if (availability.cause === "not-reviewed" || availability.cause === "no-adapter") {
@@ -720,7 +731,9 @@ describe("workflowAvailability", () => {
   });
 
   test("a workflow the language has no variant of is refused with the no-variant sentence", () => {
-    expect(workflowAvailability("agent", "query-optimization", "kubernetes", partialLanguage)).toEqual({
+    expect(
+      workflowAvailability("agent", "query-optimization", legacyAgentEngine("kubernetes"), partialLanguage),
+    ).toEqual({
       open: false,
       cause: "no-variant",
       sentence:
@@ -729,11 +742,37 @@ describe("workflowAvailability", () => {
   });
 
   test("a variant whose requirement the engine does not hold is refused with that requirement's sentence", () => {
-    expect(workflowAvailability("agent", "investigation", "kubernetes", partialLanguage)).toEqual({
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("kubernetes"), partialLanguage)).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
         "This engine serves no usage reading, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+    });
+  });
+
+  test("a variant that requires a curated reading holds it on the engine's own grants, whatever the tables list", () => {
+    const readingInvestigation = {
+      ...partialLanguage,
+      variants: {
+        ...partialLanguage.variants,
+        kubectl: {
+          ...partialLanguage.variants.kubectl,
+          investigation: { ...sqlInvestigation, requires: ["agent-readings"] },
+        },
+      },
+      requirementEngines: { ...partialLanguage.requirementEngines, "agent-readings": [] },
+    } as const;
+    const kubernetes = legacyAgentEngine("kubernetes");
+    const unread = { id: kubernetes.id, grants: { ...kubernetes.grants, agentReadings: [] } };
+    expect(workflowAvailability("agent", "investigation", kubernetes, readingInvestigation)).toEqual({
+      open: true,
+      statementLanguage: "kubectl",
+      variant: readingInvestigation.variants.kubectl.investigation,
+    });
+    expect(workflowAvailability("agent", "investigation", unread, readingInvestigation)).toEqual({
+      open: false,
+      cause: "requirement-unmet",
+      sentence: AGENT_READINGS_SENTENCE,
     });
   });
 
@@ -742,12 +781,14 @@ describe("workflowAvailability", () => {
       ...partialLanguage,
       requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": ["kubernetes"] },
     } as const;
-    expect(workflowAvailability("agent", "investigation", "kubernetes", held)).toEqual({
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("kubernetes"), held)).toEqual({
       open: true,
       statementLanguage: "kubectl",
       variant: partialLanguage.variants.kubectl.investigation,
     });
-    expect(workflowAvailability("planning", "query-optimization", "kubernetes", partialLanguage)).toEqual({
+    expect(
+      workflowAvailability("planning", "query-optimization", legacyAgentEngine("kubernetes"), partialLanguage),
+    ).toEqual({
       open: true,
       statementLanguage: "kubectl",
       variant: null,
@@ -759,16 +800,14 @@ describe("workflowAvailability", () => {
     `sql-catalog` and out of `sql-composers`, so the case holds whichever shipped engines are in it.
   */
   const catalogOnly = {
-    languages: statementLanguage,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
-    reviewed: AGENT_EXECUTION,
   } as const;
 
   test.each(["investigation", "database-assessment", "data-analysis"] as const)(
     "%s opens on an engine that composes a catalog read and no estimating plan",
     (workflow) => {
-      expect(workflowAvailability("agent", workflow, "duckdb", catalogOnly)).toEqual({
+      expect(workflowAvailability("agent", workflow, legacyAgentEngine("duckdb"), catalogOnly)).toEqual({
         open: true,
         statementLanguage: "sql",
         variant: requiredVariant("sql", workflow),
@@ -777,7 +816,7 @@ describe("workflowAvailability", () => {
   );
 
   test("query-optimization stays refused there, with the sentence that says it needs an estimating plan", () => {
-    expect(workflowAvailability("agent", "query-optimization", "duckdb", catalogOnly)).toEqual({
+    expect(workflowAvailability("agent", "query-optimization", legacyAgentEngine("duckdb"), catalogOnly)).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
@@ -786,19 +825,21 @@ describe("workflowAvailability", () => {
   });
 
   test("on a shipped engine with a catalog read and no estimating plan, the refusal claims no missing catalog", () => {
-    const refused = workflowAvailability("agent", "query-optimization", "elasticsearch");
+    const refused = workflowAvailability("agent", "query-optimization", legacyAgentEngine("elasticsearch"));
     expect(refused).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
         "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
     });
-    expect(workflowAvailability("agent", "investigation", "elasticsearch")).toMatchObject({ open: true });
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("elasticsearch"))).toMatchObject({
+      open: true,
+    });
   });
 
   test("a statement workflow on an engine that composes no catalog read names what it lacks", () => {
     const neither = { ...catalogOnly, requirementEngines: { ...catalogOnly.requirementEngines, "sql-catalog": [] } };
-    expect(workflowAvailability("agent", "investigation", "duckdb", neither)).toEqual({
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("duckdb"), neither)).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
@@ -807,19 +848,15 @@ describe("workflowAvailability", () => {
   });
 
   /*
-    An engine whose language would open a statement workflow but which the review record does not list: driven through
-    the shipped tables with PostgreSQL left off the record, since no shipped engine has a language and no review row.
+    An engine whose language would open a statement workflow but whose grants hold no agent execution: driven through
+    PostgreSQL's legacy grants with agent execution taken away, since no shipped engine has a language and no review.
   */
-  const unreviewedPostgres = {
-    languages: statementLanguage,
-    variants: AGENT_WORKFLOW_VARIANTS,
-    requirementEngines: AGENT_REQUIREMENT_ENGINES,
-    reviewed: AGENT_EXECUTION.filter((type) => type !== "postgres"),
-  } as const;
+  const postgres = legacyAgentEngine("postgres");
+  const unreviewedPostgres = { id: postgres.id, grants: { ...postgres.grants, agentExecution: false } };
 
   test("a statement workflow in agent mode on an engine the review record does not list is refused as not reviewed, though its language would open it", () => {
     for (const workflow of statementWorkflows) {
-      expect(workflowAvailability("agent", workflow, "postgres", unreviewedPostgres)).toEqual({
+      expect(workflowAvailability("agent", workflow, unreviewedPostgres)).toEqual({
         open: false,
         cause: "not-reviewed",
       });
@@ -827,34 +864,34 @@ describe("workflowAvailability", () => {
   });
 
   test("plan mode and the operations workflow still open on such an engine", () => {
-    expect(workflowAvailability("agent", "operations", "postgres", unreviewedPostgres).open).toBe(true);
+    expect(workflowAvailability("agent", "operations", unreviewedPostgres).open).toBe(true);
     for (const workflow of [...statementWorkflows, "operations"] as const) {
-      expect(workflowAvailability("planning", workflow, "postgres", unreviewedPostgres).open).toBe(true);
+      expect(workflowAvailability("planning", workflow, unreviewedPostgres).open).toBe(true);
     }
   });
 
   test("notReviewedSentence names the engine and the ways forward that remain", () => {
-    expect(notReviewedSentence("PostgreSQL")).toBe(
+    expect(notReviewedSentence("PostgreSQL", true)).toBe(
       "Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and PostgreSQL is not one of them, so a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.",
     );
   });
 
   test("an SQL run persists only its engine, since sql and the SQL verifier are what absence reads as", () => {
-    const open = workflowAvailability("agent", "query-optimization", "postgres");
+    const open = workflowAvailability("agent", "query-optimization", legacyAgentEngine("postgres"));
     if (!open.open) throw new Error("refused");
     expect(persistedRunFacts("agent", "query-optimization", "postgres", open)).toEqual({ engine: "postgres" });
   });
 
   test("a run on an engine with no language persists only its engine", () => {
     for (const mode of ["agent", "planning"] as const) {
-      const open = workflowAvailability(mode, "operations", "spark");
+      const open = workflowAvailability(mode, "operations", legacyAgentEngine("spark"));
       if (!open.open) throw new Error("refused");
       expect(persistedRunFacts(mode, "operations", "spark", open), mode).toEqual({ engine: "spark" });
     }
   });
 
   test.each(["agent", "planning"] as const)("persistedRunFacts records the engine in %s mode", (mode) => {
-    const open = workflowAvailability(mode, "operations", "kafka");
+    const open = workflowAvailability(mode, "operations", legacyAgentEngine("kafka"));
     if (!open.open) throw new Error("refused");
     expect(persistedRunFacts(mode, "operations", "kafka", open)).toEqual({
       engine: "kafka",
@@ -880,5 +917,97 @@ describe("workflowAvailability", () => {
       engine: "kubernetes",
       statementLanguage: "kubectl",
     });
+  });
+});
+
+describe("workflow availability on a package engine's record", () => {
+  /**
+   * The records of four admitted package engines: two with no register row, one requesting a statement language and
+   * one requesting none, one whose row grants one reading and no language, and one whose row grants a language and no
+   * agent execution.
+   */
+  function packageRecords() {
+    const requesting = admittedFor("acme-requesting", admittedManifest("acmerequesting", withLoosestClaims));
+    const silent = admittedFor("acme-silent", admittedManifest("acmesilent"));
+    const reading = admittedFor("acme-reading", admittedManifest("acmereading", withLoosestClaims));
+    const language = admittedFor("acme-language", admittedManifest("acmelanguage", withLoosestClaims));
+    const register = parseGrantRegister(
+      [
+        packageRow(reading, "acmereading", { agentReadings: Object.freeze(["sessions"] as const) }),
+        packageRow(language, "acmelanguage", { statementLanguage: "sql", agentExecution: false }),
+      ],
+      LEGACY_ENGINE_IDS,
+    );
+    const { engines } = composeServerCatalog([requesting, silent, reading, language], [], register);
+    const record = (id: string) => {
+      const engine = engines.get(id);
+      if (engine === undefined) throw new Error(`the catalog holds no record of ${id}`);
+      return engine;
+    };
+    return {
+      requesting: record("acmerequesting"),
+      silent: record("acmesilent"),
+      reading: record("acmereading"),
+      language: record("acmelanguage"),
+    };
+  }
+
+  const AGENT_READINGS_REFUSAL: AgentWorkflowAvailability = {
+    open: false,
+    cause: "requirement-unmet",
+    sentence:
+      "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
+  };
+
+  test("a package record's availability reads its grants: a language it requests and no row grants is not reviewed, one it requests none of has no adapter, and the operations workflow opens only on a granted reading", () => {
+    const { requesting, silent, reading, language } = packageRecords();
+    const statementWorkflows = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+
+    // Plan mode opens every workflow on every engine, under no variant where no language is granted.
+    for (const engine of [requesting, silent, reading]) {
+      for (const workflow of WORKFLOWS) {
+        expect(workflowAvailability("planning", workflow, engine)).toEqual({
+          open: true,
+          statementLanguage: null,
+          variant: null,
+        });
+      }
+    }
+    expect(workflowAvailability("planning", "investigation", language)).toEqual({
+      open: true,
+      statementLanguage: "sql",
+      variant: requiredVariant("sql", "investigation"),
+    });
+
+    for (const workflow of statementWorkflows) {
+      expect(workflowAvailability("agent", workflow, requesting)).toEqual({ open: false, cause: "not-reviewed" });
+      expect(workflowAvailability("agent", workflow, silent)).toEqual({ open: false, cause: "no-adapter" });
+      expect(workflowAvailability("agent", workflow, reading)).toEqual({ open: false, cause: "not-reviewed" });
+      expect(workflowAvailability("agent", workflow, language)).toEqual({ open: false, cause: "not-reviewed" });
+    }
+    for (const engine of [requesting, silent]) {
+      expect(workflowAvailability("agent", "operations", engine)).toEqual(AGENT_READINGS_REFUSAL);
+      expect(openWorkflows("agent", engine)).toEqual([]);
+      expect(operationsWorkflowOpens(engine)).toBe(false);
+    }
+    expect(workflowAvailability("agent", "operations", reading)).toEqual({
+      open: true,
+      statementLanguage: null,
+      variant: OPERATIONS_VARIANT,
+    });
+    expect(openWorkflows("agent", reading)).toEqual(["operations"]);
+    expect(operationsWorkflowOpens(reading)).toBe(true);
+    expect([...openWorkflows("planning", silent)]).toEqual([...WORKFLOWS]);
+  });
+
+  test("the not-reviewed refusal names the operations workflow only where it opens", () => {
+    const { requesting, reading } = packageRecords();
+
+    expect(notReviewedSentence("Acme", operationsWorkflowOpens(reading))).toBe(
+      "Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and Acme is not one of them, so a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.",
+    );
+    expect(notReviewedSentence("Acme", operationsWorkflowOpens(requesting))).toBe(
+      "Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and Acme is not one of them, so a run whose workflow sends a statement is not opened on it. Plan mode drafts here.",
+    );
   });
 });

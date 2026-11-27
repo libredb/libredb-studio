@@ -186,8 +186,8 @@ export interface AgentRunStartInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`; see `AgentRunRecord.statementLanguage`. */
   readonly statementLanguage?: AgentStatementLanguageId;
-  /** The connection's type id; see `AgentRunRecord.engine`. */
-  readonly engine?: DatabaseType;
+  /** The connection's engine id; see `AgentRunRecord.engine`. */
+  readonly engine?: string;
   /** Defaults to the variant's verifier; see `AgentRunRecord.verifier`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; the route derives it, the store persists it. */

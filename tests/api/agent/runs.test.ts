@@ -34,7 +34,7 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
-import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
 
 const { SeedConnectionError } = realSeed;
 
@@ -1029,7 +1029,8 @@ describe("POST /api/agent/runs", () => {
 
       expect(res.status).toBe(400);
       expect(body).toEqual({ error: `refused: ${cause}`, refused: "engine-unsupported" });
-      expect(mockWorkflowAvailability).toHaveBeenCalledWith("agent", "investigation", "postgres");
+      // Availability is read from the connection's engine record.
+      expect(mockWorkflowAvailability).toHaveBeenCalledWith("agent", "investigation", servedEngineRecord("postgres"));
       expect(mockStart).not.toHaveBeenCalled();
       expect(mockAdmitAgentModel).not.toHaveBeenCalled();
     },
@@ -1042,7 +1043,7 @@ describe("POST /api/agent/runs", () => {
     const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(body.error).toBe(realManifest.notReviewedSentence(getDBConfig("postgres").label));
+    expect(body.error).toBe(realManifest.notReviewedSentence(getDBConfig("postgres").label, true));
     expect(body.refused).toBe("engine-unsupported");
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();

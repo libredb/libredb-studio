@@ -201,7 +201,7 @@ export type AgentLedgerEntry =
        * engine, and its run is offered the six curated readings it was opened with; see
        * `AgentRunRecord.engine`.
        */
-      readonly engine?: DatabaseType;
+      readonly engine?: string;
       /**
        * Optional for the same reason, and absent folds to the verifier of the run's
        * variant, which is the rule that judged every run written before this field.
@@ -353,8 +353,8 @@ export interface AgentRunOpenInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly statementLanguage?: AgentStatementLanguageId;
-  /** The connection's type id, decided at start; absent only from a caller that records none. See `AgentRunRecord`. */
-  readonly engine?: DatabaseType;
+  /** The connection's engine id, decided at start; absent only from a caller that records none. See `AgentRunRecord`. */
+  readonly engine?: string;
   /** Defaults to the variant's verifier. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; written to the header only when it does. */

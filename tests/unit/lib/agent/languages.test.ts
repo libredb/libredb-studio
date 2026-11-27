@@ -6,6 +6,7 @@ import {
   AGENT_WORKFLOW_VARIANTS,
   type AgentModuleLanguageId,
   type AgentStatementLanguageId,
+  legacyAgentEngine,
 } from "@/lib/agent/agent-manifest";
 import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
@@ -40,6 +41,7 @@ import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-langu
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "@/lib/agent/workflow-tool-sets";
 import type { AgentArtifactReference, AgentReadingDenyCode, AgentRunEvent } from "@/lib/agent/types";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { DatabaseType } from "@/lib/types";
@@ -630,8 +632,8 @@ describe("the client packs", () => {
     }
   });
 
-  test("a type's granted agent statement language is its grant read as the agent's language, and null for a type granted none and for a name that is no own key", () => {
-    expect(grantedAgentStatementLanguage("mongodb")).toBe("mongo");
+  test("a type's granted agent statement language is its grant read as the agent's language, null for a type granted none, and a name that is no type id is refused before any grant is read", () => {
+    expect(grantedAgentStatementLanguage(legacyAgentEngine("mongodb"))).toBe("mongo");
     // Each shipped engine whose declaration states agent data for its language is granted that language.
     const declaring = SHIPPED_DATABASE_TYPES.flatMap((type) => {
       const data = BUNDLED_STATEMENT_LANGUAGE_DATA[type];
@@ -639,13 +641,14 @@ describe("the client packs", () => {
     });
     expect(declaring.length).toBeGreaterThan(0);
     for (const { type, name } of declaring) {
-      expect({ type, granted: grantedAgentStatementLanguage(type) }).toEqual({
+      expect({ type, granted: grantedAgentStatementLanguage(legacyAgentEngine(type)) }).toEqual({
         type,
         granted: shippedDeclaredLanguage(name),
       });
     }
-    expect(grantedAgentStatementLanguage("bigquery")).toBeNull();
-    expect(grantedAgentStatementLanguage("toString" as DatabaseType)).toBeNull();
+    expect(grantedAgentStatementLanguage(legacyAgentEngine("bigquery"))).toBeNull();
+    // A name that is no type id has no grant to read: the legacy engine's reader refuses it first.
+    expect(() => legacyAgentEngine("toString" as DatabaseType)).toThrow(UnknownProviderError);
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

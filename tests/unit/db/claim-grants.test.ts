@@ -27,8 +27,6 @@ import {
   AGENT_READING_NAMES,
   type EngineGrants,
   GRANTED_AGENT_EXECUTION_ENGINES,
-  GRANTED_AGENT_READINGS,
-  GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantEngineClaims,
@@ -423,12 +421,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
   test("the granted tables are frozen, each row too, keyed exactly by the shipped engines", () => {
     const frozen = (value: unknown): boolean =>
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
-    const tables = [
-      GRANTED_WRITE_REACH,
-      GRANTED_SSH_TUNNEL_REFUSAL,
-      GRANTED_AGENT_STATEMENT_LANGUAGE,
-      GRANTED_AGENT_READINGS,
-    ];
+    const tables = [GRANTED_WRITE_REACH, GRANTED_SSH_TUNNEL_REFUSAL];
 
     for (const table of tables) {
       expect(frozen(table)).toBe(true);
@@ -738,28 +731,27 @@ function schemaAgentModeVocabularies(): { readonly statementLanguageForm: string
 
 describe("Studio's grant of each agent mode claim", () => {
   test("for every shipped engine, each granted agent mode claim is its record's row", () => {
+    const grantedLanguages = legacyGrantTable("statementLanguage");
+    const grantedReadings = legacyGrantTable("agentReadings");
     expect(
-      SHIPPED_DATABASE_TYPES.filter(
-        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== legacyStatementLanguageTable()[type],
-      ),
+      SHIPPED_DATABASE_TYPES.filter((type) => grantedLanguages[type] !== legacyStatementLanguageTable()[type]),
     ).toEqual([]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(legacyStatementLanguageTable());
+    expect(grantedLanguages).toEqual(legacyStatementLanguageTable());
     // Vacuity: the record holds languages and nulls.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] === null)).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => grantedLanguages[type] === null)).toEqual([
       "bigquery",
       "databend",
       "snowflake",
       "spark",
     ]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE.mongodb).toBe("mongo");
+    expect(grantedLanguages.mongodb).toBe("mongo");
     expect(
       SHIPPED_DATABASE_TYPES.filter(
-        (type) =>
-          JSON.stringify(GRANTED_AGENT_READINGS[type]) !== JSON.stringify(legacyRegisterTable("agentReadings")[type]),
+        (type) => JSON.stringify(grantedReadings[type]) !== JSON.stringify(legacyRegisterTable("agentReadings")[type]),
       ),
     ).toEqual([]);
     // Vacuity: the legacy rows hold full, partial and empty readings.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_READINGS[type].length === 0)).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => grantedReadings[type].length === 0)).toEqual([
       "mqtt",
       "mtconnect",
       "opcua",
@@ -767,11 +759,11 @@ describe("Studio's grant of each agent mode claim", () => {
     ]);
     expect(
       SHIPPED_DATABASE_TYPES.some((type) => {
-        const readings = GRANTED_AGENT_READINGS[type];
+        const readings = grantedReadings[type];
         return readings.length > 0 && readings.length < CURATED_OPERATION_KINDS.length;
       }),
     ).toBe(true);
-    expect(GRANTED_AGENT_READINGS.postgres).toEqual([...CURATED_OPERATION_KINDS]);
+    expect(grantedReadings.postgres).toEqual([...CURATED_OPERATION_KINDS]);
   });
 
   const STATEMENT_LANGUAGE_CASES = [

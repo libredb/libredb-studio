@@ -706,7 +706,7 @@ function grantEngine(
 }
 
 /** The members of `ClaimGrants` a browser module reads as a table, in the order their tables are built. */
-const GRANT_MEMBERS = ["writeReach", "sshTunnel", "statementLanguage", "agentReadings"] as const;
+const GRANT_MEMBERS = ["writeReach", "sshTunnel"] as const;
 
 /** The tables of the members of `GRANT_MEMBERS`. */
 type BrowserGrantTables<K extends string> = Pick<ClaimGrants<K>, (typeof GRANT_MEMBERS)[number]>;
@@ -1026,23 +1026,6 @@ export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = B
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 
 /**
- * Studio's grant of `agent.statementLanguage`: the language agent mode sends the engine, or null where it sends none.
- * The agent posture, workflow availability and the agent rail read it; the classify route, the engine pack resolver and
- * the MCP served set and arms read the engine record's `grants.statementLanguage`.
- */
-export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, StatementLanguage>> =
-  BUNDLED_GRANTS.statementLanguage;
-
-/**
- * Studio's grant of `facets.agentReadings`: the curated readings agent mode is offered on the engine, in its legacy
- * row's order. Whether the operations workflow opens in agent mode (the agent manifest) reads it; the readings
- * `inspect_operations` offers and accepts, and the run ledger's reading check, read the engine record's
- * `grants.agentReadings`.
- */
-export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly AgentReading[]>> =
-  BUNDLED_GRANTS.agentReadings;
-
-/**
  * Studio's grant of agent execution: the engines on which **agent mode** executes statements itself, Studio's review of
  * the engines agent and MCP statements run on, in catalog order. It is each legacy row's `agentExecution` member of
  * the grant register, a host fact no declaration requests, so no claim is granted from it and an engine with no
@@ -1050,7 +1033,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  *
  * Every agent and MCP statement gate reads the same grant at run time, and an engine it does not grant is refused by
  * name, whatever its provider implements: the start of a statement-sending agent run (`workflowAvailability`,
- * `src/lib/agent/agent-manifest.ts`) reads this list; the factory's `agent-read-only` and `agent-handover` acquisition
+ * `src/lib/agent/agent-manifest.ts`), the factory's `agent-read-only` and `agent-handover` acquisition
  * and the core read path every agent, hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's
  * statistics read under `agent-operations` does not), both through `assertStatementsReviewed`
  * (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`), and MCP's served set
@@ -1071,7 +1054,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  *   grounded, and this list reaches only that grounding: see below.
  * - **The `operations` workflow opens without this list, in both modes**, because it composes no SQL: its
  *   `agent-operations` acquisition sets `requiresReadOnlyStatements: false`. In agent mode it opens on every engine
- *   Studio grants a curated reading, `GRANTED_AGENT_READINGS`.
+ *   whose record grants a curated reading, `grants.agentReadings`.
  *
  * Both are grounded before their first turn, and on an engine whose catalog read is a composed statement (its
  * overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes this list like any other
@@ -1079,7 +1062,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * the operations workflow run ungrounded; it is not routed to `agent-operations` instead, because a composed statement
  * is a statement.
  *
- * The browser reads it too, the unauthenticated login hero, the agent manifest and the agent posture, so no provider
+ * The browser reads it too, the unauthenticated login hero and the agent posture, so no provider
  * class or database driver may enter this module's imports: one would drag a driver toward the login bundle. Frozen,
  * so no code widens it at run time.
  */

@@ -666,7 +666,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it",
         "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment",
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records, the gate's statement reader and the agent manifest's legacy engine read by id",
       ],
       "tests/unit/mcp/served-engines.test.ts": [
         "an engine agent mode does not execute on is not served, whatever its rows say",
@@ -734,7 +734,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/agent/agent-manifest.test.ts": [
         "%s opens operations and planning, and refuses a statement workflow in agent mode",
-        "the operations arm refuses an engine the tables leave out of the agent-readings requirement",
+        "the operations arm refuses an engine whose grants hold no agent reading, whatever the tables hold",
       ],
       "tests/unit/lib/query-events/redact.test.ts": [
         "every redaction vector produces its redacted text and fingerprint",
@@ -778,7 +778,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
       ],
       "tests/unit/lib/agent/record-grant-readers.test.ts": [
-        "an admitted package's engine is read at its register row's grant by the statement review and the agent readings readers, and at each claim's restrictive value where no row or another digest's row exists; the engine pack resolver refuses it",
+        "an admitted package's engine is read at its register row's grant by the statement review, the agent readings, the language grant and the engine pack resolvers, and at each claim's restrictive value where no row or another digest's row exists",
       ],
       "tests/unit/mcp/record-grant-readers.test.ts": [
         "an admitted package's engine is read at its register row's grant by the annotations and the statement arms, refused by both open checks and availability, and at each claim's restrictive value where no row exists",
@@ -1520,7 +1520,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "each declaration's SQL text claims are its legacy row's: readsSqlText, the exempt forms, the redaction and the grammar's SHA-256",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records, the gate's statement reader and the agent manifest's legacy engine read by id",
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
         "a package engine no register row reviews asks about every statement, a read included, and a production connection asks its name",

@@ -369,11 +369,11 @@ export interface AgentToolContext {
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
-   * The run's PERSISTED engine, the type id its connection had when it opened. Like `statementLanguage`, it can only
+   * The run's PERSISTED engine, the engine id its connection had when it opened. Like `statementLanguage`, it can only
    * have come from the run record. Absent for a run recorded before the field, which is offered the six curated
    * readings it was opened with.
    */
-  readonly engine?: DatabaseType;
+  readonly engine?: string;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;
@@ -957,7 +957,7 @@ function isAnswerShapeFailure(problems: string): boolean {
  * @throws {UnknownProviderError} When `engine` names no engine the server knows.
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
-export function agentReadingsOf(engine: DatabaseType | undefined): readonly CuratedOperationKind[] {
+export function agentReadingsOf(engine: string | undefined): readonly CuratedOperationKind[] {
   return engine === undefined ? CURATED_OPERATION_KINDS : servedEngineRecord(engine).grants.agentReadings;
 }
 
@@ -1075,7 +1075,7 @@ const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, Map<string, readonly Age
 function workflowTools(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
-  engine: DatabaseType | undefined,
+  engine: string | undefined,
 ): readonly AgentToolDefinition[] {
   const variant = requiredVariant(language, workflow);
   let byReadings = VARIANT_TOOLS.get(variant);

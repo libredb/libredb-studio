@@ -6,6 +6,7 @@ import { grantedAgentLanguage } from "@/lib/agent/granted-language";
 import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 /**
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
       const connection = await resolveConnection({ connectionId }, guard.session);
       classification = await classifyAgentWorkflow(objective, {
         statementLanguage: grantedAgentLanguage(connection.type) ?? undefined,
-        workflows: openWorkflows(mode, connection.type),
+        workflows: openWorkflows(mode, servedEngineRecord(connection.type)),
       });
     }
 

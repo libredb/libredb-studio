@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -251,7 +251,7 @@ async function drive(
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
   const service = new AgentRunService({ store, resources: { tracker, artifacts } });
-  const availability = workflowAvailability("agent", workflowType, "kubernetes");
+  const availability = workflowAvailability("agent", workflowType, legacyAgentEngine("kubernetes"));
   if (!availability.open) throw new Error(`${workflowType} does not open on kubernetes`);
   const run = await service.start({
     mode: "agent",

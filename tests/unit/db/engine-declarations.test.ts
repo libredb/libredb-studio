@@ -95,6 +95,7 @@ import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
+  legacyAgentEngine,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
@@ -2448,9 +2449,9 @@ describe("the census", () => {
     expect(
       differing((type, d) => {
         const { statementLanguage, overlay } = d.agent;
-        if (engineFamily(type) !== statementLanguage) return false;
+        if (engineFamily(legacyAgentEngine(type)) !== statementLanguage) return false;
         if (statementLanguage === null) return true;
-        const client = engineClientPack(type).dialect;
+        const client = engineClientPack(legacyAgentEngine(type)).dialect;
         const dialect = overlay?.dialect ?? null;
         return dialect === null ? client === undefined : sameValue(client, clientViewOf(dialect));
       }),
@@ -4386,8 +4387,8 @@ describe("the census", () => {
       modes.flatMap((mode) =>
         workflows.map((workflow) => ({
           key: `${type} ${mode} ${workflow}`,
-          declared: workflowAvailability(mode, workflow, type, tables),
-          recorded: workflowAvailability(mode, workflow, type),
+          declared: workflowAvailability(mode, workflow, legacyAgentEngine(type), tables),
+          recorded: workflowAvailability(mode, workflow, legacyAgentEngine(type)),
         })),
       ),
     );
@@ -4397,7 +4398,7 @@ describe("the census", () => {
     );
     // Vacuity: some engine opens operations and no statement workflow, and some opens a statement workflow.
     const opens = (type: DatabaseType, workflow: AgentRunWorkflowType): boolean =>
-      workflowAvailability("agent", workflow, type, tables).open;
+      workflowAvailability("agent", workflow, legacyAgentEngine(type), tables).open;
     const statementWorkflows = workflows.filter((workflow) => workflow !== "operations");
     expect(
       SHIPPED_DATABASE_TYPES.some(

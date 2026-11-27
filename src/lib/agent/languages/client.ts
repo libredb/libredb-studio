@@ -13,14 +13,14 @@
  * `index.ts` and `mcp.ts` read the same declared languages from `DECLARED_AGENT_LANGUAGES` here. Its keys are declared
  * in the order the projections in `agent-manifest.ts` list them, the module languages first.
  *
- * It is also where an engine's granted statement language meets the packs: `grantedAgentStatementLanguage` reads
- * Studio's grant (`GRANTED_AGENT_STATEMENT_LANGUAGE` of the client-safe `@/lib/db/claim-grants.ts`), so the manifest
- * and the engine registry read the grant through it rather than importing the grant record themselves.
+ * It is also where an engine's granted statement language meets the packs: `grantedAgentStatementLanguage` reads the
+ * `statementLanguage` grant of the engine it is handed, an engine record on the server or a legacy engine's grants in
+ * the browser (`legacyAgentEngine` of `agent-manifest.ts`), so the manifest and the engine registry read the grant
+ * through it and no table of Studio's is keyed by an engine here.
  */
-import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
-import type { DatabaseType } from "@/lib/types";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
@@ -140,8 +140,8 @@ export function isAgentStatementLanguage(value: string): value is AgentStatement
  * The agent's statement language for `engine`'s granted statement language `granted`: `granted` itself where it is
  * null or a language this build holds a pack for, a module language or one declared as data. A grant reads a language
  * as a name of the register's form, not as Studio's list, so this is the one place a granted name meets the agent's
- * packs; every caller reaches only a legacy engine today, whose row grants an agent language, so a name with no pack is
- * a host defect.
+ * packs; an engine's register row, a legacy engine's or a package's, grants only a language Studio reviewed, so a name
+ * with no pack is a host defect.
  *
  * @throws {Error} Naming the engine and the language, where agent mode holds no pack for `granted`.
  */
@@ -153,15 +153,16 @@ export function agentLanguageOfGrant(engine: string, granted: string | null): Ag
 }
 
 /**
- * The agent's statement language for `type`: Studio's grant for it (`GRANTED_AGENT_STATEMENT_LANGUAGE`) read as the
- * agent's language (`agentLanguageOfGrant`), or null where the grant is null and for a name that is no own key of the
- * grant (`toString`).
+ * The agent's statement language for `engine`: the `statementLanguage` grant its grants hold, an engine record's or a
+ * legacy engine's, read as the agent's language (`agentLanguageOfGrant`), or null where the grant is null.
  *
  * @throws {Error} Naming the engine and the language, where agent mode holds no pack for the granted language.
  */
-export function grantedAgentStatementLanguage(type: DatabaseType): AgentStatementLanguageId | null {
-  if (!Object.hasOwn(GRANTED_AGENT_STATEMENT_LANGUAGE, type)) return null;
-  return agentLanguageOfGrant(type, GRANTED_AGENT_STATEMENT_LANGUAGE[type]);
+export function grantedAgentStatementLanguage(engine: {
+  readonly id: string;
+  readonly grants: Pick<EngineGrants, "statementLanguage">;
+}): AgentStatementLanguageId | null {
+  return agentLanguageOfGrant(engine.id, engine.grants.statementLanguage);
 }
 
 /**

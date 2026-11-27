@@ -102,7 +102,7 @@ mock.module("@/lib/agent/languages/sql/engines/client", () => ({
   },
 }));
 
-const { persistedRunFacts, workflowAvailability } = await import("@/lib/agent/agent-manifest");
+const { legacyAgentEngine, persistedRunFacts, workflowAvailability } = await import("@/lib/agent/agent-manifest");
 const { forgetHeldSnapshots } = await import("@/lib/agent/context-snapshot");
 const { AgentRunDeadline } = await import("@/lib/agent/deadline");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
@@ -162,7 +162,7 @@ async function drive(
       kind === listed.id ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
     describeObjects: async () => ({ details: [] }),
   } as unknown as DatabaseProvider;
-  const availability = workflowAvailability("agent", workflowType, connection.type);
+  const availability = workflowAvailability("agent", workflowType, legacyAgentEngine(connection.type));
   if (!availability.open) throw new Error(`${workflowType} does not open on the double`);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-composed-catalog-"));
   dataDirs.push(dataDir);

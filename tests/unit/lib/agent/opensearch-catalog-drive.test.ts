@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -90,7 +90,7 @@ async function drive(
     listObjects: async () => [],
     describeObjects: async () => ({ details: [] }),
   } as unknown as DatabaseProvider;
-  const availability = workflowAvailability("agent", workflowType, connection.type);
+  const availability = workflowAvailability("agent", workflowType, legacyAgentEngine(connection.type));
   if (!availability.open) throw new Error(`${workflowType} does not open on OpenSearch`);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-opensearch-catalog-"));
   dataDirs.push(dataDir);
@@ -161,7 +161,7 @@ describe("the statement workflows on OpenSearch", () => {
   });
 
   test("query optimization stays closed: OpenSearch composes no estimating plan", () => {
-    expect(workflowAvailability("agent", "query-optimization", connection.type)).toMatchObject({
+    expect(workflowAvailability("agent", "query-optimization", legacyAgentEngine(connection.type))).toMatchObject({
       open: false,
       cause: "requirement-unmet",
     });

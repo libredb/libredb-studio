@@ -45,30 +45,11 @@ export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
   },
   {
     module: CLAIM_GRANTS,
-    name: "GRANTED_AGENT_STATEMENT_LANGUAGE",
-    removedBy: [
-      {
-        milestone: "M7",
-        readers: [
-          "src/components/agent/AgentRail.tsx",
-          "src/lib/agent/languages/client.ts",
-          "src/lib/agent/posture.ts",
-        ],
-      },
-    ],
-  },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_AGENT_READINGS",
-    removedBy: [{ milestone: "M7", readers: ["src/lib/agent/agent-manifest.ts"] }],
-  },
-  {
-    module: CLAIM_GRANTS,
     name: "GRANTED_AGENT_EXECUTION_ENGINES",
     removedBy: [
       {
         milestone: "M7",
-        readers: ["src/components/login/hero-proof.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
+        readers: ["src/components/login/hero-proof.tsx", "src/lib/agent/posture.ts"],
       },
     ],
   },
@@ -76,7 +57,10 @@ export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     module: CLAIM_GRANTS,
     name: "legacyEngineGrants",
     removedBy: [
-      { milestone: "M7", readers: ["src/lib/sql/dangerous-query.ts"] },
+      {
+        milestone: "M7",
+        readers: ["src/lib/agent/agent-manifest.ts", "src/lib/sql/dangerous-query.ts"],
+      },
       { milestone: "M18", readers: ["src/lib/provider-host/legacy-adapter/records.ts"] },
     ],
   },

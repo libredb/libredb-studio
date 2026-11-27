@@ -42,7 +42,7 @@ mock.module("@/lib/agent/languages/sql/engines/duckdb", () => ({
   },
 }));
 
-const { persistedRunFacts, workflowAvailability } = await import("@/lib/agent/agent-manifest");
+const { legacyAgentEngine, persistedRunFacts, workflowAvailability } = await import("@/lib/agent/agent-manifest");
 const { forgetHeldSnapshots } = await import("@/lib/agent/context-snapshot");
 const { AgentRunDeadline } = await import("@/lib/agent/deadline");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
@@ -104,7 +104,7 @@ async function systemPromptOf(
   const capabilities = declared.getCapabilities();
   const [listed] = capabilities.objectKinds ?? [];
   if (listed === undefined) throw new Error(`${engine} declares no object kind to list`);
-  const availability = workflowAvailability(mode, workflowType, engine);
+  const availability = workflowAvailability(mode, workflowType, legacyAgentEngine(engine));
   if (!availability.open) throw new Error(`${mode}/${workflowType}/${engine} does not open`);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-engine-override-reach-"));
   dataDirs.push(dataDir);

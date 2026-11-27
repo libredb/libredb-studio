@@ -4,7 +4,12 @@
  * names.
  */
 import { describe, expect, test } from "bun:test";
-import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS, workflowAvailability } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_LANGUAGE_COPY,
+  AGENT_WORKFLOW_VARIANTS,
+  legacyAgentEngine,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { fingerprintMtconnectread, mtconnectreadRowCapAdvice } from "@/lib/agent/languages/mtconnectread/adapter";
 import {
@@ -117,11 +122,11 @@ describe("the prompt texts", () => {
   test("only the investigation and the operations variants are held, the operations workflow opens nowhere here, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.mtconnectread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.mtconnectread.investigation?.canAutoExecute).toBe(false);
-    expect(workflowAvailability("agent", "investigation", "mtconnect").open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("mtconnect")).open).toBe(true);
     // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
     // curated reading (its legacy row in the grant register lists none).
-    expect(workflowAvailability("agent", "operations", "mtconnect").open).toBe(false);
-    expect(workflowAvailability("agent", "data-analysis", "mtconnect").open).toBe(false);
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("mtconnect")).open).toBe(false);
+    expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("mtconnect")).open).toBe(false);
   });
 });
 

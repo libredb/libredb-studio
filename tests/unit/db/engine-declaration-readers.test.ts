@@ -840,7 +840,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records, the gate's statement reader and the agent manifest's legacy engine read by id", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -866,8 +866,9 @@ describe("engine declaration readers", () => {
       "src/lib/db/sql-grammar/index.ts",
     ]);
     // The gate counts each as its engine's grant: the browser's gate reads a legacy engine's grants by id
-    // (`legacyEngineGrants`), which only the legacy records and the gate's statement reader import, and the server's
-    // gate reads a package engine's from its record. No module imports a review record of the gate's claims.
+    // (`legacyEngineGrants`), which only the legacy records, the gate's statement reader and the agent manifest's
+    // legacy engine (`legacyAgentEngine`, which reads only the agent members) import, and the server's gate reads a
+    // package engine's from its record. No module imports a review record of the gate's claims.
     const vscodeFiles = readdirSync(path.join(ROOT, "vscode-extension/src"), { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
       .map((entry) => path.relative(ROOT, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
@@ -889,7 +890,11 @@ describe("engine declaration readers", () => {
         .filter((entry) => entry.names.includes("legacyEngineGrants"))
         .map((entry) => entry.path)
         .sort(),
-    ).toEqual(["src/lib/provider-host/legacy-adapter/records.ts", "src/lib/sql/dangerous-query.ts"]);
+    ).toEqual([
+      "src/lib/agent/agent-manifest.ts",
+      "src/lib/provider-host/legacy-adapter/records.ts",
+      "src/lib/sql/dangerous-query.ts",
+    ]);
     expect(vscodeFiles.length).toBeGreaterThan(0);
     expect(importsOf("@/lib/db/confirmation-claim-review")).toEqual([]);
   }, 60_000);

@@ -212,9 +212,9 @@ describe("the exit of M3", () => {
       CORE_GRANT_RECORDS.filter((entry) => entry.removedBy.some(removed)).length;
 
     expect(claimTables).toHaveLength(0);
-    expect(grantedTables).toHaveLength(4);
+    expect(grantedTables).toHaveLength(2);
     expect(count((removal) => "item" in removal && removal.item === 4)).toBe(0);
-    expect(count((removal) => "milestone" in removal && removal.milestone === "M7")).toBe(6);
+    expect(count((removal) => "milestone" in removal && removal.milestone === "M7")).toBe(4);
     expect(count((removal) => "milestone" in removal && removal.milestone === "M18")).toBe(1);
   });
 
@@ -253,8 +253,8 @@ describe("the exit of M3", () => {
       "src/lib/db/claim-grants/planted-grants.ts imports legacyEngineGrants from .",
     ]);
     expect(
-      planted("vscode-extension/src/planted-grants.ts", `import { GRANTED_AGENT_READINGS } from "${from}";`),
-    ).toEqual([`vscode-extension/src/planted-grants.ts imports GRANTED_AGENT_READINGS from ${from}`]);
+      planted("vscode-extension/src/planted-grants.ts", `import { GRANTED_SSH_TUNNEL_REFUSAL } from "${from}";`),
+    ).toEqual([`vscode-extension/src/planted-grants.ts imports GRANTED_SSH_TUNNEL_REFUSAL from ${from}`]);
     // A reader of one entry is not a reader of another.
     const marker = "src/components/read-only-marker.tsx";
     expect(
@@ -279,8 +279,8 @@ describe("the exit of M3", () => {
     // Vacuity: the scan over the tree finds every reader's import of its listed name, the .tsx readers included.
     const listedNames = new Set(CORE_GRANT_RECORDS.map((entry) => entry.name));
     const found = listedModuleInputs(modules).filter(({ name }) => listedNames.has(name));
-    expect(found).toHaveLength(12);
-    expect(new Set(found.map(({ file }) => file)).size).toBe(10);
+    expect(found).toHaveLength(8);
+    expect(new Set(found.map(({ file }) => file)).size).toBe(8);
     for (const entry of CORE_GRANT_RECORDS) {
       for (const reader of readersOf(entry)) {
         expect(found.some(({ file, name }) => file === reader && name === entry.name)).toBe(true);

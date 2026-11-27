@@ -23,7 +23,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -125,7 +125,7 @@ async function surfaceOf(
   forgetHeldSnapshots();
   const connection = CENSUS_CONNECTION[engine];
   const { capabilities, labels, listedKind } = await declarationsOf(engine);
-  const availability = workflowAvailability(mode, workflowType, engine);
+  const availability = workflowAvailability(mode, workflowType, legacyAgentEngine(engine));
   if (!availability.open) throw new Error(`${what} does not open`);
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-no-family-surface-"));

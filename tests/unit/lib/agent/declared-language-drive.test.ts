@@ -15,8 +15,8 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
  *
  * This file substitutes the statement language projection (`@/lib/db/engine-catalog/statement-language.generated`)
  * with the shipped one plus `acmeread`, stated under Spark, and `acmeplain`, a language with no agent part, stated under
- * Snowflake, and grants MQTT `acmeread`: in the browser tables by substituting the grant reader's
- * `GRANTED_AGENT_STATEMENT_LANGUAGE` row, and on the server by a crafted catalog. MQTT rather than an engine whose
+ * Snowflake, and grants MQTT `acmeread`: in the browser by substituting the grant reader's legacy grants of MQTT
+ * (`legacyEngineGrants`), and on the server by a crafted catalog. MQTT rather than an engine whose
  * declaration states its language as data, so no such engine's test reads a substituted language. Spark and Snowflake
  * state no statement language of their own and Studio holds no code row for either, so the confirmation gate's
  * resolver, which compiles a row from each engine's stated data and refuses an engine holding both, loads in this
@@ -46,10 +46,10 @@ mock.module("@/lib/db/engine-catalog/statement-language.generated", () => ({
 }));
 mock.module("@/lib/db/claim-grants", () => ({
   ...REAL_CLAIM_GRANTS,
-  GRANTED_AGENT_STATEMENT_LANGUAGE: Object.freeze({
-    ...REAL_CLAIM_GRANTS.GRANTED_AGENT_STATEMENT_LANGUAGE,
-    mqtt: "acmeread",
-  }),
+  legacyEngineGrants: (id: string) =>
+    id === "mqtt"
+      ? Object.freeze({ ...REAL_CLAIM_GRANTS.legacyEngineGrants(id), statementLanguage: "acmeread" })
+      : REAL_CLAIM_GRANTS.legacyEngineGrants(id),
 }));
 
 const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
@@ -61,6 +61,7 @@ const {
   AGENT_PLAN_ESTIMATE_OPERATION,
   AGENT_WORKFLOW_VARIANTS,
   agentVariant,
+  legacyAgentEngine,
   workflowAvailability,
 } = await import("@/lib/agent/agent-manifest");
 const { agentPosture } = await import("@/lib/agent/posture");
@@ -177,18 +178,21 @@ describe("a data-declared language in the language registries", () => {
   test("a crafted data-declared language on a legacy engine is admitted, refused with its declared sentence and code and offered with its composed text, with no module of its own", async () => {
     const client = languageClientPack(ACME);
     const variant = client.variants.investigation ?? null;
-    expect(workflowAvailability("agent", "investigation", "mqtt")).toEqual({
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("mqtt"))).toEqual({
       open: true,
       statementLanguage: ACME,
       variant,
     });
     // The operations variant is Studio's, which needs an agent reading MQTT does not offer.
     expect(client.variants.operations?.requires).toEqual(["agent-readings"]);
-    expect(workflowAvailability("agent", "operations", "mqtt")).toMatchObject({
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("mqtt"))).toMatchObject({
       open: false,
       cause: "requirement-unmet",
     });
-    expect(workflowAvailability("agent", "data-analysis", "mqtt")).toMatchObject({ open: false, cause: "no-variant" });
+    expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("mqtt"))).toMatchObject({
+      open: false,
+      cause: "no-variant",
+    });
     expect(agentVariant(ACME, "investigation")).toBe(client.variants.investigation);
 
     const definition = agentToolDefinition(ACME, "investigation", "run_read_query");

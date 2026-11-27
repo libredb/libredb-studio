@@ -124,10 +124,13 @@ describe("an engine the review record does not list, though its provider impleme
   });
 
   test("a statement-sending agent run on SQLite is refused at start as not reviewed, while plan mode, the operations workflow and an engine on the record still open", () => {
-    expect(workflowAvailability("agent", "investigation", "sqlite")).toEqual({ open: false, cause: "not-reviewed" });
-    expect(workflowAvailability("planning", "investigation", "sqlite").open).toBe(true);
-    expect(workflowAvailability("agent", "operations", "sqlite").open).toBe(true);
-    expect(workflowAvailability("agent", "investigation", "postgres").open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", servedEngineRecord("sqlite"))).toEqual({
+      open: false,
+      cause: "not-reviewed",
+    });
+    expect(workflowAvailability("planning", "investigation", servedEngineRecord("sqlite")).open).toBe(true);
+    expect(workflowAvailability("agent", "operations", servedEngineRecord("sqlite")).open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", servedEngineRecord("postgres")).open).toBe(true);
   });
 
   test.each([
@@ -143,7 +146,7 @@ describe("an engine the review record does not list, though its provider impleme
         database: sqliteFile,
         createdAt: new Date(0),
       };
-      expect(workflowAvailability(mode, workflowType, "sqlite").open).toBe(true);
+      expect(workflowAvailability(mode, workflowType, servedEngineRecord("sqlite")).open).toBe(true);
       const acquisitions: Array<[string, unknown]> = [];
       const context: AgentToolContext = {
         runId: `run-grounding-${mode}`,
