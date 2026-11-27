@@ -853,6 +853,48 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package's open answering a refinement it cannot have is answered as a not-sent connection error on both grants, the refusal logged as the package's", async () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    // The host core refuses the open's answer, and the one open function raises that refusal in its own sentence.
+    const refusedWords = `The provider package's open was refused: ${callRefusalSentence({ rule: "refinement-key-unknown", pointer: `/${key}`, name: key })}`;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const [engine, answered] of [
+        [WORDS, refusedWords],
+        [MAIN, "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words."],
+      ] as const) {
+        const executed: string[] = [];
+        setHooks(engine, {
+          open: () => Promise.resolve({ handle: { session: randomUUID() }, refine: { [key]: true } }),
+          execute: () => {
+            executed.push(engine);
+            return Promise.reject(new Error("execute was reached"));
+          },
+        });
+        const refused = await post({ connection: connectionOf(engine), sql: "SELECT 1" });
+        // An open sends no statement, so its refusal is answered as a connection error marked not-sent.
+        expect([refused.status, refused.body.code, refused.body.outcome, refused.body.error]).toEqual([
+          503,
+          "CONNECTION_ERROR",
+          "not-sent",
+          answered,
+        ]);
+        expect(executed).toEqual([]);
+      }
+      // Logged once per engine as the package's, naming the rule and the pointer, beside the route's connection line.
+      const packageLines = error.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
+      expect(packageLines.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
+        ["A provider package's open failed", refusedWords],
+        ["A provider package's open failed", refusedWords],
+      ]);
+      expect(error.mock.calls.map(([message]) => message)).not.toContain("Unhandled error");
+    } finally {
+      error.mockRestore();
+      hooksFor(WORDS);
+      hooksFor(MAIN);
+    }
+  });
+
   test("a HostDefectError of what a granted package answered is logged as the package's defect", async () => {
     const error = spyOn(logger, "error").mockImplementation(() => undefined);
     try {

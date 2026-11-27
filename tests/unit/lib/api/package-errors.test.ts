@@ -102,6 +102,24 @@ describe("packageFailureAnswer", () => {
       error.mockRestore();
     }
 
+    // The same defect of an open sent no statement: a not-sent connection error in the same words, on both grants.
+    const widened = refused([{ rule: "refinement-widens", pointer: "/calls/console/cancel" }]);
+    const widenedSentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(widened.refusals[0] as CallRefusal)}`;
+    for (const engine of [CODE_ONLY, GRANTED]) {
+      let answered: unknown;
+      let logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        answered = packageFailureAnswer(engine, "open", widened, scrub, ROUTE);
+        logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+      } finally {
+        error.mockRestore();
+      }
+      expect(answered).toBeInstanceOf(ConnectionError);
+      expect([(answered as Error).message, errorOutcome(answered)]).toEqual([widenedSentence, "not-sent"]);
+      expect(logged).toEqual([["A provider package's open failed", widenedSentence]]);
+    }
+
     // A package's own open failure: not-sent, Studio's sentence where no row grants its words, its words through the
     // scrub where one does, a credential withheld on both, logged once on both.
     const words = `refused ${randomUUID()}`;

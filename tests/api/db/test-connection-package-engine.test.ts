@@ -439,21 +439,21 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       expect(seen).toEqual(["open", "close"]);
 
       // A refinement that widens what the package declared is what the package answered: the package's defect,
-      // answered and logged in Studio's words naming the rule and the pointer.
+      // answered and logged in Studio's words naming the rule and the pointer, and, since an open sends no statement,
+      // answered as a connection error marked not-sent.
       error.mockClear();
       openOverride = () => Promise.reject(hostDefect({ rule: "refinement-widens", pointer: "/console" }));
       const widened = await routeAnswer(VALID);
-      expect([widened.status, widened.body.code, widened.body.error]).toEqual([
-        500,
-        "INTERNAL_ERROR",
-        `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence({ rule: "refinement-widens", pointer: "/console" })}`,
+      const defect = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence({ rule: "refinement-widens", pointer: "/console" })}`;
+      expect([widened.status, widened.body.code, widened.body.outcome, widened.body.error]).toEqual([
+        503,
+        "CONNECTION_ERROR",
+        "not-sent",
+        defect,
       ]);
-      // The route's own line of its 500 answer carries the same words, which name the package as the author.
-      expect(attributed()).toEqual({ studio: 1, open: 1, health: 0 });
-      for (const line of ["A provider package's open failed", "Unhandled error"]) {
-        const logged = error.mock.calls.find(([text]) => text === line)?.[1];
-        expect(String((logged as Error).message)).toStartWith(PACKAGE_DEFECT_PREFIX);
-      }
+      expect(attributed()).toEqual({ studio: 0, open: 1, health: 0 });
+      const logged = error.mock.calls.find(([line]) => line === "A provider package's open failed")?.[1];
+      expect(String((logged as Error).message)).toBe(defect);
 
       // A value the package's own open rejects with is the package's.
       error.mockClear();

@@ -3197,6 +3197,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package's warnings of another shape than the contract's are refused at the core as the package's defect, each at its pointer, their members never read or logged",
         "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
         "a granted package's open failure answers a not-sent ConnectionError with its scrubbed words",
+        "a package's open answering a refinement it cannot have is answered as a not-sent connection error on both grants, the refusal logged as the package's",
         "a HostDefectError of what a granted package answered is logged as the package's defect",
         "a package engine whose register row grants its own words answers its warnings through core's scrub",
         "a warning outside the contract's shape is refused at the core as the package's defect on both grants, its members never answered",

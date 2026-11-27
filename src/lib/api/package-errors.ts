@@ -7,14 +7,14 @@
  * cannot construct one. It is logged once under the route, its words through core's scrub of the connection, on both
  * grants. An open that fails sent no statement, so it is answered as a `ConnectionError` marked not-sent: in Studio's
  * sentence naming its code where no register row grants the engine its own words (docs/providers/CONTRACT.md, clause
- * M-84), and in the error's own words through core's scrub where one does, its record's `grants.ownWords`
- * `"scrubbed"`. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
+ * M-84), in the error's own words through core's scrub where one does, its record's `grants.ownWords` `"scrubbed"`,
+ * and in the package-defect words below for a refusal of what the package's open answered. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
  * words, and as raised, through core's scrub, where one does.
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
  * words under `PACKAGE_DEFECT_PREFIX`, naming each rule and pointer and none of the package's words, where the
- * accessor's message names Studio. A `HostDefectError` whose refusals are each about Studio's own request is Studio's
+ * accessor's message names Studio, as a not-sent `ConnectionError` for an open and a plain `Error` for an execute. A `HostDefectError` whose refusals are each about Studio's own request is Studio's
  * defect, and is answered as Studio's own internal error. A legacy record's provider is Studio's own code, so its
  * failure is answered as raised.
  *
@@ -141,8 +141,8 @@ export function packageWarnings(
 /**
  * The error a route answers for `error`, a failure of the `call` of `engine`'s session, the one answer of a provider
  * package's failure on every route: a legacy record's failure (`offers.legacyProvider`) and Studio's own failure
- * (`isStudioFailure`) as raised; a host defect with a refusal of what the package answered logged once and answered as
- * `packageDefect`, on both grants; and any other value logged once as the package's (`logPackageError`), on both
+ * (`isStudioFailure`) as raised; a host defect with a refusal of what the package answered logged once and answered in
+ * `packageDefect`'s words, on both grants, as a `ConnectionError` marked not-sent for an open; and any other value logged once as the package's (`logPackageError`), on both
  * grants, then answered by the record's `grants.ownWords`. An open's is a `ConnectionError` marked not-sent, since an
  * open sends no statement: its message the error's own through core's scrub where the words are `"scrubbed"`, and
  * Studio's sentence naming its code where they are `"code-only"` or the value is no `Error` and has no words. An
@@ -161,14 +161,19 @@ export function packageFailureAnswer(
   if (error instanceof HostDefectError) {
     const defect = packageDefect(error);
     logPackageError(call, defect, scrub, route);
-    return defect;
+    return call === "open" ? notSentConnectionError(defect.message) : defect;
   }
   logPackageError(call, error, scrub, route);
   const granted = engine.grants.ownWords === "scrubbed";
   if (call === "execute") return granted ? error : new Error(packageErrorSentence(call, error));
-  const failed = new ConnectionError(
+  return notSentConnectionError(
     granted && error instanceof Error ? scrubProviderText(scrub, error.message) : packageErrorSentence(call, error),
   );
+}
+
+/** A `ConnectionError` of `message` marked not-sent: the answer of a failed open, which sends no statement. */
+function notSentConnectionError(message: string): ConnectionError {
+  const failed = new ConnectionError(message);
   markNotSent(failed);
   return failed;
 }
