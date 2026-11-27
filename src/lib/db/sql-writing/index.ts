@@ -110,8 +110,8 @@ export interface SqlWritingFunctions {
  *
  * SQL writing runs in the browser and on the server, so only Studio's own functions are bound here: a name this table
  * does not hold, a package's included, is refused when the row is composed. Whether a declaration may choose a shared
- * building block by name, and where a package's own SQL writing function runs, are decided with the first package that
- * fills a slot (clause S-16).
+ * building block by name is decided with the first package that fills a slot, and how a package's own SQL writing
+ * functions are called and granted in provider isolation milestone M7 (clause S-16).
  */
 export const SQL_WRITING_FUNCTIONS: SqlWritingFunctions = Object.freeze({
   escapeLiterals: slotFunctionTable("escapeLiteral", {
