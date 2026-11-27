@@ -190,18 +190,18 @@ describe("the composer of a data-declared language", () => {
     expect(issuesOf(facet.statementInput, "")).toEqual([["too_small", "statement cannot be empty"]]);
     expect(issuesOf(facet.statementInput, '{"read":"topics"}')).toEqual([]);
     // Each member Studio fixes is what kafkaread's and rabbitread's modules state, member for member.
-    for (const module of [KAFKAREAD_MCP_FACET, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
+    for (const moduleFacet of [KAFKAREAD_MCP_FACET, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
       for (const member of ["takesDatabase", "strictInput", "paging", "fence"] as const) {
         expect<{ member: string; value: unknown }>({ member, value: facet[member] }).toEqual({
           member,
-          value: module[member],
+          value: moduleFacet[member],
         });
       }
       for (const member of ["leastTimeout", "answersWarnings", "withholdsDatabase"]) {
-        expect({ member, stated: member in facet }).toEqual({ member, stated: member in module });
+        expect({ member, stated: member in facet }).toEqual({ member, stated: member in moduleFacet });
       }
       for (const value of ["", "x", 5, null]) {
-        expect(issuesOf(facet.statementInput, value)).toEqual(issuesOf(module.statementInput, value));
+        expect(issuesOf(facet.statementInput, value)).toEqual(issuesOf(moduleFacet.statementInput, value));
       }
     }
     for (const composed of [facet, facet.words]) expect(Object.isFrozen(composed)).toBe(true);
@@ -209,10 +209,10 @@ describe("the composer of a data-declared language", () => {
 
     // Every module tool fenced by its language's admission says what a refused statement never reached as its
     // language's copy does, so the composed facet's single source is the one every module language keeps.
-    for (const [language, module] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
-      if (module?.fence !== "language-admission") continue;
+    for (const [language, moduleFacet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+      if (moduleFacet?.fence !== "language-admission") continue;
       const copy = AGENT_LANGUAGE_COPY[language as keyof typeof AGENT_LANGUAGE_COPY];
-      expect({ language, reached: module.words.reached }).toEqual({ language, reached: copy.reached });
+      expect({ language, reached: moduleFacet.words.reached }).toEqual({ language, reached: copy.reached });
     }
   });
 
