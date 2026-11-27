@@ -5,8 +5,9 @@
  * digest of the grammar an engine declares is that one.
  *
  * The canonical text is the grammar as JSON with no white space, every object's members in ascending code-unit order
- * and every list in its own order, so two declarations stating the same facts in another member order have one digest
- * and any changed fact another.
+ * and every list in its own order (./canonical-json, which the statement language data digest, ./language-digest,
+ * reads too), so two declarations stating the same facts in another member order have one digest and any changed fact
+ * another.
  *
  * Server-only: it hashes with node:crypto. The server catalog's composer (./server-catalog-compose) computes a provider
  * package's grammar digest here when it grants the package's engine; a legacy engine's request carries its legacy
@@ -16,6 +17,7 @@
  * free of it and of node:crypto.
  */
 import { createHash } from "node:crypto";
+import { canonicalJsonText } from "./canonical-json";
 
 /**
  * The canonical text of `grammar`.
@@ -24,18 +26,7 @@ import { createHash } from "node:crypto";
  * number that is not finite, anywhere in the grammar.
  */
 export function canonicalGrammarText(grammar: unknown): string {
-  if (Array.isArray(grammar)) return `[${grammar.map((item) => canonicalGrammarText(item)).join(",")}]`;
-  if (grammar === null || typeof grammar === "string" || typeof grammar === "boolean") return JSON.stringify(grammar);
-  if (typeof grammar === "number" && Number.isFinite(grammar)) return JSON.stringify(grammar);
-  if (typeof grammar !== "object") {
-    throw new Error(
-      `a grammar's canonical text holds JSON values only, and this grammar holds a value of type ${typeof grammar}`,
-    );
-  }
-  const record = grammar as Readonly<Record<string, unknown>>;
-  const names = Object.keys(record).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const members = names.map((name) => `${JSON.stringify(name)}:${canonicalGrammarText(record[name])}`);
-  return `{${members.join(",")}}`;
+  return canonicalJsonText(grammar, "grammar");
 }
 
 /** The SHA-256 of `grammar`'s canonical text, 64 lower-case hex characters. */
