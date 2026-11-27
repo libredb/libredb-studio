@@ -48,14 +48,12 @@ import {
   type McpToolCall,
 } from "../context";
 import {
-  cutUtf8,
   engineError,
   engineMessage,
   MCP_CANCELLED_TEXT,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
   MCP_RESULT_CAP_BYTES,
-  MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
   ownWordsFailure,
@@ -69,7 +67,7 @@ import {
 
 /**
  * inspect_schema (#246): one connection's tables, their columns and, on request, their indexes,
- * behind the untrusted-content notice, because every name, type, default and comment here is
+ * behind the untrusted-content notice, because every name, type and default here is
  * database content someone else may have written.
  *
  * It lists the kinds an engine declares as relations and nothing else, and a kind whose names are withheld from
@@ -81,9 +79,8 @@ import {
  * It acquires under agent-operations, which sends no statement and so is served on every engine; an engine's granted
  * agent readings decide only which readings agent mode's `inspect_operations` offers, never this acquisition. The
  * decision event is written before acquisition and the outcome after, and a call whose record
- * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, a
- * table comment is cut to its own bound first, and the column and index caps count what they leave
- * out instead of adding fake entries.
+ * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, and
+ * the column and index caps count what they leave out instead of adding fake entries.
  *
  * The host core is read before anything else, so a call made before its install throws `HostCoreBootOrderError` by name,
  * with no record written and nothing opened (docs/providers/CONTRACT.md, clause C-82).
@@ -134,8 +131,6 @@ export const InspectSchemaInputSchema = z.object({
 const InspectedTableSchema = z.object({
   name: z.string(),
   kind: z.string(),
-  comment: z.string().optional(),
-  comment_truncated: z.literal(true).optional(),
   columns: z
     .array(
       z.object({
@@ -276,12 +271,6 @@ async function chooseContainer(tree: ObjectTree, schema: string | undefined, ste
   }
 }
 
-/** A comment an engine reports on an object; no provider fills one today (src/lib/db/types.ts). */
-function commentOf(source: unknown): string | undefined {
-  const comment = (source as { comment?: unknown }).comment;
-  return typeof comment === "string" ? comment : undefined;
-}
-
 /**
  * One table of the page. `declaresForeignKeys` is the provider's editor gate (`ProviderCapabilities.declaresForeignKeys`),
  * read off the provider the call holds, since it is no member of the engine's object model.
@@ -299,8 +288,6 @@ async function inspectTable(
     args.include_columns || args.include_indexes || readsForeignKeys
       ? await step(() => tree.describeObject(object.path, object.kind))
       : null;
-  const rawComment = (detail === null ? undefined : commentOf(detail)) ?? commentOf(object);
-  const comment = rawComment === undefined ? undefined : cutUtf8(rawComment, MCP_TABLE_COMMENT_CAP_BYTES);
   // Before the cap and the count: a column the engine only inferred from sampled data is named by the data, so it
   // never reaches a client, and `columns_omitted` keeps meaning "beyond the 50-column cap".
   const columns = machineColumns(detail?.columns ?? []);
@@ -309,8 +296,6 @@ async function inspectTable(
   return {
     name: object.name,
     kind: object.kind,
-    ...(comment === undefined ? {} : { comment: comment.text }),
-    ...(comment?.cut === true ? { comment_truncated: true as const } : {}),
     ...(args.include_columns
       ? {
           columns: columns.slice(0, MAX_COLUMNS).map((column) => ({

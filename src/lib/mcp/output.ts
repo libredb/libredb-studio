@@ -22,9 +22,9 @@ import { redactError, redactErrorMessage } from "./serializer";
  * against that schema only on a result that is not an error.
  *
  * C bounds every result a handler returns, measured as byte_size is: the UTF-8 length of the
- * compact JSON of the whole result, before the SDK adds its envelope. E and T bound the two pieces
- * of database text a result can quote whole, an engine message and a table comment, so that C
- * holds for every result and not only for a successful one.
+ * compact JSON of the whole result, before the SDK adds its envelope. E bounds the one piece of
+ * database text a result can quote whole, an engine message, so that C holds for every result and
+ * not only for a successful one.
  */
 
 export const MCP_UNTRUSTED_NOTICE =
@@ -40,7 +40,6 @@ export const MCP_PROVIDER_BYTE_CAP = 1_048_576;
  */
 export const MCP_CALL_READ_ALLOWANCE = 2_000;
 export const MCP_ENGINE_MESSAGE_CAP_BYTES = 4_096;
-export const MCP_TABLE_COMMENT_CAP_BYTES = 2_048;
 export const MCP_ENGINE_MESSAGE_CUT_SUFFIX = " (message cut at 4 KiB)";
 export const MCP_ENGINE_ERROR_PREFIX = "The database refused or failed the call: ";
 /**

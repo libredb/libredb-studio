@@ -22,7 +22,6 @@ import {
   MCP_PROVIDER_ROW_CAP,
   MCP_READ_ONLY_ANNOTATIONS,
   MCP_RESULT_CAP_BYTES,
-  MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
   ownWordsFailure,
@@ -51,7 +50,7 @@ const FOUR = "\u{10348}"; // 4 bytes, a surrogate pair in UTF-16
 describe("the constants", () => {
   test("carry the bounds and the notice the design fixes", () => {
     expect([MCP_RESULT_CAP_BYTES, MCP_PROVIDER_ROW_CAP, MCP_PROVIDER_BYTE_CAP]).toEqual([32_768, 1_000, 1_048_576]);
-    expect([MCP_ENGINE_MESSAGE_CAP_BYTES, MCP_TABLE_COMMENT_CAP_BYTES]).toEqual([4_096, 2_048]);
+    expect(MCP_ENGINE_MESSAGE_CAP_BYTES).toBe(4_096);
     expect(MCP_ENGINE_MESSAGE_CUT_SUFFIX).toBe(" (message cut at 4 KiB)");
     expect(MCP_ENGINE_ERROR_PREFIX).toBe("The database refused or failed the call: ");
     expect(MCP_UNTRUSTED_NOTICE).toBe(
