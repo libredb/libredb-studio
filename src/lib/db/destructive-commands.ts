@@ -1,4 +1,3 @@
-import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
 import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/graph/cypher/destructive";
 import { FIRESTORE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/firestore/destructive";
@@ -10,6 +9,7 @@ import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destru
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
 import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/weaviateapi/destructive";
+import { rowTypedAsk } from "@/lib/db/statement-language-row";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";
@@ -79,40 +79,16 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
 };
 
 /**
- * Whether this type's row is the gate's whole answer, which `isDangerousQuery` asks
- * before it reads the text as SQL at all.
- *
- * True only where the row declares `decidesAlone: true` and Studio grants that claim from the engine's register row for
- * the grammar that row reviewed (`legacyEngineGrants` in `./claim-grants.ts`): a claim the grant leaves out is read as
- * if the row had not made it, so the gate reads the text as SQL and reads the row beside it.
- *
- * False for every type with no row, and for no type at all: the SQL half reads those.
- * Any other value that is not a type id is refused by name (`typeIdRow`, FND-1), before any grant is read.
+ * Studio's code row of `databaseType`, the statement language row the confirmation gate reads for a legacy engine whose
+ * language is still a module of Studio's, read from the table on each call; null for no type at all and for every type
+ * with no row, whose statements the SQL half of the gate reads. Any other value that is not a type id is refused by
+ * name (`typeIdRow`, FND-1).
  *
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
-export function vocabularyDecidesAlone(databaseType?: DatabaseType): boolean {
-  if (databaseType === undefined) return false;
-  const facts = typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  return facts?.decidesAlone === true && legacyEngineGrants(databaseType).decidesAlone;
-}
-
-/**
- * Whether this query, on a type whose text is not SQL, asks for a confirmation.
- *
- * False for every type with no row - including no type at all, which is the reading a
- * caller without a connection gets and the one the SQL half already covers. Any other
- * value that is not a type id is refused by name (`typeIdRow`, FND-1).
- *
- * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
- */
-export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  if (facts === undefined) return false;
-
-  const named = facts.read(query);
-  if (named === undefined) return true;
-  return named.some((name) => facts.operations.has(name));
+export function codeStatementLanguageRow(databaseType?: DatabaseType): DestructiveVocabulary | null {
+  if (databaseType === undefined) return null;
+  return typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType) ?? null;
 }
 
 /**
@@ -129,8 +105,7 @@ export function vocabularyTypedConfirmation(
   databaseType: DatabaseType | undefined,
   text: string,
 ): TypedConfirmationAsk | undefined {
-  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  return facts?.typedConfirmation?.(text);
+  return rowTypedAsk(codeStatementLanguageRow(databaseType), text);
 }
 
 /**
@@ -143,8 +118,7 @@ export function vocabularyTypedConfirmation(
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  return facts?.safetyAnalysis !== false;
+  return codeStatementLanguageRow(databaseType)?.safetyAnalysis !== false;
 }
 
 /**
@@ -178,8 +152,7 @@ function utf8Bytes(text: string): number {
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
-  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  return facts?.maxTextBytes;
+  return codeStatementLanguageRow(databaseType)?.maxTextBytes;
 }
 
 /** The sentence a text over `limit` bytes is refused with, naming its size and the bound and never quoting it. */
@@ -199,8 +172,8 @@ export function consoleTextOverLimit(text: string, limit: number): string | unde
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
-  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  if (facts === undefined) return undefined;
+  const facts = codeStatementLanguageRow(databaseType);
+  if (facts === null) return undefined;
   if (facts.maxTextBytes !== undefined) {
     const over = consoleTextOverLimit(query, facts.maxTextBytes);
     if (over !== undefined) return over;

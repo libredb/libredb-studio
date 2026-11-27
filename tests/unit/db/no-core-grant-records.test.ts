@@ -279,8 +279,8 @@ describe("the exit of M3", () => {
     // Vacuity: the scan over the tree finds every reader's import of its listed name, the .tsx readers included.
     const listedNames = new Set(CORE_GRANT_RECORDS.map((entry) => entry.name));
     const found = listedModuleInputs(modules).filter(({ name }) => listedNames.has(name));
-    expect(found).toHaveLength(13);
-    expect(new Set(found.map(({ file }) => file)).size).toBe(10);
+    expect(found).toHaveLength(12);
+    expect(new Set(found.map(({ file }) => file)).size).toBe(9);
     for (const entry of CORE_GRANT_RECORDS) {
       for (const reader of readersOf(entry)) {
         expect(found.some(({ file, name }) => file === reader && name === entry.name)).toBe(true);
@@ -300,7 +300,7 @@ describe("the exit of M3", () => {
     ] as const;
     const planted = (text: string) => unlistedImporters(new Map([[reader, text], importer]));
 
-    expect(readerText).toContain(`import { type EngineGrants, legacyEngineGrants } from "${from}";`);
+    expect(readerText).toContain(`import { legacyEngineGrants } from "${from}";`);
     expect(planted(readerText)).toEqual([]);
 
     // Each form answers the reader and the name; the planted modules are never written to disk.

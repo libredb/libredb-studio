@@ -3,15 +3,17 @@
  * written by JSON.stringify alone, and neither ever throws.
  */
 import { describe, expect, test } from "bun:test";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import {
+  codeStatementLanguageRow,
   NON_SQL_DESTRUCTIVE_VOCABULARY,
-  vocabularyDecidesAlone,
   vocabularySendsToModel,
 } from "@/lib/db/destructive-commands";
 import { rabbitmqSelectQuery, rabbitmqTableQuery } from "@/lib/db/providers/stream/rabbitmq/generators";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
 import { formatterForLanguage } from "@/lib/db/editor-language";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
+import { rowDecidesAlone } from "@/lib/db/statement-language-row";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
@@ -77,7 +79,7 @@ describe("the rabbitmq dialect's records", () => {
   test("the safety dialog reads no destructive verb and posts nothing for an AI analysis", () => {
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.rabbitmq?.operations.size).toBe(0);
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.rabbitmq?.read('{"vhost": "/", "stream": "orders"}')).toEqual([]);
-    expect(vocabularyDecidesAlone("rabbitmq")).toBe(true);
+    expect(rowDecidesAlone(codeStatementLanguageRow("rabbitmq"), legacyEngineGrants("rabbitmq"))).toBe(true);
     expect(vocabularySendsToModel("rabbitmq")).toBe(false);
   });
 });

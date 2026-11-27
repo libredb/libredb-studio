@@ -7,14 +7,15 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   consoleTextByteLimit,
+  codeStatementLanguageRow,
   consoleTextOverLimit,
-  isDestructiveNonSqlQuery,
   statementRefusal,
-  vocabularyDecidesAlone,
   vocabularySendsToModel,
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
+import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
 import { redisRefusal } from "@/lib/languages/rediscli/command-text";
 import { INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES, influxqlRefusal } from "@/lib/languages/influxql/policy";
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";
@@ -37,13 +38,28 @@ import { legacyStatementLanguageTable } from "../../helpers/legacy-register";
 
 const statementLanguage = legacyStatementLanguageTable();
 
+/** Whether the gate's row reader asks about `query` on `type`'s code row: `rowNamesAsked` over `codeStatementLanguageRow`. */
+function rowAsks(query: string, type?: DatabaseType): boolean {
+  return rowNamesAsked(codeStatementLanguageRow(type), query);
+}
+
+/**
+ * Whether `type`'s code row is the gate's whole answer: `rowDecidesAlone` over `codeStatementLanguageRow` and the grants
+ * Studio holds for the engine (`legacyEngineGrants`), the row read first, so a value that is not a type id is refused by
+ * name before any grant is read.
+ */
+function rowDecides(type?: DatabaseType): boolean {
+  const row = codeStatementLanguageRow(type);
+  return type !== undefined && rowDecidesAlone(row, legacyEngineGrants(type));
+}
+
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in
 // tests/components/QuerySafetyDialog.test.tsx; this file pins the vocabulary and the
 // readers it is driven from, because they are what decides whether an operator is
 // asked before a FLUSHALL or a deleteMany runs.
 
-describe("isDestructiveNonSqlQuery", () => {
+describe("a code row's named operations (rowNamesAsked)", () => {
   // ── The table decides which types this reader answers about ───────────────
 
   test.each<["postgres" | "mysql" | "clickhouse" | "couchbase"]>([
@@ -54,11 +70,11 @@ describe("isDestructiveNonSqlQuery", () => {
   ])("answers false for %s, whose text a SQL reader reads", (type) => {
     // Not "safe": these types have no row in the table, because their statements are
     // read by the SQL half of the gate. A row here would be a second, weaker opinion.
-    expect(isDestructiveNonSqlQuery("DROP TABLE users", type)).toBe(false);
+    expect(rowAsks("DROP TABLE users", type)).toBe(false);
   });
 
   test("answers false with no type at all", () => {
-    expect(isDestructiveNonSqlQuery("FLUSHALL")).toBe(false);
+    expect(rowAsks("FLUSHALL")).toBe(false);
   });
 
   // ── MongoDB ──────────────────────────────────────────────────────────────
@@ -69,7 +85,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["updateMany", '{"collection":"users","operation":"updateMany","filter":{},"update":{"$unset":{"email":""}}}'],
     ["updateOne", '{"collection":"users","operation":"updateOne","filter":{"_id":1},"update":{"$set":{"a":1}}}'],
   ])("asks before a MongoDB %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(true);
+    expect(rowAsks(query, "mongodb")).toBe(true);
   });
 
   test.each<[string, string]>([
@@ -81,7 +97,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["insertMany", '{"collection":"users","operation":"insertMany","documents":[{"name":"J"}]}'],
     ["aggregate", '{"collection":"orders","operation":"aggregate","pipeline":[{"$group":{"_id":"$status"}}]}'],
   ])("does not ask before a MongoDB %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(false);
+    expect(rowAsks(query, "mongodb")).toBe(false);
   });
 
   test.each<[string, string]>([
@@ -91,7 +107,7 @@ describe("isDestructiveNonSqlQuery", () => {
       '{"collection":"orders","operation":"aggregate","pipeline":[{"$merge":{"into":"totals","whenMatched":"replace"}}]}',
     ],
   ])("asks before an aggregate whose pipeline carries %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(true);
+    expect(rowAsks(query, "mongodb")).toBe(true);
   });
 
   test.each<[string, string]>([
@@ -99,7 +115,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a stage that is not an object", '{"collection":"o","operation":"aggregate","pipeline":[1,null,"$out"]}'],
     ["no pipeline at all", '{"collection":"o","operation":"aggregate"}'],
   ])("does not ask for an aggregate with %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(false);
+    expect(rowAsks(query, "mongodb")).toBe(false);
   });
 
   test.each<[string, string]>([
@@ -113,21 +129,21 @@ describe("isDestructiveNonSqlQuery", () => {
     ["an operation that is not a string", '{"collection":"users","operation":7}'],
     ["no operation key", '{"collection":"users"}'],
   ])("asks when the payload cannot be read as a command document: %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(true);
+    expect(rowAsks(query, "mongodb")).toBe(true);
   });
 
   test.each<[string, string]>([
     ["nothing", ""],
     ["whitespace", "  \n "],
   ])("does not ask for %s, which is not a command", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "mongodb")).toBe(false);
+    expect(rowAsks(query, "mongodb")).toBe(false);
   });
 
   test("matches the operation spelling the provider dispatches on", () => {
     // `SUPPORTED_OPERATIONS` is checked case-sensitively, so `DELETEMANY` is refused
     // before any collection is touched: prompting for it would be a prompt about text
     // that cannot run.
-    expect(isDestructiveNonSqlQuery('{"collection":"users","operation":"DELETEMANY"}', "mongodb")).toBe(false);
+    expect(rowAsks('{"collection":"users","operation":"DELETEMANY"}', "mongodb")).toBe(false);
   });
 
   // ── Redis ────────────────────────────────────────────────────────────────
@@ -153,7 +169,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["SINTERSTORE dest a b"],
     ["SHUTDOWN NOSAVE"],
   ])("asks before the Redis command %s", (query) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(true);
+    expect(rowAsks(query, "redis")).toBe(true);
   });
 
   test.each<[string]>([
@@ -169,7 +185,7 @@ describe("isDestructiveNonSqlQuery", () => {
     // Since #1121 `RedisProvider.query()` refuses the blocking commands through
     // `sharedConnectionRefusal`, so a confirmation followed by a refusal is the
     // double take this gate exists to avoid. The dialog is for commands that run.
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
   });
 
   test.each<[string]>([
@@ -183,7 +199,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["ZMPOP 1 z MIN COUNT 1"],
   ])("still asks before %s, the non-blocking form of a refused command", (query) => {
     // The provider runs these, and each one removes what it returns.
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(true);
+    expect(rowAsks(query, "redis")).toBe(true);
   });
 
   test.each<[string]>([
@@ -200,7 +216,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["CLUSTER SLOTS"],
     ["XINFO STREAM stream"],
   ])("does not ask before the Redis command %s", (query) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
   });
 
   test.each<[string, string]>([
@@ -211,22 +227,22 @@ describe("isDestructiveNonSqlQuery", () => {
     // A named gap, not an oversight: the option sits past the two tokens this reader
     // looks at, and the same command without it is a plain read. Pinned here so that
     // closing it is a deliberate change rather than a silent one.
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
   });
 
   test("does not ask for a plain GETEX, which is byte-for-byte a GET", () => {
-    expect(isDestructiveNonSqlQuery("GETEX k", "redis")).toBe(false);
+    expect(rowAsks("GETEX k", "redis")).toBe(false);
   });
 
   test("reads the command name the way the provider does: case-folded", () => {
     // Both parsers uppercase the command before `client.call`, so a lowercase
     // `del` reaches the server as DEL.
-    expect(isDestructiveNonSqlQuery("del session:1", "redis")).toBe(true);
-    expect(isDestructiveNonSqlQuery("FlushAll", "redis")).toBe(true);
+    expect(rowAsks("del session:1", "redis")).toBe(true);
+    expect(rowAsks("FlushAll", "redis")).toBe(true);
   });
 
   test("reads a quoted first token the way the plain tokenizer does", () => {
-    expect(isDestructiveNonSqlQuery('"DEL" session:1', "redis")).toBe(true);
+    expect(rowAsks('"DEL" session:1', "redis")).toBe(true);
   });
 
   test.each<[string, string]>([
@@ -234,7 +250,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a lowercase subcommand", "acl deluser reader"],
     ["a script flush", "SCRIPT FLUSH"],
   ])("asks for %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(true);
+    expect(rowAsks(query, "redis")).toBe(true);
   });
 
   test.each<[string, string]>([
@@ -242,7 +258,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["an ACL read", "ACL LIST"],
     ["a script load", 'SCRIPT LOAD "return 1"'],
   ])("does not ask for %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
   });
 
   test.each<[string, string, boolean]>([
@@ -253,7 +269,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a JSON container reading", '{"command":"CONFIG","args":["GET","maxmemory"]}', false],
     ["a JSON command with a non-string first arg", '{"command":"DEL","args":[7]}', true],
   ])("answers %s with %p", (_label, query, expected) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(expected);
+    expect(rowAsks(query, "redis")).toBe(expected);
   });
 
   test.each<[string, string]>([
@@ -261,7 +277,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a command that is not a string", '{"command":7}'],
     ["no command key at all", '{"args":["k"]}'],
   ])("asks when a JSON Redis payload cannot be read: %s", (_label, query) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(true);
+    expect(rowAsks(query, "redis")).toBe(true);
   });
 
   test.each<[string, string, boolean]>([
@@ -281,7 +297,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["only comments", "# nothing to run", false],
     ["nothing at all", "", false],
   ])("reduces the buffer the way the provider does - %s", (_label, query, expected) => {
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(expected);
+    expect(rowAsks(query, "redis")).toBe(expected);
   });
 
   // Each line is its own command (docs/providers/redis.md 3.4a), and the editor refuses a second one before
@@ -294,7 +310,7 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a second command after a comment line", "DEL a\n# then\nDEL b"],
   ])("names nothing for %s, which the editor refuses", (_label, query) => {
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.read(query)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
     expect(statementRefusal(query, "redis")).toBe(redisRefusal(query));
     expect(statementRefusal(query, "redis")).toContain("holds a second command");
   });
@@ -302,7 +318,7 @@ describe("isDestructiveNonSqlQuery", () => {
   test("names nothing for a quote that never closes, which the editor refuses", () => {
     const query = "DEL it's\nFLUSHALL";
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.read(query)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(rowAsks(query, "redis")).toBe(false);
     expect(statementRefusal(query, "redis")).toContain("Line 1 opens a quoted argument with ' that never closes");
   });
 
@@ -327,7 +343,7 @@ describe("isDestructiveNonSqlQuery", () => {
     // Not "unreadable, so ask": whatever the text, the one request it becomes is an
     // evaluation on the query endpoint, which cannot write (#1085, section 2). Text the
     // server cannot parse is refused there, with nothing changed.
-    expect(isDestructiveNonSqlQuery(query, "prometheus")).toBe(false);
+    expect(rowAsks(query, "prometheus")).toBe(false);
   });
 
   // ── Kafka ────────────────────────────────────────────────────────────────
@@ -345,7 +361,7 @@ describe("isDestructiveNonSqlQuery", () => {
     // Not "unreadable, so ask": whatever the text, the provider either parses it as one read of
     // one topic's messages or refuses it before anything is sent, and it sends no request that
     // writes (#1088, section 2).
-    expect(isDestructiveNonSqlQuery(query, "kafka")).toBe(false);
+    expect(rowAsks(query, "kafka")).toBe(false);
   });
 
   // ── Neo4j ────────────────────────────────────────────────────────────────
@@ -361,15 +377,15 @@ describe("isDestructiveNonSqlQuery", () => {
   ])("names nothing for %s, because the provider refuses every write before sending it", (_label, query) => {
     // Not "unreadable, so ask": the read policy refuses a write before anything is sent (Neo4j spec 5.5), so a
     // confirmation would ask about a statement that cannot run.
-    expect(isDestructiveNonSqlQuery(query, "neo4j")).toBe(false);
+    expect(rowAsks(query, "neo4j")).toBe(false);
   });
 });
 
-describe("vocabularyDecidesAlone", () => {
+describe("a code row deciding alone (rowDecidesAlone)", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
   test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, influxdb, oxia, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus and for no other type", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => rowDecides(type))).toEqual([
       "etcd",
       "firestore",
       "influxdb",
@@ -394,7 +410,7 @@ describe("vocabularyDecidesAlone", () => {
   });
 
   test("is false with no type at all", () => {
-    expect(vocabularyDecidesAlone()).toBe(false);
+    expect(rowDecides()).toBe(false);
   });
 
   // The row is the gate's whole answer only where the engine's register row grants its claim (`legacyEngineGrants`).
@@ -402,7 +418,7 @@ describe("vocabularyDecidesAlone", () => {
     const remove = installStandInVocabulary({});
     try {
       expect(NON_SQL_DESTRUCTIVE_VOCABULARY[STAND_IN_TYPE]?.decidesAlone).toBe(true);
-      expect(vocabularyDecidesAlone(STAND_IN_TYPE)).toBe(false);
+      expect(rowDecides(STAND_IN_TYPE)).toBe(false);
     } finally {
       remove();
     }
@@ -689,7 +705,7 @@ describe("the etcd row", () => {
     ["text the parser refuses, which will not run", "compaction 5"],
     ["an empty buffer", ""],
   ])("asks nothing for %s", (_label, text) => {
-    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(false);
+    expect(rowAsks(text, "etcd")).toBe(false);
     expect(vocabularyTypedConfirmation("etcd", text)).toBeUndefined();
   });
 
@@ -699,7 +715,7 @@ describe("the etcd row", () => {
     ["a txn that writes", 'txn\nmod("/app/cfg") > "0"\n\nput /app/cfg v\n\n'],
     ["a txn of two single-key dels", "txn\n\ndel /app/a\ndel /app/b\n\n"],
   ])("asks one click for %s, and no typed text", (_label, text) => {
-    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(true);
+    expect(rowAsks(text, "etcd")).toBe(true);
     expect(vocabularyTypedConfirmation("etcd", text)).toBeUndefined();
   });
 
@@ -708,7 +724,7 @@ describe("the etcd row", () => {
     ["a from-key delete, the start key", "del /app/a --from-key", { type: "text", text: "/app/a" }],
     ["a lease revoke, the lease id", "lease revoke 694d8147df1dc4c8", { type: "text", text: "694d8147df1dc4c8" }],
   ] as const)("asks for typed text for %s", (_label, text, ask) => {
-    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(true);
+    expect(rowAsks(text, "etcd")).toBe(true);
     expect(vocabularyTypedConfirmation("etcd", text)).toEqual(ask);
   });
 
@@ -725,10 +741,10 @@ describe("the etcd row", () => {
   });
 
   test("the row decides alone, so no SQL keyword test reads an etcd key", () => {
-    expect(vocabularyDecidesAlone("etcd")).toBe(true);
+    expect(rowDecides("etcd")).toBe(true);
     // Read as SQL, the key names below are a DELETE and a DROP; read as etcdctl, they are keys a get reads.
-    expect(isDestructiveNonSqlQuery("get DELETE FROM users", "etcd")).toBe(false);
-    expect(isDestructiveNonSqlQuery("get /drop/table --prefix", "etcd")).toBe(false);
+    expect(rowAsks("get DELETE FROM users", "etcd")).toBe(false);
+    expect(rowAsks("get /drop/table --prefix", "etcd")).toBe(false);
   });
 });
 
@@ -739,7 +755,7 @@ describe("the etcd row", () => {
  * row, and the readers tested here hand the text to the row as written, so no grammar reads it.
  * An engine's own row is pinned in its describe block below, Weaviate's in tests/unit/db/weaviate/routes.test.ts,
  * S3's text bound in tests/unit/db/s3/console-constants.test.ts and Redis's beside its reader in
- * describe("isDestructiveNonSqlQuery").
+ * describe("a code row's named operations (rowNamesAsked)").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
@@ -764,8 +780,8 @@ describe("statementRefusal and the console text bound", () => {
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.maxTextBytes).toBeUndefined();
-      // Redis's refusal is pinned beside its reader in describe("isDestructiveNonSqlQuery"): it refuses a second
-      // command and never one command, so the oversize single-line text below still goes through.
+      // Redis's refusal is pinned beside its reader in describe("a code row's named operations (rowNamesAsked)"): it
+      // refuses a second command and never one command, so the oversize single-line text below still goes through.
       if (type === "redis") continue;
       expect(row?.refuse).toBeUndefined();
     }
@@ -852,7 +868,7 @@ describe("the qdrant row", () => {
     // guard.ts answers the route's class, and no class a v1 route has is a destructive operation.
     expect(row?.read(READ)).toEqual(["read"]);
     expect(row?.operations.has("read")).toBe(false);
-    expect(isDestructiveNonSqlQuery(READ, "qdrant")).toBe(false);
+    expect(rowAsks(READ, "qdrant")).toBe(false);
     expect(row?.typedConfirmation).toBeUndefined();
   });
 
@@ -892,7 +908,7 @@ describe("the oxia row", () => {
     expect(row?.operations.size).toBe(0);
     expect(row?.read).toBe(readOxiaOperations);
     expect(row?.read(READ)).toEqual(["get"]);
-    expect(isDestructiveNonSqlQuery(READ, "oxia")).toBe(false);
+    expect(rowAsks(READ, "oxia")).toBe(false);
     expect(row?.typedConfirmation).toBeUndefined();
   });
 
@@ -943,7 +959,7 @@ describe("the milvus row", () => {
     // guard.ts answers the route's class, and no class a v1 route has is a destructive operation.
     expect(row?.read(READ)).toEqual(["read"]);
     expect(row?.operations.has("read")).toBe(false);
-    expect(isDestructiveNonSqlQuery(READ, "milvus")).toBe(false);
+    expect(rowAsks(READ, "milvus")).toBe(false);
     expect(row?.typedConfirmation).toBeUndefined();
   });
 
@@ -980,7 +996,7 @@ describe("the influxdb row", () => {
     expect(row?.decidesAlone).toBe(true);
     expect(row?.operations.size).toBe(0);
     expect(row?.read(READ)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(READ, "influxdb")).toBe(false);
+    expect(rowAsks(READ, "influxdb")).toBe(false);
     expect(row?.typedConfirmation).toBeUndefined();
   });
 
@@ -1007,7 +1023,7 @@ describe("the influxdb row", () => {
   ])("sends %s with no operation and no prompt, where a SQL span reader would misread it", (_label, text) => {
     expect(statementRefusal(text, "influxdb")).toBeUndefined();
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb?.read(text)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(text, "influxdb")).toBe(false);
+    expect(rowAsks(text, "influxdb")).toBe(false);
   });
 
   test("refuses a text one byte past the bound before the policy reads it", () => {
@@ -1038,7 +1054,7 @@ describe("the kubernetes row", () => {
     expect(row?.decidesAlone).toBe(true);
     expect(row?.operations.size).toBe(0);
     expect(row?.read(READ)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(WRITE, "kubernetes")).toBe(false);
+    expect(rowAsks(WRITE, "kubernetes")).toBe(false);
     expect(isDangerousQuery("kubectl get configmap drop-table -n delete", "kubernetes")).toBe(false);
     expect(vocabularySendsToModel("kubernetes")).toBe(false);
   });
@@ -1077,7 +1093,7 @@ describe("the firestore row", () => {
     expect(row?.operations.size).toBe(0);
     expect(row?.read(READ)).toEqual([]);
     expect(row?.read(WRITE)).toEqual([]);
-    expect(isDestructiveNonSqlQuery(WRITE, "firestore")).toBe(false);
+    expect(rowAsks(WRITE, "firestore")).toBe(false);
     expect(isDangerousQuery('db.collection("drop").where("delete", "==", "truncate")', "firestore")).toBe(false);
     expect(vocabularySendsToModel("firestore")).toBe(false);
   });
@@ -1104,8 +1120,7 @@ describe("a type outside the union (FND-1)", () => {
   // states, a type id reads its row or none, and anything else is refused by name, so a prototype key never reaches an
   // `Object.prototype` member and a value that only spells a type id through coercion never reads that type's row.
   const READERS: readonly (readonly [string, (databaseType: DatabaseType | undefined) => unknown])[] = [
-    ["vocabularyDecidesAlone", (type) => vocabularyDecidesAlone(type)],
-    ["isDestructiveNonSqlQuery", (type) => isDestructiveNonSqlQuery("FLUSHALL", type)],
+    ["codeStatementLanguageRow", (type) => codeStatementLanguageRow(type)],
     ["vocabularyTypedConfirmation", (type) => vocabularyTypedConfirmation(type, "del /App/ --prefix")],
     ["vocabularySendsToModel", (type) => vocabularySendsToModel(type)],
     ["consoleTextByteLimit", (type) => consoleTextByteLimit(type)],
@@ -1121,8 +1136,7 @@ describe("a type outside the union (FND-1)", () => {
 
   test("with no type at all, each keeps the no-connection reading", () => {
     expect(READERS.map(([reader, read]) => [reader, read(undefined)])).toEqual([
-      ["vocabularyDecidesAlone", false],
-      ["isDestructiveNonSqlQuery", false],
+      ["codeStatementLanguageRow", null],
       ["vocabularyTypedConfirmation", undefined],
       ["vocabularySendsToModel", true],
       ["consoleTextByteLimit", undefined],
@@ -1132,14 +1146,13 @@ describe("a type outside the union (FND-1)", () => {
 
   test("a type id with no row reads none, and one with a row reads it", () => {
     expect(READERS.map(([reader, read]) => [reader, read("postgres")])).toEqual([
-      ["vocabularyDecidesAlone", false],
-      ["isDestructiveNonSqlQuery", false],
+      ["codeStatementLanguageRow", null],
       ["vocabularyTypedConfirmation", undefined],
       ["vocabularySendsToModel", true],
       ["consoleTextByteLimit", undefined],
       ["statementRefusal", undefined],
     ]);
-    expect(isDestructiveNonSqlQuery("FLUSHALL", "redis")).toBe(true);
+    expect(rowAsks("FLUSHALL", "redis")).toBe(true);
     expect(vocabularyTypedConfirmation("etcd", "del /App/ --prefix")).toEqual(
       etcdTypedConfirmation("del /App/ --prefix"),
     );

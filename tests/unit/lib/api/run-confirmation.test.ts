@@ -17,10 +17,10 @@ import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation"
 import {
   type ConfirmationVerdict,
   confirmationVerdict,
-  packageConfirmationVerdict,
   TYPED_NAME_MISSING_REFUSAL,
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
+import { readingOfType } from "@/lib/sql/dangerous-query";
 import { type EngineConnection, type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
@@ -858,9 +858,22 @@ describe("one gate for every engine, reading the record's confirmation reader", 
       for (const sql of statements) {
         const { name, environment } = connectionOf(engine.id);
         const expected = engine.offers.statementVocabulary
-          ? outcomeOf(() => confirmationVerdict(sql, engine.id as DatabaseConnection["type"], name, environment))
+          ? outcomeOf(() =>
+              confirmationVerdict(sql, readingOfType(engine.id as DatabaseConnection["type"]), name, environment),
+            )
           : outcomeOf(() =>
-              packageConfirmationVerdict(sql, engine.id, engine.statementGrammar, engine.grants, name, environment),
+              confirmationVerdict(
+                sql,
+                {
+                  engine: engine.id,
+                  row: null,
+                  grammar: engine.statementGrammar,
+                  grants: engine.grants,
+                  explainReading: "either",
+                },
+                name,
+                environment,
+              ),
             );
         // oxlint-disable-next-line no-await-in-loop -- each gate call runs after the one before.
         expect([engine.id, sql, await run(engine, sql)]).toEqual([engine.id, sql, expected]);

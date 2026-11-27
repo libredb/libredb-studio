@@ -1,13 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { statementRefusal, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
 import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types";
 import {
   analyzeStatement,
   confirmationVerdict,
   escalatedAsk,
   type OffsetRange,
-  packageConfirmationVerdict,
   runsAsScript,
   type StatementAnalysis,
   type StatementAnalysisInput,
@@ -18,19 +18,22 @@ import {
   typedConfirmationFor,
 } from "@/lib/editor/statement-analysis";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
+import type { GateGrants } from "@/lib/db/statement-language-row";
 import {
   grantsWithoutGrammarDefect,
   hasUnreadableRun,
   isDangerousQuery,
-  type PackageGateGrants,
-  packageStatementAsks,
-  packageUnreadableRun,
+  readingOfType,
+  type StatementReading,
+  statementAsks,
+  unreadableRun,
 } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { cursorTarget, RunTargetRangeError, selectionTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import type { DatabaseType } from "@/lib/types";
 import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { admittedManifest } from "../../helpers/package-catalog";
@@ -642,11 +645,11 @@ describe("typedConfirmationExpected", () => {
 
 describe("confirmationVerdict", () => {
   test("answers run for a read", () => {
-    expect(confirmationVerdict("SELECT 1", "postgres", "census")).toStrictEqual({ decision: "run" });
+    expect(confirmationVerdict("SELECT 1", readingOfType("postgres"), "census")).toStrictEqual({ decision: "run" });
   });
 
   test("answers confirm for a write", () => {
-    expect(confirmationVerdict("DELETE FROM t", "postgres", "census")).toStrictEqual({
+    expect(confirmationVerdict("DELETE FROM t", readingOfType("postgres"), "census")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: null,
@@ -655,7 +658,7 @@ describe("confirmationVerdict", () => {
 
   test("says an unreadable run is unreadable", () => {
     // #297: in `E'\'` PostgreSQL reads `\'` as an escaped quote, so the literal never closes and the DELETE is inside it.
-    expect(confirmationVerdict("SELECT E'\\'; DELETE FROM t", "postgres", "census")).toStrictEqual({
+    expect(confirmationVerdict("SELECT E'\\'; DELETE FROM t", readingOfType("postgres"), "census")).toStrictEqual({
       decision: "confirm",
       unreadable: true,
       typedConfirmation: null,
@@ -663,12 +666,12 @@ describe("confirmationVerdict", () => {
   });
 
   test("carries the row's typed confirmation", () => {
-    expect(confirmationVerdict("del /App/ --prefix", "etcd", ORDERS_ETCD)).toStrictEqual({
+    expect(confirmationVerdict("del /App/ --prefix", readingOfType("etcd"), ORDERS_ETCD)).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "text", expected: "/App/" },
     });
-    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", ORDERS_ETCD)).toStrictEqual({
+    expect(confirmationVerdict(ETCD_EVERY_KEY, readingOfType("etcd"), ORDERS_ETCD)).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: ORDERS_ETCD, targets: ["every key"] },
@@ -676,14 +679,54 @@ describe("confirmationVerdict", () => {
   });
 
   test("refuses a connection-name ask on a nameless connection", () => {
-    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", "")).toStrictEqual({
+    expect(confirmationVerdict(ETCD_EVERY_KEY, readingOfType("etcd"), "")).toStrictEqual({
       decision: "refuse",
       refusal: TYPED_NAME_MISSING_REFUSAL,
     });
-    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", undefined)).toStrictEqual({
+    expect(confirmationVerdict(ETCD_EVERY_KEY, readingOfType("etcd"), undefined)).toStrictEqual({
       decision: "refuse",
       refusal: TYPED_NAME_MISSING_REFUSAL,
     });
+  });
+
+  test("confirmationVerdict reads the reading it is handed and never a type: a row in the reading decides, whatever the engine's type", () => {
+    // A row of the test's own, naming the statement's first word, and asking about SELECT.
+    const firstWord: DestructiveVocabulary = {
+      operations: new Set(["SELECT"]),
+      read: (text) => [text.trim().split(/\s+/)[0].toUpperCase()],
+      decidesAlone: false,
+    };
+    const postgres = readingOfType("postgres");
+    expect(postgres.row).toBeNull();
+    expect(postgres.grammar).toBe(resolveSqlGrammar("postgres"));
+    expect(postgres.explainReading).toBe("declared");
+    const reading: StatementReading = { ...postgres, row: firstWord };
+
+    // The engine's type has no row and reads a SELECT as a read; the reading's row asks about it.
+    expect(isDangerousQuery("SELECT 1", "postgres")).toBe(false);
+    expect(confirmationVerdict("SELECT 1", postgres, "census")).toStrictEqual({ decision: "run" });
+    expect(confirmationVerdict("SELECT 1", reading, "census")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
+    // A statement the row names no listed operation of runs, and a SQL write still asks beside the row.
+    expect(confirmationVerdict("VALUES (1)", reading, "census")).toStrictEqual({ decision: "run" });
+    expect(confirmationVerdict("DELETE FROM t", reading, "census")).toMatchObject({ decision: "confirm" });
+
+    // The explain claim is read as the reading says: PostgreSQL's grammar declares that EXPLAIN ANALYZE executes, so a
+    // planned write runs under the declared value and asks where the reading takes either value.
+    expect(resolveSqlGrammar("postgres").explainExecutesWithAnalyze).toBe(true);
+    expect(confirmationVerdict("EXPLAIN UPDATE t SET x = 1", postgres, "census")).toStrictEqual({ decision: "run" });
+    expect(
+      confirmationVerdict("EXPLAIN UPDATE t SET x = 1", { ...postgres, explainReading: "either" }, "census"),
+    ).toStrictEqual({ decision: "confirm", unreadable: false, typedConfirmation: null });
+    for (const explainReading of ["declared", "either"] as const) {
+      expect([
+        explainReading,
+        confirmationVerdict("EXPLAIN ANALYZE DELETE FROM t", { ...postgres, explainReading }, "census"),
+      ]).toMatchObject([explainReading, { decision: "confirm" }]);
+    }
   });
 
   test("analyzeStatement answers what confirmationVerdict answers for the sent statement", () => {
@@ -695,7 +738,7 @@ describe("confirmationVerdict", () => {
     for (const c of compared) {
       const analysis = analyzeStatement(inputOf(c));
       if (analysis.decision === "nothing") throw new Error(`${c.id} has nothing to run`);
-      const verdict = confirmationVerdict(analysis.statement, c.type, c.name ?? "census");
+      const verdict = confirmationVerdict(analysis.statement, readingOfType(c.type), c.name ?? "census");
       if (analysis.decision === "run") expect(verdict).toStrictEqual({ decision: "run" });
       else if (analysis.decision === "refuse") {
         expect(verdict).toStrictEqual({ decision: "refuse", refusal: analysis.refusal });
@@ -715,7 +758,7 @@ describe("the connection's environment", () => {
 
   test("a write on a production connection asks for the connection's name", () => {
     const name = crypto.randomUUID();
-    expect(confirmationVerdict("DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+    expect(confirmationVerdict("DELETE FROM t", readingOfType("postgres"), name, "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: name, targets: [] },
@@ -723,14 +766,18 @@ describe("the connection's environment", () => {
   });
 
   test("a read on a production connection runs", () => {
-    expect(confirmationVerdict("SELECT 1", "postgres", crypto.randomUUID(), "production")).toStrictEqual({
-      decision: "run",
-    });
+    expect(confirmationVerdict("SELECT 1", readingOfType("postgres"), crypto.randomUUID(), "production")).toStrictEqual(
+      {
+        decision: "run",
+      },
+    );
   });
 
   test("an unreadable run on production asks for the name and stays unreadable", () => {
     const name = crypto.randomUUID();
-    expect(confirmationVerdict("SELECT E'\\'; DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+    expect(
+      confirmationVerdict("SELECT E'\\'; DELETE FROM t", readingOfType("postgres"), name, "production"),
+    ).toStrictEqual({
       decision: "confirm",
       unreadable: true,
       typedConfirmation: { type: "connection-name", expected: name, targets: [] },
@@ -739,7 +786,7 @@ describe("the connection's environment", () => {
 
   test("a row's text ask becomes the name on production, its text the one target", () => {
     const name = crypto.randomUUID();
-    expect(confirmationVerdict("del /a /b", "etcd", name, "production")).toStrictEqual({
+    expect(confirmationVerdict("del /a /b", readingOfType("etcd"), name, "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: name, targets: ["/a"] },
@@ -748,7 +795,7 @@ describe("the connection's environment", () => {
 
   test("a row's name ask keeps its targets on production", () => {
     const name = crypto.randomUUID();
-    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", name, "production")).toStrictEqual({
+    expect(confirmationVerdict(ETCD_EVERY_KEY, readingOfType("etcd"), name, "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: name, targets: ["every key"] },
@@ -757,7 +804,7 @@ describe("the connection's environment", () => {
 
   test("a write on a nameless production connection is refused", () => {
     for (const name of ["", undefined]) {
-      expect(confirmationVerdict("DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+      expect(confirmationVerdict("DELETE FROM t", readingOfType("postgres"), name, "production")).toStrictEqual({
         decision: "refuse",
         refusal: TYPED_NAME_MISSING_REFUSAL,
       });
@@ -776,8 +823,8 @@ describe("the connection's environment", () => {
     for (const environment of OTHER_ENVIRONMENTS) {
       for (const [statement, type] of statements) {
         for (const name of [ORDERS_ETCD, "", undefined]) {
-          expect(confirmationVerdict(statement, type, name, environment)).toStrictEqual(
-            confirmationVerdict(statement, type, name),
+          expect(confirmationVerdict(statement, readingOfType(type), name, environment)).toStrictEqual(
+            confirmationVerdict(statement, readingOfType(type), name),
           );
         }
       }
@@ -833,7 +880,7 @@ describe("the connection's environment", () => {
   });
 });
 
-describe("packageConfirmationVerdict", () => {
+describe("confirmationVerdict of a package engine's reading", () => {
   /** The engine whose record the gate reads, by its id. */
   const ENGINE = "acmeverdict";
   /** The grammar the minimal manifest declares, composed as the server catalog composes a package engine's. */
@@ -841,38 +888,53 @@ describe("packageConfirmationVerdict", () => {
     (admittedManifest(ENGINE).engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar,
   );
   /** The SQL text grants of an engine whose register row reviewed its grammar and grants no loosening claim. */
-  const reviewed: PackageGateGrants = { reviewedGrammar: true, readsSqlText: true, confirmExemptForms: [] };
+  /** The reading gateRun hands the verdict for a package engine's record holding `grammar` and `grants`. */
+  const packageReading = (grammar: SqlGrammar | null, grants: GateGrants): StatementReading => ({
+    engine: ENGINE,
+    row: null,
+    grammar,
+    grants,
+    explainReading: "either",
+  });
+  const reviewed: GateGrants = {
+    reviewedGrammar: true,
+    readsSqlText: true,
+    confirmExemptForms: [],
+    decidesAlone: false,
+  };
 
-  test("packageConfirmationVerdict answers run, confirm with unreadable, and refuse for a nameless production connection", () => {
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, grammar, reviewed, "Keys", undefined)).toStrictEqual({
+  test("the verdict of a package engine's reading answers run, confirm with unreadable, and refuse for a nameless production connection", () => {
+    expect(confirmationVerdict("SELECT 1", packageReading(grammar, reviewed), "Keys", undefined)).toStrictEqual({
       decision: "run",
     });
-    expect(packageConfirmationVerdict("DELETE FROM t", ENGINE, grammar, reviewed, "Keys", "development")).toStrictEqual(
-      {
-        decision: "confirm",
-        unreadable: false,
-        typedConfirmation: null,
-      },
-    );
+    expect(
+      confirmationVerdict("DELETE FROM t", packageReading(grammar, reviewed), "Keys", "development"),
+    ).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
     // A write in a later statement asks, as the split the multi-statement route runs reads it.
     expect(
-      packageConfirmationVerdict("SELECT 1; DROP TABLE x", ENGINE, grammar, reviewed, "Keys", undefined),
+      confirmationVerdict("SELECT 1; DROP TABLE x", packageReading(grammar, reviewed), "Keys", undefined),
     ).toMatchObject({
       decision: "confirm",
       unreadable: false,
     });
-    expect(packageConfirmationVerdict("SELECT 'a", ENGINE, grammar, reviewed, "Keys", undefined)).toStrictEqual({
+    expect(confirmationVerdict("SELECT 'a", packageReading(grammar, reviewed), "Keys", undefined)).toStrictEqual({
       decision: "confirm",
       unreadable: true,
       typedConfirmation: null,
     });
-    expect(packageConfirmationVerdict("DELETE FROM t", ENGINE, grammar, reviewed, "Keys", "production")).toStrictEqual({
-      decision: "confirm",
-      unreadable: false,
-      typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
-    });
+    expect(confirmationVerdict("DELETE FROM t", packageReading(grammar, reviewed), "Keys", "production")).toStrictEqual(
+      {
+        decision: "confirm",
+        unreadable: false,
+        typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
+      },
+    );
     expect(
-      packageConfirmationVerdict("DELETE FROM t", ENGINE, grammar, reviewed, undefined, "production"),
+      confirmationVerdict("DELETE FROM t", packageReading(grammar, reviewed), undefined, "production"),
     ).toStrictEqual({
       decision: "refuse",
       refusal: TYPED_NAME_MISSING_REFUSAL,
@@ -880,7 +942,7 @@ describe("packageConfirmationVerdict", () => {
     // An exempt form the declaration states and the row does not grant is not counted: the shared keyword asks.
     const exempting = { ...grammar, confirmExemptForms: [["ALTER", "SESSION", "SET"]] };
     expect(
-      packageConfirmationVerdict("ALTER SESSION SET x = 1", ENGINE, exempting, reviewed, "Keys", undefined),
+      confirmationVerdict("ALTER SESSION SET x = 1", packageReading(exempting, reviewed), "Keys", undefined),
     ).toMatchObject({
       decision: "confirm",
     });
@@ -892,11 +954,11 @@ describe("packageConfirmationVerdict", () => {
         expect([
           explainExecutesWithAnalyze,
           sql,
-          packageConfirmationVerdict(sql, ENGINE, explaining, reviewed, "Keys", undefined),
+          confirmationVerdict(sql, packageReading(explaining, reviewed), "Keys", undefined),
         ]).toMatchObject([explainExecutesWithAnalyze, sql, { decision: "confirm" }]);
       }
       expect(
-        packageConfirmationVerdict("EXPLAIN ANALYZE SELECT 1", ENGINE, explaining, reviewed, "Keys", undefined),
+        confirmationVerdict("EXPLAIN ANALYZE SELECT 1", packageReading(explaining, reviewed), "Keys", undefined),
       ).toStrictEqual({
         decision: "run",
       });
@@ -907,22 +969,27 @@ describe("packageConfirmationVerdict", () => {
     const form = ["ALTER", "SESSION", "SET"];
     // No register row reviewed a grammar, as for every engine that states no SQL text: the loosening claims count for
     // nothing.
-    const unreviewed: PackageGateGrants = { reviewedGrammar: false, readsSqlText: false, confirmExemptForms: [form] };
+    const unreviewed: GateGrants = {
+      reviewedGrammar: false,
+      readsSqlText: false,
+      confirmExemptForms: [form],
+      decidesAlone: false,
+    };
     for (const sql of ["SELECT 1", "ALTER SESSION SET x = 1", "EXPLAIN ANALYZE SELECT 1"]) {
-      expect([sql, packageStatementAsks(sql, ENGINE, null, unreviewed)]).toEqual([sql, true]);
+      expect([sql, statementAsks(sql, packageReading(null, unreviewed))]).toEqual([sql, true]);
     }
-    expect(packageUnreadableRun("SELECT 'a", ENGINE, null, unreviewed)).toBe(false);
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, null, unreviewed, "Keys", undefined)).toStrictEqual({
+    expect(unreadableRun("SELECT 'a", packageReading(null, unreviewed))).toBe(false);
+    expect(confirmationVerdict("SELECT 1", packageReading(null, unreviewed), "Keys", undefined)).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: null,
     });
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, null, unreviewed, "Keys", "production")).toStrictEqual({
+    expect(confirmationVerdict("SELECT 1", packageReading(null, unreviewed), "Keys", "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
     });
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, null, unreviewed, undefined, "production")).toStrictEqual({
+    expect(confirmationVerdict("SELECT 1", packageReading(null, unreviewed), undefined, "production")).toStrictEqual({
       decision: "refuse",
       refusal: TYPED_NAME_MISSING_REFUSAL,
     });
@@ -932,45 +999,62 @@ describe("packageConfirmationVerdict", () => {
     const defect = `The engine "acmeverdict"'s record grants a grammar its register row reviewed but holds no grammar: a host defect, since an engine that states no SQL text requests no grammar digest for a row to review.`;
     expect(grantsWithoutGrammarDefect(ENGINE)).toBe(defect);
     for (const readsSqlText of [true, false]) {
-      const claiming: PackageGateGrants = { reviewedGrammar: true, readsSqlText, confirmExemptForms: [form] };
-      expect(() => packageStatementAsks("SELECT 1", ENGINE, null, claiming)).toThrow(defect);
-      expect(() => packageUnreadableRun("SELECT 'a", ENGINE, null, claiming)).toThrow(defect);
-      expect(() => packageConfirmationVerdict("SELECT 1", ENGINE, null, claiming, "Keys", undefined)).toThrow(defect);
+      const claiming: GateGrants = {
+        reviewedGrammar: true,
+        readsSqlText,
+        confirmExemptForms: [form],
+        decidesAlone: false,
+      };
+      expect(() => statementAsks("SELECT 1", packageReading(null, claiming))).toThrow(defect);
+      expect(() => unreadableRun("SELECT 'a", packageReading(null, claiming))).toThrow(defect);
+      expect(() => confirmationVerdict("SELECT 1", packageReading(null, claiming), "Keys", undefined)).toThrow(defect);
     }
   });
 
-  test("packageConfirmationVerdict asks about every statement under a grammar no register row reviewed, and reads none of it", () => {
-    const unreviewed: PackageGateGrants = { reviewedGrammar: false, readsSqlText: true, confirmExemptForms: [] };
+  test("the verdict of a package engine's reading asks about every statement under a grammar no register row reviewed, and reads none of it", () => {
+    const unreviewed: GateGrants = {
+      reviewedGrammar: false,
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+    };
     // A read, an empty text and a run that never closes each ask, and none is reported unreadable: nothing is read.
     for (const sql of ["SELECT 1", "", "SELECT 'a", "DELETE FROM t"]) {
-      expect([sql, packageConfirmationVerdict(sql, ENGINE, grammar, unreviewed, "Keys", undefined)]).toStrictEqual([
+      expect([sql, confirmationVerdict(sql, packageReading(grammar, unreviewed), "Keys", undefined)]).toStrictEqual([
         sql,
         { decision: "confirm", unreadable: false, typedConfirmation: null },
       ]);
     }
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, grammar, unreviewed, "Keys", "production")).toStrictEqual({
+    expect(confirmationVerdict("SELECT 1", packageReading(grammar, unreviewed), "Keys", "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
     });
-    expect(packageConfirmationVerdict("SELECT 1", ENGINE, grammar, unreviewed, undefined, "production")).toStrictEqual({
-      decision: "refuse",
-      refusal: TYPED_NAME_MISSING_REFUSAL,
-    });
+    expect(confirmationVerdict("SELECT 1", packageReading(grammar, unreviewed), undefined, "production")).toStrictEqual(
+      {
+        decision: "refuse",
+        refusal: TYPED_NAME_MISSING_REFUSAL,
+      },
+    );
   });
 
-  test("packageConfirmationVerdict counts a granted text-not-SQL claim and a granted exempt form", () => {
+  test("the verdict of a package engine's reading counts a granted text-not-SQL claim and a granted exempt form", () => {
     const form = ["ALTER", "SESSION", "SET"];
     const exempting = { ...grammar, confirmExemptForms: [form] };
-    const granted: PackageGateGrants = { reviewedGrammar: true, readsSqlText: false, confirmExemptForms: [form] };
+    const granted: GateGrants = {
+      reviewedGrammar: true,
+      readsSqlText: false,
+      confirmExemptForms: [form],
+      decidesAlone: false,
+    };
     // The granted form runs, and the text is neither checked for an unreadable run nor split.
     for (const sql of ["ALTER SESSION SET x = 1", "SELECT 'a", "SELECT 1; DROP TABLE x"]) {
-      expect([sql, packageConfirmationVerdict(sql, ENGINE, exempting, granted, "Keys", undefined)]).toStrictEqual([
+      expect([sql, confirmationVerdict(sql, packageReading(exempting, granted), "Keys", undefined)]).toStrictEqual([
         sql,
         { decision: "run" },
       ]);
       // The same statements ask where the row grants neither claim.
-      expect([sql, packageConfirmationVerdict(sql, ENGINE, exempting, reviewed, "Keys", undefined)]).toMatchObject([
+      expect([sql, confirmationVerdict(sql, packageReading(exempting, reviewed), "Keys", undefined)]).toMatchObject([
         sql,
         { decision: "confirm" },
       ]);
@@ -982,7 +1066,7 @@ describe("packageConfirmationVerdict", () => {
         expect([
           explainExecutesWithAnalyze,
           sql,
-          packageConfirmationVerdict(sql, ENGINE, explaining, granted, "Keys", undefined),
+          confirmationVerdict(sql, packageReading(explaining, granted), "Keys", undefined),
         ]).toStrictEqual([
           explainExecutesWithAnalyze,
           sql,

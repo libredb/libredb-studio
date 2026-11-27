@@ -4,14 +4,15 @@
  * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` (its `query` action) call `gateRun`
  * after their own field checks and before the admission gate and any provider, and so does the VS Code extension's
  * backend child on every `query/run` (route `vscode/query/run`, docs/VSCODE_EXTENSION.md), each handing it the server
- * catalog's record of the connection's engine. It classifies the submitted statement with the reader that record
- * offers: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`),
- * `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take; for any other
- * engine, `packageConfirmationVerdict`, the statement read under the grammar the record holds
- * (`EngineRecord.statementGrammar`, the one a package's declaration states, or none where it states no SQL text) with
- * the claims that loosen the gate the record grants (`EngineRecord.grants`), every statement asked where no register
- * row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3 and
- * S-8). It then decides what the request gets, by the request's `confirmation` field and the mode
+ * catalog's record of the connection's engine. It classifies the submitted statement with `confirmationVerdict`, the one
+ * verdict function the web editor's dialog and `POST /api/db/statement/analyze` read too, over the reading the record
+ * gives: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`), the
+ * reading of the connection's type (`readingOfType`), with Studio's code row, the type's grammar and the grants Studio
+ * holds for it; for any other engine, no row, the grammar the record holds (`EngineRecord.statementGrammar`, the one a
+ * package's declaration states, or none where it states no SQL text), the claims that loosen the gate the record
+ * grants (`EngineRecord.grants`), and the explain claim read under either value, every statement asked where no
+ * register row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3
+ * and S-8). It then decides what the request gets, by the request's `confirmation` field and the mode
  * (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |
@@ -52,11 +53,11 @@ import {
   type ConfirmationVerdict,
   confirmationVerdict,
   escalatedAsk,
-  packageConfirmationVerdict,
   resolvedTypedConfirmation,
   TYPED_NAME_MISSING_REFUSAL,
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
+import { readingOfType, type StatementReading } from "@/lib/sql/dangerous-query";
 import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
 
 /** The refusal of a `confirmation` field of any other shape, before anything is classified. */
@@ -181,15 +182,21 @@ function classify(request: GateRequest): RunVerdict | { readonly decision: "refu
 export async function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
   const { engine, connection, sql } = request;
   const { name, environment } = connection;
-  let verdict: () => ConfirmationVerdict;
+  let reading: () => StatementReading;
   if (engine.offers.statementVocabulary) {
     // Read before the gate, outside the reader: a record that disagrees with itself is raised, not asked about.
     const { type } = legacyConnection(engine, connection);
-    verdict = () => confirmationVerdict(sql, type, name, environment);
+    reading = () => readingOfType(type);
   } else {
-    verdict = () =>
-      packageConfirmationVerdict(sql, engine.id, engine.statementGrammar, engine.grants, name, environment);
+    reading = () => ({
+      engine: engine.id,
+      row: null,
+      grammar: engine.statementGrammar,
+      grants: engine.grants,
+      explainReading: "either",
+    });
   }
+  const verdict = () => confirmationVerdict(sql, reading(), name, environment);
   return gate({ ...request, verdict }, clock);
 }
 

@@ -42,7 +42,7 @@ mock.module("@libredb/grant-register", () => ({
   }),
 }));
 
-const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+const { hasUnreadableRun, isDangerousQuery, readingOfType } = await import("@/lib/sql/dangerous-query");
 const editorGate = await import("@/components/QuerySafetyDialog");
 const { analyzeStatement, confirmationVerdict } = await import("@/lib/editor/statement-analysis");
 const { createDatabaseProvider } = await import("@/lib/db/factory");
@@ -65,7 +65,7 @@ describe("a grammar its register row did not review", () => {
     expect(isDangerousQuery("", "sqlite")).toBe(true);
     // Nothing of the text is read, so no run is reported unreadable.
     expect(hasUnreadableRun("SELECT 'x", "sqlite")).toBe(false);
-    expect(confirmationVerdict("SELECT 1", "sqlite", "census")).toEqual({
+    expect(confirmationVerdict("SELECT 1", readingOfType("sqlite"), "census")).toEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: null,
@@ -172,17 +172,17 @@ describe("the readers of the verdict", () => {
       });
     const confirm = { decision: "confirm" as const, unreadable: false, typedConfirmation: null };
 
-    expect(confirmationVerdict("DELETE FROM t", "trino", "census")).toEqual(confirm);
+    expect(confirmationVerdict("DELETE FROM t", readingOfType("trino"), "census")).toEqual(confirm);
     expect(analyze("DELETE FROM t")).toMatchObject(confirm);
 
     remove = installStandInVocabulary({});
-    expect(confirmationVerdict("DROP TABLE t", STAND_IN_TYPE, "census")).toEqual(confirm);
+    expect(confirmationVerdict("DROP TABLE t", readingOfType(STAND_IN_TYPE), "census")).toEqual(confirm);
     expect(analyze("DROP TABLE t")).toMatchObject(confirm);
     remove();
     remove = undefined;
 
-    expect(confirmationVerdict("SELECT 1; DROP TABLE t", "druid", "census")).toEqual(confirm);
-    expect(confirmationVerdict("SELECT '\\'; DELETE FROM t", "druid", "census")).toEqual({
+    expect(confirmationVerdict("SELECT 1; DROP TABLE t", readingOfType("druid"), "census")).toEqual(confirm);
+    expect(confirmationVerdict("SELECT '\\'; DELETE FROM t", readingOfType("druid"), "census")).toEqual({
       ...confirm,
       unreadable: true,
     });
