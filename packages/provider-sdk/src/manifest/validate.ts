@@ -21,6 +21,8 @@ import { AGENT_READING_PANELS } from "../calls/types";
 import {
   type AgentCredentialForm,
   type AgentCredentialFormClaim,
+  type AgentRequestForm,
+  type AgentRequestKeyCheck,
   type CaptureKindWord,
   type EngineDeclaration,
   MANIFEST_SCHEMA_SHA256,
@@ -109,6 +111,17 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "statement-language-name-differs",
   "statement-language-data-sql",
   "confirmation-operations-unread",
+  "statement-language-agent-unspoken",
+  "request-key-undeclared",
+  "request-key-unruled",
+  "request-key-ruled-twice",
+  "request-read-duplicate",
+  "request-reads-without-selector",
+  "request-integer-range-empty",
+  "request-integer-default-outside",
+  "request-name-range-reversed",
+  "request-name-range-not-one-character",
+  "request-name-length-empty",
   "statistics-without-catalog-read",
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
@@ -813,11 +826,103 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
   return sqlDialectRefusals(dialect, `${pointer}/dialect`);
 }
 
+/** Whether `text` is exactly one well-formed code point, never a lone surrogate. */
+function isOneCharacter(text: string): boolean {
+  return [...text].length === 1 && text.isWellFormed();
+}
+
+/**
+ * The rules of one key check's value rule the schema cannot state, at pointers under `at`, the check's pointer: an
+ * integer rule's range holds a value and its default; a name rule's character range runs from one well-formed code
+ * point up to another, and its length range holds a length.
+ */
+function requestRuleRefusals(check: AgentRequestKeyCheck, at: string): SchemaRefusal[] {
+  const { rule } = check;
+  const pointer = `${at}/rule`;
+  const refusals: SchemaRefusal[] = [];
+  if (rule.kind === "integer") {
+    if (rule.minimum > rule.maximum) refusals.push(schemaRefusal("request-integer-range-empty", `${pointer}/minimum`));
+    if (rule.default !== null && (rule.default < rule.minimum || rule.default > rule.maximum)) {
+      refusals.push(schemaRefusal("request-integer-default-outside", `${pointer}/default`));
+    }
+  }
+  if (rule.kind === "name") {
+    rule.characters.forEach(({ from, to }, index) => {
+      const range = `${pointer}/characters/${index}`;
+      const ends = [
+        ["from", from],
+        ["to", to],
+      ] as const;
+      const malformed = ends.filter(([, end]) => !isOneCharacter(end));
+      for (const [name] of malformed) {
+        refusals.push(schemaRefusal("request-name-range-not-one-character", `${range}/${name}`));
+      }
+      if (malformed.length === 0 && (from.codePointAt(0) as number) > (to.codePointAt(0) as number)) {
+        refusals.push(schemaRefusal("request-name-range-reversed", range));
+      }
+    });
+    if (rule.minLength > rule.maxLength)
+      refusals.push(schemaRefusal("request-name-length-empty", `${pointer}/minLength`));
+  }
+  return refusals;
+}
+
+/**
+ * The rules of a request form the schema cannot state, at pointers under `at`, the form's pointer, so that an admission
+ * reads the form whole. Every key a check, a refusal or the selector names is one of the form's keys. Each key is ruled
+ * exactly once for each read: by the selector, a common check, the read's refusals or the read's checks, and with no
+ * selector by a common check, so no key is admitted with a value no rule reads. Reads exist exactly where a selector
+ * names them, no two of one value. And every value rule holds a value (`requestRuleRefusals`).
+ */
+function requestFormRefusals(form: AgentRequestForm, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const keys = new Set<string>(form.keys);
+  const declared = (key: string, pointer: string) => {
+    if (!keys.has(key)) refusals.push(schemaRefusal("request-key-undeclared", pointer));
+  };
+  const rule = (ruled: Set<string>, key: string, pointer: string) => {
+    declared(key, pointer);
+    if (ruled.has(key)) refusals.push(schemaRefusal("request-key-ruled-twice", pointer));
+    ruled.add(key);
+  };
+  const common = new Set<string>();
+  if (form.selector !== null) rule(common, form.selector.key, `${at}/selector/key`);
+  form.common.forEach((check, index) => {
+    rule(common, check.key, `${at}/common/${index}/key`);
+    refusals.push(...requestRuleRefusals(check, `${at}/common/${index}`));
+  });
+  const values = new Set<string>();
+  form.reads.forEach((read, index) => {
+    const pointer = `${at}/reads/${index}`;
+    if (values.has(read.value)) refusals.push(schemaRefusal("request-read-duplicate", `${pointer}/value`));
+    values.add(read.value);
+    const ruled = new Set(common);
+    read.refuses.forEach(({ key }, position) => rule(ruled, key, `${pointer}/refuses/${position}/key`));
+    read.checks.forEach((check, position) => {
+      rule(ruled, check.key, `${pointer}/checks/${position}/key`);
+      refusals.push(...requestRuleRefusals(check, `${pointer}/checks/${position}`));
+    });
+    if (form.selector !== null && form.keys.some((key) => !ruled.has(key))) {
+      refusals.push(schemaRefusal("request-key-unruled", pointer));
+    }
+  });
+  if (form.selector === null) {
+    form.keys.forEach((key, index) => {
+      if (!common.has(key)) refusals.push(schemaRefusal("request-key-unruled", `${at}/keys/${index}`));
+    });
+  }
+  if ((form.selector === null) !== (form.reads.length === 0)) {
+    refusals.push(schemaRefusal("request-reads-without-selector", `${at}/reads`));
+  }
+  return refusals;
+}
+
 /**
  * The rules of an engine's statement language data the schema cannot state, at pointers under `at`: the data's name is
  * the engine's agent statement language where both are stated; it is never the SQL family's name, since an engine that
- * speaks SQL states null; and a reader kind that names no operation lists none, since no reader could ever answer one
- * it lists.
+ * speaks SQL states null; a reader kind that names no operation lists none, since no reader could ever answer one it
+ * lists; and an agent part is stated only for an engine whose agent mode sends a statement, with a request form read
+ * whole (`requestFormRefusals`).
  */
 function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const data = engine.statementLanguageData;
@@ -832,6 +937,10 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
   const { reader, operations } = data.confirmation;
   if (reader === "names-no-operation" && operations.length > 0) {
     refusals.push(schemaRefusal("confirmation-operations-unread", `${pointer}/confirmation/operations`));
+  }
+  if (data.agent !== null) {
+    if (requested === null) refusals.push(schemaRefusal("statement-language-agent-unspoken", `${pointer}/agent`));
+    refusals.push(...requestFormRefusals(data.agent.request, `${pointer}/agent/request`));
   }
   return refusals;
 }
@@ -1159,6 +1268,28 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The statement language data's name at ${at} is the SQL family's, whose engines state no statement language data.`;
     case "confirmation-operations-unread":
       return `The operations at ${at} are listed for a reader kind that names no operation, so no statement could ever run one.`;
+    case "statement-language-agent-unspoken":
+      return `The agent part at ${at} is stated for an engine whose agent mode sends no statement.`;
+    case "request-key-undeclared":
+      return `The request key named at ${at} is not one of the request form's keys.`;
+    case "request-key-unruled":
+      return `The request form at ${at} leaves a key of the form with no rule, so a value no rule reads would be admitted.`;
+    case "request-key-ruled-twice":
+      return `The request key named at ${at} is already ruled for the same read by the selector, a common check, a refusal or a check.`;
+    case "request-read-duplicate":
+      return `The read's value at ${at} is already the value of an earlier read.`;
+    case "request-reads-without-selector":
+      return `The reads at ${at} are not stated exactly where a selector names them: a form with a selector states its reads, and one without states none.`;
+    case "request-integer-range-empty":
+      return `The integer rule's minimum at ${at} is above its maximum, so no value is admitted.`;
+    case "request-integer-default-outside":
+      return `The integer rule's default at ${at} is outside its range.`;
+    case "request-name-range-reversed":
+      return `The character range at ${at} runs from a code point above the one it runs to.`;
+    case "request-name-range-not-one-character":
+      return `The character range's end at ${at} is not exactly one well-formed character.`;
+    case "request-name-length-empty":
+      return `The name rule's minimum length at ${at} is above its maximum length, so no name is admitted.`;
     case "statistics-without-catalog-read":
       return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
     case "catalog-capture-without-catalog-read":
