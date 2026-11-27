@@ -79,7 +79,7 @@ An engine id is the schema's `engineId`, and a manifest declares each of its eng
 
 ### M-8 (normative): Every engine fact is required
 
-Every fact of an engine declaration is a required key in the schema's engine declaration, written as `null`, `false` or an empty list where the engine has none; only the connection defaults have optional keys.
+Every fact of an engine declaration is a required key in the schema's engine declaration, written as `null`, `false` or an empty list where the engine has none, except the object model, which M-89 requires only where the package offers `objects.tree`; only the connection defaults have optional keys.
 
 ### M-9 (normative): Connection fields are the contract's vocabulary, and so are their classes
 
@@ -467,6 +467,11 @@ For an engine that states no SQL text, whose register row reviews no grammar, th
 
 A package engine's statement language data (M-85) will be served in agent mode and on MCP only as the engine's register row grants it (M-87).
 Until then agent mode and MCP refuse a package engine's connection as C-107 says, so nothing checks the first sentence yet.
+
+### M-89 (normative): An engine's object model is data of its declaration
+
+An engine that offers `objects.tree` states its object model in its declaration's `objects` member: its container levels, the catalog level among them, and the object kinds each level holds, with each kind's columns, source and row actions.
+A kind whose names the engine masks for machine readers, and a kind a maintenance spec names, is one the model states.
 
 ## Values
 
@@ -1241,7 +1246,7 @@ An optional dependency a driver loads at run time is bundled or removed by the p
 
 These chapters are added by the changes that bring their enforcers:
 
-- The machine redaction a provider declares once built and the object kinds a maintenance spec names, with the object model; and presentation (an icon and a colour).
+- Presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
