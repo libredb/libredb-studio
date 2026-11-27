@@ -143,12 +143,12 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     // module it reaches is the registry, the generated SQL text it composes each row from, the function table lookup,
     // an engine's `sql-grammar` function module, or one of the two leaves an engine module may import, and those leaves
     // import nothing at all (docs/providers/CONTRACT.md, clause M-78). The type-id check joined it with FND-1: the
-    // registry refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the
-    // compatibility table, the engine catalog it reads the shipped engines from, the connection flags module it reads
-    // three records from, the error classes and the error codes, each named below with its exact value imports. The
-    // SDK's SQL grammar facts joined it when the engine rows started importing the compatibility default from
-    // `@libredb/provider-sdk/sql`: the specifier resolves through the package's `exports`, and each file it reaches
-    // value-imports only files of its own directory.
+    // registry refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the one-line
+    // quote, which imports nothing, the compatibility table, the engine catalog it reads the shipped engines from, the
+    // connection flags module it reads three records from, the error classes and the error codes, each named below
+    // with its exact value imports. The SDK's SQL grammar facts joined it when the engine rows started importing the
+    // compatibility default from `@libredb/provider-sdk/sql`: the specifier resolves through the package's `exports`,
+    // and each file it reaches value-imports only files of its own directory.
     const valueSpecifiers = (source: string): readonly string[] =>
       [...source.matchAll(/^(?:import|export)\s(?!type\s)[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
     const resolve = (specifier: string, from: string): string => {
@@ -161,7 +161,8 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     const LEAVES = new Set(["src/lib/is-record.ts", "src/lib/languages/rediscli/command-text.ts"]);
     const COMPOSITION = new Set(["src/lib/db/engine-catalog/sql-text.generated.ts", "src/lib/db/function-table.ts"]);
     const TYPE_ID_CHECK: Readonly<Record<string, readonly string[]>> = {
-      "src/lib/db/type-id.ts": ["./compatibility", "./errors"],
+      "src/lib/db/type-id.ts": ["@/lib/one-line-quote", "./compatibility", "./errors"],
+      "src/lib/one-line-quote.ts": [],
       "src/lib/db/errors.ts": ["@/lib/api/error-codes"],
       "src/lib/db/compatibility.ts": [
         "./engine-catalog/catalog.generated",
