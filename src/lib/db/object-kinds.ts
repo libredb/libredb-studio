@@ -513,21 +513,27 @@ export function relationKindIds(model: ObjectModelView): readonly string[] {
  * modifiers, so `{ readonly unavailable: string }` survives the subtraction and every
  * caller is left holding the whole union with no `.count` on it. Measured against
  * TypeScript 6.0.3.
+ *
+ * The arm is read by its member's value, never by the member's presence: a member of another arm present with no
+ * value reads as absent (docs/providers/CONTRACT.md, clause C-62), so `{ count: 5, unavailable: undefined }`, which
+ * the tree answer check admits, is a count. The `in` only narrows the type for the value's reading.
  */
 export function isCountUnavailable(count: KindCount): count is { readonly unavailable: string } {
-  return "unavailable" in count;
+  return "unavailable" in count && count.unavailable !== undefined;
 }
 
 /**
  * Whether an index list is a REFUSAL rather than an array of index schemas (#1768).
  *
  * Follows the `isCountUnavailable` precedent: a union between the successful reading
- * and `{ readonly unavailable: string }` carries the refusal sentence directly.
+ * and `{ readonly unavailable: string }` carries the refusal sentence directly, read by its value.
  */
 export function isIndexesUnavailable(
   indexes: readonly IndexSchema[] | { readonly unavailable: string } | undefined,
 ): indexes is { readonly unavailable: string } {
-  return indexes !== undefined && !Array.isArray(indexes) && "unavailable" in indexes;
+  return (
+    indexes !== undefined && !Array.isArray(indexes) && "unavailable" in indexes && indexes.unavailable !== undefined
+  );
 }
 
 /**
@@ -543,9 +549,12 @@ export function isIndexesUnavailable(
  * variant being additive: `count.count` narrows on both members. It is the RENDERER that
  * needs it, because "1,204 tables" and "at least 1,204 key groupings" are different facts
  * and the badge is the only place a person meets either (#789).
+ *
+ * The field is read by its value, as `isCountUnavailable` reads its own: `{ count, sampledFrom: undefined }` is a
+ * population.
  */
 export function isCountSampled(count: KindCount): count is { readonly count: number; readonly sampledFrom: string } {
-  return "sampledFrom" in count;
+  return "sampledFrom" in count && count.sampledFrom !== undefined;
 }
 
 /**

@@ -2602,6 +2602,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/api/object-tree.test.ts": [
         "a tree answer the core refuses as tree-answer-unreadable is answered as a host defect naming the rule, with no check of the facade's own",
       ],
+      "tests/api/db-objects.test.ts": [
+        "a member of another arm of a count present with no value reads as absent, so the client gets the arm its values name",
+      ],
+      "tests/unit/db/object-kinds.test.ts": [
+        "isCountUnavailable, isCountSampled and isIndexesUnavailable read an arm by its member's value, never by its presence",
+      ],
+      "tests/unit/lib/query-generators.test.ts": [
+        "a piece's member of another arm present with no value reads as absent, so the arm its values name is written",
+      ],
     },
   },
   "C-66": {

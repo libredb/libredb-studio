@@ -12,7 +12,7 @@ import {
 // The whole module, for the one assertion that is about what it does NOT export.
 import * as generators from "@/lib/query-generators";
 import { outermostFieldPaths } from "@/lib/db/providers/document/mongodb/generators";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
@@ -2231,6 +2231,24 @@ describe("etcd tree click on a group this connection reads in part (#1089 4.7)",
     expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("/config/a"), prefix: false, limit: 50 });
     // The control: the same group with no pieces reads its whole prefix.
     expect(generateTableQuery(["/config/*"], "etcd", etcdCaps, [], {})).toBe("get /config/ --prefix --limit=50");
+  });
+
+  test("a piece's member of another arm present with no value reads as absent, so the arm its values name is written", () => {
+    // The tree answer check admits each of these pieces (docs/providers/CONTRACT.md, clause C-62).
+    const readRanges = [
+      { key: undefined, prefix: "/config/b/" },
+      { key: undefined, prefix: undefined, start: "/config/c", end: "/config/e" },
+      { key: "/config/a", prefix: undefined, start: undefined, end: undefined },
+    ] as unknown as readonly ObjectReadRange[];
+    expect(generateTableQuery(["/config/*"], "etcd", etcdCaps, [], { readRanges })).toBe(
+      [
+        "get /config/b/ --prefix --limit=50",
+        "",
+        "# get /config/c /config/e --limit=50",
+        "",
+        "# get /config/a --limit=50",
+      ].join("\n"),
+    );
   });
 
   test("a piece that begins with - is written after --, and one holding a carriage return through a txn", () => {
