@@ -72,8 +72,9 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * with no call. A read its deadline stopped hands the stopped call's settlement to the grant's `holdUntilSettled`, so
  * the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the grant's sentence.
  *
- * Answers. A read answers the provider's own answer by reference and throws every refusal and stop as the accessor's
- * error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
+ * Answers. A read answers the provider's own answer by reference, which the host core read with its call's SDK check
+ * (`checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, clause C-112), and throws every refusal and stop as
+ * the accessor's error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
  * not-sent when refused before the call and unknown once the provider was called, or a defect of Studio's bridge. A
  * provider's error passes as the same object. A read's failure after its wait ended is logged by route, facet, panel,
  * kind and code, never its text, and a later answer is dropped, since nothing waits on it.
