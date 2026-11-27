@@ -12,7 +12,9 @@
  * The host passes a tree answer on to the caller whole, by reference, so `checkTreeAnswer` reads all of it once, here,
  * against the form its request's action answers: every record closed over the members the SDK's object tree types
  * state, a key outside them refused by name, and a value of another type, more details than the request's limit or
- * `needsConfiguration` where clause C-61 does not allow it refused at its pointer as `tree-answer-unreadable`.
+ * `needsConfiguration` where clause C-61 does not allow it refused at its pointer as `tree-answer-unreadable`. Each
+ * record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
+ * typecheck here until its form names it, as the frame reader's shapes do.
  *
  * Each reader reads the answer by its own property descriptors: a getter is never called but refused, an inherited
  * property is never read, and no refusal carries a value of the answer. An optional member present as an own data
@@ -21,7 +23,23 @@
  */
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import type { CallRefusal } from "./refusals";
-import type { TreeRequest } from "./types";
+import type {
+  ColumnSchema,
+  Container,
+  DatabaseObject,
+  ExclusionConstraintSchema,
+  ForeignKeySchema,
+  IndexSchema,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
+  ObjectReadRange,
+  TreeContainersAnswer,
+  TreeCountAnswer,
+  TreeDescribeAnswer,
+  TreeListAnswer,
+  TreeRequest,
+} from "./types";
 
 /** The members a warning can have: its message, and its optional code and severity. */
 const WARNING_MEMBERS: readonly string[] = Object.freeze(["message", "code", "severity"]);
@@ -206,16 +224,36 @@ function listForm(item: TreeForm): TreeForm {
   };
 }
 
+/** A member a record form reads where the SDK type requires it. */
+interface RequiredMember {
+  readonly required: TreeForm;
+}
+
+/** A member a record form reads where the SDK type admits a value without it. */
+interface OptionalMember {
+  readonly optional: TreeForm;
+}
+
 /**
- * A closed record of `required` and `optional` members: a plain record, refused once at its pointer otherwise. Each own
- * key is read in the answer's order: a key neither names is refused by name, an accessor at its pointer, and a data
- * member as its form, except an optional member whose value is `undefined`, which reads as absent. A required member
- * the record does not have is then refused at its pointer, in the form's order.
+ * One entry per member of the SDK type `T`, `required` or `optional` as the member is: a member is optional exactly
+ * when `T` admits a value without it, the rule of the frame reader's `ShapeOf`. So a member added to a tree type, or a
+ * member's optionality changed, fails typecheck here until its form names it as the type has it.
  */
-function recordForm(
-  required: Readonly<Record<string, TreeForm>>,
-  optional: Readonly<Record<string, TreeForm>> = {},
-): TreeForm {
+type TreeShape<T> = {
+  readonly [K in keyof T]-?: Partial<Pick<T, K>> extends Pick<T, K> ? OptionalMember : RequiredMember;
+};
+
+const required = (form: TreeForm): RequiredMember => ({ required: form });
+const optional = (form: TreeForm): OptionalMember => ({ optional: form });
+
+/**
+ * A closed record of the SDK type `T`, read as `shape` names its members: a plain record, refused once at its pointer
+ * otherwise. Each own key is read in the answer's order: a key the shape does not name is refused by name, an accessor
+ * at its pointer, and a data member as its form, except an optional member whose value is `undefined`, which reads as
+ * absent. A required member the record does not have is then refused at its pointer, in the shape's order.
+ */
+function recordForm<T>(shape: TreeShape<T>): TreeForm {
+  const members: Readonly<Record<string, RequiredMember | OptionalMember>> = shape;
   return (value, pointer, out) => {
     if (!isPlainRecord(value)) {
       out.push(treeUnreadable(pointer));
@@ -223,15 +261,15 @@ function recordForm(
     }
     for (const key of Object.getOwnPropertyNames(value)) {
       const at = pointerTo(pointer, key);
-      const isRequired = Object.hasOwn(required, key);
-      const form = isRequired ? required[key] : Object.hasOwn(optional, key) ? optional[key] : undefined;
+      const member = Object.hasOwn(members, key) ? members[key] : undefined;
       const read = readOwn(value, key);
-      if (form === undefined) out.push(treeUnreadable(at, key));
+      if (member === undefined) out.push(treeUnreadable(at, key));
       else if (read.kind !== "data") out.push(treeUnreadable(at));
-      else if (isRequired || read.value !== undefined) form(read.value, at, out);
+      else if ("required" in member) member.required(read.value, at, out);
+      else if (read.value !== undefined) member.optional(read.value, at, out);
     }
-    for (const key of Object.keys(required)) {
-      if (!Object.hasOwn(value, key)) out.push(treeUnreadable(pointerTo(pointer, key)));
+    for (const [key, member] of Object.entries(members)) {
+      if ("required" in member && !Object.hasOwn(value, key)) out.push(treeUnreadable(pointerTo(pointer, key)));
     }
   };
 }
@@ -250,15 +288,29 @@ function chosenForm(forms: readonly (readonly [string, TreeForm])[], otherwise: 
 const textListForm = listForm(textForm);
 
 /** The SDK's `Container`. */
-const containerForm = recordForm(
-  { path: textListForm, name: textForm, level: countForm },
-  { isSessionDefault: flagForm, kinds: textListForm },
-);
+const containerForm = recordForm<Container>({
+  path: required(textListForm),
+  name: required(textForm),
+  level: required(countForm),
+  isSessionDefault: optional(flagForm),
+  kinds: optional(textListForm),
+});
+
+/** A kind count read from a bounded sample, the form that says what bounded it. */
+type SampledCount = Extract<KindCount, { readonly sampledFrom: string }>;
+
+/** A counted kind: a count, and the sentence for what bounded it where it was read from a bounded sample. */
+type CountedKind = Omit<SampledCount, "sampledFrom"> & Partial<Pick<SampledCount, "sampledFrom">>;
 
 /** The SDK's `KindCount`: the engine's sentence when it has an own `unavailable`, a count otherwise. */
 const kindCountForm = chosenForm(
-  [["unavailable", recordForm({ unavailable: textForm })]],
-  recordForm({ count: countForm }, { sampledFrom: textForm }),
+  [
+    [
+      "unavailable",
+      recordForm<Extract<KindCount, { readonly unavailable: string }>>({ unavailable: required(textForm) }),
+    ],
+  ],
+  recordForm<CountedKind>({ count: required(countForm), sampledFrom: optional(textForm) }),
 );
 
 /** A count answer's counts: a plain record whose every own key is a kind, any text, and every value a `KindCount`. */
@@ -278,33 +330,46 @@ const countsForm: TreeForm = (value, pointer, out) => {
 /** The SDK's `ObjectReadRange`: one key, every key under a prefix, or a range, told apart by their own keys. */
 const readRangeForm = chosenForm(
   [
-    ["key", recordForm({ key: textForm })],
-    ["prefix", recordForm({ prefix: textForm })],
+    ["key", recordForm<Extract<ObjectReadRange, { readonly key: string }>>({ key: required(textForm) })],
+    ["prefix", recordForm<Extract<ObjectReadRange, { readonly prefix: string }>>({ prefix: required(textForm) })],
   ],
-  recordForm({ start: textForm, end: textForm }),
+  recordForm<Extract<ObjectReadRange, { readonly start: string }>>({
+    start: required(textForm),
+    end: required(textForm),
+  }),
 );
 
 /** The SDK's `DatabaseObject`. */
-const objectForm = recordForm(
-  { path: textListForm, name: textForm, kind: textForm },
-  { status: textForm, rowCount: countForm, sizeBytes: countForm, readRanges: listForm(readRangeForm) },
-);
+const objectForm = recordForm<DatabaseObject>({
+  path: required(textListForm),
+  name: required(textForm),
+  kind: required(textForm),
+  status: optional(textForm),
+  rowCount: optional(countForm),
+  sizeBytes: optional(countForm),
+  readRanges: optional(listForm(readRangeForm)),
+});
 
 /** The SDK's `ColumnSchema`. */
-const columnForm = recordForm(
-  { name: textForm, type: textForm, nullable: flagForm, isPrimary: flagForm },
-  {
-    baseType: textForm,
-    declaredType: textForm,
-    defaultValue: textForm,
-    defaultExpression: textForm,
-    provenance: provenanceForm,
-    projectable: flagForm,
-  },
-);
+const columnForm = recordForm<ColumnSchema>({
+  name: required(textForm),
+  type: required(textForm),
+  baseType: optional(textForm),
+  declaredType: optional(textForm),
+  nullable: required(flagForm),
+  isPrimary: required(flagForm),
+  defaultValue: optional(textForm),
+  defaultExpression: optional(textForm),
+  provenance: optional(provenanceForm),
+  projectable: optional(flagForm),
+});
 
-const indexListForm = listForm(recordForm({ name: textForm, columns: textListForm, unique: flagForm }));
-const indexesUnavailableForm = recordForm({ unavailable: textForm });
+const indexListForm = listForm(
+  recordForm<IndexSchema>({ name: required(textForm), columns: required(textListForm), unique: required(flagForm) }),
+);
+const indexesUnavailableForm = recordForm<Extract<ObjectDetail["indexes"], { readonly unavailable: string }>>({
+  unavailable: required(textForm),
+});
 
 /** An object's indexes: a list of the SDK's `IndexSchema`, or the engine's sentence where the read was refused. */
 const indexesForm: TreeForm = (value, pointer, out) => {
@@ -312,24 +377,37 @@ const indexesForm: TreeForm = (value, pointer, out) => {
 };
 
 /** The SDK's `ObjectDetail`. */
-const detailForm = recordForm(
-  {
-    path: textListForm,
-    columns: listForm(columnForm),
-    indexes: indexesForm,
-    foreignKeys: listForm(recordForm({ columnName: textForm, referencedTable: textForm, referencedColumn: textForm })),
-  },
-  { exclusionConstraints: listForm(recordForm({ name: textForm, definition: textForm })) },
-);
+const detailForm = recordForm<ObjectDetail>({
+  path: required(textListForm),
+  columns: required(listForm(columnForm)),
+  indexes: required(indexesForm),
+  foreignKeys: required(
+    listForm(
+      recordForm<ForeignKeySchema>({
+        columnName: required(textForm),
+        referencedTable: required(textForm),
+        referencedColumn: required(textForm),
+      }),
+    ),
+  ),
+  exclusionConstraints: optional(
+    listForm(recordForm<ExclusionConstraintSchema>({ name: required(textForm), definition: required(textForm) })),
+  ),
+});
 
-const containersAnswerForm = recordForm({ containers: listForm(containerForm) }, { needsConfiguration: textForm });
-const countAnswerForm = recordForm({ counts: countsForm });
-const listAnswerForm = recordForm({ objects: listForm(objectForm) });
-const describeAnswerForm = recordForm({ detail: detailForm });
-const batchForm = recordForm(
-  { details: listForm(detailForm) },
-  { truncated: recordForm({ limit: countForm, reason: textForm }) },
-);
+const containersAnswerForm = recordForm<TreeContainersAnswer>({
+  containers: required(listForm(containerForm)),
+  needsConfiguration: optional(textForm),
+});
+const countAnswerForm = recordForm<TreeCountAnswer>({ counts: required(countsForm) });
+const listAnswerForm = recordForm<TreeListAnswer>({ objects: required(listForm(objectForm)) });
+const describeAnswerForm = recordForm<TreeDescribeAnswer>({ detail: required(detailForm) });
+const batchForm = recordForm<ObjectDetailBatch>({
+  details: required(listForm(detailForm)),
+  truncated: optional(
+    recordForm<NonNullable<ObjectDetailBatch["truncated"]>>({ limit: required(countForm), reason: required(textForm) }),
+  ),
+});
 
 /** The length of `answer`'s own data array `key`, or undefined when it holds none there. */
 function ownLength(answer: unknown, key: string): number | undefined {
