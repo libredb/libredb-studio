@@ -93,10 +93,194 @@
         "agentReadings": []
       },
       "agent": {
-        "statementLanguage": null,
-        "overlay": null
+        "statementLanguage": "listget",
+        "overlay": {
+          "dialect": null,
+          "grounding": null
+        }
       },
-      "statementLanguageData": null,
+      "statementLanguageData": {
+        "name": "listget",
+        "confirmation": {
+          "operations": [],
+          "reader": "names-no-operation",
+          "decidesAlone": true,
+          "safetyAnalysis": false,
+          "maxTextBytes": 64
+        },
+        "agent": {
+          "request": {
+            "kind": "json-object",
+            "maxCharacters": 256,
+            "refusals": {
+              "tooLong": {
+                "code": "request-too-long",
+                "sentence": "The request is longer than 256 characters, the most one read takes: shorten it. Nothing was sent."
+              },
+              "empty": {
+                "code": "request",
+                "sentence": "The request holds no read. Write one JSON object: {\"read\": \"list\"} lists every entry, and {\"read\": \"get\", \"name\": \"beta\"} reads the entry of one name. Nothing was sent."
+              },
+              "notAnObject": {
+                "code": "request",
+                "sentence": "A read is one JSON object: {\"read\": \"list\"} lists every entry, and {\"read\": \"get\", \"name\": \"beta\"} reads the entry of one name. Nothing was sent."
+              },
+              "repeatedKey": {
+                "code": "request",
+                "sentence": "The request writes a key twice. A read is one JSON object with the keys read and name, each at most once. Nothing was sent."
+              },
+              "unknownKey": {
+                "code": "request",
+                "sentence": "The request holds a key a read does not take: its keys are read and name. Nothing was sent."
+              }
+            },
+            "keys": [
+              "read",
+              "name"
+            ],
+            "selector": {
+              "key": "read",
+              "refusal": {
+                "code": "request",
+                "sentence": "That is not a read: \"read\" is \"list\" or \"get\". Nothing was sent."
+              }
+            },
+            "common": [],
+            "reads": [
+              {
+                "value": "list",
+                "refuses": [
+                  {
+                    "key": "name",
+                    "refusal": {
+                      "code": "request",
+                      "sentence": "The list read takes no \"name\": it lists every entry. Nothing was sent."
+                    }
+                  }
+                ],
+                "checks": []
+              },
+              {
+                "value": "get",
+                "refuses": [],
+                "checks": [
+                  {
+                    "key": "name",
+                    "absent": {
+                      "code": "request",
+                      "sentence": "The get read names one entry in \"name\". Nothing was sent."
+                    },
+                    "rule": {
+                      "kind": "name",
+                      "characters": [
+                        {
+                          "from": "a",
+                          "to": "z"
+                        }
+                      ],
+                      "minLength": 1,
+                      "maxLength": 32,
+                      "refused": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "\"name\" is 1 to 32 lower-case letters. Nothing was sent."
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "text": {
+            "copy": {
+              "subject": "an in-memory store of names and values",
+              "noun": "read",
+              "writes": "every change to an entry",
+              "reached": "the store",
+              "defect": "your read"
+            },
+            "investigation": {
+              "classifierDescription": "a question about which names the store holds and the value of each, answered from what the run establishes",
+              "objective": "Your objective is a question about this store's names and values. Answer it from what you establish.",
+              "toolDescription": "Run one read of the store, written as one JSON object: {\"read\": \"list\"} lists every entry, and {\"read\": \"get\", \"name\": \"beta\"} reads the entry of one name. A request with any other key or read is refused rather than answered in part, and you are told why.",
+              "toolRule": "Read the store with run_read_query, one JSON request at a time: {\"read\": \"list\"} or {\"read\": \"get\", \"name\": \"beta\"}, with no other key. Report what the evidence supports, and nothing further."
+            },
+            "posture": {
+              "qualifier": [
+                "reads only, ",
+                {
+                  "fill": "rows"
+                },
+                " rows and ",
+                {
+                  "fill": "seconds"
+                },
+                " s per read"
+              ],
+              "title": "Agent mode reads the store's names and values",
+              "body": [
+                "Agent mode runs reads it wrote itself, each one JSON request listing every entry or reading one, bounded to ",
+                {
+                  "fill": "rows"
+                },
+                " rows and ",
+                {
+                  "fill": "seconds"
+                },
+                " seconds each and refused past them rather than cut. Nothing reaches your editor."
+              ],
+              "handover": "An answer is never run in your editor: the hand-over is not offered on this engine."
+            },
+            "grounding": {
+              "omissionAdvice": "Read the store with run_read_query, {\"read\": \"list\"}, to see every entry.",
+              "ungrounded": [
+                "So nothing about this store has been established for you: not one ",
+                {
+                  "fill": "noun"
+                },
+                " name. List the entries with run_read_query, {\"read\": \"list\"}."
+              ]
+            },
+            "advice": {
+              "rowCap": [
+                "Ask for at most ",
+                {
+                  "fill": "allowed"
+                },
+                " rows."
+              ],
+              "shape": "The request's shape falls outside what a read may be; a read is {\"read\": \"list\"} or {\"read\": \"get\", \"name\": \"beta\"}."
+            }
+          },
+          "mcp": {
+            "tool": "run_listget_read",
+            "holdsNoTables": true,
+            "text": {
+              "title": "Run a read of an in-memory store",
+              "description": [
+                "Run one read of an in-memory store on a connection: one JSON object as text, {\"read\": \"list\"} for every entry or {\"read\": \"get\", \"name\": \"beta\"} for the entry of one name. Any other request is refused before the store is reached. Runs on ",
+                {
+                  "fill": "engines"
+                },
+                "; other engines refuse it. ",
+                {
+                  "fill": "limits"
+                },
+                "; this tool takes no offset."
+              ],
+              "fewerFields": "A read's columns are fixed, so none can be left out",
+              "readPast": [
+                "read past the ",
+                {
+                  "fill": "shown"
+                },
+                " rows returned, read the entries by name."
+              ],
+              "rowOverCap": "One row of this result is larger than the result limit. Read one entry by name, and run it again."
+            }
+          }
+        }
+      },
       "editor": {
         "commitKeyword": "COMMIT",
         "consentDeadline": null,
