@@ -16,10 +16,12 @@
  * The readers are a closed set too: a module of src or vscode-extension/src whose value inputs (`valueInputs`,
  * tests/helpers/value-inputs.ts) hold a listed name from a specifier resolving to the entry's module is one of that
  * entry's readers, or it fails by module and input. A namespace import, an `export *`, or an `import()` or `require()`
- * of an entry's module reaches every name it exports, so it fails for every module. A type-only import and a
- * side-effect import read no name, and a name the list does not hold passes. Test files stay outside the set: none is
- * tracked under either root. A computed `import()` names no module the scan can resolve; under src, the census
- * tests/security/kubernetes-access-callers.test.ts refuses one that has no allowance.
+ * of an entry's module reaches every name it exports, so it fails for every module. A re-export of a listed name, by
+ * `export ... from` or by a local `export { ... }` or `export default` of its imported binding, fails for every module,
+ * a reader included, since a module importing the name from the reader would read it outside the set. A type-only
+ * import and a side-effect import read no name, and a name the list does not hold passes. Test files stay outside the
+ * set: none is tracked under either root. A computed `import()` names no module the scan can resolve; under src, the
+ * census tests/security/kubernetes-access-callers.test.ts refuses one that has no allowance.
  *
  * The list may only shrink. A new record keyed by engine id raises the isolation ratchet's `engineKeyedTypePositions`,
  * and a new list of engine ids its `coreHandwritten.linesNamingAnEngine`, both gate counters that only fall, so an
@@ -120,34 +122,37 @@ function sourceModules(): ReadonlyMap<string, string> {
 const LOAD_CALL = /^(import|require)\s*\(/;
 
 /**
- * Every value input of `modules` from the module of a listed entry: `<file> imports <input>`. Each input carries the
- * name it reads, `*` for one that reaches every name, or the call that loads the module whole.
+ * Every value input of `modules` from the module of a listed entry: `<file> imports <input>`, or `<file> re-exports
+ * <input>` for one the module exports again. Each input carries the name it reads, `*` for one that reaches every
+ * name, or the call that loads the module whole.
  */
 function listedModuleInputs(
   modules: ReadonlyMap<string, string>,
-): readonly { readonly file: string; readonly name: string; readonly line: string }[] {
+): readonly { readonly file: string; readonly name: string; readonly exported: boolean; readonly line: string }[] {
   const listedModules = new Set(CORE_GRANT_RECORDS.map((entry) => moduleOf(entry.module)));
   return [...modules].flatMap(([file, text]) =>
     valueInputs(file, text)
       .filter(({ module }) => module !== null && listedModules.has(module))
-      .map(({ input }) => ({
+      .map(({ input, exported }) => ({
         file,
         name: LOAD_CALL.test(input) ? "*" : input.slice(0, input.indexOf(" from ")),
-        line: `${file} imports ${input}`,
+        exported,
+        line: `${file} ${exported ? "re-exports" : "imports"} ${input}`,
       })),
   );
 }
 
 /**
- * Each value input of `modules` that reads a listed name without its module being one of that entry's readers, and
- * each that reaches every name of a listed entry's module, a namespace import, an `export *`, an `import()` or a
- * `require()`, sorted. A name the list does not hold passes.
+ * Each value input of `modules` that reads a listed name without its module being one of that entry's readers, each
+ * that re-exports a listed name, a reader's included, and each that reaches every name of a listed entry's module, a
+ * namespace import, an `export *`, an `import()` or a `require()`, sorted. A name the list does not hold passes.
  */
 function unlistedImporters(modules: ReadonlyMap<string, string>): readonly string[] {
   return listedModuleInputs(modules)
     .filter(
-      ({ file, name }) =>
-        name === "*" || CORE_GRANT_RECORDS.some((entry) => entry.name === name && !readersOf(entry).includes(file)),
+      ({ file, name, exported }) =>
+        name === "*" ||
+        CORE_GRANT_RECORDS.some((entry) => entry.name === name && (exported || !readersOf(entry).includes(file))),
     )
     .map(({ line }) => line)
     .sort();
@@ -229,12 +234,12 @@ describe("the exit of M3", () => {
       planted(marker, `import { GRANTED_SSH_TUNNEL_REFUSAL } from "${from}";\n${modules.get(marker) ?? ""}`),
     ).toEqual([`${marker} imports GRANTED_SSH_TUNNEL_REFUSAL from ${from}`]);
     expect(planted("src/lib/planted-grants.ts", `export { legacyEngineGrants } from "${from}";`)).toEqual([
-      `src/lib/planted-grants.ts imports legacyEngineGrants from ${from}`,
+      `src/lib/planted-grants.ts re-exports legacyEngineGrants from ${from}`,
     ]);
     // A form that reaches every name of the module is refused for every module, a reader included.
     expect(planted(marker, `import * as grants from "${from}";`)).toEqual([`${marker} imports * from ${from}`]);
     expect(planted("src/lib/planted-grants.ts", `export * from "${from}";`)).toEqual([
-      `src/lib/planted-grants.ts imports * from ${from}`,
+      `src/lib/planted-grants.ts re-exports * from ${from}`,
     ]);
     expect(planted("src/lib/planted-grants.ts", `const grants = await import("${from}");`)).toEqual([
       `src/lib/planted-grants.ts imports import("${from}")`,
@@ -254,5 +259,42 @@ describe("the exit of M3", () => {
         expect(found.some(({ file, name }) => file === reader && name === entry.name)).toBe(true);
       }
     }
+  });
+
+  test("no module of src or vscode-extension/src re-exports a listed grant name, a reader included, so the importer set stays closed past a reader", () => {
+    const modules = sourceModules();
+    const from = "@/lib/db/claim-grants";
+    const reader = "src/lib/sql/dangerous-query.ts";
+    const readerText = modules.get(reader) ?? "";
+    // A module importing the name from the reader: it reads no listed module, so the reader's re-export is what fails.
+    const importer = [
+      "src/lib/planted-grants.ts",
+      'import { legacyEngineGrants } from "@/lib/sql/dangerous-query";',
+    ] as const;
+    const planted = (text: string) => unlistedImporters(new Map([[reader, text], importer]));
+
+    expect(readerText).toContain(`import { type EngineGrants, legacyEngineGrants } from "${from}";`);
+    expect(planted(readerText)).toEqual([]);
+
+    // Each form answers the reader and the name; the planted modules are never written to disk.
+    expect(planted(`${readerText}\nexport { legacyEngineGrants } from "${from}";`)).toEqual([
+      `${reader} re-exports legacyEngineGrants from ${from}`,
+    ]);
+    expect(planted(`${readerText}\nexport { legacyEngineGrants as engineGrants } from "../db/claim-grants";`)).toEqual([
+      `${reader} re-exports legacyEngineGrants from ../db/claim-grants`,
+    ]);
+    expect(planted(`${readerText}\nexport { legacyEngineGrants };`)).toEqual([
+      `${reader} re-exports legacyEngineGrants from ${from}`,
+    ]);
+    expect(planted(`${readerText}\nexport default legacyEngineGrants;`)).toEqual([
+      `${reader} re-exports legacyEngineGrants from ${from}`,
+    ]);
+    expect(
+      planted(`import { legacyEngineGrants as grants } from "${from}";\nexport { grants as engineGrants };`),
+    ).toEqual([`${reader} re-exports legacyEngineGrants from ${from}`]);
+    expect(planted(`${readerText}\nexport * from "${from}";`)).toEqual([`${reader} re-exports * from ${from}`]);
+    // A type-only re-export loads nothing, and a local export of another binding re-exports no listed name.
+    expect(planted(`${readerText}\nexport type { EngineGrants } from "${from}";`)).toEqual([]);
+    expect(planted(`${readerText}\nexport { type EngineGrants };`)).toEqual([]);
   });
 });
