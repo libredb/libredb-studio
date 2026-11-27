@@ -184,7 +184,7 @@ describe("bridgedConsole", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "not-offered" },
       maintenance: { run: "offered", preview: "not-offered" },
       monitoring: { panel: "offered", poolStats: "not-offered" },
     });
@@ -201,7 +201,7 @@ describe("bridgedConsole", () => {
         endScope: "offered",
         transaction: "not-offered",
       },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "not-offered" },
       maintenance: { run: "offered", preview: "not-offered" },
       monitoring: { panel: "offered", poolStats: "not-offered" },
     });
@@ -219,7 +219,7 @@ describe("bridgedConsole", () => {
     ];
 
     for (const { session } of sessions) {
-      expect(session.calls.objects).toEqual({ tree: "offered" });
+      expect(session.calls.objects).toEqual({ tree: "offered", source: "not-offered" });
       expect(Object.isFrozen(session.calls.objects)).toBe(true);
       expect(checkObjectsFacet(session.calls, "tree")).toEqual([]);
       expect(typeof session.tree).toBe("function");
@@ -1523,7 +1523,7 @@ describe("bridgedReadOnlyStatements", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "not-offered", source: "not-offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });
@@ -1752,7 +1752,7 @@ describe("bridgedComposedStatements", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "not-offered", source: "not-offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });
@@ -1847,7 +1847,7 @@ describe("bridgedScriptUnit", () => {
         endScope: "offered",
         transaction: "not-offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "not-offered", source: "not-offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });
@@ -2075,7 +2075,7 @@ describe("bridgedTransactionScriptUnit", () => {
         endScope: "not-offered",
         transaction: "offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "not-offered", source: "not-offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });

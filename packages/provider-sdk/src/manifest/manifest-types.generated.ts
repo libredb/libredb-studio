@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "8a6ffebcf16dd3303d4cf494a27be99dd1964e814dd9e8f309ed63957779fe82";
+export const MANIFEST_SCHEMA_SHA256 = "dc68e450771feffb4cd6d3088d14159357f872b8386321e0dbb014a7b256bcbd";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -92,9 +92,10 @@ export interface ConsoleCalls {
   readonly transaction: FacetOffer;
 }
 
-/** The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container. */
+/** The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container. source: read the source document of one object of a kind whose object model states it has source. */
 export interface ObjectsCalls {
   readonly tree: FacetOffer;
+  readonly source: FacetOffer;
 }
 
 /** The maintenance facets: each optional call that runs or previews a maintenance operation an engine lists, keyed by the path to its function under the implementation's maintenance. run: run one operation on the object or session it targets, or over the whole database. preview: read what one per-row operation would do to the object its path addresses, before it runs. */
@@ -1457,7 +1458,7 @@ export type InlineEditRefusal = {
   readonly reason: string;
 } | null;
 
-/** The engine's object model, which an engine whose package offers objects.tree, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none. */
+/** The engine's object model, which an engine whose package offers objects.tree or objects.source, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none. */
 export interface ObjectModel {
   /** The engine's container levels, outermost first, exactly one of four lists: none where every object is addressed by its bare name, a lone schema, a lone catalog, or a catalog then the schema inside it. */
   readonly containerLevels: readonly ContainerLevel[];

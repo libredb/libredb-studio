@@ -12,7 +12,9 @@
  * A maintenance run or preview request is held to the session's maintenance: an operation it lists, a placement its
  * spec offers, a preview its spec declares on a row, and no empty text where the request names something. A monitoring
  * panel request is held to the panels the session's engine offers (clause C-71). A tree request is held to the
- * session's object model: a container path its levels and path shapes admit, and a kind it states (clause M-89).
+ * session's object model: a container path its levels and path shapes admit, and a kind it states (clause M-89). A
+ * source request is held to it too: a kind it states with source, and a path of at least one segment no deeper than
+ * its levels admit for the kind (clauses C-17 and C-115).
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -30,6 +32,7 @@ import {
   checkMonitoringPanelRequest,
   checkObjectsFacet,
   checkReadOnlyRequest,
+  checkSourceRequest,
   checkTreeRequest,
   type EngineMaintenance,
   type ExecuteRequest,
@@ -38,6 +41,7 @@ import {
   type MonitoringPanelRequest,
   sessionCalls,
   sessionMaintenance,
+  type SourceRequest,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import type {
@@ -52,7 +56,7 @@ import type {
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
   console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
-  objects: { tree: "not-offered" },
+  objects: { tree: "not-offered", source: "not-offered" },
   maintenance: { run: "not-offered", preview: "not-offered" },
   monitoring: { panel: "not-offered", poolStats: "not-offered" },
 };
@@ -65,7 +69,7 @@ const EVERYTHING: Calls = {
     endScope: "offered",
     transaction: "offered",
   },
-  objects: { tree: "offered" },
+  objects: { tree: "offered", source: "offered" },
   maintenance: { run: "offered", preview: "offered" },
   monitoring: { panel: "offered", poolStats: "offered" },
 };
@@ -236,6 +240,16 @@ describe("checkObjectsFacet", () => {
     expect(callRefusalSentence(tree)).toBe(
       'The session does not offer the facet "objects.tree" at "/objects/tree", so the call was not made.',
     );
+  });
+
+  test("the objects source facet is refused by name to a session that does not offer it", () => {
+    const withdrawn = sessionCalls(EVERYTHING, { calls: { objects: { source: "not-offered" } } });
+    const source: CallRefusal = { rule: "facet-not-offered", pointer: "/objects/source", name: "objects.source" };
+
+    expect(checkObjectsFacet(NOTHING, "source")).toEqual([source]);
+    expect(checkObjectsFacet(withdrawn, "source")).toEqual([source]);
+    expect(checkObjectsFacet(withdrawn, "tree")).toEqual([]);
+    expect(checkObjectsFacet(EVERYTHING, "source")).toEqual([]);
   });
 
   test("a session that offers objects.tree is called", () => {
@@ -517,6 +531,95 @@ describe("checkTreeRequest", () => {
       KIND_AT_KIND,
     ]);
     for (const refusal of refusals) expect(Object.keys(refusal)).toEqual(["rule", "pointer"]);
+    expect(text).not.toContain(segment);
+    expect(text).not.toContain(kind);
+  });
+});
+
+/** An object kind `id` with source, as a declaration states one, attached to `attachedTo` and enumerated by `enumeratedBy`. */
+function sourceKindOf(
+  id: string,
+  attachedTo: string | null = null,
+  enumeratedBy: ObjectKind["enumeratedBy"] = null,
+): ObjectKind {
+  return { ...kindOf(id), role: "routine", hasSource: true, sourceLanguage: "sql", attachedTo, enumeratedBy };
+}
+
+const SOURCE_KIND_AT_KIND: CallRefusal = { rule: "request-source-not-stated", pointer: "/kind" };
+const PATH_EMPTY: CallRefusal = { rule: "request-field-empty", pointer: "/path", name: "path" };
+const PATH_NOT_ADMITTED: CallRefusal = { rule: "request-path-not-admitted", pointer: "/path" };
+
+describe("checkSourceRequest", () => {
+  /** A model of `levels` levels under `shapes`, stating a relation, a routine, a trigger on the relation and a key. */
+  const sourceModel = (levels: 0 | 1 | 2, shapes: ObjectModel["containerPathShapes"]): ObjectModel => ({
+    ...modelOf(levels, shapes, ["item"]),
+    objectKinds: [
+      kindOf("item"),
+      sourceKindOf("routine"),
+      sourceKindOf("trigger", "item"),
+      sourceKindOf("key", null, "key-browser"),
+    ],
+  });
+
+  /** The path lengths of 0 to 9 segments a source request of `kind` over `model` is admitted at. */
+  const admitted = (model: ObjectModel, kind: string): number[] =>
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter((length) => {
+      const refusals = checkSourceRequest(model, { path: pathOf(length), kind });
+      if (refusals.length > 0) expect(refusals).toEqual([length === 0 ? PATH_EMPTY : PATH_NOT_ADMITTED]);
+      return refusals.length === 0;
+    });
+
+  test("a source request naming a kind the object model does not state or states without source, a path of no segment, or a path deeper than the model admits for its kind is refused at its pointer, and an empty segment is a name", () => {
+    const twoExact = sourceModel(2, "exact");
+
+    // The kind: unstated, an inherited name included, or stated without source; nothing throws.
+    for (const kind of ["missing", "constructor", "__proto__", "toString", "", "ROUTINE"]) {
+      expect(checkSourceRequest(twoExact, { path: pathOf(3), kind })).toEqual([KIND_AT_KIND]);
+    }
+    expect(checkSourceRequest(twoExact, { path: pathOf(3), kind: "item" })).toEqual([SOURCE_KIND_AT_KIND]);
+    // The path: at least one segment, at most the deepest container path the levels admit plus the name, plus the
+    // parent for an attached kind; a kind only the key browser enumerates takes a path of any depth.
+    expect(admitted(twoExact, "routine")).toEqual([1, 2, 3]);
+    expect(admitted(twoExact, "trigger")).toEqual([1, 2, 3, 4]);
+    expect(admitted(twoExact, "key")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(admitted(sourceModel(2, "prefixes"), "routine")).toEqual([1, 2, 3]);
+    expect(admitted(sourceModel(1, "exact"), "routine")).toEqual([1, 2]);
+    expect(admitted(sourceModel(0, "exact"), "routine")).toEqual([1]);
+    expect(admitted(sourceModel(0, "prefixes"), "trigger")).toEqual([1, 2]);
+    expect(admitted(sourceModel(0, "exact"), "key")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    // An empty segment is a name, as an engine's default object can be named by the empty string.
+    expect(checkSourceRequest(twoExact, { path: ["", "", ""], kind: "routine" })).toEqual([]);
+    expect(checkSourceRequest(twoExact, { path: [""], kind: "routine" })).toEqual([]);
+    // An unstated kind reads no path bound but the empty path; both refusals of one request, path first.
+    expect(checkSourceRequest(twoExact, { path: pathOf(9), kind: "missing" })).toEqual([KIND_AT_KIND]);
+    expect(checkSourceRequest(twoExact, { path: [], kind: "missing" })).toEqual([PATH_EMPTY, KIND_AT_KIND]);
+    expect(checkSourceRequest(twoExact, { path: pathOf(4), kind: "item" })).toEqual([
+      PATH_NOT_ADMITTED,
+      SOURCE_KIND_AT_KIND,
+    ]);
+    // A path that is no list is not a request of this shape: the request frame's reading refuses it by name.
+    const notAList = { path: "segment", kind: "routine" } as unknown as SourceRequest;
+    expect(checkSourceRequest(twoExact, notAList)).toEqual([]);
+    expect(callRefusalSentence(SOURCE_KIND_AT_KIND)).toBe(
+      'The request names at "/kind" an object kind whose source the engine\'s object model does not state, so the call was not made.',
+    );
+    expect(callRefusalSentence(PATH_NOT_ADMITTED)).toBe(
+      'The request names at "/path" an object path deeper than the engine\'s object model admits for its kind, so the call was not made.',
+    );
+  });
+
+  test("no source request refusal carries a value of the request", () => {
+    const twoExact = sourceModel(2, "exact");
+    const segment = randomUUID();
+    const kind = randomUUID();
+    const refusals = [
+      ...checkSourceRequest(twoExact, { path: [segment, segment, segment, segment], kind: "routine" }),
+      ...checkSourceRequest(twoExact, { path: [segment], kind }),
+      ...checkSourceRequest(twoExact, { path: [], kind: "item" }),
+    ];
+    const text = JSON.stringify(refusals) + new CallRefusalError(refusals).message;
+
+    expect(refusals).toEqual([PATH_NOT_ADMITTED, KIND_AT_KIND, PATH_EMPTY, SOURCE_KIND_AT_KIND]);
     expect(text).not.toContain(segment);
     expect(text).not.toContain(kind);
   });

@@ -1,6 +1,6 @@
 /**
  * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27,
- * C-57, C-62, C-67, C-71, C-78, C-112 and M-89).
+ * C-57, C-62, C-67, C-71, C-78, C-112, C-115 and M-89).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -39,6 +39,13 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-level-not-stated",
   /** An object kind the session's object model does not state; the pointer is into the request. */
   "request-kind-not-stated",
+  /** An object kind the session's object model states without source, in a source request; into the request. */
+  "request-source-not-stated",
+  /**
+   * An object path deeper than the session's object model admits for its kind, in a source request: past the deepest
+   * container path plus the object's name, plus its parent's for an attached kind; the pointer is into the request.
+   */
+  "request-path-not-admitted",
   /** A facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
   "facet-not-offered",
   /** A key a refinement cannot have; the pointer is into the refinement, `name` the key. */
@@ -86,6 +93,14 @@ export const CALL_REFUSAL_RULES = Object.freeze([
    * `needsConfiguration` where C-61 does not allow it, or a value whose reading throws; the pointer is into the answer.
    */
   "tree-answer-unreadable",
+  /**
+   * A source answer the host reads that is not the SDK's closed source document: not a plain record, a member missing
+   * or behind an accessor, a key its form cannot have (`name` the key), a path or kind other than the request's, no
+   * part or more than `SOURCE_PART_LIMIT`, a part of none of its three forms, an empty text or sentence, a sentence
+   * past `SOURCE_CHARACTER_LIMIT`, a part id an earlier part holds, a list whose length is no count, a list's first
+   * hole, or a value whose reading throws; the pointer is into the answer.
+   */
+  "source-answer-unreadable",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -97,7 +112,7 @@ export interface CallRefusal {
   readonly pointer: string;
   /**
    * The request field, for a field not honoured or sent empty, the facet's call name, for a facet not offered, or the key, for a key
-   * a refinement, a transaction answer, an execute answer's warning or a tree answer cannot have.
+   * a refinement, a transaction answer, an execute answer's warning, a tree answer or a source answer cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -159,6 +174,10 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request names at ${at} a container path whose levels the engine's object model does not state, so the call was not made.`;
     case "request-kind-not-stated":
       return `The request names at ${at} an object kind the engine's object model does not state, so the call was not made.`;
+    case "request-source-not-stated":
+      return `The request names at ${at} an object kind whose source the engine's object model does not state, so the call was not made.`;
+    case "request-path-not-admitted":
+      return `The request names at ${at} an object path deeper than the engine's object model admits for its kind, so the call was not made.`;
     case "facet-not-offered":
       return `The session does not offer the facet ${name} at ${at}, so the call was not made.`;
     case "refinement-key-unknown":
@@ -195,5 +214,9 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return refusal.name === undefined
         ? `The tree answer value at ${at} is missing, an accessor, or not what the provider contract allows there for the request, so Studio did not read it.`
         : `The tree answer has the key ${name} at ${at}, which the provider contract does not define there, so Studio did not read it.`;
+    case "source-answer-unreadable":
+      return refusal.name === undefined
+        ? `The source answer value at ${at} is missing, an accessor, empty, longer than the SDK's bound, or not what the provider contract allows there for the request, so Studio did not read it.`
+        : `The source answer has the key ${name} at ${at}, which the provider contract does not define there, so Studio did not read it.`;
   }
 }

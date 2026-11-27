@@ -25,7 +25,7 @@ import { FIXTURE_ENTRY, lockEntryOf, writeArtifact, writeLock } from "./provider
 /** The calls a package can offer, by their contract names. */
 const FACETS = Object.freeze({
   console: ["cancel", "endScope", "transaction"],
-  objects: ["tree"],
+  objects: ["tree", "source"],
   maintenance: ["run", "preview"],
   monitoring: ["panel", "poolStats"],
 } as const);

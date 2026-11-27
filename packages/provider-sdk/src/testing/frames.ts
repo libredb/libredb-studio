@@ -17,6 +17,7 @@ export const SERVED_CALLS = Object.freeze([
   "console.endScope",
   "console.transaction",
   "objects.tree",
+  "objects.source",
   "maintenance.run",
   "maintenance.preview",
   "monitoring.panel",

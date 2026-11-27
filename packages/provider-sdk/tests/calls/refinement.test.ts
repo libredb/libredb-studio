@@ -28,7 +28,7 @@ const DECLARED: Calls = Object.freeze({
     endScope: "not-offered",
     transaction: "not-offered",
   }),
-  objects: Object.freeze({ tree: "offered" }),
+  objects: Object.freeze({ tree: "offered", source: "offered" }),
   maintenance: Object.freeze({ run: "offered", preview: "offered" }),
   monitoring: Object.freeze({ panel: "offered", poolStats: "offered" }),
 });
@@ -107,7 +107,7 @@ describe("checkRefinement and sessionCalls", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "offered" },
       maintenance: { run: "offered", preview: "offered" },
       monitoring: { panel: "offered", poolStats: "not-offered" },
     });
@@ -118,7 +118,7 @@ describe("checkRefinement and sessionCalls", () => {
     expect(DECLARED.console.execute.honours).toEqual(["params", "offset"]);
     const unfrozen: Calls = {
       console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered", transaction: "offered" },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
       monitoring: { panel: "offered", poolStats: "not-offered" },
     };
@@ -185,7 +185,7 @@ describe("checkRefinement and sessionCalls", () => {
   });
 
   test("a refinement may withdraw objects.tree, and never offer it where the manifest does not", () => {
-    const notOffering: Calls = { ...DECLARED, objects: { tree: "not-offered" } };
+    const notOffering: Calls = { ...DECLARED, objects: { tree: "not-offered", source: "offered" } };
     const withdraw = { calls: { objects: { tree: "not-offered" } } };
     const offer = { calls: { objects: { tree: "offered" } } };
     const both = { calls: { objects: { tree: "not-offered" }, console: { cancel: "not-offered" } } };
@@ -200,7 +200,7 @@ describe("checkRefinement and sessionCalls", () => {
 
     expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
     const withdrawn = sessionCalls(DECLARED, withdraw as Refinement);
-    expect(withdrawn.objects).toEqual({ tree: "not-offered" });
+    expect(withdrawn.objects).toEqual({ tree: "not-offered", source: "offered" });
     expect(deepFrozen(withdrawn)).toBe(true);
     expect(DECLARED.objects.tree).toBe("offered");
     expect(sessionCalls(DECLARED, undefined).objects.tree).toBe("offered");
@@ -211,7 +211,7 @@ describe("checkRefinement and sessionCalls", () => {
     expect(checkRefinement(DECLARED, both)).toEqual([]);
     expect(sessionCalls(DECLARED, both as Refinement)).toEqual({
       console: { ...DECLARED.console, cancel: "not-offered" },
-      objects: { tree: "not-offered" },
+      objects: { tree: "not-offered", source: "offered" },
       maintenance: DECLARED.maintenance,
       monitoring: DECLARED.monitoring,
     });
@@ -229,8 +229,8 @@ describe("checkRefinement and sessionCalls", () => {
     expect(checkRefinement(DECLARED, { calls: { objects: "tree" } })).toEqual([
       refused("refinement-unreadable", "/calls/objects"),
     ]);
-    expect(checkRefinement(DECLARED, { calls: { objects: { source: "offered" } } })).toEqual([
-      refused("refinement-key-unknown", "/calls/objects/source", "source"),
+    expect(checkRefinement(DECLARED, { calls: { objects: { notAFacet: "offered" } } })).toEqual([
+      refused("refinement-key-unknown", "/calls/objects/notAFacet", "notAFacet"),
     ]);
     expect(checkRefinement(DECLARED, { calls: { objects: accessor } })).toEqual([
       refused("refinement-unreadable", "/calls/objects/tree"),
@@ -247,6 +247,30 @@ describe("checkRefinement and sessionCalls", () => {
       }),
     ).toEqual([refused("refinement-unreadable", "/calls/objects")]);
     expect(reads).toBe(0);
+  });
+
+  test("a refinement may withdraw objects.source, and never offer it where the manifest does not", () => {
+    const notOffering: Calls = { ...DECLARED, objects: { tree: "offered", source: "not-offered" } };
+    const withdraw = { calls: { objects: { source: "not-offered" } } };
+    const offer = { calls: { objects: { source: "offered" } } };
+
+    expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
+    const withdrawn = sessionCalls(DECLARED, withdraw as Refinement);
+    expect(withdrawn.objects).toEqual({ tree: "offered", source: "not-offered" });
+    expect(deepFrozen(withdrawn)).toBe(true);
+    expect(DECLARED.objects.source).toBe("offered");
+    expect(sessionCalls(DECLARED, undefined).objects.source).toBe("offered");
+    expect(checkRefinement(DECLARED, offer)).toEqual([]);
+    expect(checkRefinement(notOffering, withdraw)).toEqual([]);
+    expect(checkRefinement(notOffering, offer)).toEqual([refused("refinement-widens", "/calls/objects/source")]);
+    expect(checkRefinement(notOffering, { calls: { objects: { tree: "not-offered", source: "offered" } } })).toEqual([
+      refused("refinement-widens", "/calls/objects/source"),
+    ]);
+    for (const value of ["maybe", true, null]) {
+      expect(checkRefinement(DECLARED, { calls: { objects: { source: value } } })).toEqual([
+        refused("refinement-unreadable", "/calls/objects/source"),
+      ]);
+    }
   });
 
   test("a refinement may withdraw maintenance.run and maintenance.preview, and never offer one the manifest does not", () => {

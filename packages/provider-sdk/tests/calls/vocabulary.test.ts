@@ -57,7 +57,7 @@ describe("the call vocabularies", () => {
 
   test("the objects facets are the schema's", () => {
     expect<readonly string[]>([...OBJECTS_FACETS]).toEqual(Object.keys(SCHEMA.$defs.objectsCalls?.properties ?? {}));
-    expect<readonly string[]>([...OBJECTS_FACETS]).toEqual(["tree"]);
+    expect<readonly string[]>([...OBJECTS_FACETS]).toEqual(["tree", "source"]);
     expect(Object.isFrozen(OBJECTS_FACETS)).toBe(true);
   });
 

@@ -18,6 +18,7 @@ import {
   defineProvider,
   definitionRefusalSentence,
   ProviderDefinitionError,
+  type ObjectSourceDocument,
   type ProviderImpl,
 } from "@libredb/provider-sdk/calls";
 
@@ -224,6 +225,58 @@ describe("checkProviderModule", () => {
     ).toBe(true);
     expect(definitionRefusalSentence(refusal("facet-unimplemented", "/impl/objects/tree", { name }))).toBe(
       'The manifest offers the facet objects.tree, for which the implementation has no function of its own at "/impl/objects/tree".',
+    );
+  });
+
+  test("the objects source facet is declared and implemented both ways, like the tree", () => {
+    const source = async (): Promise<ObjectSourceDocument> => ({
+      path: ["a"],
+      kind: "routine",
+      parts: [{ id: "a", label: "A", unavailable: "b" }],
+    });
+    const offered = manifest((m) => (m.calls.objects.source = "offered"));
+    const implemented = impl((i) => (i.objects = { source }));
+    const name = "objects.source";
+    const defined = defineProvider(offered, implemented);
+
+    expect(defined.impl.objects?.source).toBe(source);
+    expect(defined.impl.objects?.tree).toBeUndefined();
+    expect(checkProviderModule(record((r) => (r.manifest = offered)))).toEqual([
+      refusal("facet-unimplemented", "/impl/objects/source", { name }),
+    ]);
+    expect(
+      checkProviderModule(
+        record((r) => {
+          r.manifest = offered;
+          r.impl.objects = { source: "source" };
+        }),
+      ),
+    ).toEqual([refusal("facet-unimplemented", "/impl/objects/source", { name })]);
+    expect(checkProviderModule(record((r) => (r.impl = implemented)))).toEqual([
+      refusal("facet-undeclared", "/impl/objects/source", { name }),
+    ]);
+    // Both facets offered and implemented, and each refused alone where the other is in order.
+    const both = manifest((m) => {
+      m.calls.objects.tree = "offered";
+      m.calls.objects.source = "offered";
+    });
+    const tree = async () => ({ containers: [] });
+    expect(
+      defineProvider(
+        both,
+        impl((i) => (i.objects = { tree, source })),
+      ).impl.objects?.source,
+    ).toBe(source);
+    expect(
+      checkProviderModule(
+        record((r) => {
+          r.manifest = both;
+          r.impl.objects = { tree };
+        }),
+      ),
+    ).toEqual([refusal("facet-unimplemented", "/impl/objects/source", { name })]);
+    expect(definitionRefusalSentence(refusal("facet-undeclared", "/impl/objects/source", { name }))).toContain(
+      "objects.source",
     );
   });
 
@@ -860,7 +913,7 @@ describe("checkProviderModule", () => {
     const changed = record((r) => {
       r.impl.ping = async () => ({});
       r.impl.console.explain = async () => ({});
-      r.impl.objects = { source: async () => ({}) };
+      r.impl.objects = { notAFacet: async () => ({}) };
       r.impl.maintenance = { explain: async () => ({}) };
       r.impl.monitoring = { sessions: async () => ({}) };
     });
@@ -868,7 +921,7 @@ describe("checkProviderModule", () => {
     expect(checkProviderModule(changed)).toEqual([
       refusal("impl-key-unknown", "/impl/ping", { key: "ping" }),
       refusal("impl-key-unknown", "/impl/console/explain", { key: "explain" }),
-      refusal("impl-key-unknown", "/impl/objects/source", { key: "source" }),
+      refusal("impl-key-unknown", "/impl/objects/notAFacet", { key: "notAFacet" }),
       refusal("impl-key-unknown", "/impl/maintenance/explain", { key: "explain" }),
       refusal("impl-key-unknown", "/impl/monitoring/sessions", { key: "sessions" }),
     ]);

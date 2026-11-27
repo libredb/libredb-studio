@@ -41,7 +41,7 @@ function callsOf(run = true, preview = true): Calls {
       endScope: "not-offered",
       transaction: "not-offered",
     },
-    objects: { tree: "not-offered" },
+    objects: { tree: "not-offered", source: "not-offered" },
     maintenance: { run: run ? "offered" : "not-offered", preview: preview ? "offered" : "not-offered" },
     monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };

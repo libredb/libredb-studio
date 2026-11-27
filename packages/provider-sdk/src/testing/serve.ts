@@ -1,7 +1,7 @@
 /**
- * The memory test transport (docs/providers/CONTRACT.md, clauses C-19, C-22 to C-25, C-27, C-31 to C-33 and M-89): `serve`
- * puts a provider module record behind JSON frames, so a test calls a provider exactly as the contract says calls
- * look.
+ * The memory test transport (docs/providers/CONTRACT.md, clauses C-19, C-22 to C-25, C-27, C-31 to C-33, C-115 and
+ * M-89): `serve` puts a provider module record behind JSON frames, so a test calls a provider exactly as the contract
+ * says calls look.
  *
  * Every call crosses as one request frame and one answer frame, each the JSON text of values `encodeValue` wrote; a call
  * with no request part, `health` and `monitoring.poolStats`, carries only its context in its request frame. Each frame
@@ -28,17 +28,19 @@
  * the open context's `policy` and kept with the session,
  * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
  * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers
- * (`checkMonitoringPanelRequest`) and every tree request to the object model the session's engine states
- * (`checkTreeRequest`, clause M-89), reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter
- * against the maintenance of the engine the open context names, which it refuses before any frame when the module's
- * manifest does not declare it,
+ * (`checkMonitoringPanelRequest`), every tree request to the object model the session's engine states
+ * (`checkTreeRequest`, clause M-89) and every source request to it (`checkSourceRequest`, clause C-115), reads
+ * `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine
+ * the open context names, which it refuses before any frame when the module's manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
  * The host's side reads a decoded execute answer as the host core does (`checkExecuteAnswer`, clause C-112) and throws
  * a member outside the SDK's types as a `CallRefusalError`, after closing the answer's sources, so a provider's own
  * test refuses what Studio refuses. It reads a decoded tree answer the same way (`checkTreeAnswer`, clause C-62) and
- * throws an answer that is not its request's action's form as a `CallRefusalError`.
+ * throws an answer that is not its request's action's form as a `CallRefusalError`, and a decoded source answer
+ * (`checkSourceAnswer`, clause C-115), throwing one that is not the SDK's closed source document. It never cuts a
+ * source answer: a text past the character bound crosses whole, and the cut is the host core's (`boundSourceAnswer`).
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
@@ -52,7 +54,7 @@ import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
-import { checkExecuteAnswer, checkTreeAnswer } from "../calls/answers";
+import { checkExecuteAnswer, checkSourceAnswer, checkTreeAnswer } from "../calls/answers";
 import { type CallRefusal, CallRefusalError } from "../calls/refusals";
 import {
   checkConsoleFacet,
@@ -64,6 +66,7 @@ import {
   checkMonitoringPanelRequest,
   checkObjectsFacet,
   checkReadOnlyRequest,
+  checkSourceRequest,
   checkTreeRequest,
   sessionCalls,
   sessionMaintenance,
@@ -90,6 +93,7 @@ import type {
   MonitoringImpl,
   MonitoringPanelAnswer,
   MonitoringPanelRequest,
+  ObjectSourceDocument,
   ObjectsImpl,
   OpenAnswer,
   OpenContext,
@@ -98,6 +102,7 @@ import type {
   ProviderModule,
   ResultSource,
   RowBatch,
+  SourceRequest,
   TransactionAnswer,
   TransactionRequest,
   TreeAnswer,
@@ -185,6 +190,24 @@ function treeRefusals(session: HostSession, request: TreeRequest): readonly Call
   return checkTreeRequest(session.objectModel, request);
 }
 
+/**
+ * The refusals of a source request on `session`: `objects.source` not offered, else every way the request names what
+ * the engine's object model does not state for a source read (`checkSourceRequest`).
+ *
+ * @throws {Error} When the session offers `objects.source` and its engine states no object model, which the
+ * validator's `object-model-missing` refuses in an admitted manifest: the host's defect, as for a tree request.
+ */
+function sourceRefusals(session: HostSession, request: SourceRequest): readonly CallRefusal[] {
+  const offered = checkObjectsFacet(session.calls, "source");
+  if (offered.length > 0) return offered;
+  if (session.objectModel === undefined) {
+    throw new Error(
+      "The session offers objects.source and its engine states no object model, a defect of the host's session.",
+    );
+  }
+  return checkSourceRequest(session.objectModel, request);
+}
+
 /** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
 function limitData(limit: BatchLimit): BatchLimitData {
   return { maxRows: limit.maxRows, maxBytes: limit.maxBytes };
@@ -250,6 +273,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     endScope: consoleImpl.endScope,
     transaction: consoleImpl.transaction,
     tree: objectsImpl?.tree,
+    source: objectsImpl?.source,
     run: maintenanceImpl?.run,
     preview: maintenanceImpl?.preview,
     panel: monitoringImpl?.panel,
@@ -330,6 +354,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       | "console.endScope"
       | "console.transaction"
       | "objects.tree"
+      | "objects.source"
       | "maintenance.run"
       | "maintenance.preview"
       | "monitoring.panel",
@@ -342,6 +367,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       | EndScopeRequest
       | TransactionRequest
       | TreeRequest
+      | SourceRequest
       | MaintenanceRunRequest
       | MaintenancePreviewRequest
       | MonitoringPanelRequest,
@@ -649,9 +675,9 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
             consoleCall<TransactionAnswer>("console.transaction", "transaction", handle, request, ctx),
         }),
   };
-  const tree = provider.tree;
-  const servedObjects: ObjectsImpl<ServedHandle> =
-    tree === undefined
+  const { tree, source } = provider;
+  const servedObjects: ObjectsImpl<ServedHandle> = {
+    ...(tree === undefined
       ? {}
       : {
           tree: async (handle: ServedHandle, request: TreeRequest, ctx: CallContext) => {
@@ -668,7 +694,26 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
             if (check.kind === "refused") throw new CallRefusalError(check.refusals);
             return check.answer;
           },
-        };
+        }),
+    ...(source === undefined
+      ? {}
+      : {
+          source: async (handle: ServedHandle, request: SourceRequest, ctx: CallContext) => {
+            const answer = await facetCall<ObjectSourceDocument>(
+              "objects.source",
+              (session) => sourceRefusals(session, request),
+              source as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
+              objectsImpl,
+              handle,
+              request,
+              ctx,
+            );
+            const check = checkSourceAnswer(request, answer);
+            if (check.kind === "refused") throw new CallRefusalError(check.refusals);
+            return check.answer;
+          },
+        }),
+  };
   const servedMaintenance: MaintenanceImpl<ServedHandle> = {
     ...(provider.run === undefined
       ? {}

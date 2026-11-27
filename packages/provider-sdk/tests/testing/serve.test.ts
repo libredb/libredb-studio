@@ -20,6 +20,7 @@ import {
   CallRefusalError,
   CLEANUP_DEADLINE_MS,
   checkProviderModule,
+  checkSourceAnswer,
   checkTreeAnswer,
   deadlineSignal,
   defineProvider,
@@ -35,6 +36,7 @@ import {
   type MaintenanceRunRequest,
   type MonitoringPanelAnswer,
   type MonitoringPanelRequest,
+  type ObjectSourceDocument,
   type OpenAnswer,
   type OpenContext,
   PAGE_MAX_BYTES,
@@ -45,6 +47,8 @@ import {
   type ResultSource,
   type RowBatch,
   rowsSource,
+  SOURCE_CHARACTER_LIMIT,
+  type SourceRequest,
   type TransactionAnswer,
   type TransactionRequest,
   type TreeAnswer,
@@ -98,13 +102,20 @@ function objectKind(id: string): Json {
   };
 }
 
-/** The fixture engine's object model: one container level, addressed exactly, holding the kinds `table` and `view`. */
+/**
+ * The fixture engine's object model: one container level, addressed exactly, holding the kinds `table` and `view` and
+ * the kind `routine`, which has source.
+ */
 function objectModel(): Json {
   return {
     containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
     containerPathShapes: "exact",
     containerNameSpelling: null,
-    objectKinds: [objectKind("table"), objectKind("view")],
+    objectKinds: [
+      objectKind("table"),
+      objectKind("view"),
+      { ...objectKind("routine"), role: "routine", hasSource: true, sourceLanguage: "sql" },
+    ],
     rowActions: [],
     containersNameKinds: false,
     tablesNeedContainer: false,
@@ -122,6 +133,7 @@ function fixture(
     readonly endScope?: boolean;
     readonly transaction?: boolean;
     readonly tree?: boolean;
+    readonly source?: boolean;
     readonly run?: boolean;
     readonly preview?: boolean;
     readonly panel?: boolean;
@@ -141,6 +153,7 @@ function fixture(
   manifest.calls.console.endScope = options.endScope === false ? "not-offered" : "offered";
   manifest.calls.console.transaction = options.transaction === false ? "not-offered" : "offered";
   manifest.calls.objects.tree = options.tree === false ? "not-offered" : "offered";
+  manifest.calls.objects.source = options.source === false ? "not-offered" : "offered";
   manifest.calls.maintenance.run = options.run === false ? "not-offered" : "offered";
   manifest.calls.maintenance.preview = options.preview === false ? "not-offered" : "offered";
   manifest.calls.monitoring.panel = options.panel === false ? "not-offered" : "offered";
@@ -194,6 +207,11 @@ function fixture(
     endScope: () => ({ openTransaction: "none" }),
     transaction: () => ({ sessionState: "in-transaction" }),
     tree: () => ({ containers: [] }),
+    source: () => ({
+      path: [marker()],
+      kind: "routine",
+      parts: [{ id: marker(), label: marker(), unavailable: marker() }],
+    }),
     run: () => ({ success: true, executionTime: 1, message: marker() }),
     preview: () => ({ summary: marker(), facts: [] }),
     panel: () => ({ storage: [] }),
@@ -237,14 +255,20 @@ function fixture(
       return answers.transaction();
     };
   }
+  const objects: Json = {};
   if (options.tree !== false) {
-    impl.objects = {
-      tree: async (h: unknown, request: unknown, ctx: CallContext) => {
-        seen.push({ call: "objects.tree", handle: h, request, ctx });
-        return answers.tree();
-      },
+    objects.tree = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "objects.tree", handle: h, request, ctx });
+      return answers.tree();
     };
   }
+  if (options.source !== false) {
+    objects.source = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "objects.source", handle: h, request, ctx });
+      return answers.source();
+    };
+  }
+  if (options.tree !== false || options.source !== false) impl.objects = objects;
   const maintenance: Json = {};
   if (options.run !== false) {
     maintenance.run = async (h: unknown, request: unknown, ctx: CallContext) => {
@@ -1097,6 +1121,115 @@ describe("serve", () => {
     ]);
     expect(narrowed.frames.length).toBe(before);
     expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served source call is refused before any frame where the session does not offer it or the model does not admit the request, crosses its request and answer as frames, and a malformed answer is refused on the host side with the core's refusals", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const unstated = marker();
+
+    // Refused before any frame: an unstated kind, a kind without source, a path of no segment or deeper than admitted.
+    const refusedRequests: [SourceRequest, CallRefusal[]][] = [
+      [{ path: [marker(), marker()], kind: unstated }, [{ rule: "request-kind-not-stated", pointer: "/kind" }]],
+      [{ path: [marker(), marker()], kind: "table" }, [{ rule: "request-source-not-stated", pointer: "/kind" }]],
+      [{ path: [], kind: "routine" }, [{ rule: "request-field-empty", pointer: "/path", name: "path" }]],
+      [
+        { path: [marker(), marker(), marker()], kind: "routine" },
+        [{ rule: "request-path-not-admitted", pointer: "/path" }],
+      ],
+    ];
+    for (const [request, refusals] of refusedRequests) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each refusal is its own call's.
+      const refused = await failure(async () => impl.objects?.source?.(opened.handle, request, callContext()));
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual(refusals);
+      expect((refused as CallRefusalError).message).not.toContain(unstated);
+    }
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+
+    // An admitted request crosses as frames; the provider receives a decoded frozen copy, and an answer past the
+    // character bound crosses whole, since the cut is the core's.
+    const request: SourceRequest = { path: [marker(), ""], kind: "routine" };
+    const answer: ObjectSourceDocument = {
+      path: [...request.path],
+      kind: "routine",
+      parts: [
+        {
+          id: marker(),
+          label: marker(),
+          text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1),
+          language: "sql",
+          form: "complete",
+          origin: "stored",
+          edit: { offered: true },
+        },
+        { id: marker(), label: marker(), unavailable: marker(), statement: true },
+      ],
+    };
+    fx.answers.source = () => answer;
+    const got = await impl.objects?.source?.(opened.handle, request, callContext());
+    expect(got).toEqual(answer);
+    expect(got).not.toBe(answer);
+    const [seen] = fx.seen.slice(1);
+    expect(seen?.call).toBe("objects.source");
+    expect(seen?.handle).toBe(fx.handle);
+    expect(seen?.request).toEqual(request);
+    expect(seen?.request).not.toBe(request);
+    expect(deepFrozen(seen?.request)).toBe(true);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual([
+      "to-provider objects.source",
+      "to-host objects.source",
+    ]);
+
+    // A malformed answer crosses as a frame and is refused on the host side with checkSourceAnswer's refusals.
+    const malformed = { ...answer, kind: "view", parts: [] };
+    fx.answers.source = () => malformed;
+    const refused = await failure(async () => impl.objects?.source?.(opened.handle, request, callContext()));
+    const refusals: CallRefusal[] = [
+      { rule: "source-answer-unreadable", pointer: "/kind" },
+      { rule: "source-answer-unreadable", pointer: "/parts" },
+    ];
+    expect(refused).toBeInstanceOf(CallRefusalError);
+    expect((refused as CallRefusalError).refusals).toEqual(refusals);
+    expect(checkSourceAnswer(request, malformed)).toEqual({ kind: "refused", refusals });
+    // A frame outside the closed shapes is refused by name.
+    fx.answers.source = () => ({ ...answer, extra: 1 });
+    const unknown = await failure(async () => impl.objects?.source?.(opened.handle, request, callContext()));
+    expect((unknown as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "objects.source", part: "answer", pointer: "/extra", name: "extra" },
+    ]);
+
+    // A session that does not offer the facet, declared or withdrawn, is refused by name before any frame.
+    const withdrawn = fixture();
+    withdrawn.answers.open = () => ({
+      handle: withdrawn.handle,
+      refine: { calls: { objects: { source: "not-offered" } } },
+    });
+    const narrowed = served(withdrawn);
+    const narrowedSession = await narrowed.impl.open(openContext());
+    const narrowedBefore = narrowed.frames.length;
+    const notOffered = await failure(async () =>
+      narrowed.impl.objects?.source?.(narrowedSession.handle, request, callContext()),
+    );
+    expect((notOffered as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/objects/source", name: "objects.source" },
+    ]);
+    expect(narrowed.frames.length).toBe(narrowedBefore);
+    expect(served(fixture({ source: false })).impl.objects?.source).toBeUndefined();
+
+    // A session offering the facet whose engine states no object model is the host's defect, before any frame.
+    const noModel = served(fixture({ statesModel: false }));
+    const noModelSession = await noModel.impl.open(openContext());
+    const defect = await failure(async () =>
+      noModel.impl.objects?.source?.(noModelSession.handle, request, callContext()),
+    );
+    expect(defect).not.toBeInstanceOf(CallRefusalError);
+    expect((defect as Error).message).toBe(
+      "The session offers objects.source and its engine states no object model, a defect of the host's session.",
+    );
   });
 
   test("a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies", async () => {
@@ -2245,6 +2378,7 @@ describe("serve", () => {
       endScope: false,
       transaction: false,
       tree: false,
+      source: false,
       run: false,
       preview: false,
       panel: false,
@@ -2259,7 +2393,8 @@ describe("serve", () => {
     expect(checkProviderModule(defineProvider(neither.module.manifest, servedNeither))).toEqual([]);
     expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute", "transaction"]);
     expect(Object.keys(servedNeither.console)).toEqual(["execute"]);
-    expect(Object.keys(servedBoth.objects ?? {})).toEqual(["tree"]);
+    expect(Object.keys(servedBoth.objects ?? {})).toEqual(["tree", "source"]);
+    expect(Object.keys(serve(fixture({ tree: false }).module).objects ?? {})).toEqual(["source"]);
     expect(Object.keys(servedNeither.objects ?? {})).toEqual([]);
     expect(Object.keys(servedBoth.maintenance ?? {})).toEqual(["run", "preview"]);
     expect(Object.keys(servedNeither.maintenance ?? {})).toEqual([]);

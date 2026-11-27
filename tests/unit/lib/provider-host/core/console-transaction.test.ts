@@ -54,7 +54,7 @@ function callsOf(transaction = true): Calls {
       endScope: "not-offered",
       transaction: transaction ? "offered" : "not-offered",
     },
-    objects: { tree: "not-offered" },
+    objects: { tree: "not-offered", source: "not-offered" },
     maintenance: { run: "not-offered", preview: "not-offered" },
     monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };

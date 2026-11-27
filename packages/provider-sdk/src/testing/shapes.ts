@@ -8,8 +8,8 @@
  * unions, fails typecheck here until its reader names it. Each record reader is declared as `ShapeOf` its type, a
  * mapped type that requires one entry per member, marked `required` or `optional` as the member is: a member is
  * optional exactly when the type admits a value without it. A union of records is read as the one form its keys name,
- * a request that names its action or its panel as that action's or that panel's shape, and a map with free keys, the
- * tree's counts, key by key. A timestamp member is read as a valid `Date`, the value the codec decodes its timestamp to.
+ * a request that names its action or its panel as that action's or that panel's shape, a source part as the form its
+ * `unavailable` and `statement` keys name, and a map with free keys, the tree's counts, key by key. A timestamp member is read as a valid `Date`, the value the codec decodes its timestamp to.
  *
  * A reader reads a value `decodeValue` produced, so every record is a plain object and every list dense and no longer
  * than the frame text. It still reads every key by its own descriptor, never calling a getter, and stops a list at its
@@ -59,7 +59,10 @@ import type {
   MonitoringTablesRequest,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectPartEdit,
   ObjectReadRange,
+  ObjectSourceDocument,
+  ObjectSourcePart,
   OpenAnswer,
   OpenContext,
   OpenPolicy,
@@ -74,6 +77,7 @@ import type {
   SessionActivity,
   SlowQuery,
   SlowQueryStats,
+  SourceRequest,
   StorageStats,
   TableStats,
   TlsSettings,
@@ -168,6 +172,11 @@ export interface FrameShapes {
     readonly request: TreeRequest;
     readonly answer: TreeAnswer;
   };
+  readonly "objects.source": {
+    readonly context: ContextData<CallContext>;
+    readonly request: SourceRequest;
+    readonly answer: ObjectSourceDocument;
+  };
   readonly "maintenance.run": {
     readonly context: ContextData<CallContext>;
     readonly request: MaintenanceRunRequest;
@@ -207,6 +216,7 @@ const number = value((item) => typeof item === "number");
 const boolean = value((item) => typeof item === "boolean");
 const textOrNumber = value((item) => typeof item === "string" || typeof item === "number");
 const exactlyTrue = value((item) => item === true);
+const exactlyFalse = value((item) => item === false);
 /** A valid `Date`, a subclass included: what the value codec decodes a timestamp to. */
 const timestamp = value((item) => item instanceof Date && !Number.isNaN(item.getTime()));
 /** Any value in the codec's domain: the decoder admitted it. */
@@ -564,6 +574,78 @@ const treeAnswer = oneOfRecords([
     ),
   }),
 ]);
+
+/** A readable source part. */
+type ReadablePart = Extract<ObjectSourcePart, { readonly text: string }>;
+
+const SOURCE_FORMS = Object.freeze<Record<ReadablePart["form"], true>>({ complete: true, partial: true });
+const SOURCE_ORIGINS = Object.freeze<Record<ReadablePart["origin"], true>>({
+  stored: true,
+  regenerated: true,
+  rendered: true,
+});
+
+const readOfferedEdit = record<Extract<ObjectPartEdit, { readonly offered: true }>>({ offered: required(exactlyTrue) });
+const readRefusedEdit = record<Extract<ObjectPartEdit, { readonly offered: false }>>({
+  offered: required(exactlyFalse),
+  reason: required(text),
+});
+
+/** A part's edit: refused with its sentence where it has a `reason` key, offered otherwise. */
+const partEdit: Reader = (item, pointer, found) => {
+  (isPlainRecord(item) && Object.hasOwn(item, "reason") ? readRefusedEdit : readOfferedEdit)(item, pointer, found);
+};
+
+const readReadablePart = record<ReadablePart>({
+  id: required(text),
+  label: required(text),
+  text: required(text),
+  language: required(text),
+  form: required(vocabulary(SOURCE_FORMS)),
+  origin: required(vocabulary(SOURCE_ORIGINS)),
+  truncated: optional(
+    record<NonNullable<ReadablePart["truncated"]>>({ limit: required(number), reason: required(text) }),
+  ),
+  edit: optional(partEdit),
+});
+const readRefusedPart = record<
+  Exclude<Extract<ObjectSourcePart, { readonly unavailable: string }>, { readonly statement: true }>
+>({
+  id: required(text),
+  label: required(text),
+  unavailable: required(text),
+});
+const readStatementPart = record<Extract<ObjectSourcePart, { readonly statement: true }>>({
+  id: required(text),
+  label: required(text),
+  unavailable: required(text),
+  statement: required(exactlyTrue),
+});
+
+/**
+ * A source part, read as the form its keys name: the engine's statement where it has `unavailable` and `statement`
+ * keys, the engine's sentence for a part it cannot read where it has `unavailable` alone, and a readable part
+ * otherwise. So a text beside `unavailable` is a key the sentence's form cannot have. The frame reader reads shapes only:
+ * an empty text, a sentence past its bound and a repeated id are the host's answer check's.
+ */
+const sourcePart: Reader = (item, pointer, found) => {
+  const keys = isPlainRecord(item) ? Object.getOwnPropertyNames(item) : [];
+  const reader = !keys.includes("unavailable")
+    ? readReadablePart
+    : keys.includes("statement")
+      ? readStatementPart
+      : readRefusedPart;
+  reader(item, pointer, found);
+};
+
+const sourceRequest = record<SourceRequest>({ path: required(path), kind: required(text) });
+
+/** A source document: its path, its kind and its parts, each read as its form (`sourcePart`). */
+const sourceAnswer = record<ObjectSourceDocument>({
+  path: required(path),
+  kind: required(text),
+  parts: required(listOf(sourcePart)),
+});
 
 const MAINTENANCE_OPERATION_WORDS = Object.freeze<Record<MaintenanceRunRequest["operation"], true>>({
   vacuum: true,
@@ -1032,6 +1114,7 @@ const READERS = Object.freeze<{
     }),
   },
   "objects.tree": { context: callContext, request: treeRequest, answer: treeAnswer },
+  "objects.source": { context: callContext, request: sourceRequest, answer: sourceAnswer },
   "maintenance.run": { context: callContext, request: maintenanceRunRequest, answer: maintenanceRunAnswer },
   "maintenance.preview": { context: callContext, request: maintenancePreviewRequest, answer: maintenancePreview },
   "monitoring.panel": { context: callContext, request: panelRequest, answer: panelAnswer },

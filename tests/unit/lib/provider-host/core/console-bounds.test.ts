@@ -37,7 +37,7 @@ const child = boundedChild({
           endScope: "offered",
           transaction: "offered",
         },
-        objects: { tree: "not-offered" },
+        objects: { tree: "not-offered", source: "not-offered" },
         maintenance: { run: "not-offered", preview: "not-offered" },
         monitoring: { panel: "not-offered", poolStats: "not-offered" },
       },

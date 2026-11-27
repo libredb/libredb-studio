@@ -8,7 +8,8 @@
  *
  * The SDK declares each shape the contexts and the object tree share with Studio's own source (`TlsSettings`,
  * `EgressDecision`, `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`, and the tree's `Container`,
- * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, the maintenance run's answer and the
+ * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, the source document `ObjectSourceDocument`
+ * and the shapes it holds, the maintenance run's answer and the
  * maintenance preview, the monitoring panels' answers and the pool statistics, and the health answer) itself, because a
  * package imports nothing from Studio; a census in Studio's tests holds each one mutually assignable with Studio's
  * type.
@@ -59,7 +60,7 @@ export type TransactionAction = (typeof TRANSACTION_ACTIONS)[number];
  * The optional object facets, the keys of `$defs/objectsCalls`, in schema order. Each is the path to its function under
  * the implementation's `objects`, and the manifest's `calls.objects` declares each as offered or not.
  */
-export const OBJECTS_FACETS = Object.freeze(["tree"] as const) satisfies readonly (keyof ObjectsCalls)[];
+export const OBJECTS_FACETS = Object.freeze(["tree", "source"] as const) satisfies readonly (keyof ObjectsCalls)[];
 
 export type ObjectsFacet = (typeof OBJECTS_FACETS)[number];
 
@@ -290,6 +291,7 @@ export interface Refinement {
     };
     readonly objects?: {
       readonly tree?: FacetOffer;
+      readonly source?: FacetOffer;
     };
     readonly maintenance?: {
       readonly run?: FacetOffer;
@@ -667,12 +669,57 @@ export type TreeAnswerOf<A extends TreeAction> = {
   readonly describeMany: ObjectDetailBatch;
 }[A];
 
+/** What a source text is: `complete` runs as given, and `partial` is a body or a bare statement that does not. */
+export type ObjectSourceForm = "complete" | "partial";
+
+/**
+ * Where a source text came from: `stored`, the author's own text; `regenerated`, the engine rebuilding it from its
+ * catalog; `rendered`, a structured definition the provider prints as text.
+ */
+export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
+
+/** Whether a readable part can be submitted back, and the engine's sentence where it cannot. */
+export type ObjectPartEdit = { readonly offered: true } | { readonly offered: false; readonly reason: string };
+
+/**
+ * One part of an object's source document: a readable text with its language, form and origin, the bound that cut it
+ * and whether it can be edited; the engine's sentence for a part it cannot read; or a neutral statement about the
+ * object, the engine's sentence marked `statement`. Every text and sentence is filled, never empty or whitespace only.
+ */
+export type ObjectSourcePart =
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly text: string;
+      readonly language: string;
+      readonly form: ObjectSourceForm;
+      readonly origin: ObjectSourceOrigin;
+      readonly truncated?: { readonly limit: number; readonly reason: string };
+      readonly edit?: ObjectPartEdit;
+    }
+  | { readonly id: string; readonly label: string; readonly unavailable: string }
+  | { readonly id: string; readonly label: string; readonly unavailable: string; readonly statement: true };
+
+/** One object's source document: the object's path and kind, as its request named them, and at least one part. */
+export interface ObjectSourceDocument {
+  readonly path: readonly string[];
+  readonly kind: string;
+  readonly parts: readonly [ObjectSourcePart, ...ObjectSourcePart[]];
+}
+
+/** Read the source document of the object `path` names, of kind `kind`. */
+export interface SourceRequest {
+  readonly path: readonly string[];
+  readonly kind: string;
+}
+
 /**
  * The object facets. Each is implemented exactly when the manifest's `calls.objects` offers it. Written as methods so
  * an implementation over its own handle type is a `ProviderImpl<unknown>` too.
  */
 export interface ObjectsImpl<Handle> {
   tree?(handle: Handle, request: TreeRequest, ctx: CallContext): Promise<TreeAnswer>;
+  source?(handle: Handle, request: SourceRequest, ctx: CallContext): Promise<ObjectSourceDocument>;
 }
 
 /**

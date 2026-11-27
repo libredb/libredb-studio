@@ -1,6 +1,6 @@
 /**
  * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57,
- * C-67, C-68, C-71, C-78 and M-89).
+ * C-67, C-68, C-71, C-78, C-115 and M-89).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The refinement may also narrow the session's
@@ -15,8 +15,10 @@
  * the session's maintenance with `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is
  * never sent an operation or a placement its session's maintenance does not offer, and every monitoring panel request
  * to the panels the session's engine offers with `checkMonitoringPanelRequest`, so a package is never asked for a panel
- * its engine does not offer, and every tree request to the session's object model with `checkTreeRequest`, so a package
- * is never asked for a level or a kind its engine's model does not state.
+ * its engine does not offer, every tree request to the session's object model with `checkTreeRequest`, so a package
+ * is never asked for a level or a kind its engine's model does not state, and every source request to it with
+ * `checkSourceRequest`, so a package is never asked for the source of a kind its model states without source, or at a
+ * path deeper than its model admits for the kind.
  */
 import type {
   Calls,
@@ -47,6 +49,7 @@ import {
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
+  type SourceRequest,
   type TreeRequest,
 } from "./types";
 
@@ -196,6 +199,34 @@ export function checkTreeRequest(model: ObjectModel, request: TreeRequest): read
       if (!stated(request.kind)) refusals.push({ rule: "request-kind-not-stated", pointer: "/kind" });
       break;
   }
+  return refusals;
+}
+
+/**
+ * Every way `request` names what `model`, the object model of the session's engine, does not state for a source read,
+ * in request order. The path: no segment is `request-field-empty`, named `path`; an empty segment is a name and passes;
+ * and, for a stated kind the key browser does not enumerate, a path longer than the deepest container path the levels
+ * admit (the level count, under either path shape) plus the object's name, plus its parent's for a kind attached to
+ * another, is `request-path-not-admitted`, since the path's shape below that bound is the provider's to read. A kind
+ * the key browser enumerates is addressed by a path of any depth. The kind: one that is no stated kind's id is
+ * `request-kind-not-stated`, and a stated kind whose `hasSource` is false `request-source-not-stated`. A kind is
+ * compared with each stated id, so an inherited name such as `__proto__` is unstated and nothing throws. A path that
+ * is not a list is not read here: it is not a request of this shape, and reading the request's frame refuses it by
+ * name. A refusal names a pointer into the request, never a value of it.
+ */
+export function checkSourceRequest(model: ObjectModel, request: SourceRequest): readonly CallRefusal[] {
+  const refusals: CallRefusal[] = [];
+  const kind = model.objectKinds.find((objectKind) => objectKind.id === request.kind);
+  const path: unknown = request.path;
+  if (Array.isArray(path)) {
+    const deepest = model.containerLevels.length + 1 + (kind === undefined || kind.attachedTo === null ? 0 : 1);
+    if (path.length === 0) refusals.push({ rule: "request-field-empty", pointer: "/path", name: "path" });
+    else if (kind !== undefined && kind.enumeratedBy !== "key-browser" && path.length > deepest) {
+      refusals.push({ rule: "request-path-not-admitted", pointer: "/path" });
+    }
+  }
+  if (kind === undefined) refusals.push({ rule: "request-kind-not-stated", pointer: "/kind" });
+  else if (!kind.hasSource) refusals.push({ rule: "request-source-not-stated", pointer: "/kind" });
   return refusals;
 }
 
@@ -620,6 +651,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
     }),
     objects: Object.freeze({
       tree: narrowedObjects?.tree ?? declared.objects.tree,
+      source: narrowedObjects?.source ?? declared.objects.source,
     }),
     maintenance: Object.freeze({
       run: narrowedMaintenance?.run ?? declared.maintenance.run,

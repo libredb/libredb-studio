@@ -931,7 +931,7 @@ describe("runEditorQuery on the host core", () => {
             endScope: "not-offered",
             transaction: "not-offered",
           },
-          objects: { tree: "not-offered" },
+          objects: { tree: "not-offered", source: "not-offered" },
           maintenance: { run: "not-offered", preview: "not-offered" },
           monitoring: { panel: "not-offered", poolStats: "not-offered" },
         },
