@@ -794,6 +794,36 @@ Its children run without `NODE_OPTIONS`, `NODE_PATH` or any `npm_config_*` varia
 The whole file takes about 5 s; the build alone about 1.5 s and 785 MB.
 `tests/unit/provider-sdk/sdk-pack.test.ts` holds the script's command line, the manifest rule and the staged-package check in process.
 
+### The provider pack step (`providers:pack`)
+
+`bun run providers:pack -- --out <absolute directory> [<absolute package directory> ...]` (`scripts/providers-pack.ts`) turns provider packages into artifacts a providers directory holds, each placed as `<out>/<name>/<version>/`.
+With no package directory named, it packs every provider package of the repository, `packages/provider-*` but the SDK (`providerPackageDirectories` in `scripts/workspace-packages.mjs`).
+It writes no lock: `bun run providers:lock` locks what it placed (C-91).
+
+Studio holds no bundler configuration of any package: the step runs the package's own `build` script, so what a driver needs to bundle stays in the package.
+It runs `bun run --shell=bun build -- --outdir <dir>`, Bun's own shell on every platform, with the package's directory as the working directory, so the build resolves its dependencies from the workspace's install.
+`<dir>` is an empty directory in a temporary directory outside the repository, removed when the package is done.
+The build sees the caller's `PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP` and `TMPDIR` alone, with `HOME` and `USERPROFILE` an empty directory of its own, plus the `NODE`, `PWD` and `npm_*` variables `bun run` adds; no `NODE_OPTIONS`, `NODE_PATH`, `BUN_*` or `LIBREDB_*` reaches it.
+A build has no deadline: a deadline on `bun run` ends `bun` and leaves the build's own children running (measured with Bun 1.4.4, 2026-11-27), so a build that never ends holds the step, and the CI job's timeout bounds a CI run.
+
+A package's build writes its manifest's `runtime.entry` and every other file the artifact needs under `--outdir`, and nothing else: not `package.json` or `libredb-provider.json`, which the step copies from the package's directory, and nothing into the package's directory.
+It writes the same bytes for the same source and install, so no absolute path and no time stamp.
+The step reads `package.json` and `libredb-provider.json` once before the build, each a regular file never reached through a link, and places exactly those bytes in the artifact.
+A build that changed either, or left either other than a regular file, is refused by one sentence naming the file.
+esbuild 0.28.2 writes each input's path, relative to the package's directory with links followed, into a comment of the bundle (measured 2026-11-27), so a bundle's bytes are the same in every checkout only when every input lies inside the repository.
+
+What the build wrote is judged by the lock command's own sequence over one artifact directory (`artifactEntry`), then by admission's own checks before import, each finding named by file: an import outside the package by `closureOutside` with Node.js's built-in list, a TypeScript file, a native addon, and a manifest declaring `runtime.native`.
+Then every module file, read by the lock's own parse, is refused for a runtime load the lock's record cannot hold (C-114), each named by file and line: a module that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`.
+The rule runs at pack time only, never at admission, and `scripts/providers-pack.ts` lists what it does not refuse.
+esbuild's ES module bundle of a driver that calls `require` carries a `__require` shim that reads `require` as a value: under Node.js 24 it throws `Dynamic require of "events" is not supported`, and under Bun 1.4.4 it loads the module (measured 2026-11-27), so a test under Bun would pass a bundle Studio's Node.js server cannot load.
+Every refusal is one sentence on standard error; a refused package gets nothing written and a closing sentence saying so, and the other packages are still packed.
+The output directory must exist and lie outside the repository, as must the temporary directory, and an artifact already at `<out>/<name>/<version>` is refused, never overwritten.
+That destination, its existing part resolved through any link, must lie outside the repository too, since `--out` may be an ancestor of the repository or hold a link into it.
+The command prints `<name> <version> <digest>` per package placed, the digest the lock command writes for it, and exits 0 when nothing was refused, 1 when anything was, 2 on any other command line.
+Nothing is written into the repository.
+
+`tests/unit/scripts/providers-pack.test.ts` packs planted packages in a planted root under the system's temporary directory, never under the repository's `packages/`, where the isolation ratchet would count one as an engine: a bundled package with a CommonJS dependency, locked by the lock command and admitted; every refusal; two packs giving one digest; the repository's listing unchanged; the build's working directory, arguments and environment; and each runtime-load form with its controls.
+
 ### Provider source coupling lint
 
 A block in `eslint.config.mjs` covers `packages/provider-*/src/**`, every JavaScript and TypeScript extension, except `packages/provider-kit/**`.

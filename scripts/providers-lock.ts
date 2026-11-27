@@ -138,6 +138,12 @@ function sorted(names: readonly string[]): string[] {
 
 /** A JavaScript module file by its extension, in any letter case: the only files the command scans. */
 const MODULE_FILE = /\.[mc]?js$/i;
+
+/** Whether the artifact path `file` is a module file: `.js`, `.mjs` or `.cjs` in any letter case. */
+export function isModuleFile(file: string): boolean {
+  return MODULE_FILE.test(file);
+}
+
 /** UTF-8 that refuses an invalid byte. */
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -199,11 +205,12 @@ function reading(text: string, awaitOperator: boolean): { program: AnyNode; comm
 }
 
 /**
- * The imports `bytes` makes statically in every reading that parses, or null when they are not UTF-8 or the parser
- * reads them neither way: a syntax error, an HTML-like comment, `new.target` outside a function, or nesting past the
- * runtime's stack, which acorn reports as a syntax error.
+ * The text of the module file `bytes` and the tree of every reading of it that parses, or null when they are not
+ * UTF-8 or the parser reads them neither way: a syntax error, an HTML-like comment, `new.target` outside a function, or
+ * nesting past the runtime's stack, which acorn reports as a syntax error. The lock's one parse of a module file: the
+ * import record reads it here, and so does the pack step's runtime-load rule (scripts/providers-pack.ts).
  */
-function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
+export function parsedModule(bytes: Buffer): { text: string; programs: AnyNode[] } | null {
   let text: string;
   try {
     text = STRICT_UTF8.decode(bytes);
@@ -223,8 +230,15 @@ function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | nul
   ) {
     return null;
   }
+  return { text, programs: readings.map((read) => read.program) };
+}
+
+/** The imports `bytes` makes statically in every reading that parses, or null when `parsedModule` answers null. */
+function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
+  const parsed = parsedModule(bytes);
+  if (parsed === null) return null;
   const found: { specifier: string; kind: ImportKind }[] = [];
-  const pending: AnyNode[] = readings.map((read) => read.program);
+  const pending: AnyNode[] = [...parsed.programs];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     const recorded = recordedImport(node);
     if (recorded !== null) found.push(recorded);
@@ -246,7 +260,7 @@ function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | nul
 export function moduleImports(directory: string, files: readonly ArtifactFile[]): ModuleImport[] | string {
   const pairs = new Map<string, ModuleImport>();
   for (const file of files) {
-    if (!MODULE_FILE.test(file.path)) continue;
+    if (!isModuleFile(file.path)) continue;
     if (!inForm(file.path, IMPORT_FROM_FORM)) return "a module path is longer than 1024 characters";
     const found = scanned(fs.readFileSync(path.join(directory, ...file.path.split("/"))));
     if (found === null) return `${file.path}: its parser cannot read it, or it is not UTF-8`;
