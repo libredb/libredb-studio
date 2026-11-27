@@ -13,7 +13,7 @@ import { WEAVIATE_CONSOLE } from "@/lib/languages/weaviateapi/routes";
  * what guard.ts refuses (a write route, a model-calling key, an alpha other than 0, an unknown key) the editor refuses
  * before anything is sent.
  */
-export const WEAVIATE_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const WEAVIATE_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: WEAVIATE_DESTRUCTIVE_OPERATIONS,
   read: readWeaviateOperations,
   decidesAlone: true,
@@ -21,4 +21,4 @@ export const WEAVIATE_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: weaviateRefusal,
   maxTextBytes: WEAVIATE_CONSOLE.maxTextBytes,
-};
+});

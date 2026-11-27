@@ -9,7 +9,7 @@ import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/
  * parse. v1 only reads, so nothing asks; what guard.ts refuses (a write or stream verb, a key under __oxia/, a refused
  * flag) the editor refuses before anything is sent.
  */
-export const OXIA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const OXIA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: OXIA_DESTRUCTIVE_OPERATIONS,
   read: readOxiaOperations,
   decidesAlone: true,
@@ -18,4 +18,4 @@ export const OXIA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: oxiaRefusal,
   maxTextBytes: OXIA_MAX_TEXT_BYTES,
-};
+});

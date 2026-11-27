@@ -10,7 +10,7 @@ import type { DestructiveVocabulary, OperationReader } from "@/lib/db/destructiv
  * (#1085 S9). Series deletion and snapshots, which are the admin API, and the
  * lifecycle endpoints are calls this product never makes (#1085, section 2).
  */
-const PROMETHEUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+const PROMETHEUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /**
  * What a PromQL buffer would run: never an operation this gate asks about.
@@ -22,8 +22,8 @@ const PROMETHEUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>()
 const readPrometheusOperations: OperationReader = () => [];
 
 /** Prometheus's row of the confirmation gate's vocabulary. */
-export const PROMETHEUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const PROMETHEUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS,
   read: readPrometheusOperations,
   decidesAlone: true,
-};
+});

@@ -9,7 +9,7 @@ import type { DestructiveVocabulary, OperationReader } from "@/lib/db/destructiv
  * commits an offset, joins a group or creates a topic, and `tests/unit/db/kafka/seam-guard.test.ts`
  * holds the one file that calls its client library to an allowlist of reads (#1088, section 2).
  */
-const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /**
  * What a Kafka buffer would run: never an operation this gate asks about.
@@ -21,8 +21,8 @@ const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
 const readKafkaOperations: OperationReader = () => [];
 
 /** Kafka's row of the confirmation gate's vocabulary. */
-export const KAFKA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const KAFKA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: KAFKA_DESTRUCTIVE_OPERATIONS,
   read: readKafkaOperations,
   decidesAlone: true,
-};
+});

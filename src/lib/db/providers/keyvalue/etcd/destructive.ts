@@ -6,7 +6,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/guard";
 
 /** etcd's row of the confirmation gate's vocabulary. */
-export const ETCD_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const ETCD_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: ETCD_DESTRUCTIVE_OPERATIONS,
   // The provider's own parser, read by guard.ts, so what asks and what runs are one parse (#1089 5.5). Text
   // it refuses names nothing, where every other reader answers "could not tell": the provider refuses that
@@ -17,4 +17,4 @@ export const ETCD_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   typedConfirmation: etcdTypedConfirmation,
   // A put's value is part of the statement, so no etcd statement is posted for an AI analysis (#1089 E10).
   safetyAnalysis: false,
-};
+});

@@ -7,9 +7,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * posted for an AI analysis. The absence is structural: the encoder has no function that writes a PUBLISH, so no
  * console text could change a plant even if one named a verb.
  */
-export const SPARKPLUG_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const SPARKPLUG_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

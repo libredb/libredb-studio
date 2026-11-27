@@ -10,7 +10,7 @@
 import { parseOxiaCommand } from "./commands";
 
 /** The operations the confirmation gate asks about: none, because v1 only reads (O1). */
-export const OXIA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+export const OXIA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /** The vocabulary row's `refuse`: the parser with the browser's context; undefined to send. */
 export function oxiaRefusal(text: string): string | undefined {

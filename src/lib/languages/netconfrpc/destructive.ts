@@ -8,9 +8,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * read operations and a close, and no function in the provider can build an `<edit-config>`, a `<commit>` or a
  * `<lock>`. Naming an operation here would claim this provider can send one.
  */
-export const NETCONF_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const NETCONF_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

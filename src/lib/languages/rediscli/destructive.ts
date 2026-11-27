@@ -197,9 +197,9 @@ const readRedisOperations: OperationReader = (query) => {
  * Each line of the text is one command (docs/providers/redis.md 3.4a), and a second command is refused in the editor
  * with the reading the provider runs, before anything is sent, rather than run as one merged command.
  */
-export const REDIS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: REDIS_DESTRUCTIVE_COMMANDS,
+export const REDIS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(REDIS_DESTRUCTIVE_COMMANDS),
   read: readRedisOperations,
   decidesAlone: false,
   refuse: redisRefusal,
-};
+});

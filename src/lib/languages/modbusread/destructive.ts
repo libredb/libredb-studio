@@ -7,9 +7,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * the shape MTConnect and Prometheus use. The encoder builds four read function codes and the identification request
  * and nothing else, so there is no destructive verb to find; naming one would claim this provider can send it.
  */
-export const MODBUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const MODBUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

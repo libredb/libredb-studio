@@ -10,11 +10,11 @@ import { firestoreRefusal } from "@/lib/db/providers/document/firestore/console/
  * modular API, a `${` in a template string) the editor refuses before anything is sent, past the console's 64 KiB
  * bound. A statement names collections, ids and values, so none is posted for an AI analysis.
  */
-export const FIRESTORE_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const FIRESTORE_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-  refuse: (text) => firestoreRefusal(text) ?? undefined,
+  refuse: (text: string) => firestoreRefusal(text) ?? undefined,
   maxTextBytes: FIRESTORE_LIMITS.maxConsoleBytes,
-};
+});

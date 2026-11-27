@@ -13,7 +13,7 @@ import { S3_MAX_TEXT_BYTES } from "@/lib/db/providers/objectstore/s3/console/con
  * parse. v1 only reads, so nothing asks; what the guard refuses (a write command, an unknown flag, a bucket or key the
  * console cannot address) the editor refuses before anything is sent.
  */
-export const S3_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const S3_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: S3_DESTRUCTIVE_OPERATIONS,
   read: readS3Operations,
   decidesAlone: true,
@@ -21,4 +21,4 @@ export const S3_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: s3Refusal,
   maxTextBytes: S3_MAX_TEXT_BYTES,
-};
+});

@@ -7,9 +7,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * record is exhaustive over every engine whose text is not SQL, and its operations list is empty by construction:
  * this provider has no code that can write to a broker.
  */
-export const MQTT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const MQTT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});
