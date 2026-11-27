@@ -665,7 +665,10 @@ function textManifest(change: (text: Json) => void): Json {
   return agentManifest((agent) => change(agent.text));
 }
 
-/** The Kafka fixture speaking `acmeread`, whose statement language data states the MCP tool of `agentMcp`, changed by `change`. */
+/**
+ * The Kafka fixture speaking `acmeread`, whose statement language data states the MCP tool of `agentMcp`, changed by
+ * `change`.
+ */
 function mcpManifest(change: (mcp: Json) => void): Json {
   return agentManifest((agent) => change(agent.mcp));
 }

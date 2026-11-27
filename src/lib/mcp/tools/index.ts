@@ -6,7 +6,10 @@ import { ListConnectionsInputSchema, registerListConnections } from "./list-conn
 import { registerStatementTools } from "./run-statement";
 import { MCP_STATEMENT_INPUT_SCHEMAS, type McpStatementTool } from "./statement-arms";
 
-/** Every MCP tool's name: the two metadata tools, and each statement tool its language's MCP facet declares. */
+/**
+ * Every MCP tool's name: the metadata tools every engine shares, and each statement tool its language's MCP facet
+ * declares.
+ */
 export type McpToolName = "list_connections" | "inspect_schema" | McpStatementTool;
 
 /**
