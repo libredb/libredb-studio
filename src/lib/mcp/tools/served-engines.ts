@@ -1,6 +1,6 @@
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { EngineGrants } from "@/lib/db/claim-grants";
-import { type EngineId, type EngineRecord, servedEngines } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngines } from "@/lib/db/server-catalog";
 
 /**
  * The one served-engine resolver of the MCP statement tools. A tool's served set, its
@@ -26,20 +26,18 @@ export type McpExposure = (
 ) => Pick<EngineGrants, "agentExecution" | "exposable" | "statementRead" | "statementLanguage">;
 
 /**
- * The engines of `engines` an MCP tool whose statements are in `language` serves, in their order, read when called;
- * `engines` defaults to the served records, and `exposure`, the reader of an engine's grants, to the engine record's,
- * both injectable for the tests.
+ * The records of `engines` an MCP tool whose statements are in `language` serves, in their order and by reference, read
+ * when called, so a caller takes each engine's id and display name from one record; `engines` defaults to the served
+ * records, and `exposure`, the reader of an engine's grants, to the engine record's, both injectable for the tests.
  */
 export function mcpStatementEngines(
   language: AgentStatementLanguageId,
   engines: ReadonlyMap<string, EngineRecord> = servedEngines(),
   exposure: McpExposure = (engine) => engine.grants,
-): readonly EngineId[] {
-  return [...engines.values()]
-    .filter((engine) => {
-      if (!engine.offers.executionProfiles) return false;
-      const grants = exposure(engine);
-      return grants.agentExecution && grants.exposable && grants.statementRead && grants.statementLanguage === language;
-    })
-    .map((engine) => engine.id);
+): readonly EngineRecord[] {
+  return [...engines.values()].filter((engine) => {
+    if (!engine.offers.executionProfiles) return false;
+    const grants = exposure(engine);
+    return grants.agentExecution && grants.exposable && grants.statementRead && grants.statementLanguage === language;
+  });
 }

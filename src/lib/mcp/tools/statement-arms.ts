@@ -214,8 +214,9 @@ function statementArm(
   facet: AgentLanguageMcpDeclaredFacet,
   served: ReadonlyMap<string, EngineRecord>,
 ): McpStatementArm {
-  const types = mcpStatementEngines(language, served);
-  const engines = engineNames(types.map((id) => served.get(id) as EngineRecord));
+  const records = mcpStatementEngines(language, served);
+  const types = records.map((engine) => engine.id);
+  const engines = engineNames(records);
   const argument = AGENT_LANGUAGE_COPY[language].argument;
   return Object.freeze({
     language,

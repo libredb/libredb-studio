@@ -76,7 +76,10 @@ const typesOf = (arm: McpStatementArm | null | undefined): readonly string[] => 
 
 /** The engines `language`'s tool serves, as text: the served records' ids, read through `exposure` where one is passed. */
 const servedIds = (language: AgentStatementLanguageId, exposure?: McpExposure): readonly string[] =>
-  exposure === undefined ? mcpStatementEngines(language) : mcpStatementEngines(language, servedEngines(), exposure);
+  (exposure === undefined
+    ? mcpStatementEngines(language)
+    : mcpStatementEngines(language, servedEngines(), exposure)
+  ).map((engine) => engine.id);
 const SHIPPED_TYPES = Object.keys(statementRead) as DatabaseType[];
 const LANGUAGES = [...new Set(Object.values(statementLanguage))].filter(
   (language): language is AgentStatementLanguageId => language !== null,
@@ -96,6 +99,13 @@ const symmetricDifference = (a: readonly string[], b: readonly string[]): string
 ];
 
 describe("mcpStatementEngines", () => {
+  test("answers the served records themselves, each the one its id keys in the served map", () => {
+    const served = servedEngines();
+    const engines = mcpStatementEngines("sql");
+    expect(engines.length).toBeGreaterThan(0);
+    expect(engines.filter((engine) => served.get(engine.id) !== engine)).toEqual([]);
+  });
+
   test("RUN_READ_QUERY_TYPES is exactly the SQL engines every exposure record lets through", () => {
     expect<readonly string[]>(RUN_READ_QUERY_TYPES).toEqual(servedIds("sql"));
     expect(RUN_READ_QUERY_TYPES).toEqual(

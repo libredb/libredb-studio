@@ -231,7 +231,7 @@ describe("the statement arms", () => {
     (_tool, arm) => {
       expect(arm.argument).toBe(AGENT_LANGUAGE_COPY[arm.language].argument);
       expect(arm.inputSchema.shape).toHaveProperty(arm.argument);
-      expect(arm.types).toEqual(mcpStatementEngines(arm.language));
+      expect(arm.types).toEqual(mcpStatementEngines(arm.language).map((engine) => engine.id));
       for (const type of arm.types) expect(statementLanguage[type as string as DatabaseType]).toBe(arm.language);
     },
   );
