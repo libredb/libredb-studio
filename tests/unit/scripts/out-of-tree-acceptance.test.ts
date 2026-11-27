@@ -73,7 +73,8 @@ const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
  * and a probe against the same build and providers directory on 2026-11-25 (main at the package session's head);
  * `listBody`'s `confirmation: "unconfirmed"` mark is the one a green local run of the script asserted on 2026-11-27,
  * once the gate asked about every statement of an engine no register row reviews. The package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
- * session cookie's value is drawn at run time.
+ * session cookie's value is drawn at run time. `refusedBody` is the answer to acceptance.json's refused statement, as
+ * step 5's evidence printed it in a green local run of the script on 2026-11-27.
  */
 const SAMPLES = {
   lockStdout: (lockFile: string): string =>
@@ -101,6 +102,11 @@ const SAMPLES = {
     statusCode: 503,
     kind: "provider-unavailable",
     outcome: "unknown",
+  },
+  refusedBody: {
+    error: "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+    code: "INTERNAL_ERROR",
+    statusCode: 500,
   },
   unknownBody: {
     error: `No provider for the connection type "${engineId}" is installed in this LibreDB Studio.`,
@@ -655,13 +661,9 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
 
   test("step 5 fails when a refused statement's answer holds the package's own words or lacks Studio's code", () => {
     const { refused } = fixture.acceptance;
-    const body = {
-      error: refused.sentence,
-      code: refused.code,
-      statusCode: 500,
-      kind: "internal",
-      outcome: "unknown",
-    };
+    const body: Record<string, unknown> = { ...SAMPLES.refusedBody };
+    // The sample is the answer to the refused statement acceptance.json names.
+    expect([body.code, body.error]).toEqual([refused.code, refused.sentence]);
     const quoted = `"${refused.statement}" answered`;
     expect(refusedProblems({ status: 500, body }, refused)).toEqual([]);
 
