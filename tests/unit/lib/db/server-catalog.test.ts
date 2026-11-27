@@ -966,6 +966,25 @@ describe("a package engine's register row", () => {
     expect(sqlTextOf(grantsOf([text], STUDIO_GRANT_REGISTER, "acmetext"))).toEqual(restrictive);
   });
 
+  test("a package engine requesting a statement language Studio has no module for is composed with no statement language granted", () => {
+    const acme = admittedFor(
+      "acme-language",
+      admittedManifest("acmelanguage", (engine) => {
+        engine.agent = { statementLanguage: "acmeql", overlay: { dialect: null, grounding: null } };
+      }),
+    );
+
+    // No row, and a row granting a language of Studio's: the boot composes the catalog and grants no language.
+    expect(grantsOf([acme], STUDIO_GRANT_REGISTER, "acmelanguage").statementLanguage).toBeNull();
+    expect(
+      grantsOf(
+        [acme],
+        registerOf(packageRow(acme, "acmelanguage", { ...LOOSEST_ROW, statementLanguage: "kafkaread" })),
+        "acmelanguage",
+      ),
+    ).toMatchObject({ statementLanguage: null, ownWords: "scrubbed" });
+  });
+
   test("a register row for another version or digest of the same package grants nothing", () => {
     const loose = admittedFor("acme-key", admittedManifest("acmekey", withLoosestClaims), { version: "1.2.0" });
     const rowOf = (key: Pick<AdmittedForCatalog, "name" | "version" | "digest">, engine = "acmekey") =>

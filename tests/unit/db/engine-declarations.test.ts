@@ -22,6 +22,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { RegisterStatementLanguage } from "@libredb/grant-register";
 import { DEFAULT_CONNECT_BUDGET_MS } from "@libredb/provider-sdk/calls";
 import {
   type AgentCredentialForm,
@@ -60,7 +61,6 @@ import {
   type ScriptUnit,
   type SelectFieldName,
   type SqlDialect,
-  type StatementLanguage,
   type StatementRedaction,
   type TypeFamilies,
   type WritePathEvidence,
@@ -264,7 +264,10 @@ const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
 const DIRECTORY = path.join(ROOT, ENGINE_DECLARATIONS_DIRECTORY);
 const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
 const SCHEMA = JSON.parse(readFileSync(SCHEMA_FILE, "utf8")) as {
-  $defs: Record<string, { enum?: unknown[]; properties?: Record<string, unknown>; required?: string[] }>;
+  $defs: Record<
+    string,
+    { enum?: unknown[]; pattern?: string; properties?: Record<string, unknown>; required?: string[] }
+  >;
 };
 
 /**
@@ -998,7 +1001,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the statement language data, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1033,6 +1036,7 @@ describe("the committed declarations", () => {
       "facets.maintenanceSpecs",
       "facets.agentReadings",
       "agent.statementLanguage",
+      "statementLanguageData",
       "editor.commitKeyword",
       "editor.consentDeadline",
       "editor.fenceAliases",
@@ -1086,6 +1090,7 @@ describe("the committed declarations", () => {
       },
       facets: bigquery.facets,
       agent: { statementLanguage: null },
+      statementLanguageData: null,
       editor: {
         commitKeyword: "COMMIT",
         consentDeadline: null,
@@ -1433,6 +1438,11 @@ describe("the committed declarations", () => {
     ).toThrow("bigquery.json lacks its authored member agent.statementLanguage");
     // A statement language stated as null is stated: an engine that speaks none authors null.
     expect(authoredMembersOf(committed, "bigquery.json").agent.statementLanguage).toBeNull();
+    expect(() => authoredMembersOf(without(committed, "statementLanguageData"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member statementLanguageData",
+    );
+    // Statement language data stated as null is stated: an engine that speaks SQL or no language authors null.
+    expect(authoredMembersOf(committed, "bigquery.json").statementLanguageData).toBeNull();
     expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member editor.commitKeyword",
     );
@@ -1466,6 +1476,23 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(committed, "snowflake.json")).toThrow(
       'snowflake.json names the engine id "bigquery", not its file name',
     );
+  });
+
+  test("every legacy declaration states its statement language data as null, which no projection reads", () => {
+    const stating = SHIPPED_DATABASE_TYPES.filter((type) => declared(type).statementLanguageData !== null);
+    const lacking = SHIPPED_DATABASE_TYPES.filter((type) => !Object.hasOwn(declared(type), "statementLanguageData"));
+
+    expect(lacking).toEqual([]);
+    expect(stating).toEqual([]);
+    // No generated module of the engine catalog names the member, so nothing projects it.
+    const catalog = path.join(ROOT, "src/lib/db/engine-catalog");
+    const generated = readdirSync(catalog).filter((file) => file.endsWith(".generated.ts"));
+    const projecting = generated.filter((file) =>
+      readFileSync(path.join(catalog, file), "utf8").includes("statementLanguageData"),
+    );
+    expect(projecting).toEqual([]);
+    // Vacuity: the catalog's generated modules are read.
+    expect(generated).toContain("claims.generated.ts");
   });
 
   test("each declaration is admitted by the schema's engine declaration and its rules", () => {
@@ -1925,7 +1952,8 @@ const UNCLAIMED_GRANT_MEMBERS: Readonly<Record<string, string>> = {
   ownWords: "a host fact no declaration requests, read from the engine's register row alone",
   servesOneSession: "a host fact no declaration requests, read from the engine's register row alone",
   agentExecution: "a host fact no declaration requests, read from the engine's register row alone",
-  decidesAlone: "a host fact no declaration requests, a statement vocabulary row's own flag being its request",
+  decidesAlone:
+    "a host fact the grant reader reads from no declaration yet, a statement vocabulary row's own flag being its request",
   reviewedGrammar: "no grant: whether the row reviewed the grammar the request carries the digest of",
   catalogReadCommandShaped:
     "the register row's review of the agent overlay's claim, which only grantedCatalogReadCommand reads with the request",
@@ -4245,9 +4273,14 @@ describe("the census", () => {
       statementRead: statementRead[type],
       statementLanguage: statementLanguage[type] as ReturnType<McpExposure>["statementLanguage"],
     });
-    const languages = (SCHEMA.$defs.statementLanguage?.enum ?? []).filter(
-      (language): language is AgentStatementLanguageId => language !== null,
-    );
+    // The languages the declarations request, each once: the schema names a form, not a list.
+    const languages = [
+      ...new Set(
+        SHIPPED_DATABASE_TYPES.map((type) => statementLanguage[type]).filter(
+          (language): language is AgentStatementLanguageId => language !== null,
+        ),
+      ),
+    ];
     const served = languages.map((language) => [language, mcpStatementEngines(language, exposure)] as const);
 
     expect(
@@ -4354,7 +4387,7 @@ describe("the vocabularies", () => {
   test("the generated unions are Studio's own types", () => {
     const parity: [
       Equal<ManifestMaintenanceOperation, MaintenanceOperation>,
-      Equal<Exclude<StatementLanguage, null>, AgentStatementLanguageId>,
+      Equal<RegisterStatementLanguage, AgentStatementLanguageId>,
       Equal<FieldName, ConnectionField | SeedOnlyField>,
       Equal<AgentCredentialForm, SeedAgentCredential["form"]>,
       Equal<ManifestHostPathField, HostPathField>,
@@ -4429,6 +4462,12 @@ describe("the vocabularies", () => {
     ];
 
     expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 36 }, () => true));
+    // The SDK names a statement language by its form, not Studio's list: every language of Studio's agent is a name
+    // of that form, so a declaration may request each.
+    const form = new RegExp(SCHEMA.$defs.statementLanguage?.pattern ?? "^$");
+    const agentLanguages = Object.keys(AGENT_WORKFLOW_VARIANTS);
+    expect(agentLanguages.filter((language) => !form.test(language))).toEqual([]);
+    expect(agentLanguages).toContain("sql");
   });
 
   test("the generic fence tags are Studio's", () => {

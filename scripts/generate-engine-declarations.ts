@@ -9,7 +9,8 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `facets` its
- * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage`, of `editor` its `commitKeyword`, `consentDeadline`,
+ * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage`, the whole
+ * `statementLanguageData`, of `editor` its `commitKeyword`, `consentDeadline`,
  * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `redaction`, `updateTarget`
  * and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
  * written in the declaration itself: this script reads them from the committed file of the engine in
@@ -28,11 +29,11 @@
  * catalog generator then admits it.
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
- * the statement language agent mode sends it, its editor facts that are data with the language its tabs are written and
- * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts, its SQL generator forms, its
- * policy and MCP claims and its safeguards. A full manifest also states the package's runtime and the products it was
- * measured against, facts no provider in `src/lib/db/providers/` has yet, so they are written when a provider moves
- * into a package of its own, from this declaration.
+ * the statement language agent mode sends it, its statement language data, its editor facts that are data with the
+ * language its tabs are written and rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts,
+ * its SQL generator forms, its policy and MCP claims and its safeguards. A full manifest also states the package's
+ * runtime and the products it was measured against, facts no provider in `src/lib/db/providers/` has yet, so they are
+ * written when a provider moves into a package of its own, from this declaration.
  *
  * The files are committed and never edited by hand outside their authored members, so a change to any table they
  * come from lands with its declaration diff. tests/unit/db/engine-declarations.test.ts rebuilds each in memory and
@@ -111,6 +112,10 @@
  * provider modules stays true. The generator refuses by name a member of the overlay it has no place for, the two
  * overridable members besides grounding among them until the contract states them, a plan form that is neither prefix
  * nor session-mode, a grounding given as a value, and a profile type pattern whose flags are not none, i, u or iu.
+ *
+ * The statement language data, `statementLanguageData`, is authored as a whole and written back as the committed file
+ * states it: null in every declaration of this directory, since each engine's statement language is Studio's own
+ * module. No projection reads it, and no confirmation check reads it yet.
  *
  * The facets are authored, written back as the committed file states them: the monitoring panels, the maintenance
  * operations, their specs and the agent readings. The generator reads neither the engine's `ENGINE_FACETS` row nor the
@@ -529,6 +534,7 @@ export function buildEngineDeclaration(
       statementLanguage: authored.agent.statementLanguage,
       overlay: buildAgentOverlay(type, authored.agent.statementLanguage),
     },
+    statementLanguageData: authored.statementLanguageData,
     editor: buildEditor(type, capabilities, authored.editor),
     sqlText: {
       readsSqlText: authored.sqlText.readsSqlText,

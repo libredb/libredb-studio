@@ -1,5 +1,5 @@
 /**
- * Studio's review of a claim the grant register holds, or of a host fact no declaration requests, for each engine it
+ * Studio's review of a claim the grant register holds, or of a host fact read from no declaration, for each engine it
  * ships, as tests read it: one member of every legacy row of the grant register, `@libredb/grant-register`, as a table
  * keyed by engine, or a boolean member as the list of engines it holds true for. The rows are read through the grant reader's own `legacyGrantRows`, over the same served set, so a
  * test reads exactly the review rows the grant reader grants each legacy engine from, and never a granted table. The

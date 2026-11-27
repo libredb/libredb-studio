@@ -64,8 +64,8 @@
  *   compared word by word upper-cased as the gate compares a form, in the request's order, a form the request lists
  *   twice granted once at its first place, always a fresh frozen list with each form frozen, and the empty list under a
  *   grammar the row did not review.
- * - `decidesAlone`, which no declaration requests, a statement vocabulary row's own flag being its request: the row's
- *   where the grammar is reviewed, and false otherwise.
+ * - `decidesAlone`, which the grant reader reads from no declaration yet, a statement vocabulary row's own flag being
+ *   its request: the row's where the grammar is reviewed, and false otherwise.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
  * or host path fields value of a register row outside it is refused naming Studio's record, the claim and the engine; an
@@ -116,7 +116,6 @@ import type {
   McpClaims,
   NameQuote,
   PolicyClaims,
-  StatementLanguage,
   StatementRedaction,
 } from "@libredb/provider-sdk/manifest";
 import {
@@ -125,6 +124,7 @@ import {
   type RegisterGrants,
   type RegisterRedaction,
   type RegisterRow,
+  type RegisterStatementLanguage,
   readGrantRegister,
 } from "@libredb/grant-register";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
@@ -150,6 +150,12 @@ type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]
 
 /** One record of Studio's, keyed by engine id; an id it holds no row for is read at the claim's restrictive value. */
 type Rows<T> = Readonly<Record<string, T>>;
+
+/**
+ * A granted statement language, or null where none is granted. A grant is always a register row's own value, so it is
+ * typed by the register's statement languages, not by the request's form.
+ */
+type StatementLanguage = RegisterStatementLanguage | null;
 
 /**
  * Studio's review of each policy, MCP, connection and agent mode claim for one engine, keyed by the member requesting
@@ -290,35 +296,11 @@ export const HOST_PATH_FIELD_NAMES: readonly HostPathField[] = Object.freeze([
 ]);
 
 /**
- * The statement languages a declaration may request, the schema's `statementLanguage` enum but its null, in its order:
- * the vocabulary of `agent.statementLanguage`.
+ * The form of a statement language a declaration may request, the schema's `statementLanguage` pattern: a lower-case
+ * letter, then up to 31 lower-case letters or digits. A name of the form is a request whether or not Studio has a
+ * module for it; only the engine's register row grants it.
  */
-export const STATEMENT_LANGUAGE_NAMES: readonly NonNullable<StatementLanguage>[] = Object.freeze([
-  "sql",
-  "kubectl",
-  "mongo",
-  "libredbkv",
-  "influxql",
-  "weaviateapi",
-  "qdrantapi",
-  "cypher",
-  "milvusrpc",
-  "rediscli",
-  "etcdctl",
-  "oxiacli",
-  "rabbitread",
-  "kafkaread",
-  "s3api",
-  "fsquery",
-  "snmpget",
-  "netconfrpc",
-  "modbusread",
-  "promql",
-  "opcuaread",
-  "mtconnectread",
-  "mqttread",
-  "sparkplugread",
-]);
+export const STATEMENT_LANGUAGE_NAME_FORM = /^[a-z][a-z0-9]{0,31}$/;
 
 /**
  * The curated readings a declaration may request, the schema's `agentReading` enum, in its order: the vocabulary of
@@ -454,11 +436,10 @@ function agentCredentialRequest(engine: string, value: unknown): AgentCredential
   return refused(engine, "connection.agentCredential", value);
 }
 
-/** `value` as a statement language request, a language of `STATEMENT_LANGUAGE_NAMES` or null, or refused by name. */
-function statementLanguageRequest(engine: string, value: unknown): StatementLanguage {
-  if (value === null) return null;
-  const language = STATEMENT_LANGUAGE_NAMES.find((name) => name === value);
-  return language ?? refused(engine, "agent.statementLanguage", value);
+/** `value` as a statement language request, a name of `STATEMENT_LANGUAGE_NAME_FORM` or null, or refused by name. */
+function statementLanguageRequest(engine: string, value: unknown): string | null {
+  if (value === null || (typeof value === "string" && STATEMENT_LANGUAGE_NAME_FORM.test(value))) return value;
+  return refused(engine, "agent.statementLanguage", value);
 }
 
 /** `value` as an agent readings request, a list of `AGENT_READING_NAMES`, or refused by name. */
@@ -649,9 +630,9 @@ function grantAgentMode(engine: string, facets: FacetClaims, agent: AgentClaims,
   const language = statementLanguageRequest(engine, agent.statementLanguage);
   const readings = agentReadingsRequest(engine, facets.agentReadings);
   const row = rowOf(records.agentReadings, engine, undefined);
+  const languageRow = rowOf(records.statementLanguage, engine, null);
   return {
-    statementLanguage:
-      language !== null && language === rowOf(records.statementLanguage, engine, null) ? language : null,
+    statementLanguage: language !== null && language === languageRow ? languageRow : null,
     agentReadings: Object.freeze((row ?? []).filter((reading) => readings.includes(reading))),
   } as const;
 }
@@ -777,7 +758,7 @@ function grantSqlText(engine: string, sqlText: SqlTextRequest, row: RegisterRow 
  * - `redaction`: how the query event log keeps a statement of the engine, `none` where no grant covers it;
  * - `readsSqlText`: whether the confirmation gate reads the engine's text as SQL, true where no grant covers it;
  * - `confirmExemptForms`: the forms the confirmation gate exempts, none where no grant covers them;
- * a fourth host fact no declaration requests, read from the row for the grammar it reviewed:
+ * a fourth host fact the grant reader reads from no declaration yet, read from the row for the grammar it reviewed:
  * - `decidesAlone`: whether the engine's statement vocabulary may decide the confirmation gate's answer alone, false
  *   where no grant covers it; a vocabulary row's own flag is its request;
  * the row's review of a claim whose request the grants do not hold:

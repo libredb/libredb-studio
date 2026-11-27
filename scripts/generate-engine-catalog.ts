@@ -218,6 +218,7 @@ export const AUTHORED_MEMBERS = [
   "facets.maintenanceSpecs",
   "facets.agentReadings",
   "agent.statementLanguage",
+  "statementLanguageData",
   "editor.commitKeyword",
   "editor.consentDeadline",
   "editor.fenceAliases",
@@ -243,11 +244,13 @@ type SqlText = EngineDeclaration["sqlText"];
 
 /**
  * One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them: the
- * members the projections read, the whole `facets` segment, and the SQL text's `redaction`, a claim no projection
- * reads, both of which the declaration generator writes back as authored.
+ * members the projections read, the whole `facets` segment, the statement language data, and the SQL text's
+ * `redaction`, a claim, none of which a projection reads all of, and each of which the declaration generator writes
+ * back as authored.
  */
 export type AuthoredMembers = AuthoredDeclaration & {
   readonly facets: EngineDeclaration["facets"];
+  readonly statementLanguageData: EngineDeclaration["statementLanguageData"];
   readonly sqlText: AuthoredDeclaration["sqlText"] & { readonly redaction: SqlText["redaction"] };
 };
 
@@ -317,6 +320,7 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     agent: {
       statementLanguage: read("agent.statementLanguage") as EngineDeclaration["agent"]["statementLanguage"],
     },
+    statementLanguageData: read("statementLanguageData") as EngineDeclaration["statementLanguageData"],
     editor: {
       commitKeyword: read("editor.commitKeyword") as Editor["commitKeyword"],
       consentDeadline: read("editor.consentDeadline") as Editor["consentDeadline"],

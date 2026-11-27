@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "b4e1d6915533e58051fc084d23db983e6bfd9061368fa492a824461ad0eef63e";
+export const MANIFEST_SCHEMA_SHA256 = "ed34b09519e5a8dc4350ce5cb5e7ae03200bccaf1c43bd049d4e4a59707fb60b";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -129,6 +129,7 @@ export interface EngineDeclaration {
   readonly connection: Connection;
   readonly facets: Facets;
   readonly agent: Agent;
+  readonly statementLanguageData: StatementLanguageData;
   readonly editor: Editor;
   readonly sqlText: SqlText;
   readonly sqlWriting: SqlWriting;
@@ -677,33 +678,32 @@ export interface CaptureKindWord {
   readonly kind: ObjectKindId;
 }
 
-/** The statement language family agent mode sends, or null where agent mode sends the engine no statement. */
-export type StatementLanguage =
-  | "sql"
-  | "kubectl"
-  | "mongo"
-  | "libredbkv"
-  | "influxql"
-  | "weaviateapi"
-  | "qdrantapi"
-  | "cypher"
-  | "milvusrpc"
-  | "rediscli"
-  | "etcdctl"
-  | "oxiacli"
-  | "rabbitread"
-  | "kafkaread"
-  | "s3api"
-  | "fsquery"
-  | "snmpget"
-  | "netconfrpc"
-  | "modbusread"
-  | "promql"
-  | "opcuaread"
-  | "mtconnectread"
-  | "mqttread"
-  | "sparkplugread"
-  | null;
+/** The statement language family agent mode sends, by its name, or null where agent mode sends the engine no statement. */
+export type StatementLanguage = string | null;
+
+/** A statement language's name: a lower-case letter, then up to 31 lower-case letters or digits, the form of a fence tag. */
+export type StatementLanguageName = string;
+
+/** The statement language the engine speaks, as data, or null where the engine speaks SQL or no statement language. name: the language's name, equal to agent.statementLanguage where that is stated. confirmation: what the confirmation gate reads of a statement in the language. */
+export type StatementLanguageData = {
+  readonly name: StatementLanguageName;
+  readonly confirmation: StatementConfirmation;
+} | null;
+
+/** What the confirmation gate reads of a statement in the language, as data only. operations: the operations that ask a confirmation. reader: the kind of core's reader that names the operations a statement runs. decidesAlone: true where the reader's answer is the gate's whole answer. safetyAnalysis: true where Studio may send the language's statements to the AI safety analysis. maxTextBytes: the most UTF-8 bytes a statement may hold, or null where the language bounds none. */
+export interface StatementConfirmation {
+  readonly operations: readonly OperationName[];
+  readonly reader: OperationReaderKind;
+  readonly decidesAlone: boolean;
+  readonly safetyAnalysis: boolean;
+  readonly maxTextBytes: number | null;
+}
+
+/** An operation a statement runs: words separated by single spaces, each a letter, then letters, digits, underscores, dots, colons or hyphens. */
+export type OperationName = string;
+
+/** One of core's engine-neutral readers of the operations a statement runs. names-no-operation: the language is a request language whose statements name no operation, so the reader names none. */
+export type OperationReaderKind = "names-no-operation";
 
 /** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans, its query dialect and the language its tabs are written and rendered in. The SQL text facts are sqlText, the SQL writing facts sqlWriting, the migration DDL facts migrationDdl and the SQL generator forms sqlGenerators. */
 export interface Editor {

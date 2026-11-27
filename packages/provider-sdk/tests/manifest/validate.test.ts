@@ -450,6 +450,32 @@ const OVERLAY = "/engines/0/agent/overlay";
 /** The pointer of the fixture's one engine's SQL dialect. */
 const DIALECT = `${OVERLAY}/dialect`;
 
+/** The pointer of the fixture's one engine's statement language data. */
+const LANGUAGE_DATA = "/engines/0/statementLanguageData";
+
+/** The pointer of the confirmation part of the fixture's one engine's statement language data. */
+const CONFIRMATION = `${LANGUAGE_DATA}/confirmation`;
+
+/**
+ * Statement language data named `name` whose confirmation is a request language that names no operation, decides
+ * alone, stays out of the safety analysis and bounds no statement.
+ */
+function languageData(name: string): Json {
+  return {
+    name,
+    confirmation: {
+      operations: [],
+      reader: "names-no-operation",
+      decidesAlone: true,
+      safetyAnalysis: false,
+      maxTextBytes: null,
+    },
+  };
+}
+
+/** The confirmation part of the fixture's one engine's statement language data. */
+const confirmationOf = (m: Json): Json => m.engines[0].statementLanguageData.confirmation;
+
 /**
  * An SQL dialect in every shape a shipped engine gives one: a catalog read with a schema fold, a retry, the command
  * claim and a row mapper; a prefix estimating plan; a profile with an uncountable type pattern; statistics with a probe
@@ -2716,6 +2742,72 @@ describe("schema refusals", () => {
     expect(validator.validateEngine(restrictive.engines[0]).admitted).toBe(true);
   });
 
+  test("a statement language's confirmation states its operations, its reader kind, whether it decides alone, whether the safety analysis may read it and its byte bound, and names no function", () => {
+    const stated = (change: (confirmation: Json) => void) =>
+      manifest((m) => {
+        m.engines[0].statementLanguageData = languageData("acmeql");
+        change(confirmationOf(m));
+      });
+
+    for (const admitted of [
+      stated(() => {}),
+      stated((c) => Object.assign(c, { decidesAlone: false, safetyAnalysis: true, maxTextBytes: 1 })),
+      stated((c) => (c.maxTextBytes = 16777216)),
+    ]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+
+    for (const key of ["read", "refuse", "typedConfirmation"]) {
+      expect(refusalsFor(stated((c) => (c[key] = "readStatement")))).toEqual([
+        refusal("unknown-key", CONFIRMATION, key),
+      ]);
+    }
+    const agentPart = manifest((m) => {
+      m.engines[0].statementLanguageData = { ...languageData("acmeql"), agent: null };
+    });
+    expect(refusalsFor(agentPart)).toEqual([refusal("unknown-key", LANGUAGE_DATA, "agent")]);
+    for (const key of ["operations", "reader", "decidesAlone", "safetyAnalysis", "maxTextBytes"]) {
+      expect(refusalsFor(stated((c) => delete c[key]))).toEqual([refusal("missing-key", CONFIRMATION, key)]);
+    }
+    for (const key of ["name", "confirmation"]) {
+      const lacking = manifest((m) => {
+        m.engines[0].statementLanguageData = languageData("acmeql");
+        delete m.engines[0].statementLanguageData[key];
+      });
+      expect(refusalsFor(lacking)).toEqual([refusal("missing-key", LANGUAGE_DATA, key)]);
+    }
+
+    expect(refusalsFor(stated((c) => (c.reader = "parses-statement")))).toEqual([
+      refusal("value-not-allowed", `${CONFIRMATION}/reader`),
+    ]);
+    expect(refusalsFor(stated((c) => (c.decidesAlone = "yes")))).toEqual([
+      refusal("wrong-type", `${CONFIRMATION}/decidesAlone`),
+    ]);
+    expect(refusalsFor(stated((c) => (c.safetyAnalysis = null)))).toEqual([
+      refusal("wrong-type", `${CONFIRMATION}/safetyAnalysis`),
+    ]);
+    for (const bound of [0, 16777217]) {
+      expect(refusalsFor(stated((c) => (c.maxTextBytes = bound)))).toEqual([
+        refusal("out-of-range", `${CONFIRMATION}/maxTextBytes`),
+      ]);
+    }
+    expect(refusalsFor(stated((c) => (c.maxTextBytes = 1.5)))).toEqual([
+      refusal("wrong-type", `${CONFIRMATION}/maxTextBytes`),
+    ]);
+    for (const operation of ["lease  revoke", "1drop", " drop", "drop "]) {
+      expect(refusalsFor(stated((c) => (c.operations = [operation])))).toEqual([
+        refusal("pattern-mismatch", `${CONFIRMATION}/operations/0`),
+      ]);
+    }
+    expect(refusalsFor(stated((c) => (c.operations = [`d${"r".repeat(64)}`])))).toEqual([
+      refusal("out-of-range", `${CONFIRMATION}/operations/0`),
+    ]);
+    expect(refusalsFor(stated((c) => (c.operations = ["drop", "drop"])))).toEqual([
+      refusal("duplicate", `${CONFIRMATION}/operations/1`),
+    ]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -3724,6 +3816,79 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
 
+  test("an engine declaration states its statement language data or null, and the data's name equals its agent statement language", () => {
+    const named = (agentLanguage: string, dataName: string) => {
+      const changed = kafkaManifest();
+      agentOf(changed).statementLanguage = agentLanguage;
+      changed.engines[0].statementLanguageData = languageData(dataName);
+      return changed;
+    };
+    const lacking = manifest((m) => delete m.engines[0].statementLanguageData);
+    const unspoken = manifest((m) => (m.engines[0].statementLanguageData = languageData("acmeql")));
+
+    for (const admitted of [
+      manifest(),
+      kafkaManifest(),
+      named("kafkaread", "kafkaread"),
+      named("acmeql", "acmeql"),
+      unspoken,
+    ]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+    expect(refusalsFor(lacking)).toEqual([refusal("missing-key", "/engines/0", "statementLanguageData")]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].statementLanguageData = "acmeql")))).toEqual([
+      refusal("wrong-type", LANGUAGE_DATA),
+    ]);
+    expect(refusalsFor(named("acmeql", "otherql"))).toEqual([
+      refusal("statement-language-name-differs", `${LANGUAGE_DATA}/name`),
+    ]);
+    expect(refusalsFor(named("kafkaread", "acmeql"))).toEqual([
+      refusal("statement-language-name-differs", `${LANGUAGE_DATA}/name`),
+    ]);
+  });
+
+  test("the statement language name is a form, not Studio's list", () => {
+    const schema = JSON.parse(SCHEMA_BYTES.toString("utf8"));
+    const spoken = (name: string) => {
+      const changed = kafkaManifest();
+      agentOf(changed).statementLanguage = name;
+      return changed;
+    };
+    const data = (name: string) => manifest((m) => (m.engines[0].statementLanguageData = languageData(name)));
+
+    expect(schema.$defs.statementLanguage.enum).toBeUndefined();
+    expect(schema.$defs.statementLanguage.pattern).toBe(schema.$defs.fenceTag.pattern);
+    expect(schema.$defs.statementLanguageName.pattern).toBe(schema.$defs.fenceTag.pattern);
+    for (const name of ["acmeql", "q", `a${"b".repeat(31)}`, "kafkaread"]) {
+      expect(refusalsFor(spoken(name))).toEqual([]);
+    }
+    for (const name of ["acmeql", "q", `a${"b".repeat(31)}`]) expect(refusalsFor(data(name))).toEqual([]);
+    for (const name of ["AcmeQL", "1ql", `a${"b".repeat(32)}`, "", "acme-ql", "acme ql"]) {
+      expect(refusalsFor(spoken(name))).toEqual([refusal("pattern-mismatch", "/engines/0/agent/statementLanguage")]);
+      expect(refusalsFor(data(name))).toEqual([refusal("pattern-mismatch", `${LANGUAGE_DATA}/name`)]);
+    }
+  });
+
+  test("statement language data named after the SQL family is refused at its name, since an engine that speaks SQL states null", () => {
+    const sqlSpoken = dialected((m) => (m.engines[0].statementLanguageData = languageData("sql")));
+    const sqlUnspoken = manifest((m) => (m.engines[0].statementLanguageData = languageData("sql")));
+
+    expect(refusalsFor(dialected(() => {}))).toEqual([]);
+    expect(refusalsFor(sqlSpoken)).toEqual([refusal("statement-language-data-sql", `${LANGUAGE_DATA}/name`)]);
+    expect(refusalsFor(sqlUnspoken)).toEqual([refusal("statement-language-data-sql", `${LANGUAGE_DATA}/name`)]);
+  });
+
+  test("a reader kind that names no operation lists no operation", () => {
+    const listing = manifest((m) => {
+      m.engines[0].statementLanguageData = languageData("acmeql");
+      confirmationOf(m).operations = ["drop", "lease revoke"];
+    });
+
+    expect(refusalsFor(listing)).toEqual([refusal("confirmation-operations-unread", `${CONFIRMATION}/operations`)]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].statementLanguageData = languageData("acmeql"))))).toEqual([]);
+  });
+
   test("the rules run only on a manifest the schema admits", () => {
     const changed = manifest((m) => {
       m.engines.push(structuredClone(m.engines[0]));
@@ -4159,6 +4324,34 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's statement language data is refused at its own pointer under validateEngine", () => {
+    const stated = (name: string, change: (data: Json) => void = () => {}) => {
+      const declaration = kafkaManifest().engines[0] as Json;
+      declaration.statementLanguageData = languageData(name);
+      change(declaration.statementLanguageData);
+      return declaration;
+    };
+
+    expect(validator.validateEngine(stated("otherql"))).toEqual({
+      admitted: false,
+      refusals: [refusal("statement-language-name-differs", "/statementLanguageData/name")],
+    });
+    expect(validator.validateEngine(stated("kafkaread", (d) => (d.confirmation.reader = "parses-statement")))).toEqual({
+      admitted: false,
+      refusals: [refusal("value-not-allowed", "/statementLanguageData/confirmation/reader")],
+    });
+    expect(validator.validateEngine(stated("kafkaread", (d) => (d.confirmation.operations = ["drop"])))).toEqual({
+      admitted: false,
+      refusals: [refusal("confirmation-operations-unread", "/statementLanguageData/confirmation/operations")],
+    });
+    const sqlData = engine();
+    sqlData.statementLanguageData = languageData("sql");
+    expect(validator.validateEngine(sqlData)).toEqual({
+      admitted: false,
+      refusals: [refusal("statement-language-data-sql", "/statementLanguageData/name")],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -4329,6 +4522,29 @@ describe("refusals carry no value", () => {
     ]);
     for (const item of refusals) {
       for (const value of [name, invalid, ungrouped]) {
+        expect(JSON.stringify(item)).not.toContain(value);
+        expect(refusalSentence(item)).not.toContain(value);
+      }
+    }
+  });
+
+  test("no statement language data refusal carries the name or the operation it refuses", () => {
+    const requested = `q${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const declared = `q${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const operation = `op${randomUUID().replaceAll("-", "")}`;
+    const changed = kafkaManifest();
+    agentOf(changed).statementLanguage = requested;
+    changed.engines[0].statementLanguageData = languageData(declared);
+    changed.engines[0].statementLanguageData.confirmation.operations = [operation];
+
+    const refusals = refusalsFor(changed);
+
+    expect(refusals).toEqual([
+      refusal("confirmation-operations-unread", `${CONFIRMATION}/operations`),
+      refusal("statement-language-name-differs", `${LANGUAGE_DATA}/name`),
+    ]);
+    for (const item of refusals) {
+      for (const value of [requested, declared, operation]) {
         expect(JSON.stringify(item)).not.toContain(value);
         expect(refusalSentence(item)).not.toContain(value);
       }
