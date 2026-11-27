@@ -1232,11 +1232,10 @@ The host core's execute, cancel on a stop, end of a scope, tree, maintenance, mo
 Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
 The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is logged as the package's defect: a malformed batch or row, warnings that are not a list or a warning that is not the SDK's `Warning`, or an execution time or row count outside its type.
 
-### C-114 (informative): A package carries its drivers bundled into its own modules
+### C-114 (normative): A package carries its drivers bundled into its own modules
 
 A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a built-in (C-102), and a native addon stays refused (C-103).
-An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a function made by `createRequire` and called under a name other than `require`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
-Nothing checks the second sentence yet.
+An optional dependency a driver loads at run time is bundled or removed by the package's build, so no module of the package names `createRequire`, reads `require` other than to call it with a string, calls a member named `require`, or calls `import()` or `require()` with anything but a string.
 
 ## Not yet in this contract
 

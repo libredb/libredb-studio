@@ -593,4 +593,133 @@ describe("providers:pack", () => {
     },
     BUNDLING_TIMEOUT_MS,
   );
+  test(
+    "an output that calls createRequire is refused by name",
+    () => {
+      const planted = root({
+        ...writingPackage("provider-create", "@libredb/provider-create", {
+          "dist/index.mjs": [
+            'import { createRequire } from "node:module";',
+            "const load = createRequire(import.meta.url);",
+            'export default load("x");',
+            "",
+          ].join("\n"),
+        }),
+        ...writingPackage("provider-namespace", "@libredb/provider-namespace", {
+          "dist/index.mjs": [
+            'import * as m from "node:module";',
+            "// createRequire in a comment is not a name",
+            'const load = m["createRequire"](import.meta.url);',
+            "export const other = m[`createRequire`];",
+            'export const words = "no createRequire here";',
+            'export default load("x");',
+            "",
+          ].join("\n"),
+        }),
+      });
+      const out = fresh("out");
+      const at = (directory: string): string => path.join(planted, "packages", directory);
+      expect(pack(planted, out)).toEqual({
+        packed: [],
+        refusals: [
+          `${PREFIX}: @libredb/provider-create 1.0.0: dist/index.mjs line 1 names createRequire`,
+          `${PREFIX}: @libredb/provider-create 1.0.0: dist/index.mjs line 2 names createRequire`,
+          wroteNothing(at("provider-create")),
+          `${PREFIX}: @libredb/provider-namespace 1.0.0: dist/index.mjs line 3 names createRequire`,
+          `${PREFIX}: @libredb/provider-namespace 1.0.0: dist/index.mjs line 4 names createRequire`,
+          wroteNothing(at("provider-namespace")),
+        ],
+      });
+      expect(fs.readdirSync(out)).toEqual([]);
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
+
+  test(
+    "an output that reads require other than to call it with a string, or calls import() or require() with anything but a string, is refused by name",
+    () => {
+      // esbuild's `require` shim in an ES module bundle, as it writes it: under Node.js it throws for every name it
+      // is called with, and under Bun it loads it.
+      const shim =
+        'var __require = ((x) => typeof require !== "undefined" ? require : x)(function(x) { if (typeof require !== "undefined") return require.apply(this, arguments); throw Error("Dynamic require of \\"" + x + "\\" is not supported"); });';
+      const planted = root({
+        ...writingPackage("provider-alias", "@libredb/provider-alias", {
+          ...PLAIN_ENTRY,
+          "dist/alias.cjs": 'const r = require;\nr("x");\n',
+        }),
+        ...writingPackage("provider-computed", "@libredb/provider-computed", {
+          ...PLAIN_ENTRY,
+          "dist/computed.cjs":
+            'const name = "x";\nrequire(name);\nrequire(`a${name}`);\nrequire();\nrequire(...[name]);\n',
+        }),
+        ...writingPackage("provider-controls", "@libredb/provider-controls", {
+          "dist/index.mjs": [
+            'import "./two.cjs";',
+            'import { require as req } from "./four.mjs";',
+            'export default await import("./four.mjs");',
+            "export const also = await import(`./four.mjs`);",
+            "const obj = { require: req };",
+            "export const read = obj.require;",
+            "require: for (;;) break require;",
+            "class K { require() {} static require = 1; }",
+            "export { K as require };",
+            'export { require as again } from "./four.mjs";',
+            "",
+          ].join("\n"),
+          "dist/two.cjs": 'require("./three.cjs");\nrequire(`./three.cjs`);\nrequire?.("./three.cjs");\n',
+          "dist/three.cjs": "exports.x = 1;\n",
+          "dist/four.mjs": "const x = 1;\nexport { x as require };\n",
+        }),
+        ...writingPackage("provider-declared", "@libredb/provider-declared", {
+          ...PLAIN_ENTRY,
+          "dist/declared.cjs":
+            "function require() {}\nconst { require: other } = module;\n{\n  const { require } = module;\n}\n",
+        }),
+        ...writingPackage("provider-dynamic", "@libredb/provider-dynamic", {
+          "dist/index.mjs":
+            'const name = "./x.mjs";\nexport const one = await import(name);\nexport default await import(`./${name}`);\n',
+        }),
+        ...writingPackage("provider-member", "@libredb/provider-member", {
+          ...PLAIN_ENTRY,
+          "dist/member.cjs":
+            'module.require("x");\nprocess.mainModule.require("y");\nmodule["require"]("z");\nmodule?.require("w");\n',
+        }),
+        ...writingPackage("provider-shim", "@libredb/provider-shim", {
+          "dist/index.mjs": `${shim}\n__require("events");\nexport default {};\n`,
+        }),
+      });
+      const out = fresh("out");
+      const at = (directory: string): string => path.join(planted, "packages", directory);
+      const reads = "reads require other than to call it with a string";
+      const computedRequire = "calls require() with something other than a string";
+      const computedImport = "calls import() with something other than a string";
+      const member = "calls a member named require";
+      const result = pack(planted, out);
+      expect(result.refusals).toEqual([
+        `${PREFIX}: @libredb/provider-alias 1.0.0: dist/alias.cjs line 1 ${reads}`,
+        wroteNothing(at("provider-alias")),
+        `${PREFIX}: @libredb/provider-computed 1.0.0: dist/computed.cjs line 2 ${computedRequire}`,
+        `${PREFIX}: @libredb/provider-computed 1.0.0: dist/computed.cjs line 3 ${computedRequire}`,
+        `${PREFIX}: @libredb/provider-computed 1.0.0: dist/computed.cjs line 4 ${computedRequire}`,
+        `${PREFIX}: @libredb/provider-computed 1.0.0: dist/computed.cjs line 5 ${computedRequire}`,
+        wroteNothing(at("provider-computed")),
+        `${PREFIX}: @libredb/provider-declared 1.0.0: dist/declared.cjs line 1 ${reads}`,
+        `${PREFIX}: @libredb/provider-declared 1.0.0: dist/declared.cjs line 4 ${reads}`,
+        wroteNothing(at("provider-declared")),
+        `${PREFIX}: @libredb/provider-dynamic 1.0.0: dist/index.mjs line 2 ${computedImport}`,
+        `${PREFIX}: @libredb/provider-dynamic 1.0.0: dist/index.mjs line 3 ${computedImport}`,
+        wroteNothing(at("provider-dynamic")),
+        `${PREFIX}: @libredb/provider-member 1.0.0: dist/member.cjs line 1 ${member}`,
+        `${PREFIX}: @libredb/provider-member 1.0.0: dist/member.cjs line 2 ${member}`,
+        `${PREFIX}: @libredb/provider-member 1.0.0: dist/member.cjs line 3 ${member}`,
+        `${PREFIX}: @libredb/provider-member 1.0.0: dist/member.cjs line 4 ${member}`,
+        wroteNothing(at("provider-member")),
+        `${PREFIX}: @libredb/provider-shim 1.0.0: dist/index.mjs line 1 ${reads}`,
+        wroteNothing(at("provider-shim")),
+      ]);
+      expect(result.packed.map((packed) => packed.name)).toEqual(["@libredb/provider-controls"]);
+      expect(fs.readdirSync(path.join(out, "@libredb"))).toEqual(["provider-controls"]);
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
 });

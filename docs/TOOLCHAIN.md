@@ -785,12 +785,15 @@ It writes the same bytes for the same source and install, so no absolute path an
 esbuild 0.28.2 writes each input's path, relative to the package's directory with links followed, into a comment of the bundle (measured 2026-11-27), so a bundle's bytes are the same in every checkout only when every input lies inside the repository.
 
 What the build wrote is judged by the lock command's own sequence over one artifact directory (`artifactEntry`), then by admission's own checks before import, each finding named by file: an import outside the package by `closureOutside` with Node.js's built-in list, a TypeScript file, a native addon, and a manifest declaring `runtime.native`.
+Then every module file, read by the lock's own parse, is refused for a runtime load the lock's record cannot hold (C-114), each named by file and line: a module that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`.
+The rule runs at pack time only, never at admission, and `scripts/providers-pack.ts` lists what it does not refuse.
+esbuild's ES module bundle of a driver that calls `require` carries a `__require` shim that reads `require` as a value: under Node.js 24 it throws `Dynamic require of "events" is not supported`, and under Bun 1.4.4 it loads the module (measured 2026-11-27), so a test under Bun would pass a bundle Studio's Node.js server cannot load.
 Every refusal is one sentence on standard error; a refused package gets nothing written and a closing sentence saying so, and the other packages are still packed.
 The output directory must exist and lie outside the repository, as must the temporary directory, and an artifact already at `<out>/<name>/<version>` is refused, never overwritten.
 The command prints `<name> <version> <digest>` per package placed, the digest the lock command writes for it, and exits 0 when nothing was refused, 1 when anything was, 2 on any other command line.
 Nothing is written into the repository.
 
-`tests/unit/scripts/providers-pack.test.ts` packs planted packages in a planted root under the system's temporary directory, never under the repository's `packages/`, where the isolation ratchet would count one as an engine: a bundled package with a CommonJS dependency, locked by the lock command and admitted; every refusal; two packs giving one digest; the repository's listing unchanged; and the build's working directory, arguments and environment.
+`tests/unit/scripts/providers-pack.test.ts` packs planted packages in a planted root under the system's temporary directory, never under the repository's `packages/`, where the isolation ratchet would count one as an engine: a bundled package with a CommonJS dependency, locked by the lock command and admitted; every refusal; two packs giving one digest; the repository's listing unchanged; the build's working directory, arguments and environment; and each runtime-load form with its controls.
 
 ### Provider source coupling lint
 

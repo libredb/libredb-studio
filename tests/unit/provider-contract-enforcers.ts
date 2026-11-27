@@ -3121,6 +3121,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a name only Bun treats as a built-in is outside the closure under every runtime",
         "the built-in list is Node.js's, the same under Node.js and Bun",
       ],
+      "tests/unit/scripts/providers-pack.test.ts": [
+        "an output that imports a bare name, holds a native addon or a TypeScript file is refused by name, writing nothing",
+        "an output that calls createRequire is refused by name",
+        "an output that reads require other than to call it with a string, or calls import() or require() with anything but a string, is refused by name",
+      ],
     },
   },
 };

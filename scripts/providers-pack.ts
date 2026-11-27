@@ -3,7 +3,8 @@
  * Packs in-repository provider packages into artifacts a providers directory holds (docs/TOOLCHAIN.md, "The provider
  * pack step (`providers:pack`)"): for each package it runs the package's own `build` script, judges what the build
  * wrote with the lock command's artifact sequence and admission's own checks, and places the artifact as
- * `<out>/<name>/<version>/`. It writes no lock: the lock command (scripts/providers-lock.ts, C-91) locks what it placed.
+ * `<out>/<name>/<version>/`. It writes no lock: the lock command (scripts/providers-lock.ts, C-91) locks what it
+ * placed.
  * Studio holds no bundler configuration of any package and names no engine: what a build needs, a driver's optional
  * requires or its WebAssembly entry, stays in the package's `build` script.
  *
@@ -22,7 +23,7 @@
  *    with the package's directory as its working directory, so it resolves its dependencies from the workspace's
  *    install, and an environment of the caller's `PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP`
  *    and `TMPDIR` alone (names compared in any letter case, kept as the caller spells them), with `HOME` and
- *    `USERPROFILE` an empty directory beside the output; `bun run` adds `NODE`, `PWD` and `npm_*` variables of its
+ *    `USERPROFILE` an empty directory beside `--outdir`; `bun run` adds `NODE`, `PWD` and `npm_*` variables of its
  *    own. A build that exits other than 0 is refused with its exit code and everything it printed. A build has no
  *    deadline: a deadline on `bun run` ends `bun` and leaves the build's own children running, and ending a process
  *    tree differs on every platform, so a build that never ends holds the step, and a CI job's timeout bounds a run;
@@ -33,7 +34,18 @@
  * 7. every finding of admission's checks before import, each named: an import its closure judges outside the package
  *    (`closureOutside`, Node.js's built-in list), a TypeScript file, a native addon, a manifest declaring
  *    `runtime.native`;
- * 8. `<out>/<name>/<version>` does not exist yet; the artifact is then copied there, and its digest printed.
+ * 8. no module file (`isModuleFile`), read by the lock's own parse (`parsedModule`) in each of its readings, makes a
+ *    runtime load the lock's record cannot hold (C-114), each named by file, line and form: it names `createRequire`
+ *    (an identifier in any position, or a string or a template without substitution equal to it, so a computed
+ *    member is named too); it reads `require` other than as the callee of a call whose first argument is a string or
+ *    a template without substitution, a declared binding named `require` included; it calls `require()` or `import()`
+ *    with anything else; or it calls a member named `require`, such as `module.require(x)`. An identifier that is a
+ *    name rather than a reference is not read: a non-computed member or key, a label, an imported or exported name,
+ *    and the local name of a re-export with a source. Not refused: a member named `require` read without a call,
+ *    `process.getBuiltinModule`, which loads built-ins only, and code built at run time by `new Function` or `eval`,
+ *    which no rule over the source can follow; an admitted package is not sandboxed (C-102). The rule runs here only,
+ *    never at admission. A line is 1 plus the count of line feeds before the node;
+ * 9. `<out>/<name>/<version>` does not exist yet; the artifact is then copied there, and its digest printed.
  *
  * The build's output lives in a temporary directory under the temporary root, removed whatever happened, so nothing is
  * written into the repository or into a package's directory by the step itself; a build that writes into its own
@@ -50,6 +62,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import path from "node:path";
+import type { AnyNode } from "acorn";
 import { declaresNativePackages, isNativeAddonFile, isTypeScriptFile } from "../src/lib/provider-host/admission";
 import {
   decodeJson,
@@ -66,7 +79,7 @@ import {
   PACKAGE_VERSION_FORM,
   type StringForm,
 } from "../src/lib/provider-host/providers-lock-format";
-import { artifactEntry } from "./providers-lock";
+import { artifactEntry, isModuleFile, parsedModule } from "./providers-lock";
 import { PACKAGES_DIRECTORY, providerPackageDirectories } from "./workspace-packages.mjs";
 
 const USAGE = "Usage: bun run providers:pack -- --out <absolute directory> [<absolute package directory> ...]";
@@ -174,7 +187,139 @@ function readPackageJson(directory: string): { name: string; version: string; by
   return { name, version, bytes: read.bytes };
 }
 
-/** Every finding of admission's checks before import over the built artifact at `artifact`, each one sentence. */
+/** A runtime load the pack step refuses, by the words its sentence says of the module (C-114). */
+const RUNTIME_LOAD_FORMS = [
+  "names createRequire",
+  "reads require other than to call it with a string",
+  "calls require() with something other than a string",
+  "calls import() with something other than a string",
+  "calls a member named require",
+] as const;
+
+type RuntimeLoadForm = (typeof RUNTIME_LOAD_FORMS)[number];
+
+/** The string a node holds when it is a string literal or a template literal without substitution; else null. */
+function staticString(node: AnyNode | null | undefined): string | null {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
+  return null;
+}
+
+/** Whether `value` is a node of the tree: an object whose `type` is a string. */
+function isNode(value: unknown): value is AnyNode {
+  return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
+}
+
+/** A node to visit, and how its parent holds it. */
+interface Visit {
+  readonly node: AnyNode;
+  /** It is a name the parent gives, not a reference: a member, a key, a label, an imported or exported name. */
+  readonly name: boolean;
+  /** It is the callee of a call of `require`, judged at the call. */
+  readonly requireCallee: boolean;
+  /** It is a specifier of a re-export with a source, whose local name is the other module's. */
+  readonly reExport: boolean;
+}
+
+/** Whether the child `key` of `parent` is a name rather than a reference. */
+function isNamePosition(parent: AnyNode, key: string, reExport: boolean): boolean {
+  switch (parent.type) {
+    case "MemberExpression":
+      return key === "property" && !parent.computed;
+    case "Property":
+    case "MethodDefinition":
+    case "PropertyDefinition":
+      return key === "key" && !parent.computed;
+    case "LabeledStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+      return key === "label";
+    case "ImportSpecifier":
+      return key === "imported";
+    case "ExportSpecifier":
+      return key === "exported" || reExport;
+    case "ImportAttribute":
+      return key === "key";
+    case "MetaProperty":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Whether `node` is the identifier `name`. */
+function isIdentifier(node: AnyNode, name: string): boolean {
+  return node.type === "Identifier" && node.name === name;
+}
+
+/** The runtime-load form `visit` makes, if any. */
+function runtimeLoadForm({ node, name, requireCallee }: Visit): RuntimeLoadForm | null {
+  switch (node.type) {
+    case "Identifier":
+      if (node.name === "createRequire") return "names createRequire";
+      return node.name === "require" && !name && !requireCallee
+        ? "reads require other than to call it with a string"
+        : null;
+    case "Literal":
+    case "TemplateLiteral":
+      return staticString(node) === "createRequire" ? "names createRequire" : null;
+    case "CallExpression": {
+      const { callee } = node;
+      if (isIdentifier(callee, "require")) {
+        return staticString(node.arguments[0]) === null ? "calls require() with something other than a string" : null;
+      }
+      if (callee.type !== "MemberExpression") return null;
+      const named = callee.computed
+        ? staticString(callee.property) === "require"
+        : isIdentifier(callee.property, "require");
+      return named ? "calls a member named require" : null;
+    }
+    case "ImportExpression":
+      return staticString(node.source) === null ? "calls import() with something other than a string" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Every runtime load of the module file whose text is `text` and whose readings are `programs`, each by its line and
+ * form, once, in order of line then form: one walk with an explicit stack over every reading, so only the parser's own
+ * depth bounds a file. The line is 1 plus the count of line feeds before the node.
+ */
+function runtimeLoads(text: string, programs: readonly AnyNode[]): { line: number; form: RuntimeLoadForm }[] {
+  const found = new Map<string, { line: number; form: RuntimeLoadForm }>();
+  const pending: Visit[] = programs.map((node) => ({ node, name: false, requireCallee: false, reExport: false }));
+  for (let visit = pending.pop(); visit !== undefined; visit = pending.pop()) {
+    const { node } = visit;
+    const form = runtimeLoadForm(visit);
+    if (form !== null) {
+      let line = 1;
+      for (let at = text.indexOf("\n"); at !== -1 && at < node.start; at = text.indexOf("\n", at + 1)) line += 1;
+      found.set(`${line} ${form}`, { line, form });
+    }
+    const reExport = node.type === "ExportNamedDeclaration" && node.source !== null && node.source !== undefined;
+    const callsRequire = node.type === "CallExpression" && isIdentifier(node.callee, "require");
+    for (const [key, value] of Object.entries(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (!isNode(child)) continue;
+        pending.push({
+          node: child,
+          name: isNamePosition(node, key, visit.reExport),
+          requireCallee: callsRequire && key === "callee",
+          reExport: reExport && key === "specifiers",
+        });
+      }
+    }
+  }
+  return [...found.values()].sort(
+    (a, b) => a.line - b.line || RUNTIME_LOAD_FORMS.indexOf(a.form) - RUNTIME_LOAD_FORMS.indexOf(b.form),
+  );
+}
+
+/**
+ * Every finding of admission's checks before import over the built artifact at `artifact`, then every runtime load of
+ * each of its module files, each one sentence.
+ */
 function admissionFindings(artifact: string, label: string, entry: LockEntry): string[] {
   const walked = walkArtifact(artifact);
   if (!walked.ok) throw new Error(`${PREFIX}: ${artifact}: the walk refused an artifact the lock's sequence admitted`);
@@ -207,6 +352,16 @@ function admissionFindings(artifact: string, label: string, entry: LockEntry): s
   }
   if (declaresNativePackages(runtime)) {
     findings.push(`${PREFIX}: ${label}: its manifest declares runtime.native, which this Studio does not admit yet`);
+  }
+  for (const file of walked.files) {
+    if (!isModuleFile(file.path)) continue;
+    // The lock's sequence parsed every module file of this listing, so a null here is a host defect.
+    const parsed = parsedModule(fs.readFileSync(path.join(artifact, ...file.path.split("/"))));
+    if (parsed === null)
+      throw new Error(`${PREFIX}: ${file.path}: the lock's parse refused a module file it read before`);
+    for (const { line, form } of runtimeLoads(parsed.text, parsed.programs)) {
+      findings.push(`${PREFIX}: ${label}: ${file.path} line ${line} ${form}`);
+    }
   }
   return findings;
 }
