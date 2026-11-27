@@ -35,7 +35,6 @@ import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/stateme
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { admitDeclaredRequest, declaredRequestIdentity } from "@/lib/db/operations/declared-request-form";
 import { acmereadData, acmereadForm, acmereadMcp, acmereadText } from "../../../helpers/declared-agent-language";
-import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 import { shippedStatementLanguages } from "../../../helpers/declared-language-census";
 
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
@@ -190,11 +189,14 @@ describe("the composer of a data-declared language", () => {
     expect(facet.words.reached).toBe(client.copy.reached);
     expect(issuesOf(facet.statementInput, "")).toEqual([["too_small", "statement cannot be empty"]]);
     expect(issuesOf(facet.statementInput, '{"read":"topics"}')).toEqual([]);
-    // Each member Studio fixes is what rabbitread's module states, and what the facet composed from Kafka's declared
-    // data holds, member for member.
-    const kafkaread = AGENT_LANGUAGE_MCP_FACETS[shippedDeclaredLanguage("kafkaread")];
-    if (kafkaread === null) throw new Error("kafka's declared data states no MCP statement tool");
-    for (const moduleFacet of [kafkaread, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
+    // Each member Studio fixes is what rabbitread's module states, and what the facet composed from another language's
+    // declared data holds, member for member: the out-of-tree fixture's listget, read from its manifest.
+    const fixture = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../../fixtures/out-of-tree-provider/libredb-provider.json"), "utf8"),
+    );
+    const listget = composeDeclaredMcpFacet(fixture.engines[0].statementLanguageData.agent);
+    if (listget === null) throw new Error("the fixture's listget states no MCP statement tool");
+    for (const moduleFacet of [listget, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
       for (const member of ["takesDatabase", "strictInput", "paging", "fence"] as const) {
         expect<{ member: string; value: unknown }>({ member, value: facet[member] }).toEqual({
           member,
@@ -280,9 +282,12 @@ describe("the composer of a data-declared language", () => {
       readFileSync(path.join(import.meta.dir, "../../../../packages/provider-sdk/src/manifest/manifest.schema.json")),
     );
     const engine = JSON.parse(
-      readFileSync(path.join(import.meta.dir, "../../../../src/lib/db/engine-declarations/kafka.json"), "utf8"),
-    );
-    engine.agent.statementLanguage = "acmeread";
+      readFileSync(
+        path.join(import.meta.dir, "../../../../packages/provider-sdk/tests/fixtures/minimal-manifest.json"),
+        "utf8",
+      ),
+    ).engines[0];
+    engine.agent = { statementLanguage: "acmeread", overlay: { dialect: null, grounding: null } };
     engine.statementLanguageData = acmereadData();
     expect(validator.validateEngine(engine).admitted).toBe(true);
     engine.statementLanguageData.agent.text.posture.title = ["Bounded to ", { fill: "allowed" }];
@@ -432,7 +437,7 @@ describe("the composer of a data-declared language", () => {
     expect(other.fingerprint('{"read":"topics"}')).not.toBe(fingerprint('{"read":"topics"}'));
   });
 
-  test("the declared statement languages are the projection's data, equal to the committed declarations', and hold kafkaread", () => {
+  test("the declared statement languages are the projection's data, equal to the committed declarations'", () => {
     const projected = Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null);
     // The projection is built from the committed declarations alone, so a provider package's language is not in it.
     expect(projected).toEqual(
@@ -440,6 +445,7 @@ describe("the composer of a data-declared language", () => {
         .filter(({ source }) => source === "declaration")
         .map(({ data }) => data),
     );
+    // A census pin: the languages the committed declarations state as data, a set that leaves with their engines.
     expect(projected.map(({ name }) => name)).toEqual(["kafkaread"]);
     // The registries compose exactly the projection's languages that state an agent part, in its order.
     expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toEqual(

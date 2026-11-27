@@ -74,10 +74,15 @@ describe("the agent admission's imports", () => {
   test("the agent admission and the composer import no module of a statement language some engine declares as data", () => {
     const languages = statementLanguages();
     expect(languages).toContain("acmeread");
-    // Kafka's language is read from its committed declaration's data alone: no module of it is left in the tree.
-    expect(shippedLanguageData().map((data) => data.name)).toContain("kafkaread");
-    expect(subdirectories("src/lib/agent/languages")).not.toContain("kafkaread");
-    expect(languages).toContain("kafkaread");
+    // Each language a committed declaration states as data is read from that data alone: no agent module of it is left
+    // in the tree.
+    const shipped = shippedLanguageData().map((data) => data.name);
+    // A census pin: the languages the shipped declarations state as data, a set that leaves with their engines.
+    expect(shipped).toEqual(["kafkaread"]);
+    for (const name of shipped) {
+      expect(subdirectories("src/lib/agent/languages")).not.toContain(name);
+      expect(languages).toContain(name);
+    }
 
     for (const entry of ENTRIES) {
       const closure = valueImportClosure(entry);
@@ -111,8 +116,10 @@ describe("the agent admission's imports", () => {
       const languages = statementLanguages(data);
       expect(languages).toContain("alpharead");
       expect(languages).toContain("acmeread");
-      // The planted root holds no Kafka declaration, so its language comes only from the repository's.
-      expect(languages).not.toContain("kafkaread");
+      // The planted root holds none of the repository's declarations stating data, so none of their languages is held.
+      const shipped = shippedLanguageData().map(({ name }) => name);
+      expect(shipped.length).toBeGreaterThan(0);
+      for (const name of shipped) expect(languages).not.toContain(name);
     } finally {
       removePlantedRoot(planted);
     }

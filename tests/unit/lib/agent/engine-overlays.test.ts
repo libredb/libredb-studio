@@ -354,20 +354,25 @@ describe("the engine registry", () => {
 });
 
 describe("the engine packs", () => {
-  test("kafka, whose language is declared as data, holds no overlay row, and its engine pack is its declared family's pack itself", () => {
+  test("an engine whose language is declared as data holds no overlay row, and its engine pack is its declared family's pack itself", () => {
     // Its granted language is the one its declaration states as data, composed by the registries, not a module's.
-    const kafkaread = shippedDeclaredLanguage("kafkaread");
-    expect(statementLanguage.kafka).toBe(kafkaread);
-    expect(DECLARED_AGENT_LANGUAGES.some(({ id }) => id === kafkaread)).toBe(true);
-    expect(existsSync(path.join(import.meta.dir, "../../../../src/lib/agent/languages/kafkaread"))).toBe(false);
-    // No overlay row: the family is its grant, the client facet and the pack are the family's own objects, and the
-    // server overlay is empty, so the server facet one run reads is the family's own.
-    expect(engineFamily("kafka")).toBe(kafkaread);
-    expect(engineClientPack("kafka")).toBe(languageClientPack(kafkaread));
-    expect(agentEnginePack("kafka")).toBe(agentLanguagePack(kafkaread));
-    expect(Object.keys(engineServerOverlay("kafka"))).toEqual([]);
-    expect(runServerPack(kafkaread, "kafka")).toBe(languageServerPack(kafkaread));
-    expect(enginesSupporting("catalogRead")).not.toContain("kafka");
+    const declaredEngines = ENGINES.filter((type) =>
+      DECLARED_AGENT_LANGUAGES.some(({ id }) => id === statementLanguage[type]),
+    );
+    // A census pin: the shipped engines granted a language declared as data, a set that leaves with them.
+    expect(declaredEngines).toEqual(["kafka"]);
+    for (const type of declaredEngines) {
+      const declared = shippedDeclaredLanguage(statementLanguage[type] as string);
+      expect(existsSync(path.join(import.meta.dir, "../../../../src/lib/agent/languages", declared))).toBe(false);
+      // No overlay row: the family is its grant, the client facet and the pack are the family's own objects, and the
+      // server overlay is empty, so the server facet one run reads is the family's own.
+      expect(engineFamily(type)).toBe(declared);
+      expect(engineClientPack(type)).toBe(languageClientPack(declared));
+      expect(agentEnginePack(type)).toBe(agentLanguagePack(declared));
+      expect(Object.keys(engineServerOverlay(type))).toEqual([]);
+      expect(runServerPack(declared, type)).toBe(languageServerPack(declared));
+      expect(enginesSupporting("catalogRead")).not.toContain(type);
+    }
     // A name that is no engine, and a type with no language, are refused exactly as before.
     expect(engineFamily("toString" as DatabaseType)).toBeNull();
     expect(engineFamily("bigquery")).toBeNull();

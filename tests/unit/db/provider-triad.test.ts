@@ -32,10 +32,16 @@ test("a type-id whose statement language is declared as data has no agent leg fi
       readFileSync(path.join(REPOSITORY_ROOT, "src", "lib", "db", "engine-declarations", `${type}.json`), "utf8"),
     ).statementLanguageData;
 
-  // Kafka declares kafkaread as data: no overlay row and no language directory of Studio's.
-  expect(declared("kafka")?.name).toBe("kafkaread");
-  expect(providerTriad(REPOSITORY_ROOT, "kafka").agent).toBeNull();
-  expect(existsSync(path.join(REPOSITORY_ROOT, "src", "lib", "agent", "languages", "kafkaread"))).toBe(false);
+  // Each engine declaring its language as data: no overlay row and no language directory of Studio's.
+  const stating = SHIPPED_DATABASE_TYPES.filter((type) => declared(type) !== null);
+  // A census pin: the shipped engines whose declaration states its language as data, a set that leaves with them.
+  expect(stating).toEqual(["kafka"]);
+  for (const type of stating) {
+    const name = declared(type).name;
+    expect(typeof name).toBe("string");
+    expect({ type, agent: providerTriad(REPOSITORY_ROOT, type).agent }).toEqual({ type, agent: null });
+    expect(existsSync(path.join(REPOSITORY_ROOT, "src", "lib", "agent", "languages", name))).toBe(false);
+  }
   // Redis's rediscli is still a module of Studio's: its overlay and its language's client overlays stay.
   expect(declared("redis")).toBeNull();
   const redis = providerTriad(REPOSITORY_ROOT, "redis").agent;

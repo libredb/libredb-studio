@@ -26,9 +26,14 @@ export type ProviderReading =
 /** A provider's own reader of a request in its language. */
 export type ProviderReader = (text: string) => ProviderReading;
 
-/** A language's reader and the requests the census reads it over. */
+/** A reader's answer that, for a request it admits, names the plan it reads, written as JSON. */
+type PlannedReading =
+  | { readonly ok: true; readonly plan: string }
+  | { readonly ok: false; readonly code: string; readonly message: string };
+
+/** A language's reader, naming the plan of each request it admits, and the requests the census reads it over. */
 export interface ReaderEnrollment {
-  readonly reader: ProviderReader;
+  readonly reader: (text: string) => PlannedReading;
   readonly corpus: readonly string[];
 }
 
@@ -37,7 +42,7 @@ export interface ReaderEnrollment {
  * every key's values, admitted and refused, each written twice, with its keys in order and compact, and with its keys
  * reversed and spaced, so a request is read in more than one spelling. Built in code, never read from a file.
  */
-export function kafkareadCorpus(): readonly string[] {
+function kafkareadCorpus(): readonly string[] {
   const corpus = new Set<string>([
     '{"read": "topics"}',
     '{"read": "topics", "after": "orders", "limit": 7}',
@@ -100,9 +105,11 @@ export function kafkareadCorpus(): readonly string[] {
 }
 
 /** Kafka's own reader of a request, the one its provider reads before it sends anything, as the census reads it. */
-function kafkaReader(text: string): ProviderReading {
+function kafkaReader(text: string): PlannedReading {
   const reading = readKafkaAgentStatement(text);
-  return reading.ok ? { ok: true } : { ok: false, code: reading.code, message: reading.message };
+  return reading.ok
+    ? { ok: true, plan: JSON.stringify(reading.plan) }
+    : { ok: false, code: reading.code, message: reading.message };
 }
 
 /**
