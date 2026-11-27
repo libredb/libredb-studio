@@ -14,7 +14,7 @@
  * Each engine's overlay here is stated by its engine declaration at `agent.overlay`, generated from this registry and
  * read back to it by the census, tests/unit/db/engine-declarations.test.ts (docs/providers/CONTRACT.md, clause M-67).
  */
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineId, servedEngineRecord } from "@/lib/db/server-catalog";
 import { INFLUXDB_SERVER_OVERLAY } from "../influxql/engines/influxdb";
 import { KUBERNETES_SERVER_OVERLAY } from "../kubectl/engines/kubernetes";
 import { LIBREDB_SERVER_OVERLAY } from "../libredbkv/engines/libredb";
@@ -155,7 +155,7 @@ type EngineServerFacet = Readonly<AgentLanguageServerPack & { readonly dialect?:
  * (`(base) => value`) is a new object every time its function runs, so a facet derived on every read would differ on
  * every run. Only a registry id is cached, whose family is its row's, so no id caches two families' facets.
  */
-const ENGINE_SERVER_FACETS = new Map<string, EngineServerFacet>();
+const ENGINE_SERVER_FACETS = new Map<EngineId, EngineServerFacet>();
 
 /**
  * The server facet one run reads: the family its persisted `language` names (`statementFamilyOf`), with the overlay of
@@ -168,10 +168,10 @@ export function runServerPack(language: AgentStatementLanguageId | undefined, id
   const family = statementFamilyOf(language);
   const base = languageServerPack(family);
   if (engineFamily(engine) !== family || !Object.hasOwn(SERVER_OVERLAYS, id)) return base;
-  let facet = ENGINE_SERVER_FACETS.get(id);
+  let facet = ENGINE_SERVER_FACETS.get(engine.id);
   if (facet === undefined) {
     facet = defineOverlay(base, SERVER_OVERLAYS[id as AgentEngineType] as EngineServerOverlay);
-    ENGINE_SERVER_FACETS.set(id, facet);
+    ENGINE_SERVER_FACETS.set(engine.id, facet);
   }
   return facet;
 }

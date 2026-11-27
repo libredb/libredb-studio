@@ -50,6 +50,12 @@ const STATEMENT_FAMILY =
 
 export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
+    module: "src/lib/agent/languages/engines/server.ts",
+    name: "ENGINE_SERVER_FACETS",
+    destination:
+      "core-owned: a cache of each engine's server facet, derived on first read from its agent language overlay, which holds the facts",
+  },
+  {
     module: "src/lib/db-showcase.ts",
     name: "SHOWCASE_RANK",
     destination: "core-owned: the order the README shows engines in is Studio's presentation, not a fact of an engine",
