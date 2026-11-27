@@ -15,7 +15,11 @@ import { MCP_STATEMENT_ARMS, mcpStatementToolFor } from "@/lib/mcp/tools/stateme
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 import {
   admittedFor,
   admittedManifest,
@@ -28,7 +32,7 @@ import {
 const agentExecution = legacyRegisterEngines("agentExecution");
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 type Exposed = ReturnType<McpExposure>;
 

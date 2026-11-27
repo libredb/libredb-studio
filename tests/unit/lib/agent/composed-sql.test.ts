@@ -18,9 +18,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 /**
  * The SQL the SERVER composes (#329 T6, planning decision P1).

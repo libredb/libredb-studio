@@ -10,6 +10,7 @@ import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { agentLanguagePack } from "../index";
 import type { AgentEnginePack } from "../pack";
 import { engineClientPack } from "./client";
+import { agentLanguageOfGrant } from "../client";
 import { runServerPack } from "./server";
 
 /**
@@ -24,7 +25,7 @@ import { runServerPack } from "./server";
  */
 export function agentEnginePack(type: DatabaseType): AgentEnginePack {
   const client = engineClientPack(type);
-  const language = servedEngineRecord(type).grants.statementLanguage;
+  const language = agentLanguageOfGrant(type, servedEngineRecord(type).grants.statementLanguage);
   if (language === null) throw new Error(`no engine pack for ${type}: Studio grants it no statement language`);
   const family = agentLanguagePack(language);
   const server = runServerPack(family.id, type);

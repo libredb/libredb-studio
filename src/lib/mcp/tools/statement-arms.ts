@@ -13,6 +13,7 @@ import {
   type AgentLanguageMcpWords,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
+import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";
@@ -266,7 +267,7 @@ export function listedStatementArms(
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
-  const language = servedEngineRecord(type).grants.statementLanguage;
+  const language = agentLanguageOfGrant(type, servedEngineRecord(type).grants.statementLanguage);
   const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
   return arm !== null && arm.types.includes(type) ? arm : null;
 }
@@ -289,7 +290,7 @@ export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function mcpWithholdsDatabase(type: DatabaseType): boolean {
-  const language = servedEngineRecord(type).grants.statementLanguage;
+  const language = agentLanguageOfGrant(type, servedEngineRecord(type).grants.statementLanguage);
   return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
 }
 

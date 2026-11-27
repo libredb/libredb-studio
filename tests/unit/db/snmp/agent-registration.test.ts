@@ -12,14 +12,18 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import { SNMP_WITHHELD_SUBTREES } from "@/lib/db/providers/network/snmp/agent-statement";
 import { SNMP_LABELS } from "@/lib/db/providers/network/snmp/labels";
 import type { DatabaseConnection } from "@/lib/types";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../../helpers/legacy-register";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8");

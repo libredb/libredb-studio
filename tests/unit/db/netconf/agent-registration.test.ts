@@ -22,14 +22,18 @@ import { NETCONF_AGENT_SENTENCES } from "@/lib/db/providers/network/netconf/agen
 import { NETCONF_WITHHELD_TEXT } from "@/lib/db/providers/network/netconf/agent-withheld";
 import { NETCONF_LABELS } from "@/lib/db/providers/network/netconf/labels";
 import type { DatabaseConnection } from "@/lib/types";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../../helpers/legacy-register";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8");

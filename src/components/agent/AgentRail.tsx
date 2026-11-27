@@ -59,6 +59,7 @@ import { AGENT_TERMINAL_STATUSES } from "@/lib/agent/types";
 import type { AgentWorkflowClassification } from "@/lib/agent/workflow-classifier";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
+import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnswerCard, answerCardState } from "./AnswerCard";
@@ -1137,7 +1138,10 @@ export const AgentRail = React.memo(function AgentRail({
     engine that has none. `canHandOver` is the yes.
   */
   const handOverLanguage = (candidate: AgentRunWorkflowType): AgentStatementLanguageId | null => {
-    const language = connectionType === null ? "sql" : GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType];
+    const language =
+      connectionType === null
+        ? "sql"
+        : agentLanguageOfGrant(connectionType, GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType]);
     const offered =
       mode === "agent" &&
       language !== null &&

@@ -233,7 +233,12 @@ import {
   slotNameAt,
   valueAt,
 } from "./engine-declarations/declared-slots";
-import { legacyAgentCredentialTable, legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyAgentCredentialTable,
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
@@ -251,7 +256,7 @@ const hostPathFields = legacyRegisterTable("hostPathFields");
 const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
 const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 const agentReadings = legacyRegisterTable("agentReadings");
 const readsSqlTextRow = legacyRegisterTable("readsSqlText");
 const confirmExemptFormsRow = legacyRegisterTable("confirmExemptForms");

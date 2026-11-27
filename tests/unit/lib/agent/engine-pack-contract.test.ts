@@ -17,12 +17,12 @@ import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql"
 import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyRegisterEngines, legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 /**
  * The engine pack contract (#1821): what must hold for the pack an engine RESOLVES to, run over every engine that

@@ -28,9 +28,9 @@ import path from "node:path";
 import type { DatabaseType } from "@/lib/types";
 import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 import { PROVIDER_DIRECTORY_MAP } from "./provider-directory-map";
-import { legacyRegisterTable } from "./legacy-register";
+import { legacyStatementLanguageTable } from "./legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 export interface ProviderTriad {
   readonly type: DatabaseType;

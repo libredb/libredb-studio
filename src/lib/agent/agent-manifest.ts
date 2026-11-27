@@ -28,6 +28,7 @@ import {
   DEFAULT_STATEMENT_LANGUAGE,
   projectClientPacks,
   statementFamilyOf,
+  agentLanguageOfGrant,
 } from "./languages/client";
 import { enginesSupporting } from "./languages/engines/client";
 import type { AgentPackVariantRequirement, AgentVariantRequirementSpec } from "./languages/pack";
@@ -303,8 +304,18 @@ interface AgentAvailabilityTables {
   readonly reviewed: readonly DatabaseType[];
 }
 
+/** Each engine's granted statement language, read as the agent's language once at load (`agentLanguageOfGrant`). */
+const AGENT_STATEMENT_LANGUAGES = Object.freeze(
+  Object.fromEntries(
+    Object.entries(GRANTED_AGENT_STATEMENT_LANGUAGE).map(([type, granted]) => [
+      type,
+      agentLanguageOfGrant(type, granted),
+    ]),
+  ) as AgentAvailabilityTables["languages"],
+);
+
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
-  languages: GRANTED_AGENT_STATEMENT_LANGUAGE,
+  languages: AGENT_STATEMENT_LANGUAGES,
   variants: AGENT_WORKFLOW_VARIANTS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
   reviewed: GRANTED_AGENT_EXECUTION_ENGINES,

@@ -25,9 +25,9 @@ import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types"
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 // The agent's statements run through the host core's read-only execute, and plan mode's statistics read through its
 // console execute, so this file installs one for its runs.

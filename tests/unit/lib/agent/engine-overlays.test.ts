@@ -101,9 +101,9 @@ import { getExplainStrategy } from "@/lib/explain";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 /**
  * The engine overlays (#1821): one engine's pack is its family's pack with the engine's dialect laid on, and nothing

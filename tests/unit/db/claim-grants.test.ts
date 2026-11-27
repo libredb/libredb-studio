@@ -56,7 +56,11 @@ import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 import { CLAIM_GRANTS, CORE_GRANT_RECORDS } from "../../helpers/core-grant-records";
-import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyAgentCredentialTable,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
 import { type Input, moduleOf, valueInputs } from "../../helpers/value-inputs";
 import {
@@ -727,10 +731,10 @@ describe("Studio's grant of each agent mode claim", () => {
   test("for every shipped engine, each granted agent mode claim is its record's row", () => {
     expect(
       SHIPPED_DATABASE_TYPES.filter(
-        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== legacyRegisterTable("statementLanguage")[type],
+        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== legacyStatementLanguageTable()[type],
       ),
     ).toEqual([]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(legacyRegisterTable("statementLanguage"));
+    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(legacyStatementLanguageTable());
     // Vacuity: the record holds languages and nulls.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] === null)).toEqual([
       "bigquery",
