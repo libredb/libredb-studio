@@ -353,7 +353,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "sqlText.redaction",
     ],
     reason:
-      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (packageStatementAsks)",
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (packageStatementAsks); a null sqlText is read as the restrictive SQL text request, with no grammar digest, and no statement grammar",
   },
   {
     path: "src/lib/db/server-catalog.ts",

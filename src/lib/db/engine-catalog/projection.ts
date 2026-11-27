@@ -80,7 +80,9 @@
  * `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where Studio's review record
  * lists them (docs/providers/CONTRACT.md, clause S-8). Each takes `AuthoredDeclaration`, those members alone: an
  * admitted `EngineDeclaration` is one, and so are the authored members the catalog generator's `--write` reads from a
- * file whose generated members are not yet rewritten.
+ * file whose generated members are not yet rewritten. The SQL text, SQL writing and migration DDL projections take
+ * `SqlFamilyDeclaration`, one whose `sqlText`, `sqlWriting` and `migrationDdl` are stated, since an engine may state
+ * each as null and those projections hold a row for every declaration they are handed.
  *
  * The projections are pure: their keys are the ids in ascending code-unit order, so the same set gives the same answer
  * whatever order it is admitted in, and removing a declaration gives exactly what a fresh build from the rest gives.
@@ -160,9 +162,9 @@ export interface AuthoredDeclaration {
     readonly dialect: Editor["dialect"];
     readonly language: Editor["language"];
   };
-  readonly sqlText: SqlTextEntry;
-  readonly sqlWriting: SqlWriting;
-  readonly migrationDdl: MigrationDdl;
+  readonly sqlText: SqlTextEntry | null;
+  readonly sqlWriting: SqlWritingEntry | null;
+  readonly migrationDdl: MigrationDdlEntry | null;
   readonly sqlGenerators: SqlGenerators;
   readonly policy: PolicyClaims;
   readonly mcp: McpClaims;
@@ -170,14 +172,29 @@ export interface AuthoredDeclaration {
 }
 
 /**
+ * A declaration that states every SQL-family member, its `sqlText`, `sqlWriting` and `migrationDdl`, none of them
+ * null: what the SQL text, SQL writing and migration DDL projections read. Every bundled declaration is one, the
+ * catalog generator refusing a null member in it by engine and member; a package engine may state each as null, and
+ * gets no entry in these projections (docs/providers/CONTRACT.md, clauses S-3, S-11 and S-17).
+ */
+export type SqlFamilyDeclaration = AuthoredDeclaration & {
+  readonly sqlText: SqlTextEntry;
+  readonly sqlWriting: SqlWritingEntry;
+  readonly migrationDdl: MigrationDdlEntry;
+};
+
+/** The SDK's `SqlText` as an engine that states SQL text states it. */
+type StatedSqlText = NonNullable<SqlText>;
+
+/**
  * One engine's SQL text as its declaration authors it: every member of the SDK's `SqlText` but its `redaction`, which
  * is a claim. A clause is its source and flags, each word list a list and each function its name.
  */
 export interface SqlTextEntry {
-  readonly readsSqlText: SqlText["readsSqlText"];
-  readonly grammar: SqlText["grammar"];
-  readonly updateTarget: SqlText["updateTarget"];
-  readonly completion: SqlText["completion"];
+  readonly readsSqlText: StatedSqlText["readsSqlText"];
+  readonly grammar: StatedSqlText["grammar"];
+  readonly updateTarget: StatedSqlText["updateTarget"];
+  readonly completion: StatedSqlText["completion"];
 }
 
 /** The SQL text: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
@@ -187,7 +204,7 @@ export type SqlTexts = Readonly<Record<string, SqlTextEntry>>;
  * One engine's SQL writing as its declaration authors it, the SDK's `SqlWriting`: a type pattern is its source and
  * flags, each type name list a list and each function its name.
  */
-export type SqlWritingEntry = SqlWriting;
+export type SqlWritingEntry = NonNullable<SqlWriting>;
 
 /** The SQL writing: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type SqlWritings = Readonly<Record<string, SqlWritingEntry>>;
@@ -197,7 +214,7 @@ export type SqlWritings = Readonly<Record<string, SqlWritingEntry>>;
  * and reasons, or written, with its transaction wrapper, its CREATE TABLE form, each statement writer as its name and
  * its reasons.
  */
-export type MigrationDdlEntry = MigrationDdl;
+export type MigrationDdlEntry = NonNullable<MigrationDdl>;
 
 /** The migration DDL: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type MigrationDdls = Readonly<Record<string, MigrationDdlEntry>>;
@@ -399,7 +416,7 @@ function languageTabType(id: string, queryLanguage: string): string {
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-function inIdOrder(declarations: readonly AuthoredDeclaration[]): AuthoredDeclaration[] {
+function inIdOrder<Declaration extends AuthoredDeclaration>(declarations: readonly Declaration[]): Declaration[] {
   const seen = new Set<string>();
   for (const declaration of declarations) {
     if (seen.has(declaration.id)) throw new Error(`The engine id ${JSON.stringify(declaration.id)} is declared twice.`);
@@ -412,9 +429,9 @@ function inIdOrder(declarations: readonly AuthoredDeclaration[]): AuthoredDeclar
  * One frozen record over `ordered`, each declaration's value read by `read`, or no entry where `read` answers
  * undefined.
  */
-function recordOf<Value>(
-  ordered: readonly AuthoredDeclaration[],
-  read: (declaration: AuthoredDeclaration) => Value | undefined,
+function recordOf<Value, Declaration extends AuthoredDeclaration>(
+  ordered: readonly Declaration[],
+  read: (declaration: Declaration) => Value | undefined,
 ): Readonly<Record<string, Value>> {
   const entries: [string, Value][] = [];
   for (const declaration of ordered) {
@@ -676,12 +693,12 @@ export function projectQueryEditorFacts(declarations: readonly AuthoredDeclarati
 
 /**
  * The SQL text of `declarations`, each entry read from `sqlText.readsSqlText`, `grammar`, `updateTarget` and
- * `completion`, members every declaration authors, the grammar in the declaration's own member order. No entry holds
- * the declaration's `sqlText.redaction`: it is a claim, granted from the engine's register row.
+ * `completion`, members every declaration it is handed states, the grammar in the declaration's own member order. No
+ * entry holds the declaration's `sqlText.redaction`: it is a claim, granted from the engine's register row.
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-export function projectSqlText(declarations: readonly AuthoredDeclaration[]): SqlTexts {
+export function projectSqlText(declarations: readonly SqlFamilyDeclaration[]): SqlTexts {
   return recordOf(inIdOrder(declarations), ({ sqlText }) =>
     frozenCopy<SqlTextEntry>({
       readsSqlText: sqlText.readsSqlText,
@@ -694,21 +711,21 @@ export function projectSqlText(declarations: readonly AuthoredDeclaration[]): Sq
 
 /**
  * The SQL writing of `declarations`, each entry the declaration's `sqlWriting` as it states it, a segment every
- * declaration authors, in its own member order at every level.
+ * declaration it is handed states, in its own member order at every level.
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-export function projectSqlWriting(declarations: readonly AuthoredDeclaration[]): SqlWritings {
+export function projectSqlWriting(declarations: readonly SqlFamilyDeclaration[]): SqlWritings {
   return recordOf(inIdOrder(declarations), ({ sqlWriting }) => frozenCopy<SqlWritingEntry>(sqlWriting));
 }
 
 /**
  * The migration DDL of `declarations`, each entry the declaration's `migrationDdl` as it states it, a segment every
- * declaration authors, in its own member order at every level.
+ * declaration it is handed states, in its own member order at every level.
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-export function projectMigrationDdl(declarations: readonly AuthoredDeclaration[]): MigrationDdls {
+export function projectMigrationDdl(declarations: readonly SqlFamilyDeclaration[]): MigrationDdls {
   return recordOf(inIdOrder(declarations), ({ migrationDdl }) => frozenCopy<MigrationDdlEntry>(migrationDdl));
 }
 

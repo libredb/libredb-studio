@@ -421,9 +421,10 @@ function fieldRuleRefusals(connection: EngineDeclaration["connection"], at: stri
 
 /**
  * The rule of an engine's trailing limit clauses the schema cannot state, at pointers under `at`: each clause's source
- * compiles with its flags.
+ * compiles with its flags. An engine whose `sqlText` is null states no clause, so none is refused.
  */
 function clausePatternRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  if (engine.sqlText === null) return [];
   return engine.sqlText.grammar.trailingLimitClauses.flatMap(({ source, flags }, index) =>
     compiled(source, flags) === null
       ? [schemaRefusal("pattern-invalid", `${at}/sqlText/grammar/trailingLimitClauses/${index}/source`)]
@@ -448,12 +449,14 @@ function capturingGroups(pattern: RegExp): number {
  * with its flags, the wrapper pattern captures exactly one group, the type it wraps, and no type name is named twice in
  * one table, either under two bare type families, the later kind in the schema's order refused, or by two bare
  * spellings, the later refused. The kinds are read in the schema's order, whatever order the declaration writes them in.
+ * An engine whose `sqlWriting` is null states none of these facts, so none is refused.
  */
 function sqlWritingRuleRefusals(
   engine: EngineDeclaration,
   at: string,
   vocabularies: FieldVocabularies,
 ): SchemaRefusal[] {
+  if (engine.sqlWriting === null) return [];
   const refusals: SchemaRefusal[] = [];
   const base = `${at}/sqlWriting/export`;
   const { bareSpelling, typeVocabulary } = engine.sqlWriting.export;

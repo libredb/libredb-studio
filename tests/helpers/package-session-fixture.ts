@@ -90,12 +90,17 @@ function manifestOf(pkg: SessionPackage): Record<string, unknown> {
  * The SHA-256 of the grammar `pkg`'s engine declares, read from its manifest as `admitSessionPackages` writes it and
  * admitted by the SDK's validator: the digest a register row names to review that grammar.
  *
- * @throws {Error} Naming the package, for a manifest the validator refuses.
+ * @throws {Error} Naming the package, for a manifest the validator refuses and for one whose engine states no SQL
+ * text, which declares no grammar.
  */
 export function declaredGrammarSha256(pkg: SessionPackage): string {
   const verdict = VALIDATOR.validate(manifestOf(pkg));
   if (!verdict.admitted) throw new Error(`the fixture manifest of ${pkg.name} is refused`);
-  return grammarSha256(verdict.manifest.engines[0]?.sqlText.grammar);
+  const sqlText = verdict.manifest.engines[0]?.sqlText;
+  if (sqlText === null || sqlText === undefined) {
+    throw new Error(`the fixture manifest of ${pkg.name} states no SQL text, so it declares no grammar`);
+  }
+  return grammarSha256(sqlText.grammar);
 }
 
 /** The entry of `pkg`: a record whose every function calls its hook, offering exactly the calls `pkg` offers. */

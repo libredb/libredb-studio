@@ -28,8 +28,9 @@
  *   and raises a host defect for a legacy record;
  * - `catalog`, `connection`, `fieldRules` and `statementGrammar`: the engine's catalog entry, its data-only connection
  *   tables, its field rules and the grammar its statements are confirmed under, composed for a package from its
- *   declaration with the projections Studio's generator projects its own declarations with, and for a legacy engine
- *   from Studio's committed tables, never from a declaration read at run time;
+ *   declaration with the projections Studio's generator projects its own declarations with, the grammar null where
+ *   the declaration states no SQL text, and for a legacy engine from Studio's committed tables, never from a
+ *   declaration read at run time;
  * - `grants`: Studio's grant of each claim and of the four host facts it reads from no declaration, and the row's
  *   review of the agent overlay's claim that its catalog read is a command, `grantEngineClaims` (./claim-grants)
  *   against the engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its
@@ -198,11 +199,13 @@ export interface EngineRecord {
    * The grammar the engine's statements are confirmed under: for a package, the grammar its declaration states
    * (`sqlText.grammar`), composed once by `grammarFromFacts` (./sql-grammar), which the confirmation gate reads with
    * the claims that loosen it its record grants for the grammar its register row reviewed, every statement asked where
-   * no row reviewed it (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); for a legacy
-   * engine, its row of Studio's grammar table (`sqlGrammarFor`). The query event builder reads a statement and its
-   * error text under it too (`buildQueryEvent` in src/lib/query-events/build.ts).
+   * no row reviewed it (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); null for a package whose
+   * declaration states `sqlText` as null, which no register row can review, so the gate asks about every statement and
+   * the query event log keeps none of its text; for a legacy engine, its row of Studio's grammar table
+   * (`sqlGrammarFor`), never null. The query event builder reads a statement and its error text under it too
+   * (`buildQueryEvent` in src/lib/query-events/build.ts).
    */
-  readonly statementGrammar: SqlGrammar;
+  readonly statementGrammar: SqlGrammar | null;
   readonly offers: EngineOffers;
 }
 

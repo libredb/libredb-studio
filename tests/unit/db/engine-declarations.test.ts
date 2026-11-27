@@ -34,7 +34,6 @@ import {
   type CreateTable,
   type CredentialWarning as ManifestCredentialWarning,
   type DdlTypeSpellings,
-  type EngineDeclaration,
   type FieldName,
   type FieldPlacement as ManifestFieldPlacement,
   type FormatterLanguage,
@@ -74,6 +73,7 @@ import type {
   ScriptGrammar,
   SqlGrammar,
 } from "@libredb/provider-sdk/sql";
+import type { BundledDeclaration } from "../../../scripts/generate-engine-catalog";
 import {
   AUTHORED_MEMBERS,
   type AuthoredMembers,
@@ -287,8 +287,8 @@ const CAPABILITIES = await readCensusCapabilities();
 const FIRESTORE_EMULATOR_VARIABLE = "FIRESTORE_EMULATOR_HOST";
 
 /** The committed declaration of one type-id, parsed. */
-function declared(type: DatabaseType): EngineDeclaration {
-  return JSON.parse(readFileSync(path.join(DIRECTORY, `${type}.json`), "utf8")) as EngineDeclaration;
+function declared(type: DatabaseType): BundledDeclaration {
+  return JSON.parse(readFileSync(path.join(DIRECTORY, `${type}.json`), "utf8")) as BundledDeclaration;
 }
 
 /** The authored members of one type-id's committed declaration, the generator's source for them. */
@@ -297,7 +297,7 @@ function authored(type: DatabaseType): AuthoredMembers {
 }
 
 /** The shipped ids for which `matches` answers false: the census's failure list. */
-function differing(matches: (type: DatabaseType, declaration: EngineDeclaration) => boolean): DatabaseType[] {
+function differing(matches: (type: DatabaseType, declaration: BundledDeclaration) => boolean): DatabaseType[] {
   return SHIPPED_DATABASE_TYPES.filter((type) => !matches(type, declared(type)));
 }
 
@@ -424,7 +424,7 @@ function functionPaths(value: unknown, at: string, seen = new Set<unknown>()): s
 }
 
 /** The slots of a connection form entry whose function the declaration names, as `functionPaths` spells them. */
-function namedSlotPaths(d: EngineDeclaration): string[] {
+function namedSlotPaths(d: BundledDeclaration): string[] {
   const { connection } = d;
   return [
     ...connection.fieldRules.filter((rule) => rule.check !== null).map((rule) => `fieldRules.${rule.field}.check`),
@@ -435,7 +435,7 @@ function namedSlotPaths(d: EngineDeclaration): string[] {
 }
 
 /** The slots of a connection string row whose function the declaration names, as `functionPaths` spells them. */
-function connectionStringSlotPaths(d: EngineDeclaration): string[] {
+function connectionStringSlotPaths(d: BundledDeclaration): string[] {
   const { urlTls, paste, seedCheck } = d.connection.connectionString;
   return [
     ...(urlTls === null ? [] : ["readTls"]),
@@ -445,7 +445,7 @@ function connectionStringSlotPaths(d: EngineDeclaration): string[] {
 }
 
 /** The connection string function names a declaration states. */
-function connectionStringNames(d: EngineDeclaration): string[] {
+function connectionStringNames(d: BundledDeclaration): string[] {
   const { urlTls, paste, seedCheck } = d.connection.connectionString;
   return [
     ...(urlTls === null ? [] : [urlTls]),
@@ -458,7 +458,7 @@ function connectionStringNames(d: EngineDeclaration): string[] {
  * The slots of a SQL grammar row and of its engine's statement redaction whose function the declaration names, as
  * `functionPaths` spells them over `statementFunctions`.
  */
-function sqlTextSlotPaths(d: EngineDeclaration): string[] {
+function sqlTextSlotPaths(d: BundledDeclaration): string[] {
   const { redaction, completion } = d.sqlText;
   return [
     ...(redaction.kind === "command" ? ["redaction.read"] : []),
@@ -468,7 +468,7 @@ function sqlTextSlotPaths(d: EngineDeclaration): string[] {
 }
 
 /** The SQL grammar function names a declaration states. */
-function sqlTextNames(d: EngineDeclaration): string[] {
+function sqlTextNames(d: BundledDeclaration): string[] {
   const { redaction, completion } = d.sqlText;
   return [
     ...(redaction.kind === "command" ? [redaction.reader] : []),
@@ -609,7 +609,7 @@ const MIGRATION_DDL_SLOT_KINDS: Readonly<Record<string, keyof MigrationDdlFuncti
 };
 
 /** Every function name a declaration's `migrationDdl` states, with the dotted path it is stated at. */
-function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+function migrationDdlNames(d: BundledDeclaration): (readonly [path: string, name: string])[] {
   return MIGRATION_DDL_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.migrationDdl, path);
     return typeof name === "string" ? [[path, name] as const] : [];
@@ -628,7 +628,7 @@ const SQL_GENERATOR_SLOT_KINDS: Readonly<Record<string, keyof SqlGeneratorFuncti
 };
 
 /** Every function name a declaration's `sqlGenerators` states, with the dotted path it is stated at; none where null. */
-function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+function sqlGeneratorNames(d: BundledDeclaration): (readonly [path: string, name: string])[] {
   return SQL_GENERATORS_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.sqlGenerators, path);
     return typeof name === "string" ? [[path, name] as const] : [];
@@ -639,7 +639,7 @@ function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name:
 const AGENT_OVERLAY_FUNCTION_PATHS = schemaFunctionPaths("agentOverlay");
 
 /** Every function name a declaration's `agent.overlay` states, with the dotted path it is stated at; none where null. */
-function agentOverlayNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+function agentOverlayNames(d: BundledDeclaration): (readonly [path: string, name: string])[] {
   return AGENT_OVERLAY_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.agent.overlay, path);
     return typeof name === "string" ? [[path, name] as const] : [];
@@ -727,7 +727,7 @@ function tablePaths(table: SlotTable): string[] {
 }
 
 /** Every function name a declaration's `sqlWriting` states, with the dotted path it is stated at. */
-function sqlWritingNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+function sqlWritingNames(d: BundledDeclaration): (readonly [path: string, name: string])[] {
   return SQL_WRITING_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.sqlWriting, path);
     return typeof name === "string" ? [[path, name] as const] : [];
@@ -789,7 +789,7 @@ function declaredGrammar(grammar: SqlGrammar): GrammarFacts {
  * its source and flags, and each fact stated as null, and the formatter language stated as `postgresql`, left out, so
  * its readers take the reading of its absence.
  */
-function grammarFromDeclaration(d: EngineDeclaration): SqlGrammar {
+function grammarFromDeclaration(d: BundledDeclaration): SqlGrammar {
   const {
     doubleQuoteBackslashEscapes,
     singleQuoteBackslashEscapes,
@@ -933,7 +933,7 @@ const LANGUAGE_TAB_TYPES: Readonly<Record<ProviderCapabilities["queryLanguage"],
 };
 
 /** The tab type a declaration's engine opens its tabs under: its dialect's name, or its query language's tab type. */
-function declaredTabType(d: EngineDeclaration): QueryTab["type"] {
+function declaredTabType(d: BundledDeclaration): QueryTab["type"] {
   const dialect = d.editor.dialect;
   if (dialect !== null) {
     if (!isQueryDialect(dialect.name))
@@ -1306,7 +1306,7 @@ describe("the committed declarations", () => {
     // The editor's authored members come from the declaration alone: the generator reads no execution UI, fence, dialect
     // or editor language table, so a dialect row or an accent edited by hand is kept.
     const kafka = declared("kafka");
-    const kafkaDialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const kafkaDialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const counting = { ...kafka, editor: { ...kafka.editor, dialect: { ...kafkaDialect, offersCountQuery: true } } };
     expect(
       buildEngineDeclaration("kafka", CAPABILITIES.kafka, authoredMembersOf(counting, "kafka.json")).editor.dialect,
@@ -1324,7 +1324,7 @@ describe("the committed declarations", () => {
     const read = (capabilities: ProviderCapabilities, change: Record<string, unknown>): ProviderCapabilities =>
       JSON.parse(JSON.stringify({ ...capabilities, ...change }));
     const kafka = authored("kafka");
-    const kafkaDialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const kafkaDialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const postgres = authored("postgres");
     const cases: [DatabaseType, ProviderCapabilities, AuthoredMembers, string][] = [
       ["postgres", read(CAPABILITIES.postgres, { explainFormat: "example-plan" }), postgres, "/editor/explainFormat"],
@@ -1850,7 +1850,7 @@ function studioMaintenanceSpec(spec: MaintenanceSpec): MaintenanceOperationSpec 
 }
 
 /** A provider's capabilities with their maintenance half rebuilt from the engine's declaration alone. */
-function maintenanceFromDeclaration(capabilities: ProviderCapabilities, d: EngineDeclaration): ProviderCapabilities {
+function maintenanceFromDeclaration(capabilities: ProviderCapabilities, d: BundledDeclaration): ProviderCapabilities {
   return {
     ...capabilities,
     supportsMaintenance: d.facets.maintenance.length > 0,
@@ -1864,7 +1864,7 @@ function maintenanceFromDeclaration(capabilities: ProviderCapabilities, d: Engin
 /** How the census reads one claim of an earlier segment: the engine's request, and Studio's review of it. */
 interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
-  readonly request: (declaration: EngineDeclaration) => unknown;
+  readonly request: (declaration: BundledDeclaration) => unknown;
   /**
    * Studio's review row for `type`, written in the declaration's form: the member of the engine's legacy row in the
    * grant register that reviews the claim.
@@ -1984,7 +1984,9 @@ function ungrantedClaims(
 }
 
 /** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
-function declaredRecord<Value>(read: (declaration: EngineDeclaration) => Value): Readonly<Record<DatabaseType, Value>> {
+function declaredRecord<Value>(
+  read: (declaration: BundledDeclaration) => Value,
+): Readonly<Record<DatabaseType, Value>> {
   return Object.fromEntries(SHIPPED_DATABASE_TYPES.map((type) => [type, read(declared(type))])) as Record<
     DatabaseType,
     Value
@@ -2001,7 +2003,7 @@ describe("the census", () => {
   });
 
   test("connection.defaults reads back as the form's default port and host", () => {
-    const portText = (d: EngineDeclaration) =>
+    const portText = (d: BundledDeclaration) =>
       d.connection.defaults.port === undefined ? "" : String(d.connection.defaults.port);
 
     expect(differing((type, d) => portText(d) === CONNECTION_FORM[type].defaultPort)).toEqual([]);
@@ -2026,7 +2028,7 @@ describe("the census", () => {
       netconf: onlyOf("NETCONF"),
       opcua: onlyOf("OPC UA"),
     };
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const row = SEED_ONLY_FIELDS[type];
       const seedOnly = d.connection.seedOnly;
       if (row === null || seedOnly === null) return row === seedOnly;
@@ -2053,7 +2055,7 @@ describe("the census", () => {
   });
 
   test("connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them", () => {
-    const entries = (d: EngineDeclaration) => d.connection.refused.map(({ field, refusal }) => [field, refusal]);
+    const entries = (d: BundledDeclaration) => d.connection.refused.map(({ field, refusal }) => [field, refusal]);
 
     expect(differing((type, d) => sameValue(entries(d), Object.entries(REFUSED_CONNECTION_FIELDS[type])))).toEqual([]);
     expect(
@@ -2083,7 +2085,7 @@ describe("the census", () => {
         return (error as Error).message;
       }
     };
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const { refused } = d.connection;
       const fields = refused.map((entry) => entry.field);
       return (
@@ -2101,7 +2103,7 @@ describe("the census", () => {
   });
 
   test("connection.agentCredential is the engine's legacy register row", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const row = agentCredential[type];
       const credential = d.connection.agentCredential;
       if (row === null || credential === null) return row === credential;
@@ -2121,7 +2123,7 @@ describe("the census", () => {
   });
 
   test("connection.sshTunnel is offered exactly where the engine's legacy register row holds no sentence, and carries that sentence", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const sentence = sshTunnel[type];
       const tunnel = d.connection.sshTunnel;
       return tunnel.offered ? sentence === null : tunnel.refusal === sentence;
@@ -2131,7 +2133,7 @@ describe("the census", () => {
   });
 
   test("connection.tls lists TLS modes exactly where the dialog offers the SSL panel", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const listsModes = d.connection.tls.modes.length > 0;
       return listsModes === offersSslPanel(type);
     };
@@ -2433,7 +2435,7 @@ describe("the census", () => {
   });
 
   test("connection.dialog.order is the form's dialogOrder", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const order = CONNECTION_FORM[type].dialogOrder;
       const declaredOrder = d.connection.dialog.order;
       return order === undefined ? declaredOrder === null : declaredOrder !== null && sameList(declaredOrder, order);
@@ -2514,7 +2516,7 @@ describe("the census", () => {
 
   test("a form read from the declaration shows the same fields as the connection form for every value of each controlling field", () => {
     const outside = `outside-${crypto.randomUUID()}`;
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const form = CONNECTION_FORM[type];
       const fromDeclaration: ConnectionFormSpec = {
         label: form.label,
@@ -2575,7 +2577,7 @@ describe("the census", () => {
   });
 
   test("connection.fieldRules are the form's fieldRules, each pattern by its source and flags", () => {
-    const fromDeclaration = (d: EngineDeclaration) =>
+    const fromDeclaration = (d: BundledDeclaration) =>
       byField(d.connection.fieldRules, (rule) => ({
         required: rule.required,
         format:
@@ -2629,7 +2631,7 @@ describe("the census", () => {
       "xy12345.privatelink",
       crypto.randomUUID(),
     ];
-    const readForm = (type: DatabaseType, d: EngineDeclaration): ConnectionFormSpec => {
+    const readForm = (type: DatabaseType, d: BundledDeclaration): ConnectionFormSpec => {
       const form = CONNECTION_FORM[type];
       return {
         label: form.label,
@@ -2659,7 +2661,7 @@ describe("the census", () => {
         }),
       };
     };
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const form = CONNECTION_FORM[type];
       const fromDeclaration = readForm(type, d);
       const controllers = [...new Set(d.connection.dialog.shownWhen.map(({ when }) => when.field))];
@@ -2830,7 +2832,7 @@ describe("the census", () => {
   });
 
   test("connection.connectionString names a URL TLS reader, a paste reader and a seed check exactly where the row has one, the paste with its catch-all and formats in order", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const row = CONNECTION_STRING[type];
       const { urlTls, paste, seedCheck } = d.connection.connectionString;
       const pasteMatches =
@@ -2843,7 +2845,7 @@ describe("the census", () => {
         pasteMatches
       );
     };
-    const count = (has: (offer: EngineDeclaration["connection"]["connectionString"]) => boolean) =>
+    const count = (has: (offer: BundledDeclaration["connection"]["connectionString"]) => boolean) =>
       SHIPPED_DATABASE_TYPES.filter((type) => has(declared(type).connection.connectionString)).length;
 
     expect(differing(matches)).toEqual([]);
@@ -2858,7 +2860,7 @@ describe("the census", () => {
   });
 
   test("every function a connection string row holds is, through the census's own resolver, the very slot its declaration names", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+    const matches = (type: DatabaseType, d: BundledDeclaration): boolean => {
       const row = CONNECTION_STRING[type];
       const { urlTls, paste, seedCheck } = d.connection.connectionString;
       const same = (name: string | null, held: unknown) =>
@@ -4076,14 +4078,14 @@ describe("the census", () => {
           differing((type, d) => sameValue(d.safeguards[fact], SAFEGUARD_FACTS[fact](type))),
         ] as const,
     );
-    const stated = (read: (d: EngineDeclaration) => boolean) =>
+    const stated = (read: (d: BundledDeclaration) => boolean) =>
       SHIPPED_DATABASE_TYPES.filter((type) => read(declared(type)));
 
     expect(readBack.filter(([, ids]) => ids.length > 0).map(([fact, ids]) => `${fact}: ${ids.join(", ")}`)).toEqual([]);
     expect(readBack.length).toBe(3);
     // Vacuity: some provider declares no write reach and some does, with an editor proof and a gate among them, and
     // some declares a metadata-only answer and an inline edit refusal.
-    const paths = (d: EngineDeclaration) => Object.values(d.safeguards.writePaths);
+    const paths = (d: BundledDeclaration) => Object.values(d.safeguards.writePaths);
     expect(stated((d) => paths(d).every((path) => path.reach === "open")).length).toBeGreaterThan(0);
     expect(stated((d) => d.safeguards.writePaths.editor.reach === "absent").length).toBeGreaterThan(0);
     expect(stated((d) => paths(d).some((path) => path.reach === "gated")).length).toBeGreaterThan(0);
@@ -4142,7 +4144,7 @@ describe("the census", () => {
         const writePaths = Object.fromEntries(
           WRITE_PATHS.map((path) => [path, writePathEvidence(paths[path])]),
         ) as unknown as WritePaths;
-        const changed: EngineDeclaration = {
+        const changed: BundledDeclaration = {
           ...kafka,
           policy: { ...kafka.policy, writeReach: request },
           safeguards: { ...kafka.safeguards, writePaths },
@@ -4413,7 +4415,7 @@ describe("the vocabularies", () => {
       Equal<keyof TypeFamilies, InferredKind>,
       Equal<keyof NonFiniteLiterals, NonFiniteWord>,
       Equal<InsertForm, ExportSpec["insertForm"]>,
-      Equal<MigrationDdl["tableDdl"], MigrationDdlSpec["tableDdl"]>,
+      Equal<NonNullable<MigrationDdl>["tableDdl"], MigrationDdlSpec["tableDdl"]>,
       Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
       Equal<WriteReachClaim, WriteReach>,
       Equal<keyof WritePaths, WritePath>,

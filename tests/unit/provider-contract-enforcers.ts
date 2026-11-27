@@ -1292,6 +1292,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "a SQL text segment with every grammar fact stated, a command redaction and both completion readers is admitted",
+        "an engine declaration may state sqlText, sqlWriting and migrationDdl as null",
+      ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package engine whose sqlText is null has no statement grammar and the restrictive value of every SQL text claim, whatever its register row grants",
+      ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "a package engine with no SQL text facts is asked about every statement, and its query events keep no statement text",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.readsSqlText is the engine's SQL_GRAMMAR row's",
@@ -1424,6 +1431,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "an SQL writing segment with every hook named, a create table key, a bare spelling and every key float64 is admitted",
+        "an engine declaration may state sqlText, sqlWriting and migrationDdl as null",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is",
@@ -1500,6 +1508,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a migration DDL member of the other form, a missing one or an unknown one is one no-variant refusal at the segment",
         "a create table of no listed kind, or with a member of the other kind, is one no-variant refusal at the segment",
         "an engine declaration's migration DDL is refused at its own pointer under validateEngine",
+        "an engine declaration may state sqlText, sqlWriting and migrationDdl as null",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order",

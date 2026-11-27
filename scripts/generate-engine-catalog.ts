@@ -37,7 +37,9 @@
  * is admitted only once that generator has rewritten the rest. The command
  * refuses, by name, an entry that is not a `.json` file, a file that is not JSON, and a declaration whose `id` is not
  * its file name; `--write` a file that lacks an authored member, `--check` a declaration the schema refuses, with the
- * validator's refusal sentences; the projections refuse two declarations of one id, the editor facts a fence alias two
+ * validator's refusal sentences; either a declaration that states `sqlText`, `sqlWriting` or `migrationDdl` as null,
+ * naming its engine and the member, since the SQL text, SQL writing and migration DDL modules hold a row for every
+ * bundled engine; the projections refuse two declarations of one id, the editor facts a fence alias two
  * declarations state or one equal to another declaration's engine id, and the query editor facts a dialect, a tab type
  * or an editor language two declarations state differently, so either mode exits 1 naming it before any module is
  * written. Studio's runtime reads no declaration file: the browser cannot compile the schema under Studio's content
@@ -79,17 +81,20 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileManifestValidator, type EngineDeclaration, refusalSentence } from "@libredb/provider-sdk/manifest";
 import {
-  type AuthoredDeclaration,
   type ClaimRequests,
   type ConnectionForms,
   type ConnectionStrings,
   type ConnectionTables,
   type EditorFacts,
   type EngineCatalog,
+  type MigrationDdlEntry,
   type MigrationDdls,
   type QueryEditorFacts,
+  type SqlFamilyDeclaration,
   type SqlGeneratorForms,
+  type SqlTextEntry,
   type SqlTexts,
+  type SqlWritingEntry,
   type SqlWritings,
   projectCatalog,
   projectClaimRequests,
@@ -240,19 +245,59 @@ export const AUTHORED_MEMBERS = [
 type Connection = EngineDeclaration["connection"];
 type ConnectionStringOffer = Connection["connectionString"];
 type Editor = EngineDeclaration["editor"];
-type SqlText = EngineDeclaration["sqlText"];
+type SqlText = NonNullable<EngineDeclaration["sqlText"]>;
 
 /**
  * One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them: the
- * members the projections read, the whole `facets` segment, the statement language data, and the SQL text's
- * `redaction`, a claim, none of which a projection reads all of, and each of which the declaration generator writes
- * back as authored.
+ * members the projections read, every SQL-family member stated, the whole `facets` segment, the statement language
+ * data, and the SQL text's `redaction`, a claim, none of which a projection reads all of, and each of which the
+ * declaration generator writes back as authored.
  */
-export type AuthoredMembers = AuthoredDeclaration & {
+export type AuthoredMembers = SqlFamilyDeclaration & {
   readonly facets: EngineDeclaration["facets"];
   readonly statementLanguageData: EngineDeclaration["statementLanguageData"];
-  readonly sqlText: AuthoredDeclaration["sqlText"] & { readonly redaction: SqlText["redaction"] };
+  readonly sqlText: SqlTextEntry & { readonly redaction: SqlText["redaction"] };
 };
+
+/** An admitted bundled declaration: one that states every SQL-family member, none of them null. */
+export type BundledDeclaration = EngineDeclaration & {
+  readonly sqlText: SqlText;
+  readonly sqlWriting: SqlWritingEntry;
+  readonly migrationDdl: MigrationDdlEntry;
+};
+
+/** The SQL-family members a bundled declaration states, in the order a null one is named. */
+const SQL_FAMILY_MEMBERS = ["sqlText", "sqlWriting", "migrationDdl"] as const;
+
+/**
+ * Refuses a bundled declaration that states an SQL-family member as null: a package engine may (clauses S-3, S-11 and
+ * S-17), but Studio's generated SQL text, SQL writing and migration DDL modules hold a row for every bundled engine
+ * until it moves into its package, so its declaration states each.
+ *
+ * @throws {Error} Naming the file, the engine `id` and the first null member in `SQL_FAMILY_MEMBERS` order, where
+ * `memberOf` answers null for one.
+ */
+function refuseNullSqlFamilyMember(
+  file: string,
+  id: string,
+  memberOf: (member: (typeof SQL_FAMILY_MEMBERS)[number]) => unknown,
+): void {
+  const member = SQL_FAMILY_MEMBERS.find((name) => memberOf(name) === null);
+  if (member !== undefined) {
+    throw new Error(
+      `${file}, the declaration of the bundled engine ${JSON.stringify(id)}, states ${member} as null: a bundled engine states every SQL-family member until it moves into its package, since Studio's generated SQL text, SQL writing and migration DDL modules hold a row for each`,
+    );
+  }
+}
+
+/**
+ * Holds the admitted `engine` of `file` to every SQL-family member stated.
+ *
+ * @throws {Error} As `refuseNullSqlFamilyMember` does.
+ */
+function assertBundled(file: string, engine: EngineDeclaration): asserts engine is BundledDeclaration {
+  refuseNullSqlFamilyMember(file, engine.id, (member) => engine[member]);
+}
 
 /** Whether `value` is an object, not an array, holding `member` as an own property. */
 function holds(value: unknown, member: string): value is Record<string, unknown> {
@@ -264,7 +309,8 @@ function holds(value: unknown, member: string): value is Record<string, unknown>
  * given as the file states it; the SDK's validator, which admits the whole file once the declaration generator has
  * written it, holds each to its type.
  *
- * @throws {Error} Naming the file and the member, for a value that lacks an authored member, the first in
+ * @throws {Error} Naming the file, the id and the member, for a value that states an SQL-family member as null, before
+ * any member under one is read; naming the file and the member, for a value that lacks an authored member, the first in
  * `AUTHORED_MEMBERS` order; naming the file and the id, for a value whose `id` is not the file's name.
  */
 export function authoredMembersOf(value: unknown, file: string): AuthoredMembers {
@@ -278,8 +324,10 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     }
     return current;
   };
+  const id = read("id") as string;
+  refuseNullSqlFamilyMember(file, id, (member) => (holds(value, member) ? value[member] : undefined));
   const authored: AuthoredMembers = {
-    id: read("id") as string,
+    id,
     displayName: read("displayName") as string,
     location: read("location") as EngineDeclaration["location"],
     connection: {
@@ -335,8 +383,8 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       updateTarget: read("sqlText.updateTarget") as SqlText["updateTarget"],
       completion: read("sqlText.completion") as SqlText["completion"],
     },
-    sqlWriting: read("sqlWriting") as EngineDeclaration["sqlWriting"],
-    migrationDdl: read("migrationDdl") as EngineDeclaration["migrationDdl"],
+    sqlWriting: read("sqlWriting") as SqlWritingEntry,
+    migrationDdl: read("migrationDdl") as MigrationDdlEntry,
     sqlGenerators: read("sqlGenerators") as EngineDeclaration["sqlGenerators"],
     policy: read("policy") as EngineDeclaration["policy"],
     mcp: read("mcp") as EngineDeclaration["mcp"],
@@ -373,8 +421,9 @@ function declarationFiles(directory: string): { readonly file: string; readonly 
  * previous ones gave until the declaration generator rewrites them, and the validator refuses that mix. The whole set
  * is admitted afterwards, by `--check`, which `bun run engines:generate` runs last.
  *
- * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a file that lacks
- * an authored member and a file whose `id` is not its file name.
+ * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a file that
+ * states an SQL-family member as null, a file that lacks an authored member and a file whose `id` is not its file
+ * name.
  */
 export function authoredDeclarations(
   directory: string = path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY),
@@ -383,14 +432,16 @@ export function authoredDeclarations(
 }
 
 /**
- * Every declaration of `directory`, admitted through the SDK's validator, in file name order.
+ * Every declaration of `directory`, admitted through the SDK's validator and held to every SQL-family member stated,
+ * in file name order.
  *
  * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a declaration
- * the schema refuses and a declaration whose `id` is not its file name.
+ * the schema refuses, a declaration whose `id` is not its file name and a declaration that states an SQL-family member
+ * as null.
  */
 export function admittedDeclarations(
   directory: string = path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY),
-): EngineDeclaration[] {
+): BundledDeclaration[] {
   const validator = compileManifestValidator(readFileSync(SCHEMA_FILE));
   return declarationFiles(directory).map(({ file, value }) => {
     const verdict = validator.validateEngine(value);
@@ -404,7 +455,9 @@ export function admittedDeclarations(
         `${file} declares the engine id ${JSON.stringify(verdict.engine.id)}, which is not its file name`,
       );
     }
-    return verdict.engine;
+    const { engine } = verdict;
+    assertBundled(file, engine);
+    return engine;
   });
 }
 
@@ -848,7 +901,7 @@ function main(argv: readonly string[]): number {
   const { mode, out } = parsed;
   const fileOf = (module: string) =>
     out === undefined ? path.join(REPO_ROOT, module) : path.join(path.resolve(out), path.basename(module));
-  const declarations: readonly AuthoredDeclaration[] =
+  const declarations: readonly SqlFamilyDeclaration[] =
     mode === "--check" ? admittedDeclarations() : authoredDeclarations();
   const tables = projectConnectionTables(declarations);
   const modules = [

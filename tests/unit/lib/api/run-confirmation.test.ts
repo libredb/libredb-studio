@@ -721,7 +721,7 @@ describe("the gate on an engine a provider package serves", () => {
     };
     const both = { readsSqlText: false, confirmExemptForms: [form] };
     const granted = declared(loose, both);
-    expect(granted.statementGrammar.confirmExemptForms).toEqual([form]);
+    expect(granted.statementGrammar?.confirmExemptForms).toEqual([form]);
     expect(granted.grants).toMatchObject({ reviewedGrammar: true, readsSqlText: false, confirmExemptForms: [form] });
     // Both claims granted: the form runs, and the text is neither checked for an unreadable run nor split.
     const spared = ["ALTER SESSION SET search_path = x", "SELECT 'never closed", "SELECT 1; DROP TABLE x"];
@@ -859,7 +859,9 @@ describe("one gate for every engine, reading the record's confirmation reader", 
         const { name, environment } = connectionOf(engine.id);
         const expected = engine.offers.statementVocabulary
           ? outcomeOf(() => confirmationVerdict(sql, engine.id as DatabaseConnection["type"], name, environment))
-          : outcomeOf(() => packageConfirmationVerdict(sql, engine.statementGrammar, engine.grants, name, environment));
+          : outcomeOf(() =>
+              packageConfirmationVerdict(sql, engine.id, engine.statementGrammar, engine.grants, name, environment),
+            );
         // oxlint-disable-next-line no-await-in-loop -- each gate call runs after the one before.
         expect([engine.id, sql, await run(engine, sql)]).toEqual([engine.id, sql, expected]);
       }

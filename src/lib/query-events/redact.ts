@@ -25,8 +25,9 @@
  * redaction, `EngineGrants.redaction`, which its register row grants for the grammar it reviewed, composed by
  * `composeStatementRedaction` (src/lib/db/sql-grammar/statement-redaction.ts). The statement is read under the
  * record's grammar, `statementGrammar`, and as SQL where the record's granted `readsSqlText` says so. The query event
- * builder keeps no text of an engine whose grammar no register row reviewed, so such an engine reaching here is a host
- * defect and is refused by name.
+ * builder keeps no text of an engine whose grammar no register row reviewed, as of every engine that states no SQL
+ * text, whose record holds no grammar, so such an engine reaching here is a host defect and is refused by name; so is
+ * a record whose grants say a row reviewed its grammar while it holds none, which no composed record does.
  *
  * The userinfo of a URI is masked in both modes by the rule the audit log applies to its fields
  * (`redactUriCredentials()` in `src/lib/audit.ts`). The cases are pinned in
@@ -42,6 +43,7 @@ import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redact
 import type { SqlRedaction } from "@/lib/db/sql-grammar/types";
 import { quoteTypeId } from "@/lib/db/type-id";
 import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
+import { grantsWithoutGrammarDefect } from "@/lib/sql/dangerous-query";
 import { IDENTIFIER_PART, readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 
@@ -309,7 +311,8 @@ function recordOf(engine: string | undefined): EngineRecord | undefined {
  * How a statement of `record`'s engine is read: `NO_CONNECTION_READING` for `undefined`, and otherwise the record's
  * grammar and its granted `readsSqlText`.
  *
- * @throws {Error} A host defect: when no register row reviewed the engine's grammar, whose text no query event keeps.
+ * @throws {Error} A host defect: when no register row reviewed the engine's grammar, whose text no query event keeps,
+ * and `grantsWithoutGrammarDefect` when the record's grants say a row reviewed a grammar it does not hold.
  */
 function readingOf(record: EngineRecord | undefined): StatementReading {
   if (record === undefined) return NO_CONNECTION_READING;
@@ -318,6 +321,7 @@ function readingOf(record: EngineRecord | undefined): StatementReading {
       `The engine ${quoteTypeId(record.id)} holds no register row's review of its grammar, so the query event log keeps none of its text, and a caller handed its text to the redactor: a host defect.`,
     );
   }
+  if (record.statementGrammar === null) throw new Error(grantsWithoutGrammarDefect(record.id));
   return { grammar: record.statementGrammar, readsSqlText: record.grants.readsSqlText };
 }
 

@@ -177,11 +177,14 @@ interface EnginesCase {
   readonly declare?: (engine: EditableEngine) => void;
   /**
    * The package's register row for `acmeevents`: these grants, `grammarSha256` the digest of the grammar the engine
-   * declares unless they name another, every other member at its restrictive value. No row where it is absent.
+   * declares, or null where it declares no SQL text, unless they name another, every other member at its restrictive
+   * value. No row where it is absent.
    */
   readonly row?: Partial<RegisterGrants>;
   /** Each record's grants, changed by the edit named for its engine after the composition. */
   readonly grants?: Readonly<Record<string, Partial<EngineGrants>>>;
+  /** Each record's statement grammar, replaced by the value named for its engine after the composition. */
+  readonly statementGrammar?: Readonly<Record<string, EngineRecord["statementGrammar"]>>;
 }
 
 /**
@@ -190,17 +193,17 @@ interface EnginesCase {
  * the package declares, each record's grants then changed by the case's edit: what the builder reads an event's engine
  * from.
  */
-function installEngines({ declare, row, grants = {} }: EnginesCase = {}): void {
+function installEngines({ declare, row, grants = {}, statementGrammar = {} }: EnginesCase = {}): void {
   const manifest = admittedManifest("acmeevents", declare);
   const pkg = admittedFor("acmeevents-package", manifest);
-  const declared = (manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar;
+  const declared = (manifest.engines[0] as { sqlText: { grammar: unknown } | null }).sqlText;
   const register =
     row === undefined
       ? STUDIO_GRANT_REGISTER
       : parseGrantRegister(
           [
             packageRow(pkg, "acmeevents", {
-              grammarSha256: grammarSha256(declared),
+              grammarSha256: declared === null ? null : grammarSha256(declared.grammar),
               languageSha256: manifest.engines[0]?.statementLanguageData ? declaredLanguageSha256(manifest) : null,
               ...row,
             }),
@@ -212,6 +215,9 @@ function installEngines({ declare, row, grants = {} }: EnginesCase = {}): void {
   for (const [id, edit] of Object.entries(grants)) {
     const engine = engines.get(id) as EngineRecord;
     engines.set(id, { ...engine, grants: { ...engine.grants, ...edit } });
+  }
+  for (const [id, grammar] of Object.entries(statementGrammar)) {
+    engines.set(id, { ...(engines.get(id) as EngineRecord), statementGrammar: grammar });
   }
   installServerCatalog({ engines, unavailable: composed.unavailable });
 }
@@ -322,6 +328,57 @@ describe("buildQueryEvent", () => {
       }
       forgetServerCatalog();
     }
+  });
+
+  test("an engine whose record holds no grammar keeps no statement and no error text and reads its kind as OTHER, and grants that say a row reviewed its grammar are a host defect", () => {
+    const password = randomUUID();
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+    const event = {
+      connection: kv,
+      statement: `DELETE FROM orders WHERE note = 'redis://bob:${password}@cache'`,
+      status: "error",
+      errorCode: "INTERNAL_ERROR",
+      errorMessage: "the package's own words",
+    } as const;
+    // The statement language data lets the row grant text-not-SQL under its digest.
+    const statesNoSqlText = (engine: EditableEngine) => {
+      withStatementLanguageData(engine);
+      const members = engine as Record<string, unknown>;
+      members.sqlText = null;
+      members.sqlWriting = null;
+      members.migrationDdl = null;
+    };
+
+    // Composed: a declaration with no SQL text, its row granting SQL text claims, which review no grammar of it.
+    installEngines({
+      declare: statesNoSqlText,
+      row: { redaction: { kind: "sql", nameQuote: '"' }, readsSqlText: false },
+    });
+    for (const capture of [NONE, REDACTED, FULL]) {
+      expect(build(input(event), capture)).toMatchObject({
+        engine: "acmeevents",
+        statement_type: "OTHER",
+        statement: null,
+        statement_truncated: false,
+        statement_fingerprint: null,
+        error_message: null,
+      });
+    }
+    forgetServerCatalog();
+
+    // Crafted: a record with no grammar whose grants say a row reviewed one, which no composition gives.
+    const defect = `The engine "acmeevents"'s record grants a grammar its register row reviewed but holds no grammar: a host defect, since an engine that states no SQL text requests no grammar digest for a row to review.`;
+    installEngines({ row: { redaction: { kind: "none" } }, statementGrammar: { acmeevents: null } });
+    for (const capture of [NONE, REDACTED, FULL]) {
+      expect(() => buildQueryEvent(input(event), capture, CONTEXT)).toThrow(defect);
+    }
+    forgetServerCatalog();
+
+    // The control: the same record with its grammar keeps the masked text under full.
+    installEngines({ row: { redaction: { kind: "none" } } });
+    const kept = build(input(event), FULL);
+    expect(kept.statement).toBe(maskCredentials(event.statement, "acmeevents"));
+    expect(kept.statement).not.toContain(password);
   });
 
   test("a query event keeps the statement under the record's granted redaction, for a legacy engine and for a package engine its row grants sql", () => {

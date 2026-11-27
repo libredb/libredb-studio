@@ -23,14 +23,15 @@
  * (`grantEngineClaims` in ./claim-grants) with its row of `register`, the row keyed by its package's name, version and
  * digest, or with none where the register holds none, so each claim is granted at its restrictive value, its SQL text
  * claims with the digest of the grammar it declares (`declaredSqlTextRequest`), so a row grants them only for the
- * grammar it reviewed, and its statement language and the claims that loosen the confirmation gate with the digest of
- * the statement language data it declares (`declaredLanguageDataRequest`), so a row grants them only for the data it
- * reviewed, and gives each the package's source, its digest and the session its declaration states, and the
- * offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register,
- * `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a refused package's lock entry
- * names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is transposed into each
- * engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is read by a client's
- * value.
+ * grammar it reviewed, or, for an engine whose `sqlText` is null, with the restrictive request, which holds no digest,
+ * so no row reviews a grammar for it and its record holds no statement grammar, and its statement language and the
+ * claims that loosen the confirmation gate with the digest of the statement language data it declares
+ * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, and gives each the package's
+ * source, its digest and the session its declaration states, and the offers of an engine served through the provider
+ * contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a
+ * register of its own. It maps each engine a refused package's lock entry names, but a legacy one, to the codes it was
+ * refused with. Every table keyed by engine id is transposed into each engine's own frozen record and the engines are
+ * kept in Maps, so no engine-keyed plain object is read by a client's value.
  */
 import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
@@ -194,11 +195,24 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
 }
 
 /**
+ * The SQL text request of an engine whose `sqlText` is null: the restrictive value of every SQL text claim and no
+ * grammar digest, so the grant reader grants each at its restrictive value whatever the engine's register row holds.
+ */
+const NO_SQL_TEXT_REQUEST: SqlTextRequest = Object.freeze({
+  readsSqlText: true,
+  confirmExemptForms: Object.freeze([]),
+  redaction: Object.freeze({ kind: "none" }),
+  grammarSha256: null,
+});
+
+/**
  * The SQL text request of admitted declaration `engine` as the grant reader reads it: its `readsSqlText`, exempt forms
  * and redaction as declared, and the digest of the grammar it declares, computed here on the server
- * (./grammar-digest), so no module the browser loads hashes a grammar.
+ * (./grammar-digest), so no module the browser loads hashes a grammar; or `NO_SQL_TEXT_REQUEST` where its `sqlText` is
+ * null.
  */
 export function declaredSqlTextRequest(engine: EngineDeclaration): SqlTextRequest {
+  if (engine.sqlText === null) return NO_SQL_TEXT_REQUEST;
   return {
     readsSqlText: engine.sqlText.readsSqlText,
     confirmExemptForms: engine.sqlText.grammar.confirmExemptForms,
@@ -299,8 +313,8 @@ export function composeServerCatalog(
         ),
         // The grammar the query route's confirmation gate and the query event log read the engine's statements under,
         // compiled once here; the gate counts only the exempt forms its record grants (docs/providers/CONTRACT.md,
-        // clause S-8).
-        statementGrammar: grammarFromFacts(engine.sqlText.grammar),
+        // clause S-8). An engine that states no SQL text has none (clause S-3).
+        statementGrammar: engine.sqlText === null ? null : grammarFromFacts(engine.sqlText.grammar),
         offers: PACKAGE_OFFERS,
       }) as EngineRecord,
     );

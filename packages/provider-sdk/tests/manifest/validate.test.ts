@@ -2113,6 +2113,33 @@ describe("schema refusals", () => {
     expect(refusalsFor(none)).toEqual([]);
   });
 
+  test("an engine declaration may state sqlText, sqlWriting and migrationDdl as null", () => {
+    const members = ["sqlText", "sqlWriting", "migrationDdl"] as const;
+    const stating = (nullMembers: readonly string[]) =>
+      manifest((m) => {
+        for (const member of nullMembers) m.engines[0][member] = null;
+      });
+    const all = stating(members);
+
+    expect(refusalsFor(all)).toEqual([]);
+    expect(validator.validateEngine(all.engines[0]).admitted).toBe(true);
+    for (const member of members) {
+      const alone = stating([member]);
+      expect(refusalsFor(alone)).toEqual([]);
+      expect(validator.validateEngine(alone.engines[0]).admitted).toBe(true);
+    }
+    expect(refusalsFor(manifest((m) => delete m.engines[0].sqlText))).toEqual([
+      refusal("missing-key", "/engines/0", "sqlText"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].sqlText = false)))).toEqual([refusal("wrong-type", SQL_TEXT)]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].sqlWriting = false)))).toEqual([
+      refusal("wrong-type", SQL_WRITING),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].migrationDdl = false)))).toEqual([
+      refusal("no-variant", MIGRATION_DDL),
+    ]);
+  });
+
   test("an SQL generator segment that is not an object or null is refused as wrong-type", () => {
     const text = manifest((m) => (m.engines[0].sqlGenerators = "generatorQuote"));
 

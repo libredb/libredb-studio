@@ -14,10 +14,10 @@
  * 3. the SDK's validator, the schema then its code rules, the same rules Studio's generator admits its own
  *    declarations by (`PROVIDER_SCHEMA_INVALID`, the first refusal's rule and pointer and the count of the rest, never
  *    a key), then the names only Studio's tables give meaning to, each engine's explain format, query dialect, query
- *    language, Monaco language and formatter language held to the tables the caller hands in (`./held-names`): a name
- *    none holds is `PROVIDER_SCHEMA_INVALID`, `value-not-allowed` at its pointer with the count of the other unheld
- *    names, the answer the schema gave while it listed Studio's names, never the name; the manifest admitted is
- *    deep-frozen;
+ *    language, Monaco language and, where the engine states SQL text, formatter language held to the tables the caller
+ *    hands in (`./held-names`): a name none holds is `PROVIDER_SCHEMA_INVALID`, `value-not-allowed` at its pointer with
+ *    the count of the other unheld names, the answer the schema gave while it listed Studio's names, never the name;
+ *    the manifest admitted is deep-frozen;
  * 4. its engine ids and its name: an engine id the legacy adapter serves (`LEGACY_ENGINE_IDS`, the ids of Studio's
  *    bundled engines), the package name the legacy adapter serves them under (`LEGACY_SOURCE_NAME`,
  *    `legacy-package`), an engine id that is an own key of `Object.prototype` (a table keyed by plain object would

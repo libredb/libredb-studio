@@ -29,10 +29,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { EngineDeclaration, FieldName } from "@libredb/provider-sdk/manifest";
+import type { FieldName } from "@libredb/provider-sdk/manifest";
 import {
   admittedDeclarations,
   authoredDeclarations,
+  type BundledDeclaration,
   ENGINE_CATALOG_MODULE,
   ENGINE_CLAIMS_MODULE,
   ENGINE_CONNECTION_FLAGS_MODULE,
@@ -111,10 +112,10 @@ const USAGE = "Usage: bun scripts/generate-engine-catalog.ts --write | --check [
 const DIRECTORY = path.join(ROOT, ENGINE_DECLARATIONS_DIRECTORY);
 
 /** The admitted set, read once: admission compiles the schema and validates every declaration. */
-const ADMITTED: readonly EngineDeclaration[] = admittedDeclarations();
+const ADMITTED: readonly BundledDeclaration[] = admittedDeclarations();
 
 /** The admitted declaration of `id`. */
-function admitted(id: string): EngineDeclaration {
+function admitted(id: string): BundledDeclaration {
   const declaration = ADMITTED.find((d) => d.id === id);
   if (declaration === undefined) throw new Error(`no admitted declaration of ${id}`);
   return declaration;
@@ -169,7 +170,7 @@ function generatingCopy(): {
  */
 function editMongodbDeclaration(
   root: string,
-  dialog: (committed: EngineDeclaration["connection"]["dialog"]) => unknown,
+  dialog: (committed: BundledDeclaration["connection"]["dialog"]) => unknown,
 ): FieldName[] {
   const file = path.join(root, ENGINE_DECLARATIONS_DIRECTORY, "mongodb.json");
   const committed = JSON.parse(readFileSync(file, "utf8"));
@@ -222,7 +223,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // declaration generator rewrites those members, is therefore already the final one (D-2's premise).
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         location: d.location,
@@ -295,7 +296,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // declaration generator rewrites those members, are therefore already the final ones.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         location: d.location,
@@ -318,7 +319,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectConnectionTables(replaced)).toEqual(projectConnectionTables(ADMITTED));
     // Vacuity: the replacement changed connection members the tables would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.connection.tls)).toBeGreaterThan(0);
     expect(differs((d) => d.connection.agentCredential)).toBeGreaterThan(0);
@@ -330,7 +331,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(Object.keys(forms)).toEqual(["kubernetes", "libredb", "snowflake"]);
     // Each entry holds the nine form members in one order, each as the declaration states it.
-    const entryOf = ({ displayName, connection }: EngineDeclaration): ConnectionFormEntry => ({
+    const entryOf = ({ displayName, connection }: BundledDeclaration): ConnectionFormEntry => ({
       displayName,
       defaults: connection.defaults,
       tls: connection.tls,
@@ -382,7 +383,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // declaration generator rewrites those members, are therefore already the final ones.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         displayName: d.displayName,
@@ -402,7 +403,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectConnectionForms(replaced)).toEqual(projectConnectionForms(ADMITTED));
     // Vacuity: the replacement changed members the forms would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.connection.fields)).toBeGreaterThan(0);
     expect(differs((d) => d.connection.sshTunnel)).toBeGreaterThan(0);
@@ -415,7 +416,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(Object.keys(strings)).toEqual(["bigquery", "mssql", "snowflake"]);
     // Each entry holds the four connection string members a declaration authors, in one order, as it states them.
-    const entryOf = ({ connection: { connectionString } }: EngineDeclaration): ConnectionStringEntry => ({
+    const entryOf = ({ connection: { connectionString } }: BundledDeclaration): ConnectionStringEntry => ({
       scheme: connectionString.scheme,
       urlTls: connectionString.urlTls,
       paste: connectionString.paste,
@@ -454,7 +455,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // before the declaration generator rewrites those members, are therefore already the final ones.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         connection: {
@@ -472,7 +473,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectConnectionStrings(replaced)).toEqual(projectConnectionStrings(ADMITTED));
     // Vacuity: the replacement changed members the connection strings would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.connection.connectionString.accepted)).toBeGreaterThan(0);
     expect(differs((d) => d.connection.connectionString.dialogOffersUri)).toBeGreaterThan(0);
@@ -536,7 +537,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // the declaration generator rewrites those members, are therefore already the final ones.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         editor: {
@@ -550,7 +551,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectEditorFacts(replaced)).toEqual(projectEditorFacts(ADMITTED));
     // Vacuity: the replacement changed members the editor facts would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.editor.explainFormat)).toBeGreaterThan(0);
     expect(differs((d) => d.editor.dialect)).toBeGreaterThan(0);
@@ -560,7 +561,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("an alias two declarations state, or one equal to another admitted engine id, is refused by name", () => {
-    const withAliases = (id: string, fenceAliases: readonly string[]): EngineDeclaration => {
+    const withAliases = (id: string, fenceAliases: readonly string[]): BundledDeclaration => {
       const declaration = admitted(id);
       return { ...declaration, editor: { ...declaration.editor, fenceAliases } };
     };
@@ -683,7 +684,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // before the declaration generator rewrites those members, are therefore already the final ones.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         editor: { ...postgres.editor, dialect: d.editor.dialect, language: d.editor.language },
@@ -692,7 +693,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectQueryEditorFacts(replaced)).toEqual(projectQueryEditorFacts(ADMITTED));
     // Vacuity: the replacement changed members the query editor facts would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.editor.explainFormat)).toBeGreaterThan(0);
     expect(differs((d) => d.editor.commitKeyword)).toBeGreaterThan(0);
@@ -705,10 +706,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const kafka = admitted("kafka");
     const bigquery = admitted("bigquery");
     const restated = (
-      base: EngineDeclaration,
-      editor: (committed: EngineDeclaration["editor"]) => Partial<EngineDeclaration["editor"]>,
-    ): EngineDeclaration => ({ ...base, id: "acmefoo", editor: { ...base.editor, ...editor(base.editor) } });
-    const dialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+      base: BundledDeclaration,
+      editor: (committed: BundledDeclaration["editor"]) => Partial<BundledDeclaration["editor"]>,
+    ): BundledDeclaration => ({ ...base, id: "acmefoo", editor: { ...base.editor, ...editor(base.editor) } });
+    const dialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const json = admitted("mongodb").editor.language;
 
     // One dialect stated with different rows: both engines named, in ascending id order, whatever order they come in.
@@ -723,7 +724,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     }
     // The flag list is compared in order.
     const kubernetes = admitted("kubernetes");
-    const kubectl = kubernetes.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const kubectl = kubernetes.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const flags = kubectl.historyMask?.credentialFlags ?? [];
     const reordered = restated(kubernetes, () => ({
       dialect: { ...kubectl, historyMask: { credentialFlags: [...flags].reverse() } },
@@ -760,7 +761,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
   test("the query editor facts refuse, by engine and name, a query language with no tab type", () => {
     const bigquery = admitted("bigquery");
-    const stating = (queryLanguage: string): EngineDeclaration => ({
+    const stating = (queryLanguage: string): BundledDeclaration => ({
       ...bigquery,
       id: "acmefoo",
       editor: { ...bigquery.editor, language: { ...bigquery.editor.language, queryLanguage } },
@@ -820,7 +821,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // writes first, before the declaration generator rewrites those members, is therefore already the final one.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         sqlText: {
@@ -835,7 +836,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectSqlText(replaced)).toEqual(projectSqlText(ADMITTED));
     // Vacuity: the replacement changed members the SQL text would read if it read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.sqlText.redaction)).toBeGreaterThan(0);
     expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
@@ -878,11 +879,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // Every member but the authored SQL writing replaced with postgres's: the SQL writing the generator writes first,
     // before the declaration generator rewrites those members, is therefore already the final one.
     const postgres = admitted("postgres");
-    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...postgres, id: d.id, sqlWriting: d.sqlWriting }));
+    const replaced = ADMITTED.map((d): BundledDeclaration => ({ ...postgres, id: d.id, sqlWriting: d.sqlWriting }));
 
     expect(projectSqlWriting(replaced)).toEqual(projectSqlWriting(ADMITTED));
     // Vacuity: the replacement changed members the SQL writing would read if it read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.sqlText)).toBeGreaterThan(0);
     expect(differs((d) => d.migrationDdl)).toBeGreaterThan(0);
@@ -930,11 +931,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // Every member but the authored migration DDL replaced with postgres's: the migration DDL the generator writes
     // first, before the declaration generator rewrites those members, is therefore already the final one.
     const postgres = admitted("postgres");
-    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...postgres, id: d.id, migrationDdl: d.migrationDdl }));
+    const replaced = ADMITTED.map((d): BundledDeclaration => ({ ...postgres, id: d.id, migrationDdl: d.migrationDdl }));
 
     expect(projectMigrationDdl(replaced)).toEqual(projectMigrationDdl(ADMITTED));
     // Vacuity: the replacement changed members the migration DDL would read if it read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
     expect(differs((d) => d.sqlGenerators)).toBeGreaterThan(0);
@@ -981,11 +982,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // Every member but the authored SQL generator forms replaced with mssql's: the forms the generator writes first,
     // before the declaration generator rewrites those members, are therefore already the final ones.
     const mssql = admitted("mssql");
-    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...mssql, id: d.id, sqlGenerators: d.sqlGenerators }));
+    const replaced = ADMITTED.map((d): BundledDeclaration => ({ ...mssql, id: d.id, sqlGenerators: d.sqlGenerators }));
 
     expect(projectSqlGenerators(replaced)).toEqual(projectSqlGenerators(ADMITTED));
     // Vacuity: the replacement changed members the SQL generator forms would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
     expect(differs((d) => d.migrationDdl)).toBeGreaterThan(0);
@@ -998,7 +999,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       admitted,
     );
     const requests = projectClaimRequests(set);
-    const expected = (declaration: EngineDeclaration) => ({
+    const expected = (declaration: BundledDeclaration) => ({
       policy: declaration.policy,
       mcp: declaration.mcp,
       connection: {
@@ -1085,7 +1086,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     // already the final ones, and the authored safeguards, which no gate reads, are not read either.
     const postgres = admitted("postgres");
     const replaced = ADMITTED.map(
-      (d): EngineDeclaration => ({
+      (d): BundledDeclaration => ({
         ...postgres,
         id: d.id,
         connection: {
@@ -1105,7 +1106,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(projectClaimRequests(replaced)).toEqual(projectClaimRequests(ADMITTED));
     // Vacuity: the replacement changed members the claim requests would read if they read them.
-    const differs = (read: (d: EngineDeclaration) => unknown) =>
+    const differs = (read: (d: BundledDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.safeguards)).toBeGreaterThan(0);
     expect(differs((d) => d.facets.monitoring)).toBeGreaterThan(0);
@@ -1153,6 +1154,38 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
       rmSync(path.join(directory, "acmefoo.json"));
       expect(admittedDeclarations(directory)).toEqual([...ADMITTED]);
+    } finally {
+      scratch.remove();
+    }
+  });
+
+  test("a legacy declaration with a null SQL-family member is refused by engine and member", () => {
+    const scratch = scratchDirectory();
+    try {
+      const { directory } = scratch;
+      const kafka = readFileSync(path.join(directory, "kafka.json"), "utf8");
+      const stating = (nullMembers: readonly string[]) => {
+        const declaration = JSON.parse(kafka);
+        for (const member of nullMembers) declaration[member] = null;
+        writeFileSync(path.join(directory, "kafka.json"), JSON.stringify(declaration));
+      };
+      const refusal = (member: string) =>
+        `kafka.json, the declaration of the bundled engine "kafka", states ${member} as null: a bundled engine states every SQL-family member until it moves into its package, since Studio's generated SQL text, SQL writing and migration DDL modules hold a row for each`;
+
+      for (const member of ["sqlText", "sqlWriting", "migrationDdl"]) {
+        stating([member]);
+        expect(() => authoredDeclarations(directory)).toThrow(refusal(member));
+        expect(() => admittedDeclarations(directory)).toThrow(refusal(member));
+      }
+      stating(["migrationDdl", "sqlWriting", "sqlText"]);
+      expect(() => authoredDeclarations(directory)).toThrow(refusal("sqlText"));
+      expect(() => admittedDeclarations(directory)).toThrow(refusal("sqlText"));
+
+      // A null sqlGenerators is admitted: it means the engine writes Studio's shared SQL forms.
+      writeFileSync(path.join(directory, "kafka.json"), kafka);
+      expect(admitted("kafka").sqlGenerators).toBeNull();
+      expect(admittedDeclarations(directory)).toEqual([...ADMITTED]);
+      expect(authoredDeclarations(directory).map(({ id }) => id)).toEqual(ADMITTED.map(({ id }) => id));
     } finally {
       scratch.remove();
     }
@@ -2123,9 +2156,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
-      const edit = (id: string, editor: (committed: EngineDeclaration["editor"]) => EngineDeclaration["editor"]) => {
+      const edit = (id: string, editor: (committed: BundledDeclaration["editor"]) => BundledDeclaration["editor"]) => {
         const file = path.join(directory, `${id}.json`);
-        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
         writeFileSync(file, `${JSON.stringify({ ...committed, editor: editor(committed.editor) }, null, 2)}\n`);
       };
       const sentence = "Edited in the declaration: a SQLite read past its timeout is killed.";
@@ -2176,7 +2209,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const editor = { ...committed.editor, fenceAliases: [...committed.editor.fenceAliases, "mariadb"] };
       writeFileSync(file, `${JSON.stringify({ ...committed, editor }, null, 2)}\n`);
       const editorModule = path.join(copy.root, ENGINE_EDITOR_MODULE);
@@ -2198,9 +2231,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
-      const edit = (id: string, editor: (committed: EngineDeclaration["editor"]) => EngineDeclaration["editor"]) => {
+      const edit = (id: string, editor: (committed: BundledDeclaration["editor"]) => BundledDeclaration["editor"]) => {
         const file = path.join(directory, `${id}.json`);
-        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
         const edited = { ...committed, editor: editor(committed.editor) };
         writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
         return edited;
@@ -2254,7 +2287,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const editor = {
         ...committed.editor,
         language: { ...committed.editor.language, accent: "border-hue-orange/40" },
@@ -2281,9 +2314,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
-      const edit = (id: string, sqlText: (committed: EngineDeclaration["sqlText"]) => EngineDeclaration["sqlText"]) => {
+      const edit = (
+        id: string,
+        sqlText: (committed: BundledDeclaration["sqlText"]) => BundledDeclaration["sqlText"],
+      ) => {
         const file = path.join(directory, `${id}.json`);
-        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
         const edited = { ...committed, sqlText: sqlText(committed.sqlText) };
         writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
         return edited;
@@ -2341,7 +2377,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const sqlText = {
         ...committed.sqlText,
         completion: { ...committed.sqlText.completion, formatSegment: "formatSegment" },
@@ -2363,10 +2399,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const edit = (
         id: string,
-        sqlWriting: (committed: EngineDeclaration["sqlWriting"]) => EngineDeclaration["sqlWriting"],
+        sqlWriting: (committed: BundledDeclaration["sqlWriting"]) => BundledDeclaration["sqlWriting"],
       ) => {
         const file = path.join(directory, `${id}.json`);
-        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
         const edited = { ...committed, sqlWriting: sqlWriting(committed.sqlWriting) };
         writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
         return edited;
@@ -2422,7 +2458,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const sqlWriting = { ...committed.sqlWriting, escapeLiteral: "literalBackslash" };
       writeFileSync(file, `${JSON.stringify({ ...committed, sqlWriting }, null, 2)}\n`);
 
@@ -2442,7 +2478,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const file = path.join(directory, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       if (committed.migrationDdl.tableDdl !== "written") throw new Error("mysql's migration DDL writes no table DDL");
       const mysql = {
         ...committed,
@@ -2453,7 +2489,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       };
       writeFileSync(file, `${JSON.stringify(mysql, null, 2)}\n`);
       const mssqlFile = path.join(directory, "mssql.json");
-      const mssqlCommitted = JSON.parse(readFileSync(mssqlFile, "utf8")) as EngineDeclaration;
+      const mssqlCommitted = JSON.parse(readFileSync(mssqlFile, "utf8")) as BundledDeclaration;
       if (mssqlCommitted.sqlGenerators === null) throw new Error("mssql states no SQL generator forms");
       const mssql = {
         ...mssqlCommitted,
@@ -2508,13 +2544,13 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const file = path.join(directory, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       expect(committed.policy.writeReach).toBe("open");
       // etcd's guarded write reach with its gated write paths, the summary the validator holds the request to, and MCP
       // closed: the requests an engine's own declaration states, whatever Studio's records hold.
       const etcd = admitted("etcd");
       expect(etcd.policy.writeReach).toBe("guarded");
-      const mysql: EngineDeclaration = {
+      const mysql: BundledDeclaration = {
         ...committed,
         policy: { ...committed.policy, writeReach: "guarded" },
         mcp: { ...committed.mcp, exposable: false, statementRead: false },
@@ -2566,12 +2602,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const file = path.join(directory, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       expect(committed.connection.sshTunnel).toEqual({ offered: true });
       // mysql's tunnel refused with a sentence of its own: the request its own declaration states, whatever Studio's
       // record of the claim holds.
       const refusal = "MySQL does not run through an SSH tunnel in this fixture. Turn the tunnel off.";
-      const mysql: EngineDeclaration = {
+      const mysql: BundledDeclaration = {
         ...committed,
         connection: { ...committed.connection, sshTunnel: { offered: false, refusal } },
       };
@@ -2622,10 +2658,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const file = path.join(directory, "mysql.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       expect(committed.sqlText.redaction).toEqual({ kind: "sql", nameQuote: "`" });
       // mysql's redaction with no name quote: the request its own declaration states, whatever its register row grants.
-      const mysql: EngineDeclaration = {
+      const mysql: BundledDeclaration = {
         ...committed,
         sqlText: { ...committed.sqlText, redaction: { kind: "sql", nameQuote: null } },
       };
@@ -2673,11 +2709,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     try {
       const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
       const file = path.join(directory, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       expect(committed.facets.agentReadings).toContain("health");
       // postgres's readings without health: the request its own declaration states, whatever Studio's review row holds.
       const agentReadings = committed.facets.agentReadings.filter((reading) => reading !== "health");
-      const postgres: EngineDeclaration = { ...committed, facets: { ...committed.facets, agentReadings } };
+      const postgres: BundledDeclaration = { ...committed, facets: { ...committed.facets, agentReadings } };
       writeFileSync(file, `${JSON.stringify(postgres, null, 2)}\n`);
 
       const run = copy.generate();
@@ -2723,7 +2759,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const agent = { ...committed.agent, statementLanguage: null };
       writeFileSync(file, `${JSON.stringify({ ...committed, agent }, null, 2)}\n`);
 
@@ -2742,7 +2778,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const migrationDdl = { ...committed.migrationDdl, dropTable: "dropTables" };
       writeFileSync(file, `${JSON.stringify({ ...committed, migrationDdl }, null, 2)}\n`);
 
@@ -2759,7 +2795,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copy = generatingCopy();
     try {
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
-      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const committed = JSON.parse(readFileSync(file, "utf8")) as BundledDeclaration;
       const sqlGenerators = {
         quote: "generatorQuote",
         table: null,

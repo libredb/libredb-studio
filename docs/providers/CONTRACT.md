@@ -565,8 +565,9 @@ A fact a dialect has not established takes the default's value, and the default 
 
 ### S-3 (normative): The SQL text segment
 
-An engine states, in `sqlText`, whether its statement text is SQL, its grammar facts, its redaction, its update target words and its completion quoting.
+An engine states, in `sqlText`, whether its statement text is SQL, its grammar facts, its redaction, its update target words and its completion quoting, or null where it has no SQL text.
 `grammar` has one required member per member of the SDK's `SqlGrammar`, under the same name.
+Studio reads an engine whose `sqlText` is null as one whose grammar no register row reviews (S-7, S-8), whatever its register row grants.
 
 ### S-4 (normative): A fact the grammar may leave out is written
 
@@ -617,7 +618,7 @@ Where a package's completion reader runs is decided with the first package that 
 
 ### S-11 (normative): The SQL writing segment
 
-An engine states, in `sqlWriting`, how a generated statement spells a literal, a name, a bind and a temporal literal for it, what its inline edit and its result export read, and how a document insert is written where its console text is a request.
+An engine states, in `sqlWriting`, how a generated statement spells a literal, a name, a bind and a temporal literal for it, what its inline edit and its result export read, and how a document insert is written where its console text is a request, or null where it has no SQL writing.
 Every member is required: a function the engine lacks is null, and every other function is named by the slot it fills.
 
 ### S-12 (normative): The type names an inline edit and an export read
@@ -653,7 +654,7 @@ How a package's SQL writing functions are called and granted is decided in provi
 
 ### S-17 (normative): The migration DDL segment
 
-An engine states, in `migrationDdl`, what the schema diff's migration writes for it, in one of two forms, every member required, and a value neither form admits is one `no-variant` refusal at the segment:
+An engine states, in `migrationDdl`, what the schema diff's migration writes for it, in one of two forms, every member required, or null where it has no migration DDL, and a value neither form admits is one `no-variant` refusal at the segment:
 
 - refused: the one line the migration writes in place of any statement, no transaction wrapper, and the reason the line gives;
 - written: its transaction wrapper or none, its CREATE TABLE form, written by a key writer and a foreign key writer or refused by a named function that writes the line for the quoted table, its nine statement writers, and every refusal sentence its writers print.

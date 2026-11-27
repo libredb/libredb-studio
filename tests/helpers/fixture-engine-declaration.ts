@@ -1,4 +1,4 @@
-import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import type { BundledDeclaration } from "../../scripts/generate-engine-catalog";
 
 /** The reason the fixture engine's migration DDL refusal line gives. */
 const ACME_FOO_MIGRATION_REASON = "An Acme Foo store holds no tables, so there is no column definition to change.";
@@ -34,7 +34,7 @@ const ACME_FOO_MIGRATION_REASON = "An Acme Foo store holds no tables, so there i
  * entry is one no shipped engine has, and Studio's SQL generator function table holds no `generatorQuote` for
  * `acmefoo`, so composing its row is refused by name (clause M-81).
  */
-export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
+export function fixtureEngineDeclaration(base: BundledDeclaration): BundledDeclaration {
   return {
     ...base,
     id: "acmefoo",

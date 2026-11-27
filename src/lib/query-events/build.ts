@@ -19,8 +19,10 @@
  * the record's grammar, `statementGrammar`, and the redaction and `readsSqlText` its register row grants for that
  * grammar (`EngineGrants` in src/lib/db/claim-grants.ts; docs/providers/CONTRACT.md, S-7). A unit of an engine whose
  * grammar no register row reviewed, `grants.reviewedGrammar` false, keeps no statement and no error text in any mode,
- * and its statement is read as `OTHER`. An event naming an engine the server serves no record of is the caller's
- * defect and throws.
+ * and its statement is read as `OTHER`: so is every unit of an engine that states no SQL text, whose record holds no
+ * grammar for a row to review (S-3). An event naming an engine the server serves no record of is the caller's defect
+ * and throws, and so is one whose record's grants say a row reviewed a grammar the record does not hold, a host
+ * defect no composed record gives.
  *
  * Every row has exactly the columns of the manifest and keeps their rules, so the governance source never refuses a
  * row for its shape: a bounded text column is cut to its limit by character, the unit PostgreSQL's `char_length`
@@ -33,6 +35,7 @@ import { analyzeQuery, analyzeUnderGrammar } from "@/lib/db/utils/query-limiter"
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
+import { grantsWithoutGrammarDefect } from "@/lib/sql/dangerous-query";
 import { maskRecordCredentials, redactRecordStatement } from "./redact";
 import type {
   QueryEventContext,
@@ -185,19 +188,32 @@ function clientIp(address: string | undefined): string | null {
   return address !== undefined && isIP(address) !== 0 && !address.includes("%") ? address : null;
 }
 
+/** An engine record that holds a statement grammar, as every record whose grants say a row reviewed one does. */
+type GrammarRecord = EngineRecord & { readonly statementGrammar: NonNullable<EngineRecord["statementGrammar"]> };
+
+/** Whether `record` holds a statement grammar. */
+function holdsGrammar(record: EngineRecord): record is GrammarRecord {
+  return record.statementGrammar !== null;
+}
+
 /**
  * The record a row's statement and error text are read under, read from the record of `engine` in the server's
  * catalog: the record where a register row reviewed the engine's grammar (`grants.reviewedGrammar`), null for a request
  * whose connection did not resolve, and `undefined` for an engine whose grammar no row reviewed, such as one only a
- * provider package with no register row serves, whose text no grant covers, so none of it is kept.
+ * provider package with no register row serves, or one that states no SQL text, whose text no grant covers, so none of
+ * it is kept.
  *
  * @throws {UnknownProviderError} When `engine` names no engine the server serves: the caller's defect.
  * @throws {ProviderUnavailableError} When every package naming `engine` was refused at boot: the caller's defect.
+ * @throws {Error} `grantsWithoutGrammarDefect`, a host defect: when the record's grants say a row reviewed its grammar
+ * and it holds none.
  */
-function readingEngine(engine: string | null): EngineRecord | null | undefined {
+function readingEngine(engine: string | null): GrammarRecord | null | undefined {
   if (engine === null) return null;
   const record = servedEngineRecord(engine);
-  return record.grants.reviewedGrammar ? record : undefined;
+  if (!record.grants.reviewedGrammar) return undefined;
+  if (!holdsGrammar(record)) throw new Error(grantsWithoutGrammarDefect(record.id));
+  return record;
 }
 
 /**
@@ -205,7 +221,7 @@ function readingEngine(engine: string | null): EngineRecord | null | undefined {
  * an engine whose granted `readsSqlText` is false and for an engine whose grammar no register row reviewed. A refused
  * request whose connection did not resolve is read under the compatibility grammar, because its engine is unknown.
  */
-function statementType(text: string | null, engine: EngineRecord | null | undefined): StatementType {
+function statementType(text: string | null, engine: GrammarRecord | null | undefined): StatementType {
   if (text === null || engine === undefined) return "OTHER";
   if (engine === null) return analyzeQuery(text).type;
   return engine.grants.readsSqlText ? analyzeUnderGrammar(text, engine.statementGrammar).type : "OTHER";
