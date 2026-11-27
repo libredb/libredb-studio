@@ -1079,7 +1079,9 @@ describe("query/run", () => {
   it("calls the provider as the query route calls it, handing it the run's id only when it can cancel", async () => {
     const plain = await openedOn();
     await plain.handlers.runQuery(RUN, idle);
-    const [prepare, probe, query] = plain.provider.calls;
+    // The bridge reads the provider's object model when it builds the session, before the run prepares anything.
+    const [model, prepare, probe, query] = plain.provider.calls;
+    assert.deepEqual(model, ["getCapabilities"]);
     assert.deepEqual(prepare, ["prepareQuery", "SELECT n FROM t", { limit: 2, offset: 0 }]);
     assert.deepEqual(probe, ["prepareQuery", "SELECT n FROM t", { limit: 3, offset: 0, unlimited: false }]);
     // A provider without a transaction ender offers no console.endScope, so it is sent no scope.
@@ -1087,8 +1089,8 @@ describe("query/run", () => {
 
     const cancelling = await openedOn(fakeProvider({ cancelQuery: async () => true }));
     await cancelling.handlers.runQuery(RUN, idle);
-    assert.deepEqual(methodsOf(cancelling.provider), ["prepareQuery", "prepareQuery", "query"]);
-    assert.deepEqual(cancelling.provider.calls[2].slice(0, 4), [
+    assert.deepEqual(methodsOf(cancelling.provider), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
+    assert.deepEqual(cancelling.provider.calls[3].slice(0, 4), [
       "query",
       "SELECT n FROM t LIMIT 3 OFFSET 0",
       undefined,
@@ -1114,8 +1116,14 @@ describe("query/run", () => {
     const ending = await openedOn(fakeProvider({ endOpenQueryTransaction: async () => "none" }));
     const page = await ending.handlers.runQuery(RUN, idle);
     assert.equal("openTransaction" in page, false);
-    assert.deepEqual(methodsOf(ending.provider), ["prepareQuery", "prepareQuery", "query", "endOpenQueryTransaction"]);
-    const [, , query, end] = ending.provider.calls;
+    assert.deepEqual(methodsOf(ending.provider), [
+      "getCapabilities",
+      "prepareQuery",
+      "prepareQuery",
+      "query",
+      "endOpenQueryTransaction",
+    ]);
+    const [, , , query, end] = ending.provider.calls;
     assert.equal(typeof query[4], "string");
     assert.deepEqual(end, ["endOpenQueryTransaction", query[4]]);
 
@@ -1139,7 +1147,7 @@ describe("query/run", () => {
     const scoped = await openedOn(server);
     await scoped.handlers.runQuery({ ...RUN, catalog: "sales" }, idle);
     assert.deepEqual(server.calls, [["getCapabilities"], ["forCatalog", "sales"]]);
-    assert.deepEqual(methodsOf(sales), ["prepareQuery", "prepareQuery", "query"]);
+    assert.deepEqual(methodsOf(sales), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
 
     const { handlers } = await openedOn();
     await answeredAs(
@@ -1240,7 +1248,7 @@ describe("query/run", () => {
     const source = new CancellationTokenSource();
     const run = handlers.runQuery(RUN, source.token);
     await settled();
-    assert.deepEqual(methodsOf(provider), ["prepareQuery", "prepareQuery", "query"]);
+    assert.deepEqual(methodsOf(provider), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
     source.cancel();
     source.cancel();
     // The host answers the run at the cancellation, outcome unknown, and has sent the engine's cancel once by then.
@@ -2060,7 +2068,8 @@ describe("query/cancel", () => {
     });
     const { handlers, calls } = await openedOn(server);
     await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle);
-    assert.deepEqual(server.calls, [["cancelQuery", "q-7"]]);
+    // The bridge reads the provider's object model when it builds the session the cancel is sent on.
+    assert.deepEqual(server.calls, [["getCapabilities"], ["cancelQuery", "q-7"]]);
     const [method, connection, options, posture, wait] = calls.at(-1) as unknown[];
     assert.deepEqual(
       [method, connection, options, posture],
@@ -2117,7 +2126,7 @@ describe("query/cancel", () => {
       const whileAnswering = new CancellationTokenSource();
       const leftAnswering = handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, whileAnswering.token);
       await settled();
-      assert.deepEqual(provider.calls, [["cancelQuery", "q-7"]]);
+      assert.deepEqual(provider.calls, [["getCapabilities"], ["cancelQuery", "q-7"]]);
       whileAnswering.cancel();
       await answeredAs(leftAnswering, new QueryCancelledError("The query was cancelled."));
       answer(true);
@@ -2128,7 +2137,7 @@ describe("query/cancel", () => {
     }
   });
 
-  it("query/cancel with a token already cancelled calls nothing", async () => {
+  it("query/cancel with a token already cancelled sends no cancel", async () => {
     const provider = fakeProvider({ cancelQuery: async () => true });
     const { handlers } = await openedOn(provider);
     const source = new CancellationTokenSource();
@@ -2138,7 +2147,8 @@ describe("query/cancel", () => {
     });
 
     await answeredAs(handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, source.token), notSent);
-    assert.deepEqual(provider.calls, []);
+    // The bridge reads the provider's object model when it builds the session; the cancel itself is never sent.
+    assert.deepEqual(provider.calls, [["getCapabilities"]]);
   });
 });
 

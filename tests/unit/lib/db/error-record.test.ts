@@ -43,6 +43,7 @@ import {
   RowBudgetRefusal,
   SerialisedResultRefusal,
   StudioByteBudgetRefusal,
+  StudioObjectModelRefusal,
   StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
@@ -124,6 +125,7 @@ const CLASSES: readonly (readonly [ErrorClass, ErrorKind, (text: string) => Erro
   [QueryError, "query", (text) => new QueryError(text, "postgres", text, 3, text)],
   [OffsetUnsupportedError, "offset-unsupported", (text) => new OffsetUnsupportedError(text, "cassandra", text)],
   [StudioOffsetRefusal, "studio-offset-refusal", (text) => new StudioOffsetRefusal(text, "sqlite")],
+  [StudioObjectModelRefusal, "studio-object-model-refusal", (text) => new StudioObjectModelRefusal(text)],
   [RefusedBeforeSendError, "refused-before-send", (text) => new RefusedBeforeSendError(text, "postgres", text)],
   [ReadAllowanceExceededError, "read-allowance-exceeded", (text) => new ReadAllowanceExceededError(text, "postgres")],
   [RowBudgetRefusal, "row-budget-refusal", (text) => new RowBudgetRefusal(text, "postgres", text)],
@@ -263,6 +265,12 @@ describe("outcome", () => {
     expect(errorOutcome(await throughConnect(refusal))).toBe("not-sent");
   });
 
+  test("Studio's refusal of a level or a kind the object model does not state answers not-sent wherever it is raised", async () => {
+    const refusal = new StudioObjectModelRefusal(marker());
+    expect(errorOutcome(refusal)).toBe("not-sent");
+    expect(errorOutcome(await throughConnect(refusal))).toBe("not-sent");
+  });
+
   test("a connection error raised by a statement answers unknown", () => {
     expect(errorOutcome(new ConnectionError(marker(), "postgres"))).toBe("unknown");
     expect(errorOutcome(new TransportError("network", marker(), { truncated: true }))).toBe("unknown");
@@ -271,7 +279,12 @@ describe("outcome", () => {
   test("every other class answers unknown", () => {
     for (const [Class, , make] of CLASSES) {
       const made = make(marker());
-      if (made instanceof RefusedBeforeSendError || made instanceof StudioOffsetRefusal) continue;
+      if (
+        made instanceof RefusedBeforeSendError ||
+        made instanceof StudioOffsetRefusal ||
+        made instanceof StudioObjectModelRefusal
+      )
+        continue;
       expect(errorOutcome(made), Class.name).toBe("unknown");
     }
     for (const value of [new Error(marker()), marker(), undefined]) expect(errorOutcome(value)).toBe("unknown");
@@ -413,6 +426,7 @@ describe("carries what today's branches read", () => {
         "studio-timeout-refusal",
         "studio-profile-refusal",
         "studio-offset-refusal",
+        "studio-object-model-refusal",
       ];
       expect(studio.includes(kind), label).toBe(isStudioRefusal(error));
     }
@@ -423,13 +437,16 @@ describe("carries what today's branches read", () => {
       const record = errorRecord(scrub, error);
       const refused = error instanceof RefusedBeforeSendError;
       expect(record.kind === "refused-before-send" || record.kind === "read-allowance-exceeded", label).toBe(refused);
-      expect(record.outcome === "not-sent", label).toBe(refused || error instanceof StudioOffsetRefusal);
+      expect(record.outcome === "not-sent", label).toBe(
+        refused || error instanceof StudioOffsetRefusal || error instanceof StudioObjectModelRefusal,
+      );
     }
   });
 
   test("the agent's environment failures are told apart by kind (ENVIRONMENT_FAILURES in src/lib/agent/tools.ts)", () => {
-    const environmentFailures = [ConnectionError, PoolExhaustedError, DatabaseConfigError];
+    const environmentFailures = [ConnectionError, PoolExhaustedError, DatabaseConfigError, StudioObjectModelRefusal];
     const environmentKinds = new Set<ErrorKind>([
+      "studio-object-model-refusal",
       "connection",
       "transaction-lost",
       "pool-exhausted",

@@ -13,8 +13,21 @@ import type {
 import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type { QueryResult } from "@/lib/types";
 
-/** Copied into a description and read field by field by no handler, so a small literal stands for the whole. */
-export const CAPS = { defaultPort: 5432, supportsCreateDatabase: true } as unknown as ProviderCapabilities;
+/**
+ * Copied into a description and read field by field by no handler, so a small literal stands for the whole, but for its
+ * object model, which the host core holds every tree read to: a catalog and a schema level, addressed by either prefix,
+ * holding the kind `table` the object reads name.
+ */
+export const CAPS = {
+  defaultPort: 5432,
+  supportsCreateDatabase: true,
+  containerLevels: [
+    { id: "catalog", label: "Database", labelPlural: "Databases" },
+    { id: "schema", label: "Schema", labelPlural: "Schemas" },
+  ],
+  containerPathShapes: "prefixes",
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+} as unknown as ProviderCapabilities;
 /**
  * PostgreSQL-shaped for the generator and the run target: its port picks the double-quote rule, no statementTerminator
  * declaration means ";", and one table kind with columns. No previewProjection, so Select Rows describes nothing.

@@ -226,6 +226,8 @@ function legacyProvider(shape: Shape, rows: Record<string, unknown>[]): Database
     config: CONNECTION,
     prepareQuery,
     query: async () => result,
+    // The bridge reads the session's object model from the provider; this one states none.
+    getCapabilities: () => ({}),
   } as unknown as DatabaseProvider;
 }
 

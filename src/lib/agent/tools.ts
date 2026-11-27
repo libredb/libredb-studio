@@ -89,6 +89,7 @@ import {
   ProviderUnavailableError,
   QueryError,
   RefusedBeforeSendError,
+  StudioObjectModelRefusal,
   StudioTimeoutRefusal,
   waitedSeconds,
 } from "@/lib/db/errors";
@@ -1497,6 +1498,9 @@ const ENVIRONMENT_FAILURES = [
   // record), or this Studio opens no session on a package's engine yet (docs/providers/CONTRACT.md, clause C-107).
   ProviderUnavailableError,
   PackageEngineUnsupportedError,
+  // Studio refused a tree request naming a level or a kind the connection's object model does not state
+  // (docs/providers/CONTRACT.md, clause M-89); no statement rewrite changes the model.
+  StudioObjectModelRefusal,
 ] as const;
 
 /**

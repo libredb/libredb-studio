@@ -20,6 +20,7 @@ import {
   RowBudgetRefusal,
   SerialisedResultRefusal,
   StudioByteBudgetRefusal,
+  StudioObjectModelRefusal,
   StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
@@ -1014,6 +1015,12 @@ describe("isStudioRefusal", () => {
     const sentence = `refused ${crypto.randomUUID()}`;
     expect(isStudioRefusal(new StudioOffsetRefusal(sentence, "sqlite"))).toBe(true);
     expect(isStudioRefusal(new OffsetUnsupportedError(sentence, "cassandra"))).toBe(false);
+  });
+
+  test("Studio's refusal of a level or a kind the object model does not state is Studio's, and a provider's QueryError is not", () => {
+    const sentence = `refused ${crypto.randomUUID()}`;
+    expect(isStudioRefusal(new StudioObjectModelRefusal(sentence))).toBe(true);
+    expect(isStudioRefusal(new QueryError(sentence, "sqlite"))).toBe(false);
   });
 });
 

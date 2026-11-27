@@ -292,6 +292,7 @@ export function composeServerCatalog(
                 maintenanceSpecs: engine.facets.maintenanceSpecs,
               }),
               panels: engine.facets.monitoring,
+              ...(engine.objects === undefined ? {} : { objectModel: engine.objects }),
             }),
           }),
         }),

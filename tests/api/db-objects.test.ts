@@ -935,7 +935,13 @@ describe("POST /api/db/objects/describe", () => {
     // mysql for any kind its own `hasColumns` predicate rejects (`MySQLProvider.describeObject`
     // in `src/lib/db/providers/sql/mysql.ts`).
     const describeObject = mock(async () => emptyDetail(["app", "order_total(integer)"]));
-    activeProvider = objectProvider({ describeObject });
+    const functionKind: ObjectKindSpec = {
+      id: "function",
+      role: "routine",
+      label: "Function",
+      labelPlural: "Functions",
+    };
+    activeProvider = objectProvider({ describeObject, objectKinds: [TABLE_KIND, VIEW_KIND, functionKind] });
 
     const response = await describeRoute.POST(
       createMockRequest("/api/db/objects/describe", {

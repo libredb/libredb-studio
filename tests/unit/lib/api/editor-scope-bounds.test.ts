@@ -47,6 +47,8 @@ const child = boundedChild({
       type: "postgres",
       config,
       prepareQuery: (sql: string) => ({ query: sql, wasLimited: false, limit: 1, offset: 0 }),
+      // The bridge reads the session's object model from the provider; this one states none.
+      getCapabilities: () => ({}),
       query: async () => {
         answeredAt = Date.now();
         return { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, executionTime: 1 };

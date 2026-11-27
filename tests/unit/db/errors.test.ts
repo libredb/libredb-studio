@@ -8,6 +8,7 @@ import {
   PoolExhaustedError,
   QueryError,
   OffsetUnsupportedError,
+  StudioObjectModelRefusal,
   StudioOffsetRefusal,
   TimeoutError,
   QueryCancelledError,
@@ -333,6 +334,24 @@ describe("StudioOffsetRefusal", () => {
     expect(errorKind(err)).toBe("studio-offset-refusal");
     expect(errorKind(new OffsetUnsupportedError(sentence, "cassandra"))).toBe("offset-unsupported");
     expect(errorOutcome(new OffsetUnsupportedError(sentence, "cassandra"))).toBe("unknown");
+  });
+});
+
+describe("StudioObjectModelRefusal", () => {
+  test("is a QueryError only Studio raises, outcome not-sent, of its own kind", () => {
+    const sentence = `refused ${crypto.randomUUID()}`;
+    const err = new StudioObjectModelRefusal(sentence);
+    expect(err).toBeInstanceOf(QueryError);
+    expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect(err).not.toBeInstanceOf(OffsetUnsupportedError);
+    expect(err.name).toBe("QueryError");
+    expect(err.message).toBe(sentence);
+    expect(err.code).toBe("QUERY_ERROR");
+    expect(err.provider).toBeUndefined();
+    expect(err.query).toBeUndefined();
+    expect(err.outcome).toBe("not-sent");
+    expect(errorOutcome(err)).toBe("not-sent");
+    expect(errorKind(err)).toBe("studio-object-model-refusal");
   });
 });
 

@@ -13,7 +13,9 @@ import {
   DatabaseError,
   FacetNotOfferedError,
   QueryCancelledError,
+  QueryError,
   StudioByteBudgetRefusal,
+  StudioObjectModelRefusal,
   StudioOffsetRefusal,
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
@@ -116,6 +118,36 @@ describe("the accessor", () => {
     expect(errorOutcome(error)).toBe("not-sent");
   });
 
+  test("a refusal of a level or a kind the session's object model does not state is Studio's own refusal, outcome not-sent, in Studio's words with no value of the request", () => {
+    const level: CallRefusal = { rule: "request-level-not-stated", pointer: "/container" };
+    const kind: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
+    const levelSentence =
+      "The request names a container path whose levels this connection's object model does not state, so Studio did not call the provider.";
+    const kindSentence =
+      "The request names an object kind this connection's object model does not state, so Studio did not call the provider.";
+    const view = { caller: callerOf(), deadlineSentence };
+    const budget: BudgetView = { caller: callerOf(), timeRefusal: () => new StudioTimeBudgetRefusal(randomUUID()) };
+
+    const cases: [readonly CallRefusal[], string][] = [
+      [[level], levelSentence],
+      [[kind], kindSentence],
+      [[level, kind], `${levelSentence} ${kindSentence}`],
+    ];
+    for (const [refusals, message] of cases) {
+      for (const error of [
+        refusalError(refused(refusals, false), view),
+        budgetRefusalError(refused(refusals, false), budget),
+      ]) {
+        expect(error).toBeInstanceOf(StudioObjectModelRefusal);
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.name).toBe("QueryError");
+        expect(error.message).toBe(message);
+        expect(errorKind(error)).toBe("studio-object-model-refusal");
+        expect(errorOutcome(error)).toBe("not-sent");
+      }
+    }
+  });
+
   test("refused params of a session that refuses them are FacetNotOfferedError, not-sent", () => {
     const refusal: CallRefusal = { rule: "request-field-not-honoured", pointer: "/params", name: "params" };
     const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
@@ -155,7 +187,14 @@ describe("the accessor", () => {
 
   test("any other refusal is a host defect named by its rule", () => {
     const view = { caller: callerOf(), deadlineSentence };
-    const handled = new Set(["call-signal-aborted", "call-deadline-passed", "row-over-page", "facet-not-offered"]);
+    const handled = new Set([
+      "call-signal-aborted",
+      "call-deadline-passed",
+      "row-over-page",
+      "facet-not-offered",
+      "request-level-not-stated",
+      "request-kind-not-stated",
+    ]);
     const others = CALL_REFUSAL_RULES.filter((rule) => !handled.has(rule));
 
     for (const rule of others) {
@@ -170,7 +209,7 @@ describe("the accessor", () => {
       expect(Object.hasOwn(error, "outcome")).toBe(false);
       expect(errorKind(error)).toBe("internal");
     }
-    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 4);
+    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 6);
   });
 
   test("a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal", () => {

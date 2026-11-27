@@ -49,9 +49,21 @@ const connectionWith = (fields: Partial<DatabaseConnection> = {}) =>
     ...fields,
   }) as DatabaseConnection;
 
-/** A mock provider whose statement timeout is `queryTimeout`, with every tree member a recorded mock. */
+/**
+ * A mock provider whose statement timeout is `queryTimeout`, with every tree member a recorded mock, and whose object
+ * model states the one container level and the kinds `table` and `view` the reads below name.
+ */
 function providerOf(queryTimeout?: number): DatabaseProvider {
-  return createMockProvider({ config: connectionWith({ queryTimeout }) });
+  return createMockProvider({
+    config: connectionWith({ queryTimeout }),
+    capabilities: {
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    },
+  });
 }
 
 /** The mock behind a provider's member, for its recorded calls and its implementation. */

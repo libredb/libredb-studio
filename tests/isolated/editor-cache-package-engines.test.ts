@@ -25,6 +25,7 @@ import {
   DEFAULT_CONNECT_BUDGET_MS,
   type OpenContext,
 } from "@libredb/provider-sdk/calls";
+import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { boundedChild } from "../helpers/bounded-node-child";
 import { admitSessionPackages, hooksKey, type SessionHooks, setHooks } from "../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../helpers/provider-artifacts";
@@ -75,6 +76,40 @@ const MAIN = "acmepsmain";
 const BARE = "acmepsbare";
 const ROWS = "acmepsrows";
 const SCOPE = "acmepsscope";
+const TREE = "acmepstree";
+
+/** The tree package's object model: one container level, addressed exactly, holding the one kind `item`. */
+const TREE_MODEL: ObjectModel = {
+  containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+  containerPathShapes: "exact",
+  containerNameSpelling: null,
+  objectKinds: [
+    {
+      id: "item",
+      role: "relation",
+      label: "Item",
+      labelPlural: "Items",
+      hasSource: false,
+      sourceLanguage: null,
+      hasColumns: true,
+      acceptsSourceEdits: false,
+      childKinds: [],
+      attachedTo: null,
+      acceptsRowWrites: false,
+      enumeratedBy: null,
+      countIsListing: false,
+      machineNames: null,
+      group: null,
+    },
+  ],
+  rowActions: [],
+  containersNameKinds: false,
+  tablesNeedContainer: false,
+  tablesAreDerivedGroupings: false,
+  agentWalkScope: null,
+  schemaDiffScope: null,
+  maskedNameKinds: [],
+};
 const providers = scratchDirectory("studio-editor-cache-package-engines-");
 let engines: Map<string, EngineRecord>;
 
@@ -84,6 +119,14 @@ beforeAll(async () => {
     { name: "acme-ps-bare", engine: BARE },
     { name: "acme-ps-rows", engine: ROWS, honours: ["offset"], env: ["LIBREDB_TEST_PS_ROWS"] },
     { name: "acme-ps-scope", engine: SCOPE, offered: ["console.endScope"] },
+    {
+      name: "acme-ps-tree",
+      engine: TREE,
+      offered: ["objects.tree"],
+      edit: (engine) => {
+        engine.objects = structuredClone(TREE_MODEL) as unknown as Record<string, unknown>;
+      },
+    },
   ]);
   installHostCore(createHostCore(), "test");
 });
@@ -450,6 +493,41 @@ describe("the sessions of a provider package's engine", () => {
       ]);
     }
     expect(names(hooks)).toEqual(["open"]);
+  });
+
+  test("a package engine's session states its declaration's object model, and a tree call naming a kind it does not state is refused before the package is called", async () => {
+    const hooks = record(TREE);
+    const answered = { objects: [] };
+    setHooks(TREE, {
+      ...(globalThis as Record<symbol, SessionHooks>)[hooksKey(TREE)],
+      tree: (...args: unknown[]) => {
+        hooks.calls.push({ name: "tree", args });
+        return Promise.resolve(answered);
+      },
+    });
+    const { session } = openedSession(
+      (await factory.getOrCreateEditorSession(connectionOf(TREE), engineOf(TREE), ADMIN)).opened,
+    );
+    const core = createHostCore();
+    const ports = { late: () => undefined };
+    const ctx = () => ({ deadline: Date.now() + 60_000, signal: new AbortController().signal, env: hooksEnv() });
+
+    expect(session.objectModel).toEqual(TREE_MODEL);
+    const refused = await core.treeCall(
+      session,
+      { action: "list", container: ["main"], kind: randomUUID() },
+      ctx(),
+      ports,
+    );
+    expect(refused).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-kind-not-stated", pointer: "/kind" }],
+    });
+    expect(names(hooks)).toEqual(["open"]);
+    const stated = await core.treeCall(session, { action: "list", container: ["main"], kind: "item" }, ctx(), ports);
+    expect(stated).toEqual({ kind: "answered", answer: answered });
+    expect(names(hooks)).toEqual(["open", "tree"]);
   });
 
   test("a caller whose wait ends stops waiting, and an open no caller waits for is admitted once", async () => {

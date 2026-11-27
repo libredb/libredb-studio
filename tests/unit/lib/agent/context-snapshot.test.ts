@@ -1319,6 +1319,8 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     }));
     const provider = {
       type: "mongodb",
+      // The provider answers the object model the run's context states, which its session states and every read is held to.
+      getCapabilities: () => objectCapabilities,
       listContainers: mock(async () => []),
       countObjects: mock(async () => ({ table: { count: (await read()).length } })),
       listObjects: mock(async () =>
@@ -1994,8 +1996,16 @@ describe("captureContextSnapshot — the object surface that says what each entr
         options.containers?.(parent) ?? [{ path: ["public"], name: "public", level: 0 }],
     );
 
+    const modelCapabilities: ProviderCapabilities = {
+      ...capabilities,
+      objectKinds: options.kinds ?? OBJECT_KINDS,
+      containerLevels: options.containerLevels ?? [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      ...(options.derivedGroupings === true ? { tablesAreDerivedGroupings: true } : {}),
+    };
     const provider = {
       type: options.type ?? "mongodb",
+      // The provider answers the object model the run's context states, which its session states and every read is held to.
+      getCapabilities: () => modelCapabilities,
       describeObjects: mock(async (container: readonly string[], kind: string, limit?: number) =>
         options.describeObjects !== undefined
           ? options.describeObjects(container, kind, limit)
@@ -2028,12 +2038,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
         workflowType: "investigation",
         actor: { sessionId: "session-1", role: "user" },
         connection: connectionOf(options.type ?? "mongodb"),
-        capabilities: {
-          ...capabilities,
-          objectKinds: options.kinds ?? OBJECT_KINDS,
-          containerLevels: options.containerLevels ?? [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
-          ...(options.derivedGroupings === true ? { tablesAreDerivedGroupings: true } : {}),
-        },
+        capabilities: modelCapabilities,
         labels: TABLE_LABELS,
         registry: createCanonicalOperationRegistry(),
         scope: createTargetScope("conn-1"),
