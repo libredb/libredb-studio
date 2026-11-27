@@ -352,6 +352,25 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
     }
   });
 
+  test("a package's open failure is logged once on both grants: the route's answer writes no second line", async () => {
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      for (const type of ["acmetestwords", "acmetested"]) {
+        error.mockClear();
+        warn.mockClear();
+        hooks = { ...healthyHooks(), open: () => Promise.reject(new Error(randomUUID())) };
+        const failed = await routeAnswer({ ...VALID, type });
+        expect([type, failed.status, failed.body.code]).toEqual([type, 503, "CONNECTION_ERROR"]);
+        expect([type, ...error.mock.calls.map(([line]) => line)]).toEqual([type, "A provider package's open failed"]);
+        expect(warn.mock.calls).toEqual([]);
+      }
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   test("a package engine whose register row grants its write reach opens a read-only connection, and one without a row is refused before the open", async () => {
     const granted = await routeAnswer({ type: "acmetestreach", host: "db.local", readOnly: true });
     expect([granted.status, granted.body.success, granted.body.message]).toEqual([200, true, "Connection successful"]);

@@ -365,12 +365,13 @@ export function createHandlers(
     // The core bounds the whole test by its own deadline, the engine's connect budget (docs/providers/CONTRACT.md,
     // clause C-56): at it the core answers a ConnectionError naming the budget, closes a one-shot tunnel at once and
     // the provider it built once the driver's connect settles. The engine's record is the server catalog's, which in
-    // this child, where no boot installs a catalog, is the legacy adapter's record of the type.
+    // this child, where no boot installs a catalog, is the legacy adapter's record of the type. The record of a
+    // failure the core logged already goes unread: this answer (`toResponseError`) writes no log line of its own.
     async testConnection(params) {
       const { connection, posture } = readConnectionParams(params);
       checkEnabledLocalFile(connection, posture);
       return await answeringFor(connection, () =>
-        factory.testConnection(connection, servedEngineRecord(connection.type), posture, TEST_ROUTE),
+        factory.testConnection(connection, servedEngineRecord(connection.type), posture, TEST_ROUTE, { logged: false }),
       );
     },
 

@@ -21,9 +21,9 @@
  * each about Studio's own request is Studio's defect, and is answered as Studio's own internal error. A legacy record's
  * provider is Studio's own code, so its failure is answered as raised.
  *
- * Every failure `packageFailureAnswer` answers as the package's (`isPackageFailure`) it logs, once; the query route,
- * which renders the answer, passes `logged` to `createErrorResponse` (src/lib/api/errors.ts), so it writes no second
- * line.
+ * Every failure `packageFailureAnswer` answers as the package's (`isPackageFailure`) it logs, once; the query route and
+ * the Test Connection route (through `testConnection`'s `failure`, src/lib/api/test-connection.ts), which render the
+ * answer, pass `logged` to `createErrorResponse` (src/lib/api/errors.ts), so they write no second line.
  *
  * A package's warnings reach the route as the host core checked and rebuilt them (`checkExecuteAnswer`); where no row
  * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through

@@ -312,6 +312,7 @@ describe("connection/test", () => {
         servedEngineRecord(WIRE.type),
         { allowExternalFileAccess: true },
         "vscode/connection/test",
+        { logged: false },
       ],
     ]);
     assert.equal(registry.get("c1"), undefined);
@@ -361,7 +362,7 @@ describe("connection/test", () => {
   });
 
   describe("its deadline", () => {
-    it("hands the core the connection, its record, the posture and the route only, so the core's deadline bounds the test", async () => {
+    it("hands the core the connection, its record, the posture, the route and an unread failure record only, so the core's deadline bounds the test", async () => {
       const handed: unknown[][] = [];
       const { handlers } = backend(fakeProvider(), {
         testConnection: async (...args) => {
@@ -371,7 +372,7 @@ describe("connection/test", () => {
       });
       await handlers.testConnection({ connection: WIRE, posture: POSTURE });
       assert.deepEqual(handed, [
-        [REVIVED, servedEngineRecord(WIRE.type), { allowExternalFileAccess: true }, TEST_ROUTE],
+        [REVIVED, servedEngineRecord(WIRE.type), { allowExternalFileAccess: true }, TEST_ROUTE, { logged: false }],
       ]);
     });
 

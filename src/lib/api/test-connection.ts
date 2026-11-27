@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import {
+  isPackageFailure,
   isStudioFailure,
   logPackageFailure,
   packageErrorSentence,
@@ -138,7 +139,9 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *
  * `execution` is the DuckDB editor file-access posture the caller derived (non-admin DuckDB file
  * access): it opens any handle opened here with the right posture and keeps this from borrowing a
- * handle of the other posture below. `route` is the label every log line carries.
+ * handle of the other posture below. `route` is the label every log line carries. `failure.logged` is set true when
+ * a failure of the open this rejects with was logged here already, as a provider package's (`isPackageFailure`), so a
+ * caller that logs the failures it answers writes no second line (the route passes it to `createErrorResponse`).
  *
  * The whole test, the tunnel, the open, the connect, the test-only checks, the health read and the close of a
  * package's session, answers within its engine's connect budget from `now` (`packageConnectBudget`,
@@ -182,6 +185,7 @@ export async function testConnection(
   engine: EngineRecord,
   execution: EditorExecutionContext,
   route: string,
+  failure: { logged: boolean },
   now: number = Date.now(),
 ): Promise<TestConnectionAnswer> {
   const type = legacyProviderType(engine);
@@ -261,6 +265,7 @@ export async function testConnection(
         } catch (error) {
           // The deadline is the test's answer; a stop it caused is no failure of the engine's.
           if (deadline.aborted) throw expired();
+          failure.logged = isPackageFailure(engine, error);
           throw packageFailureAnswer(engine, "open", error, scrub, route);
         }
         own = held;

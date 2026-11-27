@@ -8139,7 +8139,10 @@ describe("the Snowflake provider in the factory", () => {
         () => createDatabaseProvider(record),
         () => getOrCreateProvider(record),
         () => acquireExecutionProfileProvider(record, "agent-operations"),
-        () => testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection"),
+        () =>
+          testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection", {
+            logged: false,
+          }),
       ]) {
         // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
         const error: unknown = await attempt().catch((e: unknown) => e);
@@ -8777,7 +8780,10 @@ describe("a field its engine refuses is refused by core on every connect path (F
           () => createDatabaseProvider(record),
           () => getOrCreateProvider(record),
           () => acquireExecutionProfileProvider(record, "agent-operations"),
-          () => testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection"),
+          () =>
+            testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection", {
+              logged: false,
+            }),
         ]) {
           // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
           const error: unknown = await attempt().catch((e: unknown) => e);
