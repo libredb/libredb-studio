@@ -72,10 +72,7 @@ export const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     module: CLAIM_GRANTS,
     name: "legacyEngineGrants",
     removedBy: [
-      {
-        milestone: "M7",
-        readers: ["src/lib/db/destructive-commands.ts", "src/lib/sql/dangerous-query.ts"],
-      },
+      { milestone: "M7", readers: ["src/lib/sql/dangerous-query.ts"] },
       { milestone: "M18", readers: ["src/lib/provider-host/legacy-adapter/records.ts"] },
     ],
   },

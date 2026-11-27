@@ -1,14 +1,8 @@
 import { consoleTextByteLimit, statementRefusal, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
+import { rowTypedAsk } from "@/lib/db/statement-language-row";
 import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
-import type { SqlGrammar } from "@libredb/provider-sdk/sql";
-import {
-  hasUnreadableRun,
-  isDangerousQuery,
-  type PackageGateGrants,
-  packageStatementAsks,
-  packageUnreadableRun,
-} from "@/lib/sql/dangerous-query";
+import { readingOfType, type StatementReading, statementAsks, unreadableRun } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type RunTargetRange, runnableTarget } from "@/lib/sql/run-target";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
@@ -181,7 +175,7 @@ export function analyzeStatement(input: StatementAnalysisInput): StatementAnalys
   const route: StatementRoute = runsAsScript(statement, databaseType, capabilities.queryLanguage)
     ? "multi-query"
     : "query";
-  const verdict = confirmationVerdict(statement, databaseType, connectionName, connectionEnvironment);
+  const verdict = confirmationVerdict(statement, readingOfType(databaseType), connectionName, connectionEnvironment);
   if (verdict.decision === "run") return { decision: "run", statement, range, route };
   if (verdict.decision === "refuse") return { decision: "refuse", statement, range, refusal: verdict.refusal };
   return {
@@ -205,12 +199,14 @@ export function analyzeStatement(input: StatementAnalysisInput): StatementAnalys
  *   (`TYPED_NAME_MISSING_REFUSAL`).
  *
  * The connection's environment changes only what is typed, never whether the gate asks: on `production` every
- * statement the gate asks about is confirmed by typing the connection's name (`typedConfirmationFor`), and a read
- * still runs.
+ * statement the gate asks about is confirmed by typing the connection's name (`escalatedAsk`), and a read still
+ * runs.
  *
- * One implementation for every reader: `analyzeStatement` composes it, and the run routes classify a submitted
- * statement with it (`src/lib/api/run-confirmation.ts`). It reads the text with the gate's own readers,
- * `isDangerousQuery`, `vocabularyTypedConfirmation` and `hasUnreadableRun`, and throws whatever they throw.
+ * One implementation for every reader and every engine: `analyzeStatement` composes it over the connection type's
+ * reading (`readingOfType`), and the run routes classify a submitted statement with it over the reading of the
+ * engine's record (`src/lib/api/run-confirmation.ts`). It reads the text only through the reading it is handed, never a
+ * type: `statementAsks` for whether the gate asks, the reading's row for what is typed (`rowTypedAsk`), and
+ * `unreadableRun`, and throws whatever they throw, the host defect `grantsWithoutGrammarDefect` included.
  */
 export type ConfirmationVerdict =
   | { decision: "run" }
@@ -219,43 +215,16 @@ export type ConfirmationVerdict =
 
 export function confirmationVerdict(
   statement: string,
-  databaseType: DatabaseType,
+  reading: StatementReading,
   connectionName: string | undefined,
   connectionEnvironment?: ConnectionEnvironment,
 ): ConfirmationVerdict {
-  if (!isDangerousQuery(statement, databaseType)) return { decision: "run" };
+  if (!statementAsks(statement, reading)) return { decision: "run" };
 
-  const typedConfirmation = typedConfirmationFor(statement, databaseType, connectionName, connectionEnvironment);
+  const ask = escalatedAsk(rowTypedAsk(reading.row, statement), connectionEnvironment);
+  const typedConfirmation = resolvedTypedConfirmation(ask, connectionName);
   if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
-  return { decision: "confirm", unreadable: hasUnreadableRun(statement, databaseType), typedConfirmation };
-}
-
-/**
- * The confirmation verdict of `statement` on `engine`, an engine a provider package serves, read under `grammar`, the
- * grammar its declaration states, or null where it states no SQL text, with `grants`, the SQL text grants of the
- * engine's record (docs/providers/CONTRACT.md, clauses S-3 and S-8): `confirmationVerdict`'s answer, with the reading
- * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`, so every statement asks
- * where no register row reviewed the grammar, as none can for an engine that states no SQL text, and each throws the
- * host defect naming `engine` for grants that say a row reviewed a grammar the record does not hold. No vocabulary row
- * of Studio's applies to such an engine, so no typed ask comes from one; on a production connection the connection's
- * name is asked (`escalatedAsk`), and refused where it has none.
- */
-export function packageConfirmationVerdict(
-  statement: string,
-  engine: string,
-  grammar: SqlGrammar | null,
-  grants: PackageGateGrants,
-  connectionName: string | undefined,
-  connectionEnvironment: ConnectionEnvironment | undefined,
-): ConfirmationVerdict {
-  if (!packageStatementAsks(statement, engine, grammar, grants)) return { decision: "run" };
-  const typedConfirmation = resolvedTypedConfirmation(escalatedAsk(undefined, connectionEnvironment), connectionName);
-  if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
-  return {
-    decision: "confirm",
-    unreadable: packageUnreadableRun(statement, engine, grammar, grants),
-    typedConfirmation,
-  };
+  return { decision: "confirm", unreadable: unreadableRun(statement, reading), typedConfirmation };
 }
 
 /**
@@ -296,8 +265,9 @@ export function resolvedTypedConfirmation(
 }
 
 /**
- * The typed confirmation of a statement the gate asks about: the row's ask (`vocabularyTypedConfirmation`), escalated
- * for the connection's environment (`escalatedAsk`) and resolved against its name. Null where nothing is typed, and
+ * The typed confirmation of a statement the gate asks about on a connection of `databaseType`: the ask of the type's
+ * code row (`vocabularyTypedConfirmation`), escalated for the connection's environment (`escalatedAsk`) and resolved
+ * against its name, as `confirmationVerdict` resolves it over the type's reading. Null where nothing is typed, and
  * undefined where the name is asked and the connection has none, which `confirmationVerdict` refuses.
  *
  * The web editor's local gate reads it for the statement its dialog asks about, so the dialog asks what the server's

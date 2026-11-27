@@ -5,7 +5,7 @@
  *
  * Each such character is a refusal of its own, and the lexer once added a line's refusals to the text's list as the
  * arguments of one call, so a long enough line overflowed the stack inside the reader that both the gate and the
- * provider call first. Measured on 2026-11-04: `isDestructiveNonSqlQuery(text, "etcd")` raised `RangeError: Maximum
+ * provider call first. Measured on 2026-11-04: the gate's reader of etcd's row raised `RangeError: Maximum
  * call stack size exceeded` at 700,000 such characters under Bun 1.4.4 (600,000 passed) and at 130,000 under Node
  * 24.22.1 (120,000 passed), and `POST /api/db/statement/analyze` on the production server under that Node answered
  * 130,000 with 500 (120,000 with 200). The limit is each runtime's own, so the lines run on both, and a million is

@@ -353,7 +353,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "sqlText.redaction",
     ],
     reason:
-      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (packageStatementAsks); a null sqlText is read as the restrictive SQL text request, with no grammar digest, and no statement grammar",
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (statementAsks); a null sqlText is read as the restrictive SQL text request, with no grammar digest, and no statement grammar",
   },
   {
     path: "src/lib/db/server-catalog.ts",
@@ -803,7 +803,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -816,7 +816,7 @@ describe("engine declaration readers", () => {
     expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toHaveLength(2);
     // The only readers of them: the projection, its generated module and the SQL grammar that composes each row, the
     // server catalog's composition, which hands an admitted package's grammar to the gate, which counts only the claims
-    // the engine's record grants (packageStatementAsks in src/lib/sql/dangerous-query.ts), and hands its SQL text
+    // the engine's record grants (statementAsks in src/lib/sql/dangerous-query.ts), and hands its SQL text
     // request to the grant reader, which grants each claim against the engine's register row.
     const readers = [
       ...new Set(claimReaders(DECLARATION_READERS, CONFIRMATION_GATE_CLAIMS).map((problem) => problem.split(" ")[0])),
@@ -829,8 +829,8 @@ describe("engine declaration readers", () => {
       "src/lib/db/sql-grammar/index.ts",
     ]);
     // The gate counts each as its engine's grant: the browser's gate reads a legacy engine's grants by id
-    // (`legacyEngineGrants`), which only the legacy records and the gate's two modules import, and the server's gate
-    // reads a package engine's from its record. No module imports a review record of the gate's claims.
+    // (`legacyEngineGrants`), which only the legacy records and the gate's statement reader import, and the server's
+    // gate reads a package engine's from its record. No module imports a review record of the gate's claims.
     const vscodeFiles = readdirSync(path.join(ROOT, "vscode-extension/src"), { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
       .map((entry) => path.relative(ROOT, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
@@ -852,11 +852,7 @@ describe("engine declaration readers", () => {
         .filter((entry) => entry.names.includes("legacyEngineGrants"))
         .map((entry) => entry.path)
         .sort(),
-    ).toEqual([
-      "src/lib/db/destructive-commands.ts",
-      "src/lib/provider-host/legacy-adapter/records.ts",
-      "src/lib/sql/dangerous-query.ts",
-    ]);
+    ).toEqual(["src/lib/provider-host/legacy-adapter/records.ts", "src/lib/sql/dangerous-query.ts"]);
     expect(vscodeFiles.length).toBeGreaterThan(0);
     expect(importsOf("@/lib/db/confirmation-claim-review")).toEqual([]);
   }, 60_000);

@@ -553,7 +553,7 @@ describe("what the catalog composes", () => {
     if (statementGrammar === null) throw new Error("the record of acmegrammar holds no grammar, which it declares");
     const declared = (manifest.engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar;
     // The same record Studio composes its own engines' grammars with, from the package's facts as declared: the gate
-    // keeps only the exempt forms the record grants when it reads them (packageStatementAsks), so the record keeps the
+    // keeps only the exempt forms the record grants when it reads them (statementAsks), so the record keeps the
     // declared forms as data.
     expect(statementGrammar).toEqual(grammarFromFacts(declared));
     expect(statementGrammar.confirmExemptForms).toEqual([["ALTER", "SESSION", "SET"]]);

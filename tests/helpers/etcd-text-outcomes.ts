@@ -5,8 +5,9 @@
  * bundle of this file, and the two must be equal. What either one throws is reported as its name and message rather
  * than thrown, so a runtime whose reader fails says how.
  */
-import { isDestructiveNonSqlQuery } from "@/lib/db/destructive-commands";
+import { codeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { rowNamesAsked } from "@/lib/db/statement-language-row";
 import type { DatabaseConnection } from "@/lib/types";
 import { createFakeEtcdClient } from "./etcd-fake-client";
 import { KEY_SPACE_HEADER } from "./etcd-key-space";
@@ -18,7 +19,7 @@ export interface EtcdTextCase {
 
 export interface EtcdTextOutcome {
   readonly name: string;
-  /** `isDestructiveNonSqlQuery(text, "etcd")`, or `<name>: <message>` of what it threw. */
+  /** `rowNamesAsked(codeStatementLanguageRow("etcd"), text)`, or `<name>: <message>` of what it threw. */
   readonly gate: boolean | string;
   /** `<name>: <message>` of the error `query(text)` rejected with, or "answered". */
   readonly guard: string;
@@ -31,7 +32,7 @@ const described = (error: unknown): string =>
 
 function gateAnswer(text: string): boolean | string {
   try {
-    return isDestructiveNonSqlQuery(text, "etcd");
+    return rowNamesAsked(codeStatementLanguageRow("etcd"), text);
   } catch (error) {
     return described(error);
   }

@@ -662,7 +662,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it",
         "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment",
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id",
       ],
       "tests/unit/mcp/served-engines.test.ts": [
         "an engine agent mode does not execute on is not served, whatever its rows say",
@@ -1398,7 +1398,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "each declaration's SQL text claims are its legacy row's: readsSqlText, the exempt forms, the redaction and the grammar's SHA-256",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id",
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
         "a package engine no register row reviews asks about every statement, a read included, and a production connection asks its name",
@@ -1408,8 +1408,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with the claims its record grants",
       ],
       "tests/unit/editor/statement-analysis.test.ts": [
-        "packageConfirmationVerdict asks about every statement under a grammar no register row reviewed, and reads none of it",
-        "packageConfirmationVerdict counts a granted text-not-SQL claim and a granted exempt form",
+        "the verdict of a package engine's reading asks about every statement under a grammar no register row reviewed, and reads none of it",
+        "the verdict of a package engine's reading counts a granted text-not-SQL claim and a granted exempt form",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package engine no register row reviews asks about every statement, a read included",
