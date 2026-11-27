@@ -569,6 +569,10 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * locks out the plant's own HMI.
    *
    * The request is settled BEFORE the socket: a refusal the caller can fix costs no connection.
+   *
+   * The answer is a whole `QueryResult`: its execution time is the device's, from the dial to the
+   * last frame, as the agent path's `deviceMs` is, and the read's warnings are its `warnings`, absent
+   * when it raised none.
    */
   public async query(statement: string, _params?: unknown[]): Promise<QueryResult> {
     // On an agent-mode handle a read goes through `queryReadOnly`, paced and counted; the console is neither.
@@ -581,6 +585,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
       throw atBoundary(error);
     }
     const endpoint = this.endpoint();
+    const startedAt = performance.now();
     const socket = await dialModbus(endpoint);
     try {
       const session = new ModbusSession(socketWire(socket, endpoint));
@@ -589,8 +594,9 @@ export class ModbusProvider extends BaseDatabaseProvider {
         rows: read.rows,
         fields: read.fields,
         rowCount: read.rows.length,
-        ...(read.warnings.length > 0 ? { notices: [...read.warnings] } : {}),
-      } as QueryResult;
+        executionTime: Math.round(performance.now() - startedAt),
+        ...(read.warnings.length > 0 ? { warnings: read.warnings.map((message) => ({ message })) } : {}),
+      };
     } finally {
       socket.destroy();
     }

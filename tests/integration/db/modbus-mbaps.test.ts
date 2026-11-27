@@ -99,6 +99,7 @@ describe("mbaps, against a device that really speaks TLS", () => {
 
     expect(result.rows).toHaveLength(5);
     expect(result.rows.map((row) => row.value)).toEqual([7000, 7011, 7022, 7033, 7044]);
+    expect(Number.isFinite(result.executionTime) && result.executionTime >= 0).toBe(true);
   });
 
   test("the panel's CA reaches the handshake, and the same five rows come back over TLS", async () => {
@@ -108,6 +109,7 @@ describe("mbaps, against a device that really speaks TLS", () => {
 
     expect(result.rows).toHaveLength(5);
     expect(result.rows.map((row) => row.value)).toEqual([7000, 7011, 7022, 7033, 7044]);
+    expect(Number.isFinite(result.executionTime) && result.executionTime >= 0).toBe(true);
   });
 
   test("a CA that signed nothing here is refused, and the sentence is about the certificate", async () => {

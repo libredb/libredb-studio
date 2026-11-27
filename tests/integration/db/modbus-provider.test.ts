@@ -252,6 +252,37 @@ describe("the four tables, read through the whole provider", () => {
     expect(result.rows.map((row) => row.value)).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map(inputRegister));
   });
 
+  test("a console read answers its execution time and the map's warnings as the result's warnings", async () => {
+    const dev = await device();
+    // Unit 248 is one a serial line reserves, so the map warns about it; the device answers any unit.
+    const reserved = { name: "far", unitId: 248, table: "holding_register", address: 0, type: "uint16" };
+    const engine = new ModbusProvider(
+      {
+        id: "m",
+        name: "device",
+        type: "modbus",
+        host: "127.0.0.1",
+        port: dev.port,
+        registerMap: JSON.stringify([...POINTS, reserved]),
+      } as unknown as DatabaseConnection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
+
+    const warned = await engine.query('{"read":["far"]}');
+    const quiet = await provider(dev.port).query('{"read":["volts"]}');
+
+    expect(warned.rows.map((row) => row.value)).toEqual([holding(0)]);
+    expect(Number.isFinite(warned.executionTime) && warned.executionTime >= 0).toBe(true);
+    expect(warned.warnings).toEqual([
+      { message: 'Point "far" names unit 248, which a serial line reserves. A gateway may refuse it.' },
+    ]);
+    expect(Object.keys(warned)).not.toContain("notices");
+    expect(Number.isFinite(quiet.executionTime) && quiet.executionTime >= 0).toBe(true);
+    // Absent when the read raised none, never an empty list (`QueryResult.warnings`).
+    expect(Object.keys(quiet)).not.toContain("warnings");
+  });
+
   test("the address column carries the register the row answered for", async () => {
     const dev = await device();
     const result = await provider(dev.port).query('{"unit":1,"table":"holding_register","address":3,"count":2}');
