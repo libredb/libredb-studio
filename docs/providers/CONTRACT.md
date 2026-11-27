@@ -463,6 +463,11 @@ A register row states the digest of the statement language data it reviewed, `la
 A package row that grants `readsSqlText: false` or `decidesAlone: true` with a null digest is refused, so a package engine that states no statement language data is never granted either of the two.
 For an engine that states no SQL text, whose register row reviews no grammar, the row's grant of `readsSqlText: false` and of the whole-answer claim under the language digest alone makes the language's confirmation reading the gate's whole answer.
 
+### M-88 (informative): A package engine's statement language in agent mode and on MCP
+
+A package engine's statement language data (M-85) will be served in agent mode and on MCP as a bundled engine's is, each part read only as the engine's register row grants it (M-87).
+Until then agent mode and MCP refuse a package engine's connection as C-107 says, so nothing checks the first sentence yet.
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -1226,6 +1231,12 @@ The host core's execute, cancel on a stop, end of a scope, tree, maintenance, mo
 
 Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
 The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is logged as the package's defect: a malformed batch or row, warnings that are not a list or a warning that is not the SDK's `Warning`, or an execution time or row count outside its type.
+
+### C-114 (informative): A package carries its drivers bundled into its own modules
+
+A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a Node.js built-in (C-102), and a native addon stays refused (C-103).
+An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a `require` made by `createRequire`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
+Nothing checks this clause yet beyond C-102 and C-103.
 
 ## Not yet in this contract
 
