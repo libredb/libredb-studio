@@ -28,7 +28,9 @@
  *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, each answer marked unconfirmed, and that an
  *    explain request is refused by name, 501. No register row reviews the fixture's grammar, so the confirmation gate
  *    asks about every statement of its engine, and the default advisory mode runs a request that sends no
- *    confirmation field and marks its answer unconfirmed.
+ *    confirmation field and marks its answer unconfirmed. The statement acceptance.json lists as refused, which the
+ *    fixture refuses in its own words, is answered with Studio's sentence naming its code and holds none of the
+ *    package's words (clause C-112).
  * 6. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement.
@@ -305,6 +307,17 @@ export interface Expectation {
   readonly rows: readonly (readonly unknown[])[];
 }
 
+/**
+ * A statement the fixture's provider refuses in its own words, `packageWords`, and what Studio answers for it: the
+ * error `code` and Studio's `sentence` naming it.
+ */
+export interface Refusal {
+  readonly statement: string;
+  readonly packageWords: string;
+  readonly code: string;
+  readonly sentence: string;
+}
+
 /** The fixture as the run reads it: its package identity, its engines, its bundle's path and its expectations. */
 export interface Fixture {
   readonly name: string;
@@ -318,6 +331,7 @@ export interface Fixture {
     /** The connection's own fields, beside the id and the engine's type the run adds. */
     readonly connection: Readonly<Record<string, unknown>>;
     readonly statements: readonly Expectation[];
+    readonly refused: Refusal;
   };
 }
 
@@ -360,6 +374,40 @@ function expectations(value: unknown, file: string): Expectation[] {
   });
 }
 
+/**
+ * The refused statement of acceptance.json, refused when step 5 could prove nothing with it: a member that is no
+ * non-empty text, a sentence that does not name its code as a whole word, package words sharing a word with Studio's
+ * sentence (the words check could never pass), or a statement that is one of `statements`, which answer rows.
+ */
+function refusal(value: unknown, statements: readonly Expectation[], file: string): Refusal {
+  if (!isRecord(value)) throw new Error(`${file} holds no refused statement object`);
+  const text = (member: keyof Refusal): string => {
+    const found = value[member];
+    if (!isText(found)) throw new Error(`${file} refused statement has no ${member} text`);
+    return found;
+  };
+  const refused: Refusal = {
+    statement: text("statement"),
+    packageWords: text("packageWords"),
+    code: text("code"),
+    sentence: text("sentence"),
+  };
+  const studioWords = wordsOf(refused.sentence);
+  if (!studioWords.includes(refused.code.toLowerCase())) {
+    throw new Error(`${file} refused statement's sentence does not name its code ${refused.code}`);
+  }
+  const shared = [...new Set(wordsOf(refused.packageWords))].filter((word) => studioWords.includes(word)).sort();
+  if (shared.length > 0) {
+    throw new Error(
+      `${file} refused statement's package words share words with Studio's sentence: ${shared.join(", ")}`,
+    );
+  }
+  if (statements.some((expected) => expected.statement === refused.statement)) {
+    throw new Error(`${file} refused statement "${refused.statement}" is one of its statements, which answer rows`);
+  }
+  return refused;
+}
+
 /** Reads the fixture in `directory` through `read`; a fixture the run cannot prove anything with is refused. */
 export function readFixture(directory: string, read: (file: string) => string): Fixture {
   const packageFile = path.join(directory, "package.json");
@@ -388,6 +436,7 @@ export function readFixture(directory: string, read: (file: string) => string): 
   const acceptance = jsonObject(read(acceptanceFile), acceptanceFile);
   if (!isText(acceptance.entrySource)) throw new Error(`${acceptanceFile} names no entrySource`);
   if (!isRecord(acceptance.connection)) throw new Error(`${acceptanceFile} holds no connection object`);
+  const statements = expectations(acceptance.statements, acceptanceFile);
 
   return {
     name: pkg.name,
@@ -397,7 +446,8 @@ export function readFixture(directory: string, read: (file: string) => string): 
     acceptance: {
       entrySource: acceptance.entrySource,
       connection: acceptance.connection,
-      statements: expectations(acceptance.statements, acceptanceFile),
+      statements,
+      refused: refusal(acceptance.refused, statements, acceptanceFile),
     },
   };
 }
@@ -661,6 +711,44 @@ export function unsupportedProblems(answer: Answer, field: string): string[] {
   if (!new RegExp(`\\b${escapeRegExp(field)}\\b`).test(String(answer.body.error))) {
     problems.push(`answered a sentence naming no ${field}`);
   }
+  return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
+}
+
+/**
+ * The words of `text`: its maximal runs of letters, digits, underscores and apostrophes, lower-cased, so `package's`
+ * and `INTERNAL_ERROR` are one word each.
+ */
+export function wordsOf(text: string): string[] {
+  return (text.match(/[\p{L}\p{N}_']+/gu) ?? []).map((word) => word.toLowerCase());
+}
+
+/** Every key and every scalar value of `value`, a JSON value, as text, so a word is read where it stands. */
+function textsOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(textsOf);
+  if (isRecord(value)) return Object.entries(value).flatMap(([key, member]) => [key].concat(textsOf(member)));
+  return [String(value)];
+}
+
+/**
+ * The problems with the answer to the refused statement, which the fixture's provider refuses in its own words (clause
+ * C-112): an error status, the code acceptance.json names exactly, Studio's sentence naming it exactly, and none of the
+ * package's words anywhere in the body, each key and value read word by word.
+ */
+export function refusedProblems(answer: Answer, refused: Refusal): string[] {
+  const quoted = `"${refused.statement}" answered`;
+  const problems: string[] = [];
+  if (answer.status < 400) problems.push(`${quoted} ${answer.status}, not an error status`);
+  if (answer.body.code !== refused.code) {
+    problems.push(`${quoted} code ${JSON.stringify(answer.body.code)}, not ${refused.code}`);
+  }
+  if (answer.body.error !== refused.sentence) {
+    problems.push(
+      `${quoted} the sentence ${JSON.stringify(answer.body.error)}, not Studio's sentence naming ${refused.code}`,
+    );
+  }
+  const answered = new Set(textsOf(answer.body).flatMap(wordsOf));
+  const own = [...new Set(wordsOf(refused.packageWords))].filter((word) => answered.has(word));
+  if (own.length > 0) problems.push(`${quoted} the package's own words: ${own.join(", ")}`);
   return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
 }
 
@@ -1363,6 +1451,13 @@ async function queryEngine(ctx: Context): Promise<string> {
         `${expected.statement} -> ${JSON.stringify(answer.body.rows)}, ${String(answer.body.confirmation)}`,
       );
     }
+    // A statement the package refuses in its own words is answered with Studio's sentence naming its code.
+    const { refused } = fixture.acceptance;
+    const refusedAnswer = await postJson(server, STUDIO.routes.query, { connection, sql: refused.statement }, cookie);
+    assertNone(refusedProblems(refusedAnswer, refused));
+    answered.push(
+      `"${refused.statement}" refused -> ${refusedAnswer.status} ${String(refusedAnswer.body.code)} ${JSON.stringify(refusedAnswer.body)}`,
+    );
     // A field the engine's record does not offer is refused by name, read from the record.
     const first = (fixture.acceptance.statements[0] as Expectation).statement;
     const explain = { connection, sql: first, explain: { mode: "estimate" } };

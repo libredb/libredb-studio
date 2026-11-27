@@ -13,7 +13,6 @@ import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import ts from "typescript";
 import {
   LEGACY_KEY,
   parseGrantRegister,
@@ -59,6 +58,7 @@ import type { DatabaseType } from "@/lib/types";
 import { CLAIM_GRANTS, CORE_GRANT_RECORDS } from "../../helpers/core-grant-records";
 import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
+import { type Input, moduleOf, valueInputs } from "../../helpers/value-inputs";
 import {
   claim,
   ENGINE_TABLE_INVENTORY,
@@ -1271,85 +1271,6 @@ describe("the grant reader's inputs", () => {
       "the field names a row's superseding fields are narrowed to, keyed by no engine",
   };
 
-  interface Input {
-    /** `<name> from <specifier>`, or the call that loads a module at run time. */
-    readonly input: string;
-    /** The repository path, without extension, of the module it loads, or null for a package. */
-    readonly module: string | null;
-  }
-
-  /** `module`, a repository path, without its extension or a trailing `/index`. */
-  function moduleOf(module: string): string {
-    return module.replace(/\.(c|m)?(t|j)sx?$/, "").replace(/\/index$/, "");
-  }
-
-  /** The module `specifier` written in `file` resolves to, as `moduleOf` writes it, or null for a package. */
-  function resolved(file: string, specifier: string): string | null {
-    if (specifier.startsWith("@/")) return moduleOf(`src/${specifier.slice(2)}`);
-    if (specifier.startsWith("."))
-      return moduleOf(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
-    return null;
-  }
-
-  /**
-   * Every value input of `text`, the module at `file`: each name a non-type-only import or `export ... from`
-   * declaration binds, `*` for a namespace import or an `export *`, the bare specifier for a side-effect import, and
-   * every dynamic `import()` or `require()` call by its text. A type-only import or export loads nothing and is passed
-   * over.
-   */
-  function valueInputs(file: string, text: string): readonly Input[] {
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const inputs: Input[] = [];
-    const add = (name: string, specifier: string) =>
-      inputs.push({ input: `${name} from ${specifier}`, module: resolved(file, specifier) });
-    for (const statement of source.statements) {
-      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-        const specifier = statement.moduleSpecifier.text;
-        const clause = statement.importClause;
-        if (clause === undefined) add("(side effect)", specifier);
-        else if (!clause.isTypeOnly) {
-          if (clause.name !== undefined) add("default", specifier);
-          const bindings = clause.namedBindings;
-          if (bindings !== undefined && ts.isNamespaceImport(bindings)) add("*", specifier);
-          if (bindings !== undefined && ts.isNamedImports(bindings)) {
-            for (const element of bindings.elements) {
-              if (!element.isTypeOnly) add((element.propertyName ?? element.name).text, specifier);
-            }
-          }
-        }
-      }
-      if (
-        ts.isExportDeclaration(statement) &&
-        !statement.isTypeOnly &&
-        statement.moduleSpecifier !== undefined &&
-        ts.isStringLiteral(statement.moduleSpecifier)
-      ) {
-        const specifier = statement.moduleSpecifier.text;
-        const clause = statement.exportClause;
-        if (clause === undefined || ts.isNamespaceExport(clause)) add("*", specifier);
-        else {
-          for (const element of clause.elements) {
-            if (!element.isTypeOnly) add((element.propertyName ?? element.name).text, specifier);
-          }
-        }
-      }
-    }
-    const visit = (node: ts.Node): void => {
-      if (
-        ts.isCallExpression(node) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-      ) {
-        const argument = node.arguments[0];
-        const specifier = argument !== undefined && ts.isStringLiteralLike(argument) ? argument.text : "";
-        inputs.push({ input: node.getText(source), module: resolved(file, specifier) });
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    return inputs;
-  }
-
   /** Each input not on `GRANT_READER_INPUTS`, by name. */
   function unlisted(inputs: readonly Input[]): readonly string[] {
     return inputs.map(({ input }) => input).filter((input) => !Object.hasOwn(GRANT_READER_INPUTS, input));
@@ -1444,7 +1365,9 @@ describe("the grant reader's engine-keyed exports", () => {
         .sort(),
     );
     expect(functions.map((entry) => entry.name)).toEqual(["legacyEngineGrants"]);
-    expect(listed.filter((entry) => !("milestone" in entry.removedBy)).map((entry) => entry.name)).toEqual([]);
+    expect(
+      listed.filter((entry) => entry.removedBy.some((removal) => !("milestone" in removal))).map((entry) => entry.name),
+    ).toEqual([]);
     // Vacuity: the shape finds a table and the list, and passes over a vocabulary that holds no engine id.
     expect(exported).toContain("GRANTED_WRITE_REACH");
     expect(exported).toContain("GRANTED_AGENT_EXECUTION_ENGINES");

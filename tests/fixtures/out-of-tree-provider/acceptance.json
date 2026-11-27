@@ -17,5 +17,11 @@
       "columns": ["name", "value"],
       "rows": [["beta", "second"]]
     }
-  ]
+  ],
+  "refused": {
+    "statement": "count",
+    "packageWords": "This engine runs two statements: list, and get followed by a name.",
+    "code": "INTERNAL_ERROR",
+    "sentence": "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words."
+  }
 }

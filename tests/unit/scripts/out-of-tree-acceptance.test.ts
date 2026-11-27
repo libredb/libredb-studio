@@ -23,6 +23,7 @@ import {
   childSpec,
   dependencyClosure,
   describeChild,
+  type Expectation,
   type Fixture,
   filesNaming,
   installedSdkProblems,
@@ -35,6 +36,7 @@ import {
   porcelainProblems,
   readFixture,
   refusalLines,
+  refusedProblems,
   regularFiles,
   rowsProblems,
   runSteps,
@@ -52,6 +54,7 @@ import {
   unconfirmedProblems,
   unsupportedProblems,
   bundleProblems,
+  wordsOf,
 } from "../../../scripts/out-of-tree-acceptance";
 import { moduleSpecifiers } from "../lib/db/provider-imports/scan";
 
@@ -70,7 +73,8 @@ const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
  * and a probe against the same build and providers directory on 2026-11-25 (main at the package session's head);
  * `listBody`'s `confirmation: "unconfirmed"` mark is the one a green local run of the script asserted on 2026-11-27,
  * once the gate asked about every statement of an engine no register row reviews. The package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
- * session cookie's value is drawn at run time.
+ * session cookie's value is drawn at run time. `refusedBody` is the answer to acceptance.json's refused statement, as
+ * step 5's evidence printed it in a green local run of the script on 2026-11-27.
  */
 const SAMPLES = {
   lockStdout: (lockFile: string): string =>
@@ -98,6 +102,11 @@ const SAMPLES = {
     statusCode: 503,
     kind: "provider-unavailable",
     outcome: "unknown",
+  },
+  refusedBody: {
+    error: "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+    code: "INTERNAL_ERROR",
+    statusCode: 500,
   },
   unknownBody: {
     error: `No provider for the connection type "${engineId}" is installed in this LibreDB Studio.`,
@@ -380,6 +389,59 @@ describe("the out-of-tree fixture", () => {
     });
     expect(importing).toEqual([]);
   });
+
+  test("a refused statement is read from acceptance.json with its code, Studio's sentence and the package's words, and one step 5 cannot prove anything with is refused", () => {
+    const { refused } = fixture.acceptance;
+    expect(refused.statement).not.toBe("");
+    expect(refused.code).not.toBe("");
+    expect(wordsOf(refused.sentence)).toContain(refused.code.toLowerCase());
+    expect(wordsOf(refused.packageWords).length).toBeGreaterThan(0);
+
+    const files: Record<string, string> = {
+      "package.json": readText(path.join(FIXTURE, "package.json")),
+      "libredb-provider.json": manifestText,
+    };
+    const acceptance = JSON.parse(readText(path.join(FIXTURE, "acceptance.json"))) as Record<string, unknown>;
+    const reading = (changed: Record<string, unknown>) => () =>
+      readFixture("/fixture", (file) => {
+        const text = { ...files, "acceptance.json": JSON.stringify(changed) }[path.basename(file)];
+        if (text === undefined) throw new Error(`no ${file}`);
+        return text;
+      });
+    const withRefused = (members: Record<string, unknown>) =>
+      reading({ ...acceptance, refused: { ...refused, ...members } });
+
+    expect(reading(acceptance)().acceptance.refused).toEqual(refused);
+    const withoutRefused = { ...acceptance };
+    delete withoutRefused.refused;
+    expect(reading(withoutRefused)).toThrow("acceptance.json holds no refused statement object");
+    expect(reading({ ...acceptance, refused: "count" })).toThrow("acceptance.json holds no refused statement object");
+    for (const member of ["statement", "packageWords", "code", "sentence"]) {
+      expect(withRefused({ [member]: "" })).toThrow(`acceptance.json refused statement has no ${member} text`);
+      expect(withRefused({ [member]: 7 })).toThrow(`acceptance.json refused statement has no ${member} text`);
+    }
+    expect(
+      withRefused({ sentence: "The provider package's execute failed; the server's log holds its words." }),
+    ).toThrow(`acceptance.json refused statement's sentence does not name its code ${refused.code}`);
+    // A code inside a longer word is not named: the sentence must name it as a whole word.
+    expect(withRefused({ code: "INTERNAL" })).toThrow("does not name its code INTERNAL");
+    expect(withRefused({ packageWords: "The package failed in its own words." })).toThrow(
+      "acceptance.json refused statement's package words share words with Studio's sentence: failed, its, the, words",
+    );
+    const first = (fixture.acceptance.statements[0] as Expectation).statement;
+    expect(withRefused({ statement: first })).toThrow(
+      `acceptance.json refused statement "${first}" is one of its statements, which answer rows`,
+    );
+  });
+
+  test("the fixture's provider refuses in the words acceptance.json names", () => {
+    const { refused, statements } = fixture.acceptance;
+    // The words step 5 looks for are the words the package really answers, so a reworded error cannot pass vacuously.
+    expect(readText(path.join(FIXTURE, fixture.acceptance.entrySource))).toContain(refused.packageWords);
+    // The refused statement is none of the statements the fixture answers with rows.
+    expect(statements.map((expected) => expected.statement)).not.toContain(refused.statement);
+    expect(statements.length).toBeGreaterThan(0);
+  });
 });
 
 describe("the out-of-tree acceptance's checks over captured output", () => {
@@ -595,6 +657,61 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(unsupportedProblems({ status: 400, body: SAMPLES.unknownBody }, "explain").at(-1)).toContain(
       "PROVIDER_UNKNOWN",
     );
+  });
+
+  test("step 5 fails when a refused statement's answer holds the package's own words or lacks Studio's code", () => {
+    const { refused } = fixture.acceptance;
+    const body: Record<string, unknown> = { ...SAMPLES.refusedBody };
+    // The sample is the answer to the refused statement acceptance.json names.
+    expect([body.code, body.error]).toEqual([refused.code, refused.sentence]);
+    const quoted = `"${refused.statement}" answered`;
+    expect(refusedProblems({ status: 500, body }, refused)).toEqual([]);
+
+    // The package's own sentence in place of Studio's: the sentence and the words are named.
+    const own = refusedProblems({ status: 500, body: { ...body, error: refused.packageWords } }, refused);
+    expect(own[0]).toBe(
+      `${quoted} the sentence ${JSON.stringify(refused.packageWords)}, not Studio's sentence naming ${refused.code}`,
+    );
+    expect(own[1]).toBe(`${quoted} the package's own words: ${[...new Set(wordsOf(refused.packageWords))].join(", ")}`);
+    expect(own).toHaveLength(3);
+    expect(own[2]).toStartWith("body: ");
+
+    // The words are read over the whole body, not only its sentence.
+    const detail = refusedProblems({ status: 500, body: { ...body, detail: "followed by a name" } }, refused);
+    expect(detail).toEqual([
+      `${quoted} the package's own words: followed, by, a, name`,
+      expect.stringMatching(/^body: /),
+    ]);
+
+    // No code, and a sentence naming none.
+    const uncoded: Record<string, unknown> = { ...body };
+    delete uncoded.code;
+    const codeless = refusedProblems({ status: 500, body: { ...uncoded, error: "Something failed." } }, refused);
+    expect(codeless.slice(0, 2)).toEqual([
+      `${quoted} code undefined, not ${refused.code}`,
+      `${quoted} the sentence "Something failed.", not Studio's sentence naming ${refused.code}`,
+    ]);
+    expect(codeless).toHaveLength(3);
+
+    // A success is no refusal.
+    expect(refusedProblems({ status: 200, body }, refused)).toEqual([
+      `${quoted} 200, not an error status`,
+      expect.stringMatching(/^body: /),
+    ]);
+  });
+
+  test("words are runs of letters, digits, underscores and apostrophes, lower-cased", () => {
+    expect(wordsOf("The provider package's execute failed (INTERNAL_ERROR); log 2.")).toEqual([
+      "the",
+      "provider",
+      "package's",
+      "execute",
+      "failed",
+      "internal_error",
+      "log",
+      "2",
+    ]);
+    expect(wordsOf("")).toEqual([]);
   });
 
   test("the refusal line is found only for the code, name and version asked, and the first boot's output must name no refusal of the package", () => {
