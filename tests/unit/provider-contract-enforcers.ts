@@ -557,6 +557,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "M-48": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
         "an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer",
@@ -582,6 +585,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "M-50": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "a history mask with no flag is refused as too-few, and a flag that is not a long option as pattern-mismatch",
         "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",
@@ -1258,6 +1264,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "S-4": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags",
         "a grammar read from the declaration reads every statement of the census corpus as the row's grammar does",
@@ -1513,6 +1522,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "S-23": {
     tests: {
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id",
+      ],
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too",
         "an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names",

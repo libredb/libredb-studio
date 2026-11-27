@@ -106,9 +106,7 @@ import type {
   HistoryMask,
   McpClaims,
   MigrationDdl,
-  MonacoLanguageId,
   PolicyClaims,
-  QueryDialect,
   Safeguards,
   SqlGenerators,
   SqlText,
@@ -331,10 +329,11 @@ export interface EditorFacts {
 
 /**
  * One query dialect's row: the tab type its tabs open as, the dialect's name, and what the editor offers for it, every
- * member present, the history mask null where history keeps a statement as typed.
+ * member present, the history mask null where history keeps a statement as typed. The tab type is a plain name here;
+ * `QUERY_DIALECTS` (src/lib/db/query-dialects.ts) types the generated record over core's own tab types.
  */
 export interface QueryDialectEntry {
-  readonly tabType: QueryDialect;
+  readonly tabType: string;
   readonly offersColumnProfiling: boolean;
   readonly offersCodeGeneration: boolean;
   readonly offersCountQuery: boolean;
@@ -342,9 +341,12 @@ export interface QueryDialectEntry {
   readonly historyMask: HistoryMask;
 }
 
-/** One tab type's editor: the Monaco language its tabs render in. */
+/**
+ * One tab type's editor: the Monaco language its tabs render in, a plain name here; `DIALECT_EDITORS`
+ * (src/lib/editor/dialect-editors.ts) types the generated record over core's own editor languages.
+ */
 export interface DialectEditorEntry {
-  readonly monacoId: MonacoLanguageId;
+  readonly monacoId: string;
 }
 
 /** One Monaco language's facts: the accent an agent answer's statement block takes, and whether it is a console. */
