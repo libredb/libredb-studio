@@ -30,6 +30,15 @@
  * on Bun, so this launcher hands it no NEXT_MANUAL_SIG_HANDLE, which a
  * server on Bun refuses as `true` (docs/DISTRIBUTION.md, "Stopping the
  * server").
+ *
+ * One subcommand runs before all of that: `providers lock --dir <absolute
+ * directory>` writes the lock of a providers directory (docs/DISTRIBUTION.md,
+ * "Locking a providers directory"). It imports the lock command's module,
+ * dist/providers-lock.mjs, which `build:lib` builds into the package
+ * (scripts/build-lock-module.mjs), and runs its `main`, so it needs no
+ * download, cache or payload and never starts a server. Any other
+ * `providers` command prints that module's usage and exits 2. The rest of
+ * the arguments go to `parseLauncherArgs` unchanged.
  */
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -69,6 +78,7 @@ const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.ur
 const USAGE = `LibreDB Studio ${pkg.version} launcher
 
 Usage: npx @libredb/studio [options]
+       npx @libredb/studio providers lock --dir <absolute directory>
 
 Starts the LibreDB Studio standalone server. On first run the launcher
 downloads the release archive for this platform (tar.gz; zip on Windows)
@@ -98,6 +108,12 @@ Options:
   --verify-cache    Re-verify the cached tarball checksum and re-extract
                     the payload before starting
   --help, -h        Show this help
+
+Commands:
+  providers lock --dir <absolute directory>
+                    Write the lock of a providers directory,
+                    providers.lock.json, and exit. It downloads nothing,
+                    reads no cache and starts no server.
 
 The server binds to 127.0.0.1 by default; exposing it on the network is an
 explicit opt-in (--host, LIBREDB_BIND, or a HOSTNAME that differs from this
@@ -380,7 +396,33 @@ function startServer(payloadDir, port, host) {
   child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 1)));
 }
 
+/**
+ * Runs `providers <argv>`: `lock` runs the lock command's `main` with the rest of
+ * the arguments and exits with its code; anything else prints its usage, exit 2.
+ * The exit code is set, not forced with process.exit, so a piped stdout is
+ * written out before the process ends.
+ * @param {string[]} argv the arguments after `providers`
+ */
+async function providersCommand(argv) {
+  // The package's runtime floor holds for the subcommand too; this is not a
+  // download, cache or payload step.
+  const runtime = assessNodeRuntime(process.versions.node);
+  if (runtime.action === "fail") fail(runtime.message);
+  const lockCommand = await import("../dist/providers-lock.mjs");
+  if (argv[0] === "lock") {
+    process.exitCode = lockCommand.main(argv.slice(1));
+    return;
+  }
+  console.error(lockCommand.USAGE);
+  process.exitCode = 2;
+}
+
 async function main() {
+  if (process.argv[2] === "providers") {
+    await providersCommand(process.argv.slice(3));
+    return;
+  }
+
   let args;
   try {
     args = parseLauncherArgs(process.argv.slice(2));

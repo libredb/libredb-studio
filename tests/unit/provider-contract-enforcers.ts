@@ -2774,6 +2774,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/scripts/providers-lock.test.ts": [
         "the lock the command writes is admitted unchanged, and a later edit to the artifact is refused",
       ],
+      "tests/unit/launcher-utils.test.ts": ["the launcher dispatches providers lock before any download"],
     },
   },
   "C-92": {

@@ -257,7 +257,7 @@ describe("boot admission", () => {
       expect([label, answer, exits]).toEqual([label, false, [1]]);
       expect(printed).toContain("LibreDB Studio cannot start: its providers lock is invalid");
       expect(printed).toContain(`PROVIDER_LOCK_INVALID: ${path.join(providers, "providers.lock.json")}: ${why}`);
-      expect(printed).toContain("bun run providers:lock");
+      expect(printed).toContain("Write the lock with libredb-studio providers lock --dir <absolute directory>");
       expect([label, serverCatalogInstalled()]).toEqual([label, false]);
     }
   });

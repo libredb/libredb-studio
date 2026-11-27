@@ -179,7 +179,7 @@ function refuseBoot(refusal: LockRefusal): false {
       "============================================================",
       " LibreDB Studio cannot start: its providers lock is invalid",
       ` ${refusal.sentence}`,
-      " Write the lock with bun run providers:lock -- --dir <absolute directory>, or unset LIBREDB_PROVIDERS_DIR.",
+      " Write the lock with libredb-studio providers lock --dir <absolute directory>, or unset LIBREDB_PROVIDERS_DIR.",
       "============================================================",
       "",
     ].join("\n"),

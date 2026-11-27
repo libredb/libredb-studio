@@ -927,6 +927,33 @@ rebuilt archive never invalidates a previously printed admin password.
   from the GitHub release carries its own SLSA attestation, and from 0.9.63 the launcher checks
   it - see below.
 
+### Locking a providers directory
+
+A providers directory (`LIBREDB_PROVIDERS_DIR`, [`.env.example`](../.env.example)) is read only through its lock, `providers.lock.json`, which Studio's lock command writes (docs/providers/CONTRACT.md, C-91):
+
+```bash
+npx @libredb/studio providers lock --dir /absolute/path/of/the/directory
+```
+
+The launcher runs the command before and without any download: it reads no cache, starts no server and writes nothing outside the directory.
+The command ships in the npm package; Homebrew, the Linux packages, Snap, Windows and the desktop app do not serve it yet.
+The directory must be absolute, and holds each package as `<name>/<version>/` or `@<scope>/<name>/<version>/`.
+The command writes the lock through a temporary file in the directory and a rename, prints `Wrote <directory>/providers.lock.json` and one line per package with its name, version and digest, and exits 0.
+The same directory always gives the same bytes.
+
+It writes nothing and exits 1 when it refuses the directory, printing every refusal on stderr, each naming its entry, then `providers:lock wrote nothing`:
+
+- a `--dir` that does not exist or is not a directory;
+- an entry of the directory that is neither a package nor the lock, and a scope directory holding no package;
+- an entry of a package directory that is not a version directory (a `.DS_Store` among them), a package directory with no version, and two versions of one package;
+- more than 256 packages, the most a lock holds;
+- every refusal of a package's files (a link, a special file, a name outside the portable set, the size limits, a package.json or manifest it cannot read, more engine ids than an entry holds, a package.json naming another package, an entry that is not a file of the package);
+- a module file its parser cannot read or that is not UTF-8, an import outside the lock's forms, more than 4,096 imports in a package, and a lock over 1 MiB.
+
+Any other argument, a relative `--dir` included, prints the usage and exits 2.
+Remove or fix what a refusal names, and run the command again.
+In a checkout of Studio, `bun run providers:lock -- --dir <absolute directory>` runs the same command under Bun and writes the same bytes.
+
 ### Launcher provenance check
 
 After the checksum passes, the launcher runs `gh attestation verify` on the archive, pinned to the
