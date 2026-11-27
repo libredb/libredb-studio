@@ -68,7 +68,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import path from "node:path";
-import type { AnyNode } from "acorn";
 import { declaresNativePackages, isNativeAddonFile, isTypeScriptFile } from "../src/lib/provider-host/admission";
 import {
   decodeJson,
@@ -85,7 +84,7 @@ import {
   PACKAGE_VERSION_FORM,
   type StringForm,
 } from "../src/lib/provider-host/providers-lock-format";
-import { artifactEntry, isModuleFile, parsedModule } from "./providers-lock";
+import { artifactEntry, isModuleFile, parsedModule, runtimeLoads } from "./providers-lock";
 import { PACKAGES_DIRECTORY, providerPackageDirectories } from "./workspace-packages.mjs";
 
 const USAGE = "Usage: bun run providers:pack -- --out <absolute directory> [<absolute package directory> ...]";
@@ -219,137 +218,6 @@ function readPackageJson(directory: string): { name: string; version: string; by
   const build = isObject(scripts) ? scripts.build : undefined;
   if (typeof build !== "string" || build === "") return `${PREFIX}: ${directory}: its package.json has no build script`;
   return { name, version, bytes };
-}
-
-/** A runtime load the pack step refuses, by the words its sentence says of the module (C-114). */
-const RUNTIME_LOAD_FORMS = [
-  "names createRequire",
-  "reads require other than to call it with a string",
-  "calls require() with something other than a string",
-  "calls import() with something other than a string",
-  "calls a member named require",
-] as const;
-
-type RuntimeLoadForm = (typeof RUNTIME_LOAD_FORMS)[number];
-
-/** The string a node holds when it is a string literal or a template literal without substitution; else null. */
-function staticString(node: AnyNode | null | undefined): string | null {
-  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
-  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-
-/** Whether `value` is a node of the tree: an object whose `type` is a string. */
-function isNode(value: unknown): value is AnyNode {
-  return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
-}
-
-/** A node to visit, and how its parent holds it. */
-interface Visit {
-  readonly node: AnyNode;
-  /** It is a name the parent gives, not a reference: a member, a key, a label, an imported or exported name. */
-  readonly name: boolean;
-  /** It is the callee of a call of `require`, judged at the call. */
-  readonly requireCallee: boolean;
-  /** It is a specifier of a re-export with a source, whose local name is the other module's. */
-  readonly reExport: boolean;
-}
-
-/** Whether the child `key` of `parent` is a name rather than a reference. */
-function isNamePosition(parent: AnyNode, key: string, reExport: boolean): boolean {
-  switch (parent.type) {
-    case "MemberExpression":
-      return key === "property" && !parent.computed;
-    case "Property":
-    case "MethodDefinition":
-    case "PropertyDefinition":
-      return key === "key" && !parent.computed;
-    case "LabeledStatement":
-    case "BreakStatement":
-    case "ContinueStatement":
-      return key === "label";
-    case "ImportSpecifier":
-      return key === "imported";
-    case "ExportSpecifier":
-      return key === "exported" || reExport;
-    case "ExportAllDeclaration":
-      return key === "exported";
-    case "ImportAttribute":
-      return key === "key";
-    case "MetaProperty":
-      return true;
-    default:
-      return false;
-  }
-}
-
-/** Whether `node` is the identifier `name`. */
-function isIdentifier(node: AnyNode, name: string): boolean {
-  return node.type === "Identifier" && node.name === name;
-}
-
-/** The runtime-load form `visit` makes, if any. */
-function runtimeLoadForm({ node, name, requireCallee }: Visit): RuntimeLoadForm | null {
-  switch (node.type) {
-    case "Identifier":
-      if (node.name === "createRequire") return "names createRequire";
-      return node.name === "require" && !name && !requireCallee
-        ? "reads require other than to call it with a string"
-        : null;
-    case "Literal":
-    case "TemplateLiteral":
-      return staticString(node) === "createRequire" ? "names createRequire" : null;
-    case "CallExpression": {
-      const { callee } = node;
-      if (isIdentifier(callee, "require")) {
-        return staticString(node.arguments[0]) === null ? "calls require() with something other than a string" : null;
-      }
-      if (callee.type !== "MemberExpression") return null;
-      const named = callee.computed
-        ? staticString(callee.property) === "require"
-        : isIdentifier(callee.property, "require");
-      return named ? "calls a member named require" : null;
-    }
-    case "ImportExpression":
-      return staticString(node.source) === null ? "calls import() with something other than a string" : null;
-    default:
-      return null;
-  }
-}
-
-/**
- * Every runtime load of the module file whose text is `text` and whose readings are `programs`, each by its line and
- * form, once, in order of line then form: one walk with an explicit stack over every reading, so only the parser's own
- * depth bounds a file. The line is 1 plus the count of line feeds before the node.
- */
-function runtimeLoads(text: string, programs: readonly AnyNode[]): { line: number; form: RuntimeLoadForm }[] {
-  const found = new Map<string, { line: number; form: RuntimeLoadForm }>();
-  const pending: Visit[] = programs.map((node) => ({ node, name: false, requireCallee: false, reExport: false }));
-  for (let visit = pending.pop(); visit !== undefined; visit = pending.pop()) {
-    const { node } = visit;
-    const form = runtimeLoadForm(visit);
-    if (form !== null) {
-      let line = 1;
-      for (let at = text.indexOf("\n"); at !== -1 && at < node.start; at = text.indexOf("\n", at + 1)) line += 1;
-      found.set(`${line} ${form}`, { line, form });
-    }
-    const reExport = node.type === "ExportNamedDeclaration" && node.source !== null && node.source !== undefined;
-    const callsRequire = node.type === "CallExpression" && isIdentifier(node.callee, "require");
-    for (const [key, value] of Object.entries(node)) {
-      for (const child of Array.isArray(value) ? value : [value]) {
-        if (!isNode(child)) continue;
-        pending.push({
-          node: child,
-          name: isNamePosition(node, key, visit.reExport),
-          requireCallee: callsRequire && key === "callee",
-          reExport: reExport && key === "specifiers",
-        });
-      }
-    }
-  }
-  return [...found.values()].sort(
-    (a, b) => a.line - b.line || RUNTIME_LOAD_FORMS.indexOf(a.form) - RUNTIME_LOAD_FORMS.indexOf(b.form),
-  );
 }
 
 /**
