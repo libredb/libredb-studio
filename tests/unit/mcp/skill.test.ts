@@ -28,7 +28,7 @@ import { MCP_TOKEN_ENV_NAME, mcpClientConfigs } from "@/lib/mcp/client-config";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_RESULT_CAP_BYTES, providerTextNotice } from "@/lib/mcp/output";
 import { fenceRefusalText, profileRefusalText } from "@/lib/mcp/tools/read-query-limits";
-import { MCP_STATEMENT_TOOLS } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
@@ -224,11 +224,11 @@ describe("the skill's text", () => {
 
   test("names every metadata tool and no statement tool", () => {
     const metadataTools = registeredMcpToolNames().filter(
-      (name) => !(MCP_STATEMENT_TOOLS as readonly string[]).includes(name),
+      (name) => !(mcpStatementSurface().tools as readonly string[]).includes(name),
     );
     expect(metadataTools.length).toBeGreaterThan(0);
     for (const tool of metadataTools) expect(SKILL).toContain(`\`${tool}\``);
-    expect(MCP_STATEMENT_TOOLS.filter((tool) => SKILL.includes(tool))).toEqual([]);
+    expect(mcpStatementSurface().tools.filter((tool) => SKILL.includes(tool))).toEqual([]);
   });
 
   test("puts in code only a tool name, a key of a listed tool's input or output schema, or one of three fixed names", async () => {

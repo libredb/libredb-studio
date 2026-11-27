@@ -3,7 +3,7 @@
  * serves into one sentence, or pins a tool to its neighbour's position.
  *
  * The number and the list of tools live in the registry alone: `AGENT_LANGUAGE_MCP_FACETS` declares each statement
- * tool and `MCP_TOOL_INPUT_SCHEMAS` the order they are listed in. A tool that starts serving then edits its own facet,
+ * tool and `mcpToolInputSchemas()` the order they are listed in. A tool that starts serving then edits its own facet,
  * its own `docs/MCP.md` section and its own rows, and no shared line that a second tool landing at the same time
  * would edit too. Tests compute what they expect from the registry and pin it against a hand-written doc, the wire
  * answer, or a second record. The matchers and their reach are described in tests/helpers/fixed-tool-count.ts.

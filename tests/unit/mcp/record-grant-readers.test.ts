@@ -111,7 +111,7 @@ describe("the MCP readers of a grant", () => {
     expect(thrownBy(() => assertAgentCredentialWhereRequired(listed("postgres")))).toBeNull();
     expect(thrownBy(() => assertReadRootsWhereRequired(listed("postgres")))).toBeNull();
     expect(metadataReadAnnotations(new Set<DatabaseType>(["postgres"]))).toBe(MCP_READ_ONLY_ANNOTATIONS);
-    expect(mcpStatementEngines("sql")).toEqual(expect.arrayContaining(["duckdb", "mysql"]));
+    expect(mcpStatementEngines("sql").map((engine) => engine.id)).toEqual(expect.arrayContaining(["duckdb", "mysql"]));
     expect(mcpStatementToolFor("mysql")).toBe("run_read_query");
     expect(mcpWithholdsDatabase("mqtt")).toBe(true);
 
@@ -127,7 +127,7 @@ describe("the MCP readers of a grant", () => {
       expect(denyCode(() => assertAgentCredentialWhereRequired(listed("postgres")))).toBe("AGENT_CREDENTIAL_REQUIRED");
       expect(denyCode(() => assertReadRootsWhereRequired(listed("postgres")))).toBe("READ_ROOTS_REQUIRED");
       expect(metadataReadAnnotations(new Set<DatabaseType>(["postgres"]))).toEqual(STATE_CHANGING);
-      const served = mcpStatementEngines("sql");
+      const served: readonly string[] = mcpStatementEngines("sql").map((engine) => engine.id);
       expect(served).not.toContain("duckdb");
       expect(served).not.toContain("mysql");
       expect(mcpStatementToolFor("mysql")).toBeNull();
@@ -156,7 +156,7 @@ describe("the MCP readers of a grant", () => {
       // The register row's grant.
       expect(metadataReadAnnotations(new Set(["acmerowed" as DatabaseType]))).toBe(MCP_READ_ONLY_ANNOTATIONS);
       expect(mcpWithholdsDatabase("acmerowed" as DatabaseType)).toBe(true);
-      // The arms serve legacy engines only until MCP opens to package engines (M5).
+      // No arm serves an engine whose record offers no execution profile, as no package engine's record does.
       expect(mcpStatementToolFor("acmerowed" as DatabaseType)).toBeNull();
 
       // No row: each claim's restrictive value.

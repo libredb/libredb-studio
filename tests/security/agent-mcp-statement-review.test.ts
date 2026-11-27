@@ -62,7 +62,7 @@ const { ExecutionBudgetTracker } = await import("@/lib/db/operations/budgets");
 const { createCanonicalOperationRegistry } = await import("@/lib/db/operations/descriptors");
 const { createTargetScope } = await import("@/lib/db/operations/policy");
 const { TABLE_LABELS } = await import("../fixtures/provider-labels");
-const { MCP_STATEMENT_ARMS, mcpStatementArm, mcpStatementToolFor } = await import("@/lib/mcp/tools/statement-arms");
+const { mcpStatementSurface, mcpStatementArm, mcpStatementToolFor } = await import("@/lib/mcp/tools/statement-arms");
 const { runStatement } = await import("@/lib/mcp/tools/run-statement");
 const { McpConnectionContext } = await import("@/lib/mcp/context");
 const { getServerAuditBuffer } = await import("@/lib/audit");
@@ -307,7 +307,7 @@ describe("an engine the review record does not list, though its provider impleme
   });
 
   test("no MCP statement tool serves SQLite, and run_read_query refuses a SQLite seed before anything is acquired", async () => {
-    for (const arm of Object.values(MCP_STATEMENT_ARMS)) {
+    for (const arm of Object.values(mcpStatementSurface().arms)) {
       if (arm !== null) expect(arm.types).not.toContain("sqlite");
     }
     expect(mcpStatementToolFor("sqlite")).toBeNull();

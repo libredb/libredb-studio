@@ -25,8 +25,9 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
  * substitution, because a namespace follows its replacement.
  * `mock.module` is process-wide, so the substitutions are made before anything that reads them is loaded: every such
  * module is imported dynamically below them, and the runner gives this file its own process. The crafted catalog is
- * installed before those imports too, since `MCP_STATEMENT_ARMS` reads each arm's served engines once, when its module
- * loads (`served-engines.ts`), so a catalog installed later would leave the declared tool serving no engine.
+ * installed before those imports too, though MCP's statement arms read their served engines from the catalog installed
+ * when they are read (`mcpStatementSurface`), not when their module loads, so every module this file loads reads the
+ * one crafted catalog from its first read.
  */
 
 const ACMEREAD = acmereadData();
@@ -82,16 +83,10 @@ const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
 const { AgentRepairLedger } = await import("@/lib/agent/repair-ledger");
 const { UNAVAILABLE_TEXT } = await import("@/lib/agent/tool-contracts");
 const { agentToolDefinition, runReadQueryTool, selectAgentTools } = await import("@/lib/agent/tools");
-const {
-  MCP_STATEMENT_ARMS,
-  MCP_STATEMENT_TOOLS,
-  mcpStatementArm,
-  mcpStatementToolFor,
-  mcpTablelessReadTool,
-  servingStatementArms,
-} = await import("@/lib/mcp/tools/statement-arms");
-const { isMcpToolName, MCP_TOOL_INPUT_SCHEMAS } = await import("@/lib/mcp/tools");
-const { ListedConnectionSchema } = await import("@/lib/mcp/tools/list-connections");
+const { mcpStatementSurface, mcpStatementArm, mcpStatementToolFor, mcpTablelessReadTool, servingStatementArms } =
+  await import("@/lib/mcp/tools/statement-arms");
+const { isMcpToolName, mcpToolInputSchemas } = await import("@/lib/mcp/tools");
+const { listedConnectionSchema } = await import("@/lib/mcp/tools/list-connections");
 const { databaseContentNotice, MCP_UNTRUSTED_NOTICE } = await import("@/lib/mcp/output");
 const { providerAuthor } = await import("@/lib/db/operations/provider-text");
 const { McpConnectionContext } = await import("@/lib/mcp/context");
@@ -165,7 +160,7 @@ describe("a data-declared language in the language registries", () => {
     expect(facet?.title).toBe(AGENT.mcp?.text.title as string);
     expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS).at(-1)).toBe("acmeread");
     expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS)).not.toContain("acmeplain");
-    expect<string | undefined>(MCP_STATEMENT_ARMS[ACME]?.tool).toBe("run_acme_read");
+    expect<string | undefined>(mcpStatementSurface().arms[ACME]?.tool).toBe("run_acme_read");
 
     // The load check, read on the module languages this build holds: every language but the declared ones.
     const declaredNames = Object.values(SUBSTITUTED_PROJECTION).flatMap((data) => (data === null ? [] : [data.name]));
@@ -244,13 +239,13 @@ describe("a data-declared language in the language registries", () => {
 
   test("a crafted data-declared language on a legacy engine is fenced on the MCP path with its declared sentence and offered as its statement tool", async () => {
     const mcp = AGENT.mcp as NonNullable<typeof AGENT.mcp>;
-    const arm = MCP_STATEMENT_ARMS[ACME];
+    const arm = mcpStatementSurface().arms[ACME];
     if (arm === null) throw new Error("the declared language's MCP facet builds no arm");
 
     // The arm: the declared tool on the engine granted the language, with the input Studio fixes.
     expect<string>(arm.tool).toBe("run_acme_read");
     expect(arm.title).toBe(mcp.text.title as string);
-    expect(arm.types).toEqual(["mqtt"]);
+    expect<readonly string[]>(arm.types).toEqual(["mqtt"]);
     expect(arm.engines).toBe(getDBConfig("mqtt").label);
     expect(arm.argument).toBe("statement");
     expect(arm.paging).toBe("none");
@@ -268,14 +263,16 @@ describe("a data-declared language in the language registries", () => {
 
     // The lists MCP keeps hold the declared tool, and the engine's own module tool serves it no more.
     expect(servingStatementArms()).toContain(arm);
-    expect<readonly string[]>(MCP_STATEMENT_TOOLS).toContain("run_acme_read");
+    expect<readonly string[]>(mcpStatementSurface().tools).toContain("run_acme_read");
     expect(isMcpToolName("run_acme_read")).toBe(true);
-    expect(MCP_TOOL_INPUT_SCHEMAS[arm.tool]).toBe(arm.inputSchema);
+    expect(mcpToolInputSchemas()[arm.tool]).toBe(arm.inputSchema);
     expect(mcpStatementArm(arm.tool)).toBe(arm);
-    expect(ListedConnectionSchema.shape.read_tool.safeParse("run_acme_read").success).toBe(true);
+    expect(listedConnectionSchema(mcpStatementSurface().tools).shape.read_tool.safeParse("run_acme_read").success).toBe(
+      true,
+    );
     expect<string | null>(mcpStatementToolFor("mqtt")).toBe("run_acme_read");
     expect<string | null>(mcpTablelessReadTool("mqtt")).toBe("run_acme_read");
-    expect(MCP_STATEMENT_ARMS.mqttread?.types).toEqual([]);
+    expect<readonly string[] | undefined>(mcpStatementSurface().arms.mqttread?.types).toEqual([]);
 
     // Through the route: tools/list offers it, a refused request answers the declared sentence before anything is
     // acquired, and an admitted one reaches the acquisition under the agent read-only profile.

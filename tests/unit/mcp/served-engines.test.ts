@@ -7,11 +7,29 @@
  */
 import { describe, expect, test } from "bun:test";
 import { parseGrantRegister } from "@libredb/grant-register";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import {
+  beginServerCatalogBoot,
+  endServerCatalogBootUnfinished,
+  forgetServerCatalog,
+  installServerCatalog,
+  servedEngines,
+  serverCatalogInstalled,
+} from "@/lib/db/server-catalog";
 import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import type { McpConnectionContext } from "@/lib/mcp/context";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
-import { MCP_STATEMENT_ARMS, mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
+import { mcpToolInputSchemas } from "@/lib/mcp/tools";
+import { registerListConnections } from "@/lib/mcp/tools/list-connections";
+import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
+import {
+  type McpStatementArm,
+  McpCatalogBootUnfinishedError,
+  McpCompositionOrderError,
+  mcpStatementSurface,
+  mcpStatementToolFor,
+} from "@/lib/mcp/tools/statement-arms";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
@@ -26,6 +44,7 @@ import {
   craftedCatalog,
   packageRow,
   withCatalog,
+  withEngineRecord,
   withLoosestClaims,
 } from "../../helpers/package-catalog";
 
@@ -36,19 +55,32 @@ const statementLanguage = legacyStatementLanguageTable();
 
 type Exposed = ReturnType<McpExposure>;
 
-/** The register's legacy rows of the four claims, read as a reader of the grants. */
-const SHIPPED: McpExposure = (type) => ({
-  agentExecution: agentExecution.includes(type),
-  exposable: exposable[type],
-  statementRead: statementRead[type],
-  statementLanguage: statementLanguage[type],
-});
+/** The register's legacy rows of the four claims, read as a reader of an engine record's grants. */
+const SHIPPED: McpExposure = (engine) => {
+  const type = engine.id as string as DatabaseType;
+  return {
+    agentExecution: agentExecution.includes(type),
+    exposable: exposable[type],
+    statementRead: statementRead[type],
+    statementLanguage: statementLanguage[type],
+  };
+};
 
-/** `SHIPPED` with `member` of engine `engine` read as `value`, every other engine and member as it is. */
+/** `SHIPPED` with `member` of engine `target` read as `value`, every other engine and member as it is. */
 const withRow =
-  <M extends keyof Exposed>(member: M, engine: DatabaseType, value: Exposed[M]): McpExposure =>
-  (type) =>
-    type === engine ? { ...SHIPPED(type), [member]: value } : SHIPPED(type);
+  <M extends keyof Exposed>(member: M, target: DatabaseType, value: Exposed[M]): McpExposure =>
+  (engine) =>
+    engine.id === target ? { ...SHIPPED(engine), [member]: value } : SHIPPED(engine);
+
+/** The engines `arm` serves, as text, or none where no arm is declared. */
+const typesOf = (arm: McpStatementArm | null | undefined): readonly string[] => arm?.types ?? [];
+
+/** The engines `language`'s tool serves, as text: the served records' ids, read through `exposure` where one is passed. */
+const servedIds = (language: AgentStatementLanguageId, exposure?: McpExposure): readonly string[] =>
+  (exposure === undefined
+    ? mcpStatementEngines(language)
+    : mcpStatementEngines(language, servedEngines(), exposure)
+  ).map((engine) => engine.id);
 const SHIPPED_TYPES = Object.keys(statementRead) as DatabaseType[];
 const LANGUAGES = [...new Set(Object.values(statementLanguage))].filter(
   (language): language is AgentStatementLanguageId => language !== null,
@@ -62,14 +94,21 @@ const servedByRecords = (type: DatabaseType): boolean =>
 const opensWhenFlipped = (type: DatabaseType): boolean =>
   !statementRead[type] && agentExecution.includes(type) && exposable[type];
 
-const symmetricDifference = (a: readonly DatabaseType[], b: readonly DatabaseType[]): DatabaseType[] => [
+const symmetricDifference = (a: readonly string[], b: readonly string[]): string[] => [
   ...a.filter((type) => !b.includes(type)),
   ...b.filter((type) => !a.includes(type)),
 ];
 
 describe("mcpStatementEngines", () => {
+  test("answers the served records themselves, each the one its id keys in the served map", () => {
+    const served = servedEngines();
+    const engines = mcpStatementEngines("sql");
+    expect(engines.length).toBeGreaterThan(0);
+    expect(engines.filter((engine) => served.get(engine.id) !== engine)).toEqual([]);
+  });
+
   test("RUN_READ_QUERY_TYPES is exactly the SQL engines every exposure record lets through", () => {
-    expect(RUN_READ_QUERY_TYPES).toEqual(mcpStatementEngines("sql"));
+    expect<readonly string[]>(RUN_READ_QUERY_TYPES).toEqual(servedIds("sql"));
     expect(RUN_READ_QUERY_TYPES).toEqual(
       agentExecution.filter((type) => exposable[type] && statementRead[type] && statementLanguage[type] === "sql"),
     );
@@ -83,8 +122,8 @@ describe("mcpStatementEngines", () => {
       const flipped = withRow("statementRead", type, !statementRead[type]);
       const own = statementLanguage[type];
       for (const language of LANGUAGES) {
-        const before = mcpStatementEngines(language);
-        const after = mcpStatementEngines(language, flipped);
+        const before = servedIds(language);
+        const after = servedIds(language, flipped);
         if (language !== own) expect(after).toEqual(before);
         else
           expect(symmetricDifference(before, after)).toEqual(
@@ -96,7 +135,7 @@ describe("mcpStatementEngines", () => {
 
   test("reads the engine records when no reader is passed", () => {
     for (const language of LANGUAGES) {
-      expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
+      expect(servedIds(language)).toEqual(servedIds(language, SHIPPED));
     }
   });
 
@@ -106,15 +145,15 @@ describe("mcpStatementEngines", () => {
     for (const type of SHIPPED_TYPES) {
       const language = statementLanguage[type];
       if (language === null) continue;
-      expect(mcpStatementEngines(language).includes(type)).toBe(servedByRecords(type));
+      expect(servedIds(language).includes(type)).toBe(servedByRecords(type));
     }
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {
     expect(exposable.duckdb).toBe(true);
     expect(agentExecution).toContain("duckdb");
-    expect(mcpStatementEngines("sql", withRow("statementRead", "duckdb", false))).toEqual(
-      mcpStatementEngines("sql").filter((type) => type !== "duckdb"),
+    expect(servedIds("sql", withRow("statementRead", "duckdb", false))).toEqual(
+      servedIds("sql").filter((type) => type !== "duckdb"),
     );
   });
 
@@ -122,7 +161,7 @@ describe("mcpStatementEngines", () => {
   test("opening InfluxDB 3 leaves InfluxDB over InfluxQL unserved by every statement tool", () => {
     expect(statementRead.influxdb).toBe(false);
     expect(statementLanguage.influxdb).toBe("influxql");
-    expect(mcpStatementEngines("influxql")).toEqual([]);
+    expect(servedIds("influxql")).toEqual([]);
     expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
   });
 
@@ -135,27 +174,27 @@ describe("mcpStatementEngines", () => {
     expect(statementLanguage.opensearch).toBe("sql");
     expect(RUN_READ_QUERY_TYPES).toContain("opensearch");
     expect(RUN_READ_QUERY_TYPES).toContain("elasticsearch");
-    expect(mcpStatementEngines("sql", withRow("statementRead", "opensearch", false))).toEqual(
+    expect(servedIds("sql", withRow("statementRead", "opensearch", false))).toEqual(
       RUN_READ_QUERY_TYPES.filter((type) => type !== "opensearch"),
     );
   });
 
   test("an engine MCP is not offered for is not served, whatever its MCP read row says", () => {
-    expect(mcpStatementEngines("sql", withRow("exposable", "sqlite", false))).not.toContain("sqlite");
+    expect(servedIds("sql", withRow("exposable", "sqlite", false))).not.toContain("sqlite");
   });
 
   test("an engine agent mode does not execute on is not served, whatever its rows say", () => {
-    expect(mcpStatementEngines("sql", withRow("agentExecution", "mysql", false))).not.toContain("mysql");
+    expect(servedIds("sql", withRow("agentExecution", "mysql", false))).not.toContain("mysql");
   });
 
   test("the gate reads the engine record's grants: an engine whose record grants exposure is served, and one whose record does not is not", async () => {
     // Studio's grants, read with nothing installed: what each crafted grant below differs from.
-    expect(mcpStatementEngines("sql")).toContain("sqlite");
-    expect(mcpStatementEngines("sql")).toContain("duckdb");
+    expect(servedIds("sql")).toContain("sqlite");
+    expect(servedIds("sql")).toContain("duckdb");
 
     const catalog = craftedCatalog({ sqlite: { exposable: false }, duckdb: { statementRead: false } });
     await withCatalog(catalog, () => {
-      const served = mcpStatementEngines("sql");
+      const served = servedIds("sql");
       expect(served).not.toContain("sqlite");
       expect(served).not.toContain("duckdb");
       // Vacuity: an engine the crafted catalog leaves as it is is still served.
@@ -164,7 +203,133 @@ describe("mcpStatementEngines", () => {
     expect(serverCatalogInstalled()).toBe(false);
   });
 
-  test("a package engine whose register row grants every MCP statement claim is served by no statement tool until MCP opens to package engines", async () => {
+  test("the served set is composed from the installed catalog, not at module load", async () => {
+    // The MCP modules loaded above, with nothing installed: the bundled set.
+    const bundled = mcpStatementSurface();
+    expect(typesOf(bundled.arms.sql)).toContain("sqlite");
+    expect(mcpStatementToolFor("sqlite")).toBe("run_read_query");
+    expect(bundled.arms.sql?.description).toContain("SQLite");
+    await withCatalog(craftedCatalog({ sqlite: { exposable: false } }), () => {
+      const installed = mcpStatementSurface();
+      expect(typesOf(installed.arms.sql)).not.toContain("sqlite");
+      expect(mcpStatementToolFor("sqlite")).toBeNull();
+      expect(installed.arms.sql?.description).not.toContain("SQLite");
+      // Vacuity: an engine the crafted catalog leaves as it is is still served.
+      expect(typesOf(installed.arms.sql)).toContain("postgres");
+      expect(installed.arms.sql?.description).toContain("PostgreSQL");
+      // One composition per installed catalog.
+      expect(mcpStatementSurface()).toBe(installed);
+    });
+    // Forgotten, as a new process would: the bundled set again, the one composed before.
+    expect(mcpStatementSurface()).toBe(bundled);
+    expect(typesOf(mcpStatementSurface().arms.sql)).toContain("sqlite");
+  });
+
+  test("reading the served set before the catalog's install is a named host defect", () => {
+    const server = { registerTool: () => {} } as unknown as McpServer;
+    const reads: ReadonlyArray<readonly [string, () => unknown]> = [
+      ["mcpStatementSurface", () => mcpStatementSurface()],
+      ["mcpToolInputSchemas", () => mcpToolInputSchemas()],
+      ["mcpStatementToolFor", () => mcpStatementToolFor("postgres")],
+      ["registerStatementTools", () => registerStatementTools(server, {} as McpConnectionContext)],
+    ];
+    beginServerCatalogBoot();
+    try {
+      for (const [name, read] of reads) {
+        let thrown: unknown;
+        try {
+          read();
+        } catch (error) {
+          thrown = error;
+        }
+        expect([name, thrown]).toEqual([name, expect.any(McpCompositionOrderError)]);
+        expect((thrown as Error).name).toBe("McpCompositionOrderError");
+        expect((thrown as Error).message).toBe(
+          "MCP's statement tools were read while the server's engine catalog was still being composed at boot. Boot installs the catalog before the server serves any request, so this read is a defect of Studio's own composition order.",
+        );
+      }
+      // The install ends the boot: each read answers.
+      installServerCatalog(craftedCatalog({}));
+      expect(typesOf(mcpStatementSurface().arms.sql)).toContain("postgres");
+      expect(Object.keys(mcpToolInputSchemas())).toContain("run_read_query");
+      expect(mcpStatementToolFor("postgres")).toBe("run_read_query");
+      expect(registerStatementTools(server, {} as McpConnectionContext)).toBeUndefined();
+    } finally {
+      forgetServerCatalog();
+    }
+    // Nothing installed and no boot begun: the bundled set, no defect.
+    expect(typesOf(mcpStatementSurface().arms.sql)).toContain("postgres");
+  });
+
+  test("reading the served set after a boot that ended by an error names the unfinished boot, not composition order", () => {
+    const server = { registerTool: () => {} } as unknown as McpServer;
+    const reads: ReadonlyArray<readonly [string, () => unknown]> = [
+      ["mcpStatementSurface", () => mcpStatementSurface()],
+      ["mcpToolInputSchemas", () => mcpToolInputSchemas()],
+      ["mcpStatementToolFor", () => mcpStatementToolFor("postgres")],
+      ["registerStatementTools", () => registerStatementTools(server, {} as McpConnectionContext)],
+    ];
+    beginServerCatalogBoot();
+    endServerCatalogBootUnfinished();
+    try {
+      for (const [name, read] of reads) {
+        let thrown: unknown;
+        try {
+          read();
+        } catch (error) {
+          thrown = error;
+        }
+        expect([name, thrown]).toEqual([name, expect.any(McpCatalogBootUnfinishedError)]);
+        expect((thrown as Error).name).toBe("McpCatalogBootUnfinishedError");
+        expect((thrown as Error).message).toBe(
+          "MCP's statement tools were read after the server's engine catalog's boot began and did not finish: the boot ended by an error before it installed the catalog, so no statement tool is served.",
+        );
+      }
+    } finally {
+      forgetServerCatalog();
+    }
+  });
+
+  test("list_connections' output schema is built once per statement surface, so every request on one surface reads the same object", async () => {
+    /** The output schema one request's registration of list_connections hands the server. */
+    const outputSchemaOfOneRequest = (): unknown => {
+      const registered: unknown[] = [];
+      const server = {
+        registerTool: (_name: string, config: { readonly outputSchema?: unknown }) => {
+          registered.push(config.outputSchema);
+        },
+      } as unknown as McpServer;
+      registerListConnections(server, {} as McpConnectionContext);
+      expect(registered).toHaveLength(1);
+      return registered[0];
+    };
+    const bundled = outputSchemaOfOneRequest();
+    expect(bundled).toBeDefined();
+    expect(outputSchemaOfOneRequest()).toBe(bundled);
+    await withCatalog(craftedCatalog({}), () => {
+      const installed = outputSchemaOfOneRequest();
+      // A new surface, a schema of its own; one per surface.
+      expect(installed).not.toBe(bundled);
+      expect(outputSchemaOfOneRequest()).toBe(installed);
+    });
+  });
+
+  test("the served set reads the record's execution profile offer, not its source", async () => {
+    const catalog = withEngineRecord(craftedCatalog({}), "sqlite", (engine) => ({
+      ...engine,
+      offers: Object.freeze({ ...engine.offers, executionProfiles: false }),
+    }));
+    await withCatalog(catalog, () => {
+      expect(servedEngines().get("sqlite")?.source.package).toBeNull();
+      expect(servedIds("sql")).not.toContain("sqlite");
+      expect(typesOf(mcpStatementSurface().arms.sql)).not.toContain("sqlite");
+      expect(mcpStatementToolFor("sqlite")).toBeNull();
+      // Vacuity: a legacy record that keeps the offer is served.
+      expect(servedIds("sql")).toContain("postgres");
+    });
+  });
+
+  test("a package engine a row grants every MCP statement claim is served by no statement tool while its record offers no execution profile", async () => {
     const pkg = admittedFor("acme-served", admittedManifest("acmeserved", withLoosestClaims));
     const register = parseGrantRegister(
       [
@@ -173,15 +338,28 @@ describe("mcpStatementEngines", () => {
           exposable: true,
           statementRead: true,
           statementLanguage: "sql",
+          agentCredentialRequired: false,
+          readRootsRequired: false,
         }),
       ],
       LEGACY_ENGINE_IDS,
     );
     const catalog = composeServerCatalog([pkg] as readonly AdmittedForCatalog[], [], register);
     await withCatalog(catalog, () => {
-      for (const language of LANGUAGES) expect(mcpStatementEngines(language)).not.toContain("acmeserved");
-      expect(MCP_STATEMENT_ARMS.sql?.types).not.toContain("acmeserved");
+      // The premise: every grant the served set reads lets the engine through, and only the offer keeps it out.
+      const engine = servedEngines().get("acmeserved");
+      expect(engine?.grants).toMatchObject({
+        agentExecution: true,
+        exposable: true,
+        statementRead: true,
+        statementLanguage: "sql",
+      });
+      expect(engine?.offers.executionProfiles).toBe(false);
+      for (const language of LANGUAGES) expect(servedIds(language)).not.toContain("acmeserved");
+      for (const arm of Object.values(mcpStatementSurface().arms)) expect(typesOf(arm)).not.toContain("acmeserved");
       expect(mcpStatementToolFor("acmeserved" as DatabaseType)).toBeNull();
+      // Vacuity: the installed catalog's legacy engines are served.
+      expect(servedIds("sql")).toContain("postgres");
     });
     expect(serverCatalogInstalled()).toBe(false);
   });

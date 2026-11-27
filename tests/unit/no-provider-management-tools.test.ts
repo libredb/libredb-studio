@@ -11,10 +11,10 @@ import {
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
-import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools/index";
+import { mcpToolInputSchemas } from "@/lib/mcp/tools/index";
 import { InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { ListConnectionsInputSchema } from "@/lib/mcp/tools/list-connections";
-import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 
 /**
  * No agent or MCP tool reaches provider management.
@@ -43,13 +43,13 @@ const READ_ACCESS = new Set(["metadata-read", "data-read"]);
 
 describe("no agent or MCP tool reaches provider management", () => {
   test("every MCP tool is a metadata tool or a read-only statement tool", () => {
-    const arms = Object.values(MCP_STATEMENT_ARMS).filter((arm) => arm !== null);
+    const arms = mcpStatementSurface().declared;
     const allowed = new Set<unknown>([
       ListConnectionsInputSchema,
       InspectSchemaInputSchema,
       ...arms.map((arm) => arm.inputSchema),
     ]);
-    const schemas = Object.values(MCP_TOOL_INPUT_SCHEMAS);
+    const schemas = Object.values(mcpToolInputSchemas());
     expect(schemas.length).toBeGreaterThan(0);
     expect(schemas.filter((schema) => !allowed.has(schema))).toEqual([]);
     const fences = Object.values(AGENT_LANGUAGE_MCP_FACETS)

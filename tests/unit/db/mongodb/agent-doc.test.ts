@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { agentPosture } from "@/lib/agent/posture";
-import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (file: string): string => readFileSync(path.join(ROOT, file), "utf8");
@@ -86,11 +86,11 @@ describe("what a MongoDB run is not offered is not offered, and the section cite
   });
 
   test("MCP: the section names the tool the mongo language's MCP arm registers, and cites no backlog entry for it", () => {
-    const tool = MCP_STATEMENT_ARMS.mongo?.tool;
+    const tool = mcpStatementSurface().arms.mongo?.tool;
     expect(tool).toBe("run_mongo_command");
     const sentence = SECTION.split("\n").find((line) => /\bMCP\b/.test(line)) ?? "";
     expect(sentence).toContain(`\`${tool}\``);
-    expect(sentence).toContain("`MCP_STATEMENT_ARMS`");
+    expect(sentence).toContain("`mcpStatementSurface`");
     expect(sentence).toContain("`src/lib/agent/languages/mongo/mcp.ts`");
     expect(sentence).not.toMatch(/\bB\d+\b/);
   });

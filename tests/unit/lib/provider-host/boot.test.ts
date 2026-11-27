@@ -20,8 +20,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { admitted } from "@libredb/provider-loader";
 import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
-import { forgetServerCatalog, serverCatalogInstalled, serverEngine } from "@/lib/db/server-catalog";
+import {
+  forgetServerCatalog,
+  serverCatalogBooting,
+  serverCatalogBootUnfinished,
+  serverCatalogInstalled,
+  serverEngine,
+} from "@/lib/db/server-catalog";
+import * as compose from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
+import { McpCatalogBootUnfinishedError, mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import * as admission from "@/lib/provider-host/admission";
 import { admitProvidersAtBoot, bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
@@ -238,6 +246,8 @@ describe("boot admission", () => {
       ],
     ];
     for (const [label, make, why] of cases) {
+      // Each case is a process of its own: the refused boot exits, leaving its begun boot behind.
+      forgetServerCatalog();
       forgetProvidersDirectory();
       const providers = freshProviders();
       make(providers);
@@ -262,7 +272,7 @@ describe("boot admission", () => {
       expect(printed).toContain("LibreDB Studio cannot start: its providers lock is invalid");
       expect(printed).toContain(`PROVIDER_LOCK_INVALID: ${path.join(providers, "providers.lock.json")}: ${why}`);
       expect(printed).toContain(ADVICE);
-      expect([label, serverCatalogInstalled()]).toEqual([label, false]);
+      expect([label, serverCatalogInstalled(), serverCatalogBooting()]).toEqual([label, false, true]);
     }
   });
 
@@ -285,6 +295,81 @@ describe("boot admission", () => {
     const lines = printed.split("\n");
     expect(lines.filter((line) => line.includes("providers lock --dir"))).toEqual([ADVICE]);
     expect(printed).not.toContain("where the package is installed");
+  });
+
+  test("admission begins the catalog's boot before it reads the providers directory, and installing the catalog ends it", async () => {
+    for (const set of [false, true]) {
+      forgetProvidersDirectory();
+      forgetServerCatalog();
+      if (set) {
+        const providers = freshProviders();
+        writePackages(providers, [{}]);
+        process.env.LIBREDB_PROVIDERS_DIR = providers;
+      } else delete process.env.LIBREDB_PROVIDERS_DIR;
+      const seen: Array<readonly [string, boolean, boolean]> = [];
+      const logs = spyLogs();
+      // The providers directory is read once, and its read logs one line at info: the boot's state is taken there.
+      logs.info.mockImplementation((message: string) => {
+        if (message.includes("providers directory"))
+          seen.push(["directory", serverCatalogBooting(), serverCatalogInstalled()]);
+      });
+      const read = spyOn(providersLock, "readProvidersLock");
+      read.mockImplementation((...args: Parameters<typeof providersLock.readProvidersLock>) => {
+        seen.push(["lock", serverCatalogBooting(), serverCatalogInstalled()]);
+        read.mockRestore();
+        return providersLock.readProvidersLock(...args);
+      });
+      try {
+        expect([serverCatalogBooting(), serverCatalogInstalled()]).toEqual([false, false]);
+        expect(await admitProvidersAtBoot()).toBe(true);
+      } finally {
+        read.mockRestore();
+        logs.restore();
+      }
+      expect(seen).toEqual(
+        set
+          ? [
+              ["directory", true, false],
+              ["lock", true, false],
+            ]
+          : [["directory", true, false]],
+      );
+      expect([serverCatalogBooting(), serverCatalogInstalled()]).toEqual([false, true]);
+    }
+  });
+
+  test("a boot whose composition throws ends unfinished, and MCP's statement tools name the unfinished boot", async () => {
+    for (const set of [false, true]) {
+      forgetProvidersDirectory();
+      forgetServerCatalog();
+      if (set) {
+        const providers = freshProviders();
+        writePackages(providers, [{}]);
+        process.env.LIBREDB_PROVIDERS_DIR = providers;
+      } else delete process.env.LIBREDB_PROVIDERS_DIR;
+      const failure = new Error(`composition failed ${randomUUID()}`);
+      const composed = spyOn(compose, "composeServerCatalog").mockImplementation(() => {
+        throw failure;
+      });
+      const logs = spyLogs();
+      let thrown: unknown;
+      try {
+        await admitProvidersAtBoot();
+      } catch (error) {
+        thrown = error;
+      } finally {
+        composed.mockRestore();
+        logs.restore();
+      }
+      expect([set, thrown]).toEqual([set, failure]);
+      expect([set, serverCatalogInstalled(), serverCatalogBooting(), serverCatalogBootUnfinished()]).toEqual([
+        set,
+        false,
+        false,
+        true,
+      ]);
+      expect(() => mcpStatementSurface()).toThrow(McpCatalogBootUnfinishedError);
+    }
   });
 
   test("an unset directory admits nothing and boots", async () => {

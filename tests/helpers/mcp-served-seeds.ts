@@ -57,7 +57,7 @@ function servedSeedFields(dir: string): Partial<Record<DatabaseType, SeedFields>
 
 /** One seed per served engine, id `served-<type>`, offered to admins alone, file paths under `dir`. */
 export function servedEngineSeeds(dir: string): SeedEntry[] {
-  const fields = servedSeedFields(dir);
+  const fields: Readonly<Record<string, SeedFields | undefined>> = servedSeedFields(dir);
   const served = [...new Set(servingStatementArms().flatMap((arm) => arm.types))];
   return served.map((type) => {
     const row = fields[type];

@@ -14,7 +14,13 @@ import {
   type AgentLanguageMcpWords,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { getDBConfig } from "@/lib/db-ui-config";
+import {
+  type EngineId,
+  type EngineRecord,
+  servedEngines,
+  serverCatalogBooting,
+  serverCatalogBootUnfinished,
+} from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";
 import type { McpReach } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
@@ -40,6 +46,17 @@ import { mcpStatementEngines } from "./served-engines";
  * words and its input field come from the language's own facet, and an arm's engines come from the one served-engine
  * resolver (`served-engines.ts`), so registration, the handler's gate, the description and `list_connections`'
  * `read_tool` all read one list.
+ *
+ * The arms are read through one accessor, `mcpStatementSurface`, after boot: it composes them, with the statement tools'
+ * names and input schemas, from the served records (`servedEngines`), once per installed catalog, keyed by its Map, so a
+ * process with no installed catalog composes the bundled set and a set composed before the catalog's install is never
+ * served after it. Nothing is composed when this module loads. The composition holds zod schemas and closures, not
+ * plain data, so it is not shared through a global the way the catalog's frozen data is: each module instance of the
+ * process composes its own from the one installed catalog. A read while boot has begun and not yet installed the
+ * catalog (`serverCatalogBooting`) is refused as `McpCompositionOrderError`, a defect of Studio's own composition order,
+ * since the server serves no request before the install; a read after a boot that ended by an error before its install
+ * (`serverCatalogBootUnfinished`) is refused as `McpCatalogBootUnfinishedError`, which names that boot, so no statement
+ * tool is served from the bundled set. The arms' languages are still the bundled facets'.
  *
  * An arm whose facet pages with offset keeps `checkReadOnlyStatement` as its fence and the shared refusal texts, so a
  * SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and fences it with
@@ -67,8 +84,11 @@ export interface McpStatementArm {
    * provider's own paging (clause C-85), or none: every row, the statement sent as written.
    */
   readonly paging: "offset" | "none";
-  /** The engines this tool serves, from the served-engine resolver, and their names as the texts say them. */
-  readonly types: readonly DatabaseType[];
+  /**
+   * The engines this tool serves, from the served-engine resolver, and their names as the texts say them, each its
+   * record's display name.
+   */
+  readonly types: readonly EngineId[];
   readonly engines: string;
   /**
    * True where this language's engines hold no object inspect_schema lists, so inspect_schema refuses them by name and
@@ -124,7 +144,7 @@ function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why
 const SHARED_LIMITS =
   "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
 
-const engineNames = (types: readonly DatabaseType[]) => namedList(types.map((type) => getDBConfig(type).label));
+const engineNames = (engines: readonly EngineRecord[]) => namedList(engines.map((engine) => engine.displayName));
 
 /**
  * An arm's input: the connection, a `database` where the facet takes one, the statement under the language's own
@@ -185,10 +205,18 @@ function languageAdmissionReader(
   };
 }
 
-/** The arm `facet` declares for `language`: its engines from the resolver, its description closed by the notice. */
-function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMcpDeclaredFacet): McpStatementArm {
-  const types = mcpStatementEngines(language);
-  const engines = engineNames(types);
+/**
+ * The arm `facet` declares for `language` over `served`: its engines from the resolver, its description closed by the
+ * notice.
+ */
+function statementArm(
+  language: AgentStatementLanguageId,
+  facet: AgentLanguageMcpDeclaredFacet,
+  served: ReadonlyMap<string, EngineRecord>,
+): McpStatementArm {
+  const records = mcpStatementEngines(language, served);
+  const types = records.map((engine) => engine.id);
+  const engines = engineNames(records);
   const argument = AGENT_LANGUAGE_COPY[language].argument;
   return Object.freeze({
     language,
@@ -209,31 +237,99 @@ function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMc
   });
 }
 
-/** Each statement language's MCP arm, in the facet registry's order, which is the order tools/list answers in. */
-export const MCP_STATEMENT_ARMS: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = Object.freeze(
-  Object.fromEntries(
-    (
-      Object.entries(AGENT_LANGUAGE_MCP_FACETS) as [AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null][]
-    ).map(([language, facet]) => [language, facet === null ? null : statementArm(language, facet)]),
-  ) as Record<AgentStatementLanguageId, McpStatementArm | null>,
-);
+/** The statement arms, keyed by statement language. */
+type McpStatementArms = Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>>;
 
-/** Every arm the record declares, serving or not, in record order. */
-const DECLARED_ARMS: readonly McpStatementArm[] = Object.values(MCP_STATEMENT_ARMS).filter(
-  (arm): arm is McpStatementArm => arm !== null,
-);
+/** The MCP statement tools composed from one set of served records. */
+export interface McpStatementSurface {
+  /** Each statement language's MCP arm, in the facet registry's order, which is the order tools/list answers in. */
+  readonly arms: McpStatementArms;
+  /** Every arm the record declares, serving or not, in record order. */
+  readonly declared: readonly McpStatementArm[];
+  /** Every statement tool's name, in record order: the values `list_connections`' `read_tool` may take. */
+  readonly tools: readonly McpStatementTool[];
+  /** Each statement tool's input schema by name, the entries the route's schema map spreads after the other tools. */
+  readonly inputSchemas: Readonly<Record<McpStatementTool, z.ZodObject>>;
+}
 
-/** Every statement tool's name, in record order: the values `list_connections`' `read_tool` may take. */
-export const MCP_STATEMENT_TOOLS: readonly McpStatementTool[] = Object.freeze(DECLARED_ARMS.map((arm) => arm.tool));
+/**
+ * A read of MCP's statement tools while boot has begun and not yet installed the server's engine catalog: a defect of
+ * Studio's own composition order, never an answer composed from the bundled set.
+ */
+export class McpCompositionOrderError extends Error {
+  constructor() {
+    super(
+      "MCP's statement tools were read while the server's engine catalog was still being composed at boot. Boot installs the catalog before the server serves any request, so this read is a defect of Studio's own composition order.",
+    );
+    this.name = "McpCompositionOrderError";
+  }
+}
 
-/** Each statement tool's input schema by name, the entries the route's schema map spreads after the other tools. */
-export const MCP_STATEMENT_INPUT_SCHEMAS: Readonly<Record<McpStatementTool, z.ZodObject>> = Object.freeze(
-  Object.fromEntries(DECLARED_ARMS.map((arm) => [arm.tool, arm.inputSchema])) as Record<McpStatementTool, z.ZodObject>,
-);
+/**
+ * A read of MCP's statement tools after the server's engine catalog's boot ended by an error before it installed the
+ * catalog: the boot's failure, never an answer composed from the bundled set.
+ */
+export class McpCatalogBootUnfinishedError extends Error {
+  constructor() {
+    super(
+      "MCP's statement tools were read after the server's engine catalog's boot began and did not finish: the boot ended by an error before it installed the catalog, so no statement tool is served.",
+    );
+    this.name = "McpCatalogBootUnfinishedError";
+  }
+}
 
-/** The arm whose tool is `tool`, or a named error when no language declares that tool. */
+/** The statement tools composed from `served`. */
+function composeStatementSurface(served: ReadonlyMap<string, EngineRecord>): McpStatementSurface {
+  const arms = Object.freeze(
+    Object.fromEntries(
+      (
+        Object.entries(AGENT_LANGUAGE_MCP_FACETS) as [AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null][]
+      ).map(([language, facet]) => [language, facet === null ? null : statementArm(language, facet, served)]),
+    ) as Record<AgentStatementLanguageId, McpStatementArm | null>,
+  );
+  const declared = Object.freeze(Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null));
+  return Object.freeze({
+    arms,
+    declared,
+    tools: Object.freeze(declared.map((arm) => arm.tool)),
+    inputSchemas: Object.freeze(
+      Object.fromEntries(declared.map((arm) => [arm.tool, arm.inputSchema])) as Record<McpStatementTool, z.ZodObject>,
+    ),
+  });
+}
+
+/** Each composition of this module instance, by the Map of served records it was composed from. */
+const COMPOSED = new WeakMap<ReadonlyMap<string, EngineRecord>, McpStatementSurface>();
+
+/**
+ * MCP's statement tools as the served records compose them: the installed catalog's, or the bundled set with nothing
+ * installed, composed once per catalog.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
+ */
+export function mcpStatementSurface(): McpStatementSurface {
+  if (serverCatalogBootUnfinished()) throw new McpCatalogBootUnfinishedError();
+  if (serverCatalogBooting()) throw new McpCompositionOrderError();
+  const served = servedEngines();
+  let surface = COMPOSED.get(served);
+  if (surface === undefined) {
+    surface = composeStatementSurface(served);
+    COMPOSED.set(served, surface);
+  }
+  return surface;
+}
+
+/**
+ * The arm whose tool is `tool`, or a named error when no language declares that tool.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
+ */
 export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
-  const arm = DECLARED_ARMS.find((declared) => declared.tool === tool);
+  const arm = mcpStatementSurface().declared.find((declared) => declared.tool === tool);
   if (arm === undefined) throw new Error(`no MCP statement arm for ${tool}`);
   return arm;
 }
@@ -242,22 +338,28 @@ export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
  * The arms that serve at least one engine, in record order: the statement tools this build registers. An arm whose
  * served set is empty, as one is while its engines' grants of `mcp.statementRead` are false, is never listed. `arms` is
  * the record, and a test passes one of its own.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
-export function servingStatementArms(
-  arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
-): readonly McpStatementArm[] {
+export function servingStatementArms(arms: McpStatementArms = mcpStatementSurface().arms): readonly McpStatementArm[] {
   return Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null && arm.types.length > 0);
 }
 
 /**
  * The serving arms that serve an engine in `reached`, in record order: the statement tools one token's tools/list
  * holds. A registry read only, since each arm's `types` already come from the served-engine resolver.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function listedStatementArms(
   reached: McpReach,
-  arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
+  arms: McpStatementArms = mcpStatementSurface().arms,
 ): readonly McpStatementArm[] {
-  return servingStatementArms(arms).filter((arm) => arm.types.some((type) => reached.has(type)));
+  return servingStatementArms(arms).filter((arm) => [...reached].some((type) => arm.types.some((id) => id === type)));
 }
 
 /**
@@ -266,11 +368,15 @@ export function listedStatementArms(
  *
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
+  const { arms } = mcpStatementSurface();
   const language = grantedAgentLanguage(type);
-  const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
-  return arm !== null && arm.types.includes(type) ? arm : null;
+  const arm = language === null ? null : arms[language];
+  return arm !== null && arm.types.some((id) => id === type) ? arm : null;
 }
 
 /**
@@ -278,6 +384,9 @@ function servingArmFor(type: DatabaseType): McpStatementArm | null {
  *
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null {
   return servingArmFor(type)?.tool ?? null;
@@ -289,10 +398,14 @@ export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null
  *
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpWithholdsDatabase(type: DatabaseType): boolean {
+  const { arms } = mcpStatementSurface();
   const language = grantedAgentLanguage(type);
-  return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
+  return language !== null && arms[language]?.withholdsDatabase === true;
 }
 
 /**
@@ -301,6 +414,9 @@ export function mcpWithholdsDatabase(type: DatabaseType): boolean {
  *
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpTablelessReadTool(type: DatabaseType): McpStatementTool | null {
   const arm = servingArmFor(type);
