@@ -107,6 +107,14 @@
  * naming an engine in its files (`grantRegister.linesNamingAnEngine`), with the ids they name printed as the report id
  * list `grantRegister.engineIdsNamed`, and its files' lines, UTF-8 bytes and review notes (`grantRegister.lines`,
  * `.bytes`, `.reviewNotes`), so a relocation of engine knowledge into the register shows by size.
+ * The language machinery report, `statementLanguages.machineryLines`, shows whether serving statement languages declared
+ * as data grows a second home for engine knowledge: the lines of the engine-neutral modules that serve them
+ * (`LANGUAGE_MACHINERY_MODULES`, none of them a statement language module) plus the lines of the SDK's statement
+ * language definitions, every `$defs` member of `LANGUAGE_SCHEMA_FILE` reachable through `$ref` from
+ * `$defs.engineDeclaration.properties.statementLanguageData`, each counted once as printed by `JSON.stringify` at
+ * indent 2, so the schema file's own layout does not move it. Every such reference must be `#/$defs/<name>` naming a
+ * member. A tree holding none of the eight files reports 0; a tree holding some but not all of them, a schema that is
+ * not JSON or has no such root, or a reference of another form or naming no member is refused by name.
  * An id is a path segment when it is bounded on each side by the path's start or end or by one of `/`, `_`, `.` or `-`,
  * matched case-sensitively.
  */
@@ -161,6 +169,7 @@ export const REPORT_COUNTERS = [
   "legacyProviders.lines",
   "agentLanguages.lines",
   "languages.lines",
+  "statementLanguages.machineryLines",
   "engineDeclarations.lines",
   "coreTests.filesNamingAnEngine",
   "coreTests.linesNamingAnEngine",
@@ -250,6 +259,20 @@ export const GRANT_REGISTER_FILE = "packages/grant-register/src/register.json";
 
 /** The generated module that will hold the projection of declared statement language data. */
 export const STATEMENT_LANGUAGE_PROJECTION = "src/lib/db/engine-catalog/statement-language.generated.ts";
+
+/** The engine-neutral modules that serve a statement language declared as data, counted by the language machinery report. */
+export const LANGUAGE_MACHINERY_MODULES = [
+  "src/lib/agent/languages/declared-client.ts",
+  "src/lib/agent/languages/declared-mcp.ts",
+  "src/lib/agent/languages/declared-server.ts",
+  "src/lib/db/operations/declared-request-form.ts",
+  "src/lib/db/operations/declared-language-read.ts",
+  "src/lib/db/statement-language-row.ts",
+  "src/lib/db/language-digest.ts",
+] as const;
+
+/** The SDK's manifest schema, whose statement language definitions the language machinery report counts. */
+export const LANGUAGE_SCHEMA_FILE = "packages/provider-sdk/src/manifest/manifest.schema.json";
 
 export const NON_ENGINE_PACKAGES: readonly NonEnginePackage[] = [
   { directory: "provider-sdk", reason: "the contract SDK that providers build against, not an engine" },
@@ -610,6 +633,85 @@ function isStatementLanguageModule(file: string): boolean {
   );
 }
 
+/** A `$ref` of the form `#/$defs/<name>`, the one form the language definitions may use. */
+const DEFINITION_REFERENCE = /^#\/\$defs\/([^/]+)$/;
+
+/** Every `$ref` value anywhere inside `node`, a JSON value. */
+function referencesIn(node: unknown): unknown[] {
+  const found: unknown[] = [];
+  const pending: unknown[] = [node];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (Array.isArray(next)) pending.push(...next);
+    else if (isObject(next)) {
+      for (const [key, value] of Object.entries(next)) {
+        if (key === "$ref") found.push(value);
+        else pending.push(value);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * The lines of the SDK's statement language definitions: every `$defs` member reachable through `$ref` from
+ * `$defs.engineDeclaration.properties.statementLanguageData`, each once, printed by `JSON.stringify` at indent 2.
+ * A schema that is not JSON, holds no such root, or holds a reference that is not `#/$defs/<name>` or names no member
+ * is refused by name.
+ */
+function languageSchemaLines(text: string): number {
+  let schema: unknown;
+  try {
+    schema = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${LANGUAGE_SCHEMA_FILE} is not JSON: ${(error as Error).message}`, { cause: error });
+  }
+  const definitions = isObject(schema) && isObject(schema.$defs) ? schema.$defs : {};
+  const declaration = definitions.engineDeclaration;
+  const properties = isObject(declaration) ? declaration.properties : undefined;
+  const root = isObject(properties) ? properties.statementLanguageData : undefined;
+  if (!isObject(root)) {
+    throw new Error(
+      `${LANGUAGE_SCHEMA_FILE} holds no $defs.engineDeclaration.properties.statementLanguageData, the root of the language definitions`,
+    );
+  }
+  const reached = new Set<string>();
+  const pending = referencesIn(root);
+  for (let reference = pending.pop(); reference !== undefined; reference = pending.pop()) {
+    const name = typeof reference === "string" ? DEFINITION_REFERENCE.exec(reference)?.[1] : undefined;
+    if (name === undefined) {
+      throw new Error(
+        `${LANGUAGE_SCHEMA_FILE}: the language definitions hold the reference ${JSON.stringify(reference)}, not one of the form #/$defs/<name>`,
+      );
+    }
+    if (!Object.hasOwn(definitions, name)) {
+      throw new Error(
+        `${LANGUAGE_SCHEMA_FILE}: the language definitions reference #/$defs/${name}, which the schema does not define`,
+      );
+    }
+    if (reached.has(name)) continue;
+    reached.add(name);
+    pending.push(...referencesIn(definitions[name]));
+  }
+  return [...reached].reduce((sum, name) => sum + lineCount(JSON.stringify(definitions[name], null, 2)), 0);
+}
+
+/**
+ * The language machinery report: the lines of `LANGUAGE_MACHINERY_MODULES` plus the lines of the SDK's statement
+ * language definitions in `LANGUAGE_SCHEMA_FILE`. A tree holding none of these files reports 0; one holding some but not
+ * all is refused by name, so a missing file is never read as zero lines.
+ */
+function languageMachineryLines(tree: Tree, files: readonly string[]): number {
+  const machinery = [...LANGUAGE_MACHINERY_MODULES, LANGUAGE_SCHEMA_FILE];
+  const missing = machinery.filter((file) => !files.includes(file));
+  if (missing.length === machinery.length) return 0;
+  if (missing.length > 0) {
+    throw new Error(
+      `the language machinery files ${missing.join(", ")} are missing while the tree holds the others, so the language machinery report cannot be counted`,
+    );
+  }
+  return totalLines(tree, LANGUAGE_MACHINERY_MODULES) + languageSchemaLines(tree.read(LANGUAGE_SCHEMA_FILE));
+}
+
 /** Measures a tree: every gate and report counter, and the stale entries of the two lists. */
 export function measure(tree: Tree, lists: MeasureLists): Measurement {
   const files = [...new Set(tree.files)].sort();
@@ -725,6 +827,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
       "legacyProviders.lines": totalLines(tree, legacy),
       "agentLanguages.lines": totalLines(tree, agentLanguages),
       "languages.lines": totalLines(tree, languages),
+      "statementLanguages.machineryLines": languageMachineryLines(tree, files),
       "engineDeclarations.lines": totalLines(tree, declarations),
       "coreTests.filesNamingAnEngine": testNaming.files,
       "coreTests.linesNamingAnEngine": testNaming.lines,
