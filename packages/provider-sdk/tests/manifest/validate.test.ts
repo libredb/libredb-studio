@@ -4536,12 +4536,12 @@ describe("rules the schema cannot state", () => {
       ["NUL", "\u0000"],
       ["DEL", "\u007f"],
       ["the next line control", "\u0085"],
-      ["the line separator", " "],
-      ["the paragraph separator", " "],
-      ["the right-to-left override", "‮"],
-      ["the left-to-right isolate", "⁦"],
-      ["the right-to-left mark", "‏"],
-      ["the Arabic letter mark", "؜"],
+      ["the line separator", "\u2028"],
+      ["the paragraph separator", "\u2029"],
+      ["the right-to-left override", "\u202e"],
+      ["the left-to-right isolate", "\u2066"],
+      ["the right-to-left mark", "\u200f"],
+      ["the Arabic letter mark", "\u061c"],
     ]) {
       expect(refusalsFor(textManifest((t) => (t.copy.subject = `The subject holds ${name}: ${character}.`)))).toEqual([
         refusal("no-variant", SUBJECT),
