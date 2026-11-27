@@ -9,12 +9,21 @@
  * whose name ends in `.js`, `.mjs` or `.cjs` in any letter case, reached by the entry or not. A file of any other
  * extension is listed and digested but not scanned; a TypeScript file among them is not scanned either, since
  * admission refuses a package holding one by its listing, whatever its imports. Each module file is read as strict
- * UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports` (loader `js`), after a leading `#!` line is
- * removed, since the scanner refuses one. It reports import declarations, side-effect imports, re-exports, `import()`
- * of a string or a template without substitution and `require()` of a string, in dead branches too; not
- * `require.resolve` or `import.meta.resolve`, which load nothing. Each import is recorded with its kind, `importKind`:
- * `require` for a `require()` call, `import` for the rest. The command records; Studio's admission judges the record
- * (src/lib/provider-host/admission.ts and src/lib/provider-host/provider-closure.ts).
+ * UTF-8 and parsed once by acorn (pinned to one version in package.json, since its version is the record's grammar),
+ * with the latest syntax it reads, as a script that may also hold import and export declarations, top-level `await`
+ * and top-level `return`, so a CommonJS file and an ES module are read alike. The only lexical difference between a
+ * script and a module, an HTML-like comment (`<!--`, or `-->` at a line's start), is refused, so no file is read one
+ * way here and another way by Node.js. A leading `#!` line ends at any line terminator, as in Node.js. The tree is
+ * walked with an explicit stack, so only the parser's own depth bounds a file; that depth depends on the runtime's
+ * stack, and a file nested past it is refused by name under Node.js and Bun alike, never raised.
+ * Recorded, in dead branches too: import declarations, side-effect imports, re-exports with a source, `import()` of a
+ * string or a template without substitution, and a call of the identifier `require` (an optional call included) whose
+ * first argument is a string or a template without substitution, whatever follows it. Not recorded: a computed
+ * `import()` or `require()`, `require.resolve` or `import.meta.resolve`, which load nothing, and a `require` reached
+ * through a member or another name. Each import is recorded with its kind: `require` for a `require()` call, `import`
+ * for the rest. The command records; Studio's admission judges the record (src/lib/provider-host/admission.ts and
+ * src/lib/provider-host/provider-closure.ts). The command runs the same under Node.js and Bun: it imports acorn and
+ * Node.js built-ins, and `main` is exported for a caller that runs it under Node.js.
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
@@ -26,8 +35,8 @@
  * It refuses, writing nothing and exiting 1 with every refusal on stderr: an entry of the directory that is neither a
  * package nor the lock, a package directory holding anything but one version directory, and every refusal an artifact
  * draws (a link, a special file, a name outside the portable set, the limits, a package.json or manifest it cannot
- * read, a package.json naming another package, an entry that is not a file of the package), a module file the scanner
- * cannot parse or that is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a
+ * read, a package.json naming another package, an entry that is not a file of the package), a module file the parser
+ * cannot read or that is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a
  * package, and a lock over the reader's byte cap. Otherwise it writes the
  * lock through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the
  * same directory always gives the same bytes, and prints the lock's path and one line per package; exit 0.
@@ -39,6 +48,7 @@
  */
 import * as fs from "node:fs";
 import path from "node:path";
+import { type AnyNode, type Comment, parse } from "acorn";
 import {
   type ArtifactFile,
   artifactDigest,
@@ -98,39 +108,93 @@ function sorted(names: readonly string[]): string[] {
 
 /** A JavaScript module file by its extension, in any letter case: the only files the command scans. */
 const MODULE_FILE = /\.[mc]?js$/i;
-const SCAN_JAVASCRIPT = new Bun.Transpiler({ loader: "js" });
 /** UTF-8 that refuses an invalid byte. */
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
-/**
- * The kind the lock records for an import the scanner reports as `scannerKind`: `require` for a `require()` call,
- * `import` for an import declaration, a re-export or an `import()`.
- *
- * @throws {Error} For any other kind, which the scanner reports for no JavaScript or TypeScript file.
- */
-export function importKind(scannerKind: string): ImportKind {
-  if (scannerKind === "require-call") return "require";
-  if (scannerKind === "import-statement" || scannerKind === "dynamic-import") return "import";
-  throw new Error(
-    `providers:lock: the scanner reported an import of the kind ${scannerKind}, which the lock does not record`,
-  );
+/** The string a node holds when it is a string literal or a template literal without substitution; else null. */
+function staticString(node: AnyNode | undefined): string | null {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
+  return null;
 }
 
-/** The imports `text` makes statically, or null when it is not UTF-8 or the scanner cannot parse it. */
+/** The import `node` makes, if it is one the lock records. */
+function recordedImport(node: AnyNode): { specifier: string; kind: ImportKind } | null {
+  switch (node.type) {
+    case "ImportDeclaration":
+    case "ExportAllDeclaration":
+      return { specifier: node.source.value as string, kind: "import" };
+    case "ExportNamedDeclaration":
+      return node.source ? { specifier: node.source.value as string, kind: "import" } : null;
+    case "ImportExpression": {
+      const specifier = staticString(node.source);
+      return specifier === null ? null : { specifier, kind: "import" };
+    }
+    case "CallExpression": {
+      if (node.callee.type !== "Identifier" || node.callee.name !== "require") return null;
+      const specifier = staticString(node.arguments[0]);
+      return specifier === null ? null : { specifier, kind: "require" };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Whether `value` is a node of the tree: an object whose `type` is a string. */
+function isNode(value: unknown): value is AnyNode {
+  return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
+}
+
+/**
+ * The imports `bytes` makes statically, or null when they are not UTF-8 or the parser cannot read them: a syntax
+ * error, an HTML-like comment, or nesting past the runtime's stack, which acorn reports as a syntax error.
+ */
 function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
   let text: string;
   try {
-    text = STRICT_UTF8.decode(bytes).replace(/^#![^\n]*/, "");
+    text = STRICT_UTF8.decode(bytes);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
     return null;
   }
+  const comments: Comment[] = [];
+  let program: AnyNode;
   try {
-    return SCAN_JAVASCRIPT.scanImports(text).map((found) => ({ specifier: found.path, kind: importKind(found.kind) }));
+    program = parse(text, {
+      ecmaVersion: "latest",
+      sourceType: "script",
+      allowImportExportEverywhere: true,
+      allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: true,
+      allowHashBang: true,
+      onComment: comments,
+    });
   } catch (error) {
-    if (!(error instanceof BuildMessage) && !(error instanceof AggregateError)) throw error;
+    if (!(error instanceof SyntaxError)) throw error;
     return null;
   }
+  if (
+    comments.some(
+      (comment) =>
+        comment.type === "Line" && (text.startsWith("<!--", comment.start) || text.startsWith("-->", comment.start)),
+    )
+  ) {
+    return null;
+  }
+  const found: { specifier: string; kind: ImportKind }[] = [];
+  const pending: AnyNode[] = [program];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    const recorded = recordedImport(node);
+    if (recorded !== null) found.push(recorded);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) if (isNode(item)) pending.push(item);
+      } else if (isNode(value)) {
+        pending.push(value);
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -278,7 +342,7 @@ function writeLock(directory: string): number {
   return 0;
 }
 
-function main(argv: readonly string[]): number {
+export function main(argv: readonly string[]): number {
   const directory = directoryArgument(argv);
   if (directory === null) {
     console.error(USAGE);

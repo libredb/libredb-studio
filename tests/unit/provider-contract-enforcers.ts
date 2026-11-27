@@ -2918,7 +2918,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/scripts/providers-lock.test.ts": [
         "the command records every static import of each module file, sorted and once each, and Studio's read admits the lock",
         "the command refuses a module file its parser cannot read, a specifier outside its form, too many imports and a lock over its byte limit, writing nothing",
-        "an import's kind is require for a require call and import for every import form, and any other kind is a defect",
+        "the scanner records the same imports under Node and under Bun",
       ],
     },
   },

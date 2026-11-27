@@ -6,11 +6,12 @@
  * Each case spawns the command from the repository root, as an operator runs it, under a timeout, with `--silent` so
  * that `bun run` adds no line of its own to what the command prints.
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import path from "node:path";
 import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
+import { boundedChild } from "../../helpers/bounded-node-child";
 import {
   artifactDirectoryOf,
   type FixturePackage,
@@ -19,14 +20,50 @@ import {
   scratchDirectory,
   writeArtifact,
 } from "../../helpers/provider-artifacts";
-import { importKind, moduleImports } from "../../../scripts/providers-lock";
+import { moduleImports } from "../../../scripts/providers-lock";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
 const scratch = scratchDirectory("libredb-providers-lock-command-");
 let counter = 0;
 
+/** What the command did in the Node child: its exit code and the lines it printed to stdout and stderr. */
+interface NodeRun {
+  readonly code: number;
+  readonly out: string[];
+  readonly err: string[];
+}
+
+/**
+ * The command's `main` run under Node in a bounded child, over the providers directory its case names: the lines it
+ * prints are collected from `console.log` and `console.error`, which are restored after the run.
+ */
+const nodeCommand = boundedChild({
+  label: "providers-lock-node",
+  imports: [{ from: path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts"), names: ["main"] }],
+  runCase: (deps: { main: (argv: readonly string[]) => number }, directory: string): NodeRun => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const { log, error } = console;
+    console.log = (line: string) => out.push(line);
+    console.error = (line: string) => err.push(line);
+    try {
+      return { code: deps.main(["--dir", directory]), out, err };
+    } finally {
+      console.log = log;
+      console.error = error;
+    }
+  },
+  heapLimitMiB: 512,
+  timeoutMs: 60_000,
+});
+
+beforeAll(async () => {
+  await nodeCommand.build();
+});
+
 afterAll(() => {
+  nodeCommand.remove();
   removeScratch(scratch);
 });
 
@@ -51,6 +88,70 @@ function runCommand(...args: string[]): { exitCode: number | null; stdout: strin
 
 const FOO: FixturePackage = { name: "acme-foo", version: "1.0.0", engines: ["acmefoob", "acmefooa"] };
 const BAR: FixturePackage = { name: "@acme/bar", version: "2.3.4-rc.1", engines: ["acmebar"], entry: "lib/bar.js" };
+
+/**
+ * A package of every import form the command records and of forms it does not: only a JavaScript module file, .js, .mjs
+ * or .cjs in any letter case, is scanned. A TypeScript file, a declaration file among them, is listed but not scanned:
+ * admission refuses a package holding one by the listing alone.
+ */
+const FORMS: FixturePackage = {
+  name: "acme-scanned",
+  version: "1.0.0",
+  engines: ["acmescanned"],
+  files: {
+    "dist/index.mjs": [
+      'import { a } from "./a.mjs";',
+      'import "node:fs";',
+      'export * from "./b.mjs";',
+      'export { c } from "./c.cjs";',
+      'const later = () => import("./late.mjs");',
+      "const tagged = () => import(`./template.mjs`);",
+      'import { a as again } from "./a.mjs";',
+      'const required = () => require("./a.mjs");',
+      'export * as ns from "./ns.mjs";',
+      'import data from "./data.json" with { type: "json" };',
+      'const opted = () => import("./opt.mjs", { with: { type: "json" } });',
+      "export default { a, later, tagged, again, required };",
+      "",
+    ].join("\n"),
+    "dist/c.cjs":
+      'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\nrequire("./two.cjs", 0);\n',
+    // A script's sloppy forms: `await` as a name and a `with` statement.
+    "dist/sloppy.cjs": 'var await = 1;\nwith (Math) { require("./sloppy-dep.cjs"); }\n',
+    "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
+    "dist/view.TSX": 'import "./never.mjs";\nexport const v = <div />;\n',
+    "dist/types.d.ts": 'export * from "acme-typings";\nimport type { T } from "./t";\n',
+    "dist/esm.D.MTS": 'export * from "acme-typings";\n',
+    "dist/cjs.d.cts": 'import x = require("acme-typings");\nexport = x;\n',
+    "dist/UPPER.MJS": 'import "./upper.mjs";\n',
+    "bin/run.js": '#!/usr/bin/env node\nimport "./main.js";\n',
+    // A leading #! line ends at any line terminator, as in Node.js: here a carriage return alone.
+    "bin/cr.js": '#!/usr/bin/env node\rimport "./cr-main.js";\n',
+    "dist/notes.txt": 'import "./never.mjs";\n',
+    "dist/data.json": '{"import": "./never.mjs"}\n',
+  },
+};
+
+/** The import record of `FORMS`. */
+const FORMS_RECORD = [
+  { from: "bin/cr.js", specifier: "./cr-main.js", kind: "import" },
+  { from: "bin/run.js", specifier: "./main.js", kind: "import" },
+  { from: "dist/UPPER.MJS", specifier: "./upper.mjs", kind: "import" },
+  { from: "dist/c.cjs", specifier: "./dead.cjs", kind: "require" },
+  { from: "dist/c.cjs", specifier: "./two.cjs", kind: "require" },
+  { from: "dist/c.cjs", specifier: "fs", kind: "require" },
+  { from: "dist/index.mjs", specifier: "./a.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./a.mjs", kind: "require" },
+  { from: "dist/index.mjs", specifier: "./b.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./c.cjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./data.json", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./late.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./ns.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./opt.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "./template.mjs", kind: "import" },
+  { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
+  { from: "dist/sloppy.cjs", specifier: "./sloppy-dep.cjs", kind: "require" },
+];
 
 describe("the lock command", () => {
   test("the lock the command writes is admitted unchanged, and a later edit to the artifact is refused", () => {
@@ -193,58 +294,14 @@ describe("the lock command", () => {
   });
 
   test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {
-    // Only a JavaScript module file, .js, .mjs or .cjs in any letter case, is scanned. A TypeScript file, a declaration
-    // file among them, is listed but not scanned: admission refuses a package holding one by the listing alone.
     const providers = freshProviders();
-    const pkg: FixturePackage = {
-      name: "acme-scanned",
-      version: "1.0.0",
-      engines: ["acmescanned"],
-      files: {
-        "dist/index.mjs": [
-          'import { a } from "./a.mjs";',
-          'import "node:fs";',
-          'export * from "./b.mjs";',
-          'export { c } from "./c.cjs";',
-          'const later = () => import("./late.mjs");',
-          "const tagged = () => import(`./template.mjs`);",
-          'import { a as again } from "./a.mjs";',
-          'const required = () => require("./a.mjs");',
-          "export default { a, later, tagged, again, required };",
-          "",
-        ].join("\n"),
-        "dist/c.cjs":
-          'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\n',
-        "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
-        "dist/view.TSX": 'import "./never.mjs";\nexport const v = <div />;\n',
-        "dist/types.d.ts": 'export * from "acme-typings";\nimport type { T } from "./t";\n',
-        "dist/esm.D.MTS": 'export * from "acme-typings";\n',
-        "dist/cjs.d.cts": 'import x = require("acme-typings");\nexport = x;\n',
-        "dist/UPPER.MJS": 'import "./upper.mjs";\n',
-        "bin/run.js": '#!/usr/bin/env node\nimport "./main.js";\n',
-        "dist/notes.txt": 'import "./never.mjs";\n',
-        "dist/data.json": '{"import": "./never.mjs"}\n',
-      },
-    };
-    writeArtifact(providers, pkg);
+    writeArtifact(providers, FORMS);
 
     const run = runCommand("--dir", providers);
     expect([run.exitCode, run.stderr]).toEqual([0, ""]);
     const lock = JSON.parse(fs.readFileSync(path.join(providers, LOCK_FILE_NAME), "utf8"));
-    expect(lock.entries[0].imports).toEqual([
-      { from: "bin/run.js", specifier: "./main.js", kind: "import" },
-      { from: "dist/UPPER.MJS", specifier: "./upper.mjs", kind: "import" },
-      { from: "dist/c.cjs", specifier: "./dead.cjs", kind: "require" },
-      { from: "dist/c.cjs", specifier: "fs", kind: "require" },
-      { from: "dist/index.mjs", specifier: "./a.mjs", kind: "import" },
-      { from: "dist/index.mjs", specifier: "./a.mjs", kind: "require" },
-      { from: "dist/index.mjs", specifier: "./b.mjs", kind: "import" },
-      { from: "dist/index.mjs", specifier: "./c.cjs", kind: "import" },
-      { from: "dist/index.mjs", specifier: "./late.mjs", kind: "import" },
-      { from: "dist/index.mjs", specifier: "./template.mjs", kind: "import" },
-      { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
-    ]);
-    expect(lock.entries[0]).toEqual({ ...lockEntryOf(providers, pkg), engines: ["acmescanned"] });
+    expect(lock.entries[0].imports).toEqual(FORMS_RECORD);
+    expect(lock.entries[0]).toEqual({ ...lockEntryOf(providers, FORMS), engines: ["acmescanned"] });
     const read = readProvidersLock(providers);
     expect(read.read && read.packages.map((verified) => [verified.name, verified.verified])).toEqual([
       ["acme-scanned", true],
@@ -266,6 +323,45 @@ describe("the lock command", () => {
           files: { "dist/index.mjs": 'import "./a b.mjs";\n' },
         },
         "providers:lock: acme-form 1.0.0: dist/index.mjs: it imports a specifier outside printable ASCII without spaces, or longer than 1024 characters",
+      ],
+      [
+        // An HTML-like comment is read differently by a script and a module, so the file is refused.
+        {
+          name: "acme-html",
+          version: "1.0.0",
+          engines: ["acmehtml"],
+          files: { "dist/index.mjs": '<!-- a comment in a script\nimport "./a.mjs";\n' },
+        },
+        "providers:lock: acme-html 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+      ],
+      [
+        // Nesting past the parser's stack is refused by name, never raised.
+        {
+          name: "acme-deep",
+          version: "1.0.0",
+          engines: ["acmedeep"],
+          files: { "dist/index.mjs": `export default ${"(".repeat(100_000)}1${")".repeat(100_000)};\n` },
+        },
+        "providers:lock: acme-deep 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+      ],
+      [
+        // A syntax the pinned parser does not read yet is refused, never skipped.
+        {
+          name: "acme-defer",
+          version: "1.0.0",
+          engines: ["acmedefer"],
+          files: { "dist/index.mjs": 'import defer * as later from "./later.mjs";\n' },
+        },
+        "providers:lock: acme-defer 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+      ],
+      [
+        {
+          name: "acme-empty",
+          version: "1.0.0",
+          engines: ["acmeempty"],
+          files: { "dist/index.mjs": 'export const later = () => import("");\n' },
+        },
+        "providers:lock: acme-empty 1.0.0: dist/index.mjs: it imports a specifier outside printable ASCII without spaces, or longer than 1024 characters",
       ],
       [
         {
@@ -291,9 +387,13 @@ describe("the lock command", () => {
     expect(run.stderr).toBe(
       [
         refused[0]?.[1],
+        refused[3]?.[1],
+        refused[4]?.[1],
+        refused[5]?.[1],
         refused[1]?.[1],
-        "providers:lock: acme-latin 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
         refused[2]?.[1],
+        "providers:lock: acme-latin 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+        refused[6]?.[1],
         "providers:lock wrote nothing",
         "",
       ].join("\n"),
@@ -327,16 +427,64 @@ describe("the lock command", () => {
     );
   });
 
-  test("an import's kind is require for a require call and import for every import form, and any other kind is a defect", () => {
-    expect(["import-statement", "dynamic-import", "require-call"].map(importKind)).toEqual([
-      "import",
-      "import",
-      "require",
-    ]);
-    expect(() => importKind("url-token")).toThrow(
-      "providers:lock: the scanner reported an import of the kind url-token, which the lock does not record",
+  test("the scanner records the same imports under Node and under Bun", async () => {
+    // Node's child prints lines through console; a Windows child would end them with CRLF on a pipe, so the Bun
+    // command's output is split on CRLF or LF and the lock is compared as bytes, which the command writes with LF.
+    const lines = (text: string) => text.split(/\r?\n/);
+    const acorn = path.join(REPOSITORY_ROOT, "node_modules", "acorn", "dist");
+    const providers = freshProviders();
+    writeArtifact(providers, FORMS);
+    writeArtifact(providers, {
+      name: "acme-corpus",
+      version: "1.0.0",
+      engines: ["acmecorpus"],
+      files: Object.fromEntries(
+        ["acorn.mjs", "acorn.js", "bin.js"].map((name) => [
+          `dist/corpus/${name}`,
+          fs.readFileSync(path.join(acorn, name), "utf8"),
+        ]),
+      ),
+    });
+    const lock = path.join(providers, LOCK_FILE_NAME);
+    const bun = runCommand("--dir", providers);
+    expect([bun.exitCode, bun.stderr]).toEqual([0, ""]);
+    const bunLock = fs.readFileSync(lock);
+    expect(JSON.parse(bunLock.toString("utf8")).entries[1].imports).toEqual(FORMS_RECORD);
+    fs.rmSync(lock);
+    const node = await nodeCommand.run<NodeRun>(providers);
+    expect([node.code, node.err]).toEqual([0, []]);
+    expect([...node.out, ""]).toEqual(lines(bun.stdout));
+    expect(fs.readFileSync(lock).equals(bunLock)).toBe(true);
+
+    const refused = freshProviders();
+    const broken: [string, string][] = [
+      ["acme-broken", "import {\n"],
+      ["acme-html", '<!-- a comment in a script\nimport "./a.mjs";\n'],
+      ["acme-deep", `export default ${"(".repeat(100_000)}1${")".repeat(100_000)};\n`],
+    ];
+    for (const [name, text] of broken) {
+      writeArtifact(refused, {
+        name,
+        version: "1.0.0",
+        engines: [name.replace("-", "")],
+        files: { "dist/index.mjs": text },
+      });
+    }
+    const latin1 = { name: "acme-latin", version: "1.0.0", engines: ["acmelatin"] };
+    fs.writeFileSync(
+      path.join(writeArtifact(refused, latin1), "dist", "index.mjs"),
+      Buffer.from([0x2f, 0x2f, 0xe9, 0x0a]),
     );
-  });
+    writeArtifact(refused, FOO);
+    fs.writeFileSync(path.join(refused, "acme-foo", ".DS_Store"), "");
+    fs.mkdirSync(path.join(refused, "@empty"));
+    const bunRefused = runCommand("--dir", refused);
+    const nodeRefused = await nodeCommand.run<NodeRun>(refused);
+    expect([bunRefused.exitCode, bunRefused.stdout]).toEqual([1, ""]);
+    expect([nodeRefused.code, nodeRefused.out]).toEqual([1, []]);
+    expect([...nodeRefused.err, ""]).toEqual(lines(bunRefused.stderr));
+    expect(fs.existsSync(path.join(refused, LOCK_FILE_NAME))).toBe(false);
+  }, 120_000);
 
   test("package.json runs the command as providers:lock", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"));

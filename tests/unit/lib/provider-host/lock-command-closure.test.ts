@@ -41,7 +41,7 @@ describe("the lock commands' closures", () => {
     expect(closure.unresolved).toEqual([]);
     expect(forbiddenModules(closure)).toEqual([]);
     expect(forbiddenPackages(closure)).toEqual([]);
-    expect(closure.packages).toEqual(["node:crypto", "node:fs", "node:path"]);
+    expect(closure.packages).toEqual(["acorn", "node:crypto", "node:fs", "node:path"]);
 
     // Controls: type-id.ts imports the engine catalog, and the providers directory module imports the logger.
     const typeId = forbiddenModules(valueImportClosure("src/lib/db/type-id.ts"));

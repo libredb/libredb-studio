@@ -1171,7 +1171,7 @@ A module's syntax is never read to decide.
 
 ### C-102 (normative): Every module of a package imports only what its own directory holds or a built-in
 
-The lock command records, with Bun's transpiler and each with its kind, every static import of every file of the package whose name ends in `.js`, `.mjs` or `.cjs` in any letter case: import declarations, re-exports, and `import()` and `require()` of a string; it refuses a module file it cannot parse or that is not UTF-8, a specifier outside printable ASCII without spaces or over 1,024 characters, more than 4,096 imports, and a lock over 1 MiB.
+The lock command records, each with its kind, every static import of every file of the package whose name ends in `.js`, `.mjs` or `.cjs` in any letter case: import declarations, re-exports, and `import()` and `require()` of a string; it refuses a module file it cannot parse or that is not UTF-8, a specifier outside printable ASCII without spaces or over 1,024 characters, more than 4,096 imports, and a lock over 1 MiB.
 Before the import, admission refuses:
 
 - as `PROVIDER_MODULE_FORMAT` with the rule `typescript-module`, a package whose listing holds a TypeScript file, `.ts`, `.mts`, `.cts` or `.tsx` in any letter case, declaration files included, since Bun and Node.js can each run one unseen;
