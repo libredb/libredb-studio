@@ -6,13 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import schema from "../src/register.schema.json";
-import type {
-  RegisterAgentReading,
-  RegisterGrants,
-  RegisterRedaction,
-  RegisterRow,
-  RegisterStatementLanguage,
-} from "../src/index";
+import type { RegisterAgentReading, RegisterGrants, RegisterRedaction, RegisterRow } from "../src/index";
 
 /** A grant member's vocabulary in the schema's terms: the keywords that decide its TypeScript type. */
 type Shape =
@@ -62,35 +56,7 @@ const GRANT_SHAPES = {
     type: ["object", "null"],
     properties: { form: { enum: ["pair", "dedicated-pair", "secret"] }, supersededBy: { type: "array", items: TEXT } },
   },
-  statementLanguage: {
-    enum: [
-      "sql",
-      "kubectl",
-      "mongo",
-      "libredbkv",
-      "influxql",
-      "weaviateapi",
-      "qdrantapi",
-      "cypher",
-      "milvusrpc",
-      "rediscli",
-      "etcdctl",
-      "oxiacli",
-      "rabbitread",
-      "kafkaread",
-      "s3api",
-      "fsquery",
-      "snmpget",
-      "netconfrpc",
-      "modbusread",
-      "promql",
-      "opcuaread",
-      "mtconnectread",
-      "mqttread",
-      "sparkplugread",
-      null,
-    ],
-  },
+  statementLanguage: { type: ["string", "null"] },
   agentReadings: {
     type: "array",
     items: { enum: ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"] },
@@ -113,6 +79,7 @@ const GRANT_SHAPES = {
   confirmExemptForms: { type: "array", items: { type: "array", items: TEXT } },
   decidesAlone: { type: "boolean" },
   grammarSha256: { type: ["string", "null"] },
+  languageSha256: { type: ["string", "null"] },
 } as const satisfies { readonly [M in keyof RegisterGrants]: Shape };
 
 /** Every grant member whose described type is not its `RegisterGrants` type, never when there is none. */
@@ -158,17 +125,24 @@ describe("the types are the schema's", () => {
     const parity: [
       Equal<Mismatched, never>,
       Equal<keyof typeof GRANT_SHAPES, keyof RegisterGrants>,
-      Equal<RegisterStatementLanguage | null, RegisterGrants["statementLanguage"]>,
       Equal<readonly RegisterAgentReading[], RegisterGrants["agentReadings"]>,
       Equal<keyof NonNullable<RegisterRow["reasons"]>, keyof RegisterGrants>,
       Equal<RegisterRedaction, RegisterGrants["redaction"]>,
-    ] = [true, true, true, true, true, true];
+    ] = [true, true, true, true, true];
     const grants = schema.$defs.grants;
 
-    expect(parity).toEqual([true, true, true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true]);
     expect(shapeOf(grants, "/$defs/grants")).toEqual({ type: "object", properties: GRANT_SHAPES });
     expect(Object.keys(grants.properties)).toEqual(Object.keys(GRANT_SHAPES));
     expect(Object.keys(schema.$defs.reasons.properties)).toEqual(Object.keys(GRANT_SHAPES));
+  });
+
+  test("a statement language is a name of the engine id's form, not a list of names", () => {
+    const members = schema.$defs.grants.properties as Record<string, { readonly pattern?: string }>;
+
+    expect(members.statementLanguage?.pattern).toBe("^[a-z][a-z0-9]{0,31}$");
+    expect(members.statementLanguage?.pattern).toBe(schema.$defs.row.properties.engine.pattern);
+    expect(members.languageSha256?.pattern).toBe(members.grammarSha256?.pattern);
   });
 
   test("a keyword the shapes do not read is refused by name, never passed over", () => {

@@ -8,14 +8,16 @@
  * redaction and the confirmation gate's claims included, and its review notes are the register's own. Each row's
  * confirmation claims are compared here with the ones its engine's shipped rows make, its declaration and its
  * statement vocabulary row, each with its review note, and each row's reviewed grammar digest with the SHA-256 of its
- * declaration's grammar, so a changed legacy grammar or a new loosening claim fails here until its row is reviewed
- * again. It lives in core, not in the package's tests, because a package imports nothing of Studio's.
+ * declaration's grammar, and each row's reviewed language data digest with the digest of its declaration's statement
+ * language data, null for null, so a changed legacy grammar, changed language data or a new loosening claim fails here
+ * until its row is reviewed again. It lives in core, not in the package's tests, because a package imports nothing of Studio's.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { LEGACY_KEY, type RegisterRow, readGrantRegister } from "@libredb/grant-register";
 import registerSchema from "@libredb/grant-register/register.schema.json";
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import manifestSchema from "@libredb/provider-sdk/manifest.schema.json";
 import {
   AGENT_READING_NAMES,
@@ -25,6 +27,7 @@ import {
 } from "@/lib/db/claim-grants";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import {
   DIGEST_FORM,
   ENGINE_ID_FORM,
@@ -76,6 +79,14 @@ function declaredSqlText(engine: string): {
     readFileSync(path.join(ROOT, "src/lib/db/engine-declarations", `${engine}.json`), "utf8"),
   ) as { sqlText: ReturnType<typeof declaredSqlText> };
   return declaration.sqlText;
+}
+
+/** The statement language data legacy engine `engine`'s committed declaration states, or null. */
+function declaredLanguageData(engine: string): NonNullable<StatementLanguageData> | null {
+  const declaration = JSON.parse(
+    readFileSync(path.join(ROOT, "src/lib/db/engine-declarations", `${engine}.json`), "utf8"),
+  ) as { statementLanguageData: StatementLanguageData };
+  return declaration.statementLanguageData;
 }
 
 /** Whether `note` is one sentence: a capital first, one full stop, at the end. */
@@ -156,6 +167,21 @@ describe("the legacy rows' SQL text members", () => {
     expect(kinds.filter((kind) => kind === "command")).toHaveLength(2);
     expect(kinds.filter((kind) => kind === "none")).toHaveLength(23);
   });
+
+  test("every legacy row's language digest equals the digest of its declaration's statement language data, null for null", () => {
+    const rows = legacyRows();
+
+    for (const { engine, grants } of rows) {
+      const data = declaredLanguageData(engine);
+      expect({ engine, languageSha256: grants.languageSha256 }).toEqual({
+        engine,
+        languageSha256: data === null ? null : languageDataSha256(data),
+      });
+    }
+    // Vacuity: the walk read every engine the legacy adapter serves.
+    expect(rows).toHaveLength(LEGACY_ENGINE_IDS.length);
+    expect(rows.length).toBeGreaterThan(40);
+  });
 });
 
 /**
@@ -213,12 +239,11 @@ describe("the register's forms", () => {
   });
 
   test("the register's vocabularies are the grant reader's", () => {
-    // Every language the register grants is null or a name of the form the grant reader reads a request in.
-    const languages = defs.grants.properties.statementLanguage.enum;
-    expect(languages).toContain(null);
-    expect(languages.filter((language) => language !== null && !STATEMENT_LANGUAGE_NAME_FORM.test(language))).toEqual(
-      [],
-    );
+    // A language the register grants is null or a name of the form the grant reader and the SDK read a request in.
+    const language = defs.grants.properties.statementLanguage as { type: unknown; pattern: string };
+    expect(language.type).toEqual(["string", "null"]);
+    expect(language.pattern).toBe(STATEMENT_LANGUAGE_NAME_FORM.source);
+    expect(language.pattern).toBe(manifestSchema.$defs.statementLanguage.pattern);
     expect(defs.grants.properties.hostPathFields.items.enum).toEqual([...HOST_PATH_FIELD_NAMES]);
     expect(defs.grants.properties.agentReadings.items.enum).toEqual([...AGENT_READING_NAMES]);
     const redactions = defs.grants.properties.redaction.enum;

@@ -34,7 +34,14 @@ import type {
   StatementCapture,
 } from "@/lib/query-events/types";
 import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
-import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../../helpers/package-catalog";
+import {
+  admittedFor,
+  admittedManifest,
+  declaredLanguageSha256,
+  type EditableEngine,
+  packageRow,
+  withStatementLanguageData,
+} from "../../../helpers/package-catalog";
 
 interface ManifestColumn {
   readonly name: string;
@@ -179,8 +186,9 @@ interface EnginesCase {
 
 /**
  * Installs the catalog composed of the legacy records and one admitted package serving `acmeevents`, against a register
- * holding the package's row where the case gives one, each record's grants then changed by the case's edit: what the
- * builder reads an event's engine from.
+ * holding the package's row where the case gives one, reviewing the grammar and the statement language data, if any,
+ * the package declares, each record's grants then changed by the case's edit: what the builder reads an event's engine
+ * from.
  */
 function installEngines({ declare, row, grants = {} }: EnginesCase = {}): void {
   const manifest = admittedManifest("acmeevents", declare);
@@ -190,7 +198,13 @@ function installEngines({ declare, row, grants = {} }: EnginesCase = {}): void {
     row === undefined
       ? STUDIO_GRANT_REGISTER
       : parseGrantRegister(
-          [packageRow(pkg, "acmeevents", { grammarSha256: grammarSha256(declared), ...row })],
+          [
+            packageRow(pkg, "acmeevents", {
+              grammarSha256: grammarSha256(declared),
+              languageSha256: manifest.engines[0]?.statementLanguageData ? declaredLanguageSha256(manifest) : null,
+              ...row,
+            }),
+          ],
           LEGACY_ENGINE_IDS,
         );
   const composed = composeServerCatalog([pkg], [], register);
@@ -387,6 +401,8 @@ describe("buildQueryEvent", () => {
       declare: (engine) => {
         declaresQuotedSql(engine);
         engine.sqlText.readsSqlText = false;
+        // The statement language data its row reviews, without which no package row grants text-not-SQL.
+        withStatementLanguageData(engine);
       },
       row: { redaction: { kind: "sql", nameQuote: '"' }, readsSqlText: false },
     });

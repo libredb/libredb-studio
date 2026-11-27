@@ -43,8 +43,14 @@ export function grants(overrides: Record<string, unknown> = {}): Record<string, 
     confirmExemptForms: [],
     decidesAlone: false,
     grammarSha256: null,
+    languageSha256: null,
     ...overrides,
   };
+}
+
+/** A SHA-256 in lower-case hex, the form of a row's grammar and language digests, new on every call. */
+export function hexDigest(): string {
+  return digest().slice("sha256:".length);
 }
 
 /** A copy of `record` without its member `key`. */

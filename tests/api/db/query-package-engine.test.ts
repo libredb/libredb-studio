@@ -27,6 +27,7 @@ import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
@@ -39,6 +40,7 @@ import {
   type SessionPackage,
   setHooks,
 } from "../../helpers/package-session-fixture";
+import { ACME_LANGUAGE_DATA, withStatementLanguageData } from "../../helpers/package-catalog";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 
 const realAuth = await import("@/lib/auth");
@@ -120,11 +122,15 @@ let engines: Map<string, EngineRecord>;
 /** A package whose register row reviews the grammar it declares and grants no claim that loosens the gate. */
 const REVIEWED_PACKAGE: SessionPackage = { name: "acme-q-reviewed", engine: REVIEWED };
 const EXEMPT_FORM = ["ALTER", "SESSION", "SET"];
-/** A package declaring two claims that would loosen the gate, both granted by its register row for its grammar. */
+/**
+ * A package declaring two claims that would loosen the gate, both granted by its register row for its grammar, and the
+ * statement language data the row reviews, without which no package row grants text-not-SQL.
+ */
 const LOOSE_PACKAGE: SessionPackage = {
   name: "acme-q-loose",
   engine: LOOSE,
   edit: (engine) => {
+    withStatementLanguageData(engine);
     const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
     sqlText.readsSqlText = false;
     sqlText.grammar.confirmExemptForms = [EXEMPT_FORM];
@@ -148,6 +154,7 @@ beforeAll(async () => {
       [REVIEWED]: { grammarSha256: declaredGrammarSha256(REVIEWED_PACKAGE) },
       [LOOSE]: {
         grammarSha256: declaredGrammarSha256(LOOSE_PACKAGE),
+        languageSha256: languageDataSha256(ACME_LANGUAGE_DATA),
         readsSqlText: false,
         confirmExemptForms: [EXEMPT_FORM],
       },

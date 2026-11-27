@@ -1,8 +1,8 @@
 /**
  * The grammar digest (src/lib/db/grammar-digest.ts) and the language data digest (src/lib/db/language-digest.ts) hash
  * with node:crypto, so both are server-only modules: the server catalog's composer
- * (src/lib/db/server-catalog-compose.ts) is the one module of Studio's source that imports the grammar digest, no
- * module of it imports the language data digest yet, and the grant reader (src/lib/db/claim-grants.ts), which the
+ * (src/lib/db/server-catalog-compose.ts) is the one module of Studio's source that imports each digest, and the grant
+ * reader (src/lib/db/claim-grants.ts), which the
  * browser loads, reaches neither. The canonical text both digests read (src/lib/db/canonical-json.ts) reaches no
  * node:crypto, so a module the browser loads may read it.
  *
@@ -35,8 +35,8 @@ describe("the grammar digest stays on the server", () => {
     expect(sourceModules().filter((module) => valueImportsOf(module).includes(DIGEST))).toEqual([COMPOSER]);
   });
 
-  test("no module of src imports the language digest yet, directly or by a re-export", () => {
-    expect(sourceModules().filter((module) => valueImportsOf(module).includes(LANGUAGE_DIGEST))).toEqual([]);
+  test("the server catalog's composer is the one module of src that imports the language digest, directly or by a re-export", () => {
+    expect(sourceModules().filter((module) => valueImportsOf(module).includes(LANGUAGE_DIGEST))).toEqual([COMPOSER]);
   });
 
   test("the grant reader the browser loads reaches neither digest nor node:crypto", () => {
@@ -56,6 +56,7 @@ describe("the grammar digest stays on the server", () => {
   test("the walk sees the digest and node:crypto where they are reached, the control", () => {
     const composer = valueImportClosure(COMPOSER);
     expect(composer.modules).toContain(DIGEST);
+    expect(composer.modules).toContain(LANGUAGE_DIGEST);
     expect(composer.modules).toContain(CANONICAL_TEXT);
     expect(composer.packages).toContain("node:crypto");
     const language = valueImportClosure(LANGUAGE_DIGEST);

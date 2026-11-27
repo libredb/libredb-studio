@@ -23,7 +23,9 @@
  * (`grantEngineClaims` in ./claim-grants) with its row of `register`, the row keyed by its package's name, version and
  * digest, or with none where the register holds none, so each claim is granted at its restrictive value, its SQL text
  * claims with the digest of the grammar it declares (`declaredSqlTextRequest`), so a row grants them only for the
- * grammar it reviewed, and gives each the package's source, its digest and the session its declaration states, and the
+ * grammar it reviewed, and its statement language and the claims that loosen the confirmation gate with the digest of
+ * the statement language data it declares (`declaredLanguageDataRequest`), so a row grants them only for the data it
+ * reviewed, and gives each the package's source, its digest and the session its declaration states, and the
  * offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register,
  * `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a refused package's lock entry
  * names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is transposed into each
@@ -34,9 +36,10 @@ import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import { grantEngineClaims, type SqlTextRequest } from "./claim-grants";
+import { grantEngineClaims, type LanguageDataRequest, type SqlTextRequest } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
 import { grammarSha256 } from "./grammar-digest";
+import { languageDataSha256 } from "./language-digest";
 import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
 import {
@@ -205,6 +208,17 @@ export function declaredSqlTextRequest(engine: EngineDeclaration): SqlTextReques
 }
 
 /**
+ * The statement language data request of admitted declaration `engine` as the grant reader reads it: the digest of the
+ * data it declares, computed here on the server (./language-digest), so no module the browser loads hashes it, or null
+ * where it declares none.
+ */
+export function declaredLanguageDataRequest(engine: EngineDeclaration): LanguageDataRequest {
+  return {
+    languageSha256: engine.statementLanguageData === null ? null : languageDataSha256(engine.statementLanguageData),
+  };
+}
+
+/**
  * The server's engine catalog of the admitted packages `admitted` and the refused packages `refused`, each admitted
  * engine granted its row of `register`.
  *
@@ -279,6 +293,7 @@ export function composeServerCatalog(
           id,
           requests[id],
           declaredSqlTextRequest(engine),
+          declaredLanguageDataRequest(engine),
           register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: id }),
           tables.seedOnly,
         ),
