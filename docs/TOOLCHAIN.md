@@ -717,6 +717,7 @@ The VS Code extension's `npm ci --ignore-scripts` is unaffected: its `npm prefix
 The three Dockerfiles install from a partial file set, where two omissions change the install without failing it (measured 2026-11-22): without `bunfig.toml` the image installs with the isolated linker, and with a `bun.lock` naming a package whose `package.json` is absent, `bun install --frozen-lockfile` exits 0 and does not link the package.
 So the deps stage copies `package.json bun.lock bunfig.toml`, then `patches/`, then one `COPY packages/<name>/package.json ./packages/<name>/` line per package, which `tests/unit/docker-workspace-install.test.ts` holds to the package list.
 The builder asserts that `.next/standalone/packages` does not exist, and `scripts/lib/prune-standalone-payload.sh` removes `packages/` from every standalone payload.
+The "Engine Smoke - Build Payload" job then runs `scripts/check-build-output.ts` over the extracted payload, which fails when a file under its `.next` or `node_modules` equals a file of a provider package or of a driver it declares, or holds the package's name.
 
 ### How each gate covers a package
 

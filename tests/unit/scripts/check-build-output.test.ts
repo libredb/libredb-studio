@@ -13,11 +13,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import * as check from "../../../scripts/check-build-output";
 import { providerPackageDirectories } from "../../../scripts/workspace-packages.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts", "check-build-output.ts");
+const FIXTURE = path.join(ROOT, "tests", "fixtures", "out-of-tree-provider");
 const PACKAGE_NAME = "@libredb/provider-alpha";
 const SOURCE_TEXT = 'export const source = "the alpha package\'s own source";\n';
 const DRIVER_TEXT = 'exports.driver = "the alpha driver";\n';
@@ -320,5 +322,37 @@ describe("the build output check", () => {
       packages: [],
       exceptions: [],
     });
+  });
+});
+
+describe("the Engine Smoke - Build Payload job", () => {
+  test("the Engine Smoke - Build Payload job checks the extracted payload right after the payload build, naming the out-of-tree fixture", () => {
+    const workflow = parseYaml(fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8")) as {
+      jobs: Record<
+        string,
+        { name?: string; "runs-on"?: string; "timeout-minutes"?: number; steps: { name?: string; run?: string }[] }
+      >;
+    };
+    const job = workflow.jobs["engine-payload"];
+    expect(job?.name).toBe("Engine Smoke - Build Payload");
+    expect(job?.["runs-on"]).toBe("ubuntu-latest");
+    expect(job?.["timeout-minutes"]).toBe(20);
+    const names = (job?.steps ?? []).map((step) => step.name);
+    const build = names.indexOf("Build standalone payload");
+    expect(names.slice(build, build + 4)).toEqual([
+      "Build standalone payload",
+      "Extract the payload for the build output check",
+      "Check that the payload holds no provider package's files",
+      "Upload payload artifact",
+    ]);
+    const steps = job?.steps ?? [];
+    expect(steps[build + 1]?.run?.trim().split("\n")).toEqual([
+      'mkdir -p "$RUNNER_TEMP/standalone"',
+      'tar -xzf dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1',
+    ]);
+    expect(steps[build + 2]?.run?.trim()).toBe(
+      'bun scripts/check-build-output.ts --standalone "$RUNNER_TEMP/standalone" "$GITHUB_WORKSPACE/tests/fixtures/out-of-tree-provider"',
+    );
+    expect(fs.existsSync(path.join(FIXTURE, "package.json"))).toBe(true);
   });
 });
