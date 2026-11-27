@@ -88,7 +88,7 @@ function manifestValidator() {
 }
 
 /** The keys of the artifact at `directory`, as typed, or the sentence of its refusal. */
-function packageKeys(directory: string): PackageKeys | string {
+export function packageKeys(directory: string): PackageKeys | string {
   let root: string;
   try {
     root = fs.realpathSync.native(directory);

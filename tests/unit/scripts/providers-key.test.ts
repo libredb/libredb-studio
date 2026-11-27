@@ -6,8 +6,9 @@
  * and what the SDK's manifest validator refuses, by one sentence, and prints nothing on standard output then.
  *
  * Each case spawns the command from the repository root, as a row author runs it, under a timeout, with `--silent` so
- * that `bun run` adds no line of its own to what the command prints. Engine ids are fixture ids, or read from the
- * out-of-tree fixture's manifest.
+ * that `bun run` adds no line of its own to what the command prints. One case also calls the command's `packageKeys` in
+ * process, as the in-repo register row census (tests/unit/db/register-package-row-census.test.ts) does, and holds it
+ * to what the command prints. Engine ids are fixture ids, or read from the out-of-tree fixture's manifest.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -28,6 +29,7 @@ import {
 } from "../../helpers/package-catalog";
 import { artifactDirectoryOf, removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 import { readFixture } from "../../../scripts/out-of-tree-acceptance";
+import { packageKeys } from "../../../scripts/providers-key";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const SCRIPT = path.join(REPOSITORY_ROOT, "scripts", "providers-key.ts");
@@ -295,6 +297,27 @@ describe("the key command", () => {
     const contractPackage = { name: "acme-contract", version: "1.0.0" };
     const contractDirectory = plant(freshProviders(), { ...contractPackage, manifest: otherContract });
     refusedWith(contractDirectory, contractRefusal(contractPackage, PROVIDER_CONTRACT).sentence);
+  });
+
+  test("packageKeys answers in process what the key command prints", () => {
+    // Two engines, as the first case plants them, so the order of the engines is part of what is compared.
+    const raw = rawManifest("acmeprocb");
+    const second = structuredClone(raw.engines[0]) as EditableEngine;
+    second.id = "acmeproca";
+    raw.engines.push(second);
+    const compatibility = raw.compatibility as Record<string, unknown>[];
+    compatibility.push({ ...structuredClone(compatibility[0]), engine: "acmeproca" });
+    for (const engine of raw.engines) withStatementLanguageData(engine, ACME_LANGUAGE_DATA);
+    const directory = plant(freshProviders(), { name: "@acme/in-process", version: "2.0.0", manifest: raw });
+
+    const run = runKey("--dir", directory);
+    expect([run.exitCode, run.stderr]).toEqual([0, ""]);
+    expect(packageKeys(directory)).toEqual(JSON.parse(run.stdout));
+
+    const missing = path.join(freshProviders(), "absent");
+    const refused = runKey("--dir", missing);
+    expect([refused.exitCode, refused.stdout]).toEqual([1, ""]);
+    expect(`${packageKeys(missing)}\n`).toBe(refused.stderr);
   });
 
   test("a wrong command line prints the key command's usage and exits 2, writing nothing to standard output", () => {
