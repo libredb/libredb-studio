@@ -560,6 +560,8 @@ export async function runStatement(
  * the installed catalog (`mcpStatementSurface`), since each request builds its own server.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function registerStatementTools(
   server: McpServer,

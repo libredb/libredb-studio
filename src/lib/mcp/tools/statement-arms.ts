@@ -14,7 +14,13 @@ import {
   type AgentLanguageMcpWords,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { type EngineId, type EngineRecord, servedEngines, serverCatalogBooting } from "@/lib/db/server-catalog";
+import {
+  type EngineId,
+  type EngineRecord,
+  servedEngines,
+  serverCatalogBooting,
+  serverCatalogBootUnfinished,
+} from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";
 import type { McpReach } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
@@ -48,7 +54,9 @@ import { mcpStatementEngines } from "./served-engines";
  * plain data, so it is not shared through a global the way the catalog's frozen data is: each module instance of the
  * process composes its own from the one installed catalog. A read while boot has begun and not yet installed the
  * catalog (`serverCatalogBooting`) is refused as `McpCompositionOrderError`, a defect of Studio's own composition order,
- * since the server serves no request before the install. The arms' languages are still the bundled facets'.
+ * since the server serves no request before the install; a read after a boot that ended by an error before its install
+ * (`serverCatalogBootUnfinished`) is refused as `McpCatalogBootUnfinishedError`, which names that boot, so no statement
+ * tool is served from the bundled set. The arms' languages are still the bundled facets'.
  *
  * An arm whose facet pages with offset keeps `checkReadOnlyStatement` as its fence and the shared refusal texts, so a
  * SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and fences it with
@@ -256,6 +264,19 @@ export class McpCompositionOrderError extends Error {
   }
 }
 
+/**
+ * A read of MCP's statement tools after the server's engine catalog's boot ended by an error before it installed the
+ * catalog: the boot's failure, never an answer composed from the bundled set.
+ */
+export class McpCatalogBootUnfinishedError extends Error {
+  constructor() {
+    super(
+      "MCP's statement tools were read after the server's engine catalog's boot began and did not finish: the boot ended by an error before it installed the catalog, so no statement tool is served.",
+    );
+    this.name = "McpCatalogBootUnfinishedError";
+  }
+}
+
 /** The statement tools composed from `served`. */
 function composeStatementSurface(served: ReadonlyMap<string, EngineRecord>): McpStatementSurface {
   const arms = Object.freeze(
@@ -284,8 +305,11 @@ const COMPOSED = new WeakMap<ReadonlyMap<string, EngineRecord>, McpStatementSurf
  * installed, composed once per catalog.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpStatementSurface(): McpStatementSurface {
+  if (serverCatalogBootUnfinished()) throw new McpCatalogBootUnfinishedError();
   if (serverCatalogBooting()) throw new McpCompositionOrderError();
   const served = servedEngines();
   let surface = COMPOSED.get(served);
@@ -300,6 +324,8 @@ export function mcpStatementSurface(): McpStatementSurface {
  * The arm whose tool is `tool`, or a named error when no language declares that tool.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
   const arm = mcpStatementSurface().declared.find((declared) => declared.tool === tool);
@@ -313,6 +339,8 @@ export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
  * the record, and a test passes one of its own.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function servingStatementArms(arms: McpStatementArms = mcpStatementSurface().arms): readonly McpStatementArm[] {
   return Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null && arm.types.length > 0);
@@ -323,6 +351,8 @@ export function servingStatementArms(arms: McpStatementArms = mcpStatementSurfac
  * holds. A registry read only, since each arm's `types` already come from the served-engine resolver.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function listedStatementArms(
   reached: McpReach,
@@ -338,6 +368,8 @@ export function listedStatementArms(
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
   const { arms } = mcpStatementSurface();
@@ -352,6 +384,8 @@ function servingArmFor(type: DatabaseType): McpStatementArm | null {
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null {
   return servingArmFor(type)?.tool ?? null;
@@ -364,6 +398,8 @@ export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpWithholdsDatabase(type: DatabaseType): boolean {
   const { arms } = mcpStatementSurface();
@@ -378,6 +414,8 @@ export function mcpWithholdsDatabase(type: DatabaseType): boolean {
  * @throws {UnknownProviderError} When `type` names no engine the server knows (FND-1).
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpTablelessReadTool(type: DatabaseType): McpStatementTool | null {
   const arm = servingArmFor(type);

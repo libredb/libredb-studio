@@ -264,7 +264,7 @@ describe("the statement arms are composed after the MCP modules load", () => {
     }
   });
 
-  test("statement-arms.ts composes nothing when it loads: its only top-level exports are functions, types and the defect class", () => {
+  test("statement-arms.ts composes nothing when it loads: its only top-level exports are functions, types and the defect classes", () => {
     const source = readFileSync(join(import.meta.dir, "../../../src/lib/mcp/tools/statement-arms.ts"), "utf8");
     const exported = [...source.matchAll(/^export\s+(?:declare\s+)?(\w+)\s+(\w+)/gm)].map(([, kind, name]) => [
       kind,
@@ -274,7 +274,10 @@ describe("the statement arms are composed after the MCP modules load", () => {
     expect(exported.filter(([kind]) => !["function", "interface", "type", "class"].includes(kind as string))).toEqual(
       [],
     );
-    expect(exported.filter(([kind]) => kind === "class")).toEqual([["class", "McpCompositionOrderError"]]);
+    expect(exported.filter(([kind]) => kind === "class")).toEqual([
+      ["class", "McpCompositionOrderError"],
+      ["class", "McpCatalogBootUnfinishedError"],
+    ]);
     // No re-export or default export carries a value composed elsewhere.
     expect(source).not.toMatch(/^export\s+(?:default|\{|\*)/m);
   });

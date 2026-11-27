@@ -23,10 +23,13 @@ import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
 import {
   forgetServerCatalog,
   serverCatalogBooting,
+  serverCatalogBootUnfinished,
   serverCatalogInstalled,
   serverEngine,
 } from "@/lib/db/server-catalog";
+import * as compose from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
+import { McpCatalogBootUnfinishedError, mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import * as admission from "@/lib/provider-host/admission";
 import { admitProvidersAtBoot, bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
@@ -332,6 +335,40 @@ describe("boot admission", () => {
           : [["directory", true, false]],
       );
       expect([serverCatalogBooting(), serverCatalogInstalled()]).toEqual([false, true]);
+    }
+  });
+
+  test("a boot whose composition throws ends unfinished, and MCP's statement tools name the unfinished boot", async () => {
+    for (const set of [false, true]) {
+      forgetProvidersDirectory();
+      forgetServerCatalog();
+      if (set) {
+        const providers = freshProviders();
+        writePackages(providers, [{}]);
+        process.env.LIBREDB_PROVIDERS_DIR = providers;
+      } else delete process.env.LIBREDB_PROVIDERS_DIR;
+      const failure = new Error(`composition failed ${randomUUID()}`);
+      const composed = spyOn(compose, "composeServerCatalog").mockImplementation(() => {
+        throw failure;
+      });
+      const logs = spyLogs();
+      let thrown: unknown;
+      try {
+        await admitProvidersAtBoot();
+      } catch (error) {
+        thrown = error;
+      } finally {
+        composed.mockRestore();
+        logs.restore();
+      }
+      expect([set, thrown]).toEqual([set, failure]);
+      expect([set, serverCatalogInstalled(), serverCatalogBooting(), serverCatalogBootUnfinished()]).toEqual([
+        set,
+        false,
+        false,
+        true,
+      ]);
+      expect(() => mcpStatementSurface()).toThrow(McpCatalogBootUnfinishedError);
     }
   });
 

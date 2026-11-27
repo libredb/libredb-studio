@@ -11,6 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import {
   beginServerCatalogBoot,
+  endServerCatalogBootUnfinished,
   forgetServerCatalog,
   installServerCatalog,
   servedEngines,
@@ -23,6 +24,7 @@ import { mcpToolInputSchemas } from "@/lib/mcp/tools";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import {
   type McpStatementArm,
+  McpCatalogBootUnfinishedError,
   McpCompositionOrderError,
   mcpStatementSurface,
   mcpStatementToolFor,
@@ -246,6 +248,35 @@ describe("mcpStatementEngines", () => {
     }
     // Nothing installed and no boot begun: the bundled set, no defect.
     expect(typesOf(mcpStatementSurface().arms.sql)).toContain("postgres");
+  });
+
+  test("reading the served set after a boot that ended by an error names the unfinished boot, not composition order", () => {
+    const server = { registerTool: () => {} } as unknown as McpServer;
+    const reads: ReadonlyArray<readonly [string, () => unknown]> = [
+      ["mcpStatementSurface", () => mcpStatementSurface()],
+      ["mcpToolInputSchemas", () => mcpToolInputSchemas()],
+      ["mcpStatementToolFor", () => mcpStatementToolFor("postgres")],
+      ["registerStatementTools", () => registerStatementTools(server, {} as McpConnectionContext)],
+    ];
+    beginServerCatalogBoot();
+    endServerCatalogBootUnfinished();
+    try {
+      for (const [name, read] of reads) {
+        let thrown: unknown;
+        try {
+          read();
+        } catch (error) {
+          thrown = error;
+        }
+        expect([name, thrown]).toEqual([name, expect.any(McpCatalogBootUnfinishedError)]);
+        expect((thrown as Error).name).toBe("McpCatalogBootUnfinishedError");
+        expect((thrown as Error).message).toBe(
+          "MCP's statement tools were read after the server's engine catalog's boot began and did not finish: the boot ended by an error before it installed the catalog, so no statement tool is served.",
+        );
+      }
+    } finally {
+      forgetServerCatalog();
+    }
   });
 
   test("the served set reads the record's execution profile offer, not its source", async () => {

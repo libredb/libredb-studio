@@ -34,6 +34,7 @@ import {
 import {
   assertLegacyProvider,
   beginServerCatalogBoot,
+  endServerCatalogBootUnfinished,
   type EngineConnection,
   type EngineRecord,
   forgetServerCatalog,
@@ -44,6 +45,7 @@ import {
   legacyProviderType,
   offersLegacyProvider,
   serverCatalogBooting,
+  serverCatalogBootUnfinished,
   serverCatalogInstalled,
   servedEngineRecord,
   servedEngines,
@@ -339,6 +341,30 @@ describe("the accessor", () => {
     beginServerCatalogBoot();
     forgetServerCatalog();
     expect([serverCatalogInstalled(), serverCatalogBooting()]).toEqual([false, false]);
+  });
+
+  test("a boot that ended by an error before its install stays unfinished, told apart from a pending boot", () => {
+    expect(() => endServerCatalogBootUnfinished()).toThrow(
+      "The server's engine catalog's boot was ended unfinished while no boot had begun in this process.",
+    );
+    beginServerCatalogBoot();
+    expect([serverCatalogBooting(), serverCatalogBootUnfinished()]).toEqual([true, false]);
+    endServerCatalogBootUnfinished();
+    expect([serverCatalogInstalled(), serverCatalogBooting(), serverCatalogBootUnfinished()]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    // Every lookup still answers from the legacy records, as with nothing installed.
+    expect(servedEngines()).toBe(LEGACY_ENGINES);
+    expect(() => endServerCatalogBootUnfinished()).toThrow(
+      "The server's engine catalog's boot was ended unfinished while no boot had begun in this process.",
+    );
+    expect(() => beginServerCatalogBoot()).toThrow(
+      "The server's engine catalog's boot began in this process and ended by an error before it installed the catalog: boot composes the catalog once.",
+    );
+    forgetServerCatalog();
+    expect([serverCatalogBooting(), serverCatalogBootUnfinished()]).toEqual([false, false]);
   });
 
   test("servedEngines answers every record in catalog order, the legacy records alone with nothing installed", () => {

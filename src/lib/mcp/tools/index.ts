@@ -31,6 +31,8 @@ const TOOL_INPUT_SCHEMAS = new WeakMap<McpStatementSurface, Readonly<Record<McpT
  * by a branded string leave the brand out; `statement-arms.test.ts` holds the name types equal.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function mcpToolInputSchemas(): Readonly<Record<McpToolName, z.ZodObject>> {
   const surface = mcpStatementSurface();
@@ -50,6 +52,8 @@ export function mcpToolInputSchemas(): Readonly<Record<McpToolName, z.ZodObject>
  * An own key of the map, so an inherited name such as toString never reaches a schema.
  *
  * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
  */
 export function isMcpToolName(name: unknown): name is McpToolName {
   return typeof name === "string" && Object.hasOwn(mcpToolInputSchemas(), name);

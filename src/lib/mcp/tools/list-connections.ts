@@ -163,7 +163,11 @@ async function listConnections(args: ListConnectionsInput, call: McpToolCall): P
   return recordOrRefuse(() => recordMcpDecision(record, result.isError ? "mcp_result_too_large" : undefined)) ?? result;
 }
 
-/** @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog. */
+/**
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {McpCatalogBootUnfinishedError} After a boot that ended by an error before it installed the server's engine
+ *   catalog.
+ */
 export function registerListConnections(server: McpServer, context: McpConnectionContext): void {
   server.registerTool(
     "list_connections",

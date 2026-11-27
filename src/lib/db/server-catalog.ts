@@ -84,10 +84,13 @@
  *
  * A boot that has begun and not yet installed its catalog is a state of its own (`beginServerCatalogBoot`,
  * `serverCatalogBooting`), held under a second registered symbol beside the catalog: boot admission begins it before it
- * reads the providers directory, and the install ends it. Every lookup above answers from the legacy records while it is
- * pending, as with nothing installed; a reader whose answer is composed once per installed catalog reads the state and
- * refuses a read made in that window as a defect of Studio's own composition order, since a composition made then would
- * be the bundled set (MCP's statement tools, `mcpStatementSurface` in src/lib/mcp/tools/statement-arms.ts).
+ * reads the providers directory, and the install ends it. A boot that ended by an error before its install is recorded
+ * as unfinished (`endServerCatalogBootUnfinished`, `serverCatalogBootUnfinished`) under the same symbol, and stays so for
+ * the life of the process. Every lookup above answers from the legacy records while a boot is pending or unfinished, as
+ * with nothing installed; a reader whose answer is composed once per installed catalog reads the state and refuses a
+ * read made while it is pending as a defect of Studio's own composition order, and one made after an unfinished boot as
+ * that boot's, since a composition made then would be the bundled set (MCP's statement tools, `mcpStatementSurface` in
+ * src/lib/mcp/tools/statement-arms.ts).
  * `servedEngines` answers the Map of every served record, in catalog order, for such a composition.
  */
 import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
@@ -257,10 +260,13 @@ export type EngineNeed = "route" | "open";
 
 const CATALOG_KEY = Symbol.for("libredb-studio.server-engine-catalog");
 
-/** The key of the boot that has begun and not yet installed its catalog, beside the catalog's. */
+/**
+ * The key of the boot that has not installed its catalog, beside the catalog's: `begun` while it runs, `unfinished` once
+ * it ended by an error.
+ */
 const BOOT_KEY = Symbol.for("libredb-studio.server-engine-catalog-boot");
 
-type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: true };
+type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: "begun" | "unfinished" };
 
 /** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
@@ -478,29 +484,58 @@ export function serverCatalogInstalled(): boolean {
 
 /**
  * Begins the boot that composes and installs the server's catalog: `serverCatalogBooting` answers true until the
- * install. A boot that exits before it installs leaves it begun, which no request observes.
+ * install, or until `endServerCatalogBootUnfinished` records the boot as ended by an error. A boot that exits before it
+ * installs leaves it begun, which no request observes.
  *
- * @throws {Error} When a catalog is installed already, or a boot has begun already: boot composes the catalog once.
+ * @throws {Error} When a catalog is installed already, a boot has begun already, or a boot ended unfinished: boot
+ *   composes the catalog once.
  */
 export function beginServerCatalogBoot(): void {
   const holder = globalThis as CatalogHolder;
   if (holder[CATALOG_KEY] !== undefined) {
     throw new Error("The server's engine catalog is already installed in this process: boot composes it once.");
   }
-  if (holder[BOOT_KEY] !== undefined) {
+  if (holder[BOOT_KEY] === "begun") {
     throw new Error(
       "The server's engine catalog's boot has begun in this process already: boot composes the catalog once.",
     );
   }
-  holder[BOOT_KEY] = true;
+  if (holder[BOOT_KEY] === "unfinished") {
+    throw new Error(
+      "The server's engine catalog's boot began in this process and ended by an error before it installed the catalog: boot composes the catalog once.",
+    );
+  }
+  holder[BOOT_KEY] = "begun";
 }
 
-/** Whether a boot has begun and not yet installed the server's catalog. */
+/**
+ * Records the begun boot as ended by an error before it installed the catalog: `serverCatalogBooting` answers false and
+ * `serverCatalogBootUnfinished` true from then on. Boot admission calls it before it throws the error on.
+ *
+ * @throws {Error} When no boot has begun: only a begun boot can end unfinished.
+ */
+export function endServerCatalogBootUnfinished(): void {
+  const holder = globalThis as CatalogHolder;
+  if (holder[BOOT_KEY] !== "begun") {
+    throw new Error("The server's engine catalog's boot was ended unfinished while no boot had begun in this process.");
+  }
+  holder[BOOT_KEY] = "unfinished";
+}
+
+/** Whether a boot has begun and not yet installed the server's catalog, nor ended by an error. */
 export function serverCatalogBooting(): boolean {
-  return (globalThis as CatalogHolder)[BOOT_KEY] !== undefined;
+  return (globalThis as CatalogHolder)[BOOT_KEY] === "begun";
 }
 
-/** Test seam: forgets the installed catalog and a begun boot, as a new process would; a process never calls it. */
+/** Whether a boot began and ended by an error before it installed the server's catalog. */
+export function serverCatalogBootUnfinished(): boolean {
+  return (globalThis as CatalogHolder)[BOOT_KEY] === "unfinished";
+}
+
+/**
+ * Test seam: forgets the installed catalog and a begun or unfinished boot, as a new process would; a process never calls
+ * it.
+ */
 export function forgetServerCatalog(): void {
   const holder = globalThis as CatalogHolder;
   delete holder[CATALOG_KEY];
