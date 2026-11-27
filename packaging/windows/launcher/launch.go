@@ -9,6 +9,20 @@ import (
 	"strings"
 )
 
+// providersRefusal is the one sentence the launcher prints for a first
+// argument `providers`, the same sentence as packaging/linux/libredb-studio
+// and the Homebrew wrapper: server.js ignores its arguments, so the lock
+// command would start a second server here, and serving it waits for a
+// providers directory of this channel's own.
+const providersRefusal = "libredb-studio: this install does not run providers lock; run npx @libredb/studio providers lock --dir <absolute directory>, or libredb-studio providers lock --dir <absolute directory> in a LibreDB Studio container image."
+
+// refusesProviders reports whether the launcher's arguments (os.Args[1:])
+// name the providers command: an exact first argument `providers`, as the
+// image wrapper matches it.
+func refusesProviders(args []string) bool {
+	return len(args) > 0 && args[0] == "providers"
+}
+
 // launchPaths are the payload files the launcher composes, resolved
 // relative to the directory of the real executable (the zip root).
 type launchPaths struct {

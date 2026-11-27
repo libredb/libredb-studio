@@ -949,6 +949,7 @@ npx @libredb/studio providers lock --dir /absolute/path/of/the/directory
 
 The launcher runs the command before and without any download: it reads no cache, starts no server and writes nothing outside the directory.
 The command ships in the npm package and in the three images (see [Docker](#docker)); Homebrew, the Linux packages, Snap, Windows and the desktop app do not serve it yet.
+The `libredb-studio` command of Homebrew, the Linux packages and Windows refuses a first argument `providers` by one sentence naming npx and the images, and exits 2 without starting a server.
 The directory must be absolute, and holds each package as `<name>/<version>/` or `@<scope>/<name>/<version>/`.
 The command writes the lock through a temporary file in the directory and a rename, prints `Wrote <directory>/providers.lock.json` and one line per package with its name, version and digest, and exits 0.
 The same directory always gives the same bytes.

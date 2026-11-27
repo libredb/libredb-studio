@@ -2,7 +2,9 @@
 // win32-x64 standalone zip (issue #114), installed by winget (portable) and
 // Chocolatey. The win32 sibling of packaging/linux/libredb-studio: it execs
 // the bundled private Node runtime against the standalone server payload
-// sitting next to the executable, with the same local-first defaults.
+// sitting next to the executable, with the same local-first defaults, and
+// refuses a first argument `providers` by one sentence, exit 2, as that
+// launcher does.
 //
 // Go (CGO_ENABLED=0, cross-compiled from any OS) so Linux/macOS
 // contributors can rebuild the shim without a Windows box; see
@@ -19,6 +21,12 @@ import (
 )
 
 func main() {
+	// Refused before anything else, so no server starts (launch.go,
+	// providersRefusal); exit 2 as the image wrapper's usage.
+	if refusesProviders(os.Args[1:]) {
+		fmt.Fprintln(os.Stderr, providersRefusal)
+		os.Exit(2)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		fatal(fmt.Sprintf("could not resolve the launcher path: %v", err))
