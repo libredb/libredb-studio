@@ -22,6 +22,7 @@ import {
   type ToolResult,
 } from "../output";
 import {
+  type McpStatementSurface,
   type McpStatementTool,
   mcpStatementSurface,
   mcpStatementToolFor,
@@ -56,7 +57,8 @@ export const ListConnectionsInputSchema = z.object({
 
 /**
  * One listed connection, whose `read_tool` is one of `tools`, the statement tools of the installed catalog's
- * composition (`mcpStatementSurface`), read when the tool registers rather than when this module loads.
+ * composition (`mcpStatementSurface`), read when the tool registers rather than when this module loads, and built once
+ * per composition (`outputSchemaOf`).
  */
 export function listedConnectionSchema(tools: readonly McpStatementTool[]) {
   return z.object({
@@ -78,6 +80,22 @@ function listConnectionsOutputSchema(tools: readonly McpStatementTool[]) {
     has_more: z.boolean(),
     next_offset: z.number().int().nullable(),
   });
+}
+
+/** Each statement surface's list_connections output schema, built once per surface, as the tool input schemas are. */
+const OUTPUT_SCHEMAS = new WeakMap<McpStatementSurface, ReturnType<typeof listConnectionsOutputSchema>>();
+
+/**
+ * list_connections' output schema for `surface`, its rows' `read_tool` one of the surface's statement tools: built on
+ * the surface's first request and read by every later one.
+ */
+function outputSchemaOf(surface: McpStatementSurface): ReturnType<typeof listConnectionsOutputSchema> {
+  let schema = OUTPUT_SCHEMAS.get(surface);
+  if (schema === undefined) {
+    schema = listConnectionsOutputSchema(surface.tools);
+    OUTPUT_SCHEMAS.set(surface, schema);
+  }
+  return schema;
 }
 
 export type ListConnectionsInput = z.infer<typeof ListConnectionsInputSchema>;
@@ -175,7 +193,7 @@ export function registerListConnections(server: McpServer, context: McpConnectio
       title: LIST_CONNECTIONS_TITLE,
       description: LIST_CONNECTIONS_DESCRIPTION,
       inputSchema: ListConnectionsInputSchema,
-      outputSchema: listConnectionsOutputSchema(mcpStatementSurface().tools),
+      outputSchema: outputSchemaOf(mcpStatementSurface()),
       annotations: MCP_READ_ONLY_ANNOTATIONS,
     },
     (args, ctx) => listConnections(args, { context, signal: ctx.mcpReq.signal }),

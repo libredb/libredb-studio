@@ -21,6 +21,7 @@ import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-c
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
 import { mcpToolInputSchemas } from "@/lib/mcp/tools";
+import { registerListConnections } from "@/lib/mcp/tools/list-connections";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import {
   type McpStatementArm,
@@ -287,6 +288,30 @@ describe("mcpStatementEngines", () => {
     } finally {
       forgetServerCatalog();
     }
+  });
+
+  test("list_connections' output schema is built once per statement surface, so every request on one surface reads the same object", async () => {
+    /** The output schema one request's registration of list_connections hands the server. */
+    const outputSchemaOfOneRequest = (): unknown => {
+      const registered: unknown[] = [];
+      const server = {
+        registerTool: (_name: string, config: { readonly outputSchema?: unknown }) => {
+          registered.push(config.outputSchema);
+        },
+      } as unknown as McpServer;
+      registerListConnections(server, {} as McpConnectionContext);
+      expect(registered).toHaveLength(1);
+      return registered[0];
+    };
+    const bundled = outputSchemaOfOneRequest();
+    expect(bundled).toBeDefined();
+    expect(outputSchemaOfOneRequest()).toBe(bundled);
+    await withCatalog(craftedCatalog({}), () => {
+      const installed = outputSchemaOfOneRequest();
+      // A new surface, a schema of its own; one per surface.
+      expect(installed).not.toBe(bundled);
+      expect(outputSchemaOfOneRequest()).toBe(installed);
+    });
   });
 
   test("the served set reads the record's execution profile offer, not its source", async () => {
