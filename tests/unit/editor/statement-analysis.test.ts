@@ -18,7 +18,14 @@ import {
   typedConfirmationFor,
 } from "@/lib/editor/statement-analysis";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
-import { hasUnreadableRun, isDangerousQuery, type PackageGateGrants } from "@/lib/sql/dangerous-query";
+import {
+  GRANTS_WITHOUT_GRAMMAR_DEFECT,
+  hasUnreadableRun,
+  isDangerousQuery,
+  type PackageGateGrants,
+  packageStatementAsks,
+  packageUnreadableRun,
+} from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { cursorTarget, RunTargetRangeError, selectionTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
@@ -885,6 +892,41 @@ describe("packageConfirmationVerdict", () => {
       ).toStrictEqual({
         decision: "run",
       });
+    }
+  });
+
+  test("a record with no grammar asks about every statement and reads none, whatever its grants", () => {
+    const form = ["ALTER", "SESSION", "SET"];
+    // No register row reviewed a grammar, as for every engine that states no SQL text: the loosening claims count for
+    // nothing.
+    const unreviewed: PackageGateGrants = { reviewedGrammar: false, readsSqlText: false, confirmExemptForms: [form] };
+    for (const sql of ["SELECT 1", "ALTER SESSION SET x = 1", "EXPLAIN ANALYZE SELECT 1"]) {
+      expect([sql, packageStatementAsks(sql, null, unreviewed)]).toEqual([sql, true]);
+    }
+    expect(packageUnreadableRun("SELECT 'a", null, unreviewed)).toBe(false);
+    expect(packageConfirmationVerdict("SELECT 1", null, unreviewed, "Keys", undefined)).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
+    expect(packageConfirmationVerdict("SELECT 1", null, unreviewed, "Keys", "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
+    });
+    expect(packageConfirmationVerdict("SELECT 1", null, unreviewed, undefined, "production")).toStrictEqual({
+      decision: "refuse",
+      refusal: TYPED_NAME_MISSING_REFUSAL,
+    });
+
+    // Grants that say a row reviewed a grammar the record does not hold cannot be composed: a host defect, raised.
+    for (const readsSqlText of [true, false]) {
+      const claiming: PackageGateGrants = { reviewedGrammar: true, readsSqlText, confirmExemptForms: [form] };
+      expect(() => packageStatementAsks("SELECT 1", null, claiming)).toThrow(GRANTS_WITHOUT_GRAMMAR_DEFECT);
+      expect(() => packageUnreadableRun("SELECT 'a", null, claiming)).toThrow(GRANTS_WITHOUT_GRAMMAR_DEFECT);
+      expect(() => packageConfirmationVerdict("SELECT 1", null, claiming, "Keys", undefined)).toThrow(
+        GRANTS_WITHOUT_GRAMMAR_DEFECT,
+      );
     }
   });
 

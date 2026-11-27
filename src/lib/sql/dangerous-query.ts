@@ -863,6 +863,24 @@ function writesInLaterStatements(query: string, grammar: SqlGrammar): boolean {
 export type PackageGateGrants = Pick<EngineGrants, "reviewedGrammar" | "readsSqlText" | "confirmExemptForms">;
 
 /**
+ * The host defect the gate raises for a record whose grants say a register row reviewed its grammar while it holds no
+ * grammar: an engine that states no SQL text requests no grammar digest, so no row can review one for it, and such a
+ * record cannot be composed (docs/providers/CONTRACT.md, clause S-3).
+ */
+export const GRANTS_WITHOUT_GRAMMAR_DEFECT =
+  "The engine's record grants a grammar its register row reviewed but holds no grammar: a host defect, since an engine that states no SQL text requests no grammar digest for a row to review.";
+
+/**
+ * `grammar`, the grammar a register row reviewed by the record's grants.
+ *
+ * @throws {Error} `GRANTS_WITHOUT_GRAMMAR_DEFECT`, a host defect, where the record holds no grammar.
+ */
+function reviewedGrammarOf(grammar: SqlGrammar | null): SqlGrammar {
+  if (grammar === null) throw new Error(GRANTS_WITHOUT_GRAMMAR_DEFECT);
+  return grammar;
+}
+
+/**
  * `grammar` as the gate reads an engine a provider package serves: with only the exempt forms `grants` grants. Each
  * form is a claim that loosens the gate, counted only where the engine's register row grants it for the grammar that
  * row reviewed (docs/providers/CONTRACT.md, S-8).
@@ -877,20 +895,25 @@ function packageGateGrammar(grammar: SqlGrammar, grants: PackageGateGrants): Sql
  * Whether part of `text` could not be read under `grammar`, the grammar an engine a provider package serves declares:
  * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. False
  * where no register row reviewed the grammar, which is never read (`packageStatementAsks` asks about every statement
- * there), and where the row grants the claim that the engine's text is not SQL; otherwise the text is read as SQL
- * (S-8).
+ * there), the grammar null for an engine that states no SQL text, and where the row grants the claim that the engine's
+ * text is not SQL; otherwise the text is read as SQL (S-8).
+ *
+ * @throws {Error} `GRANTS_WITHOUT_GRAMMAR_DEFECT`, where `grants` say a row reviewed a grammar and `grammar` is null.
  */
-export function packageUnreadableRun(text: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
-  if (!grants.reviewedGrammar || !grants.readsSqlText) return false;
-  return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
+export function packageUnreadableRun(text: string, grammar: SqlGrammar | null, grants: PackageGateGrants): boolean {
+  if (!grants.reviewedGrammar) return false;
+  const reviewed = reviewedGrammarOf(grammar);
+  if (!grants.readsSqlText) return false;
+  return hasUnterminatedSpan(text, reviewed) || hasLoneCarriageReturnInLineComment(text, reviewed);
 }
 
 /**
  * Whether the confirmation gate asks about `statement` on an engine a provider package serves, read under `grammar`,
- * the grammar its declaration states, composed into the server catalog's record of the engine, with `grants`, the SQL
- * text grants that record holds (docs/providers/CONTRACT.md, clause S-8).
+ * the grammar its declaration states, composed into the server catalog's record of the engine, or null where it states
+ * no SQL text, with `grants`, the SQL text grants that record holds (docs/providers/CONTRACT.md, clauses S-3 and S-8).
  *
- * Where no register row reviewed the grammar, every statement asks and none is read. Otherwise each claim that would
+ * Where no register row reviewed the grammar, every statement asks and none is read, as for every engine that states
+ * no SQL text, which requests no grammar digest for a row to review. Otherwise each claim that would
  * loosen the gate counts only as the row grants it: a granted text-not-SQL claim skips the unreadable check and the
  * split, and a granted exempt form is read as exempt; every other claim is read at its restrictive value.
  * `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other runs: true
@@ -898,10 +921,17 @@ export function packageUnreadableRun(text: string, grammar: SqlGrammar, grants: 
  * which true reads as a plan. So the statement is read under both values, and asks where either asks. No vocabulary
  * row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks where part of the text
  * cannot be read, where the statement writes, and, for text read as SQL, where a later statement of the split writes.
+ *
+ * @throws {Error} `GRANTS_WITHOUT_GRAMMAR_DEFECT`, where `grants` say a row reviewed a grammar and `grammar` is null;
+ * the run gate reads a throw as the gate asking.
  */
-export function packageStatementAsks(statement: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
+export function packageStatementAsks(
+  statement: string,
+  grammar: SqlGrammar | null,
+  grants: PackageGateGrants,
+): boolean {
   if (!grants.reviewedGrammar) return true;
-  const read = packageGateGrammar(grammar, grants);
+  const read = packageGateGrammar(reviewedGrammarOf(grammar), grants);
   return (
     packageUnreadableRun(statement, read, grants) ||
     [false, true].some((explainExecutesWithAnalyze) => {

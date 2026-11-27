@@ -49,13 +49,14 @@ import {
   type AdmittedForCatalog,
   catalogConflicts,
   composeServerCatalog,
+  declaredSqlTextRequest,
   type RefusedForCatalog,
 } from "@/lib/db/server-catalog-compose";
 import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection } from "@/lib/types";
-import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
+import type { EngineDeclaration, GrammarFacts } from "@libredb/provider-sdk/manifest";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import ts from "typescript";
 import {
@@ -549,6 +550,7 @@ describe("what the catalog composes", () => {
     });
     installServerCatalog(composeServerCatalog([admittedFor("acme-grammar", manifest)], [], STUDIO_GRANT_REGISTER));
     const { statementGrammar } = servedRecord("acmegrammar");
+    if (statementGrammar === null) throw new Error("the record of acmegrammar holds no grammar, which it declares");
     const declared = (manifest.engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar;
     // The same record Studio composes its own engines' grammars with, from the package's facts as declared: the gate
     // keeps only the exempt forms the record grants when it reads them (packageStatementAsks), so the record keeps the
@@ -561,7 +563,7 @@ describe("what the catalog composes", () => {
     const [clause] = statementGrammar.trailingLimitClauses ?? [];
     expect(clause).toBeInstanceOf(RegExp);
     expect([clause?.source, clause?.flags]).toEqual(["\\s+FORMAT\\s+\\w+\\s*$", "i"]);
-    expect(servedRecord("acmegrammar").statementGrammar.trailingLimitClauses?.[0]).toBe(clause as RegExp);
+    expect(servedRecord("acmegrammar").statementGrammar?.trailingLimitClauses?.[0]).toBe(clause as RegExp);
   });
 
   test("composing a set that still conflicts, or an engine both served and unavailable, is a host defect", () => {
@@ -1048,6 +1050,59 @@ describe("a package engine's register row", () => {
         "acmelanguage",
       ),
     ).toMatchObject({ statementLanguage: null, ownWords: "scrubbed" });
+  });
+
+  test("a package engine whose sqlText is null has no statement grammar and the restrictive value of every SQL text claim, whatever its register row grants", () => {
+    const form = ["ALTER", "SESSION", "SET"];
+    // Both engines state the same statement language data, so the row may grant the two loosening claims under its
+    // digest, and only the grammar tells the two apart.
+    const stated = admittedManifest("acmenosql", (engine) => withStatementLanguageData(engine));
+    const none = admittedManifest("acmenosql", (engine) => {
+      withStatementLanguageData(engine);
+      const members = engine as Record<string, unknown>;
+      members.sqlText = null;
+      members.sqlWriting = null;
+      members.migrationDdl = null;
+    });
+    // The digest of the grammar the minimal manifest states, which the null engine does not have.
+    const reviewed = grammarSha256((stated.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar);
+    const granting = {
+      redaction: { kind: "sql", nameQuote: '"' },
+      readsSqlText: false,
+      confirmExemptForms: [form],
+      decidesAlone: true,
+      grammarSha256: reviewed,
+      languageSha256: declaredLanguageSha256(none),
+    } as const;
+    const recordOf = (pkg: AdmittedForCatalog) => {
+      installServerCatalog(composeServerCatalog([pkg], [], registerOf(packageRow(pkg, "acmenosql", granting))));
+      const record = servedRecord("acmenosql");
+      forgetServerCatalog();
+      return record;
+    };
+
+    const nullRecord = recordOf(admittedFor("acme-nosql", none));
+    expect(nullRecord.statementGrammar).toBeNull();
+    const { redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar } = nullRecord.grants;
+    expect({ redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar }).toEqual({
+      redaction: { kind: "none" },
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: false,
+    });
+    expect(declaredSqlTextRequest(none.engines[0] as EngineDeclaration)).toEqual({
+      readsSqlText: true,
+      confirmExemptForms: [],
+      redaction: { kind: "none" },
+      grammarSha256: null,
+    });
+
+    // The same row on the same package stating the minimal manifest's SQL text reviews its grammar.
+    const statedRecord = recordOf(admittedFor("acme-nosql", stated));
+    expect(statedRecord.statementGrammar).not.toBeNull();
+    expect(statedRecord.grants.reviewedGrammar).toBe(true);
+    expect(statedRecord.grants.decidesAlone).toBe(true);
   });
 
   test("a register row for another version or digest of the same package grants nothing", () => {

@@ -8,9 +8,9 @@
  * offers: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`),
  * `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take; for any other
  * engine, `packageConfirmationVerdict`, the statement read under the grammar the record holds
- * (`EngineRecord.statementGrammar`, the one a package's declaration states) with the claims that loosen the gate the
- * record grants (`EngineRecord.grants`), every statement asked where no register row reviewed that grammar
- * (docs/providers/CONTRACT.md, clause S-8). It then decides what the request gets, by the request's
+ * (`EngineRecord.statementGrammar`, the one a package's declaration states, or none where it states no SQL text) with
+ * the claims that loosen the gate the record grants (`EngineRecord.grants`), every statement asked where no register
+ * row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3 and S-8). It then decides what the request gets, by the request's
  * `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |

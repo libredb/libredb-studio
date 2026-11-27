@@ -116,6 +116,7 @@ const BARE = "acmeqbare";
 const LOOSE = "acmeqloose";
 const WORDS = "acmeqwords";
 const REVIEWED = "acmeqreviewed";
+const NOSQL = "acmeqnosql";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
 
@@ -137,6 +138,22 @@ const LOOSE_PACKAGE: SessionPackage = {
   },
 };
 
+/**
+ * A package whose engine states no SQL text, SQL writing or migration DDL, and the statement language data its row
+ * reviews, without which no package row grants text-not-SQL or decides-alone.
+ */
+const NOSQL_PACKAGE: SessionPackage = {
+  name: "acme-q-nosql",
+  engine: NOSQL,
+  edit: (engine) => {
+    withStatementLanguageData(engine);
+    const members = engine as Record<string, unknown>;
+    members.sqlText = null;
+    members.sqlWriting = null;
+    members.migrationDdl = null;
+  },
+};
+
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
   engines = await admitSessionPackages(
@@ -148,6 +165,7 @@ beforeAll(async () => {
       LOOSE_PACKAGE,
       { name: "acme-q-words", engine: WORDS },
       REVIEWED_PACKAGE,
+      NOSQL_PACKAGE,
     ],
     {
       [WORDS]: { ownWords: "scrubbed" },
@@ -157,6 +175,15 @@ beforeAll(async () => {
         languageSha256: languageDataSha256(ACME_LANGUAGE_DATA),
         readsSqlText: false,
         confirmExemptForms: [EXEMPT_FORM],
+      },
+      // A row granting SQL text claims for a grammar NOSQL does not have: it states none for a row to review.
+      [NOSQL]: {
+        grammarSha256: declaredGrammarSha256(REVIEWED_PACKAGE),
+        languageSha256: languageDataSha256(ACME_LANGUAGE_DATA),
+        redaction: { kind: "sql", nameQuote: '"' },
+        readsSqlText: false,
+        confirmExemptForms: [EXEMPT_FORM],
+        decidesAlone: true,
       },
     },
   );
@@ -332,6 +359,83 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     });
     expect(unasked.body.confirmation).toBe("unconfirmed");
     expect(names(seen)).toEqual(["open", "execute"]);
+  });
+
+  test("a package engine with no SQL text facts is asked about every statement, and its query events keep no statement text", async () => {
+    expect(engines.get(NOSQL)?.statementGrammar).toBeNull();
+    expect(engines.get(NOSQL)?.grants.reviewedGrammar).toBe(false);
+    const connection = connectionOf(NOSQL);
+    const secret = connection.password as string;
+    const seen = hooksFor(NOSQL);
+    // A read, and the form the row grants as exempt for a grammar the engine does not state: each asks.
+    for (const sql of ["SELECT 1", "ALTER SESSION SET x = 1"]) {
+      const asked = await post({ connection, sql, confirmation: "ask" });
+      expect([sql, asked.status]).toEqual([sql, 428]);
+      expect(asked.body).toMatchObject({
+        code: "CONFIRMATION_REQUIRED",
+        confirmation: { unreadable: false, typedConfirmation: null },
+      });
+    }
+    expect(names(seen)).toEqual([]);
+
+    recordedEvents.length = 0;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // The advisory default runs a request that sends no confirmation field, and marks it unconfirmed.
+      const unasked = await post({ connection, sql: "SELECT 1" });
+      expect(unasked.status).toBe(200);
+      expect(unasked.body).toMatchObject({
+        rows: [
+          { key: "alpha", value: 1 },
+          { key: "beta", value: "two" },
+        ],
+        confirmation: "unconfirmed",
+      });
+      expect(names(seen)).toEqual(["open", "execute"]);
+      hooksFor(NOSQL, { execute: () => Promise.reject(new Error(`no such key, as ${secret} said`)) });
+      const failed = await post({ connection, sql: "SELECT 1" });
+      expect(failed.status).toBe(500);
+    } finally {
+      error.mockRestore();
+      hooksFor(NOSQL);
+    }
+
+    expect(recordedEvents.map(({ connection: named, statement, status }) => [named.engine, statement, status])).toEqual(
+      [
+        [NOSQL, "SELECT 1", "success"],
+        [NOSQL, "SELECT 1", "error"],
+      ],
+    );
+    // Each input built into its row by the real builder in every capture mode, given the `seed:` id, access level and
+    // subject only governance's resolve and session hand, as the events case above gives them.
+    for (const statementCapture of ["full", "redacted", "none"] as const) {
+      const rows = recordedEvents.map((input) =>
+        buildQueryEvent(
+          {
+            ...input,
+            principal: { ...input.principal, subject: "subject-1" },
+            connection: { ...input.connection, id: "seed:keys", accessLevel: "read" },
+          },
+          { statementCapture, maxStatementBytes: 4096 },
+          { studioInstance: "libredb-studio" },
+        ),
+      );
+      expect([
+        statementCapture,
+        rows.map(({ statement, statement_fingerprint, error_message, statement_type }) => [
+          statement,
+          statement_fingerprint,
+          error_message,
+          statement_type,
+        ]),
+      ]).toEqual([
+        statementCapture,
+        [
+          [null, null, null, "OTHER"],
+          [null, null, null, "OTHER"],
+        ],
+      ]);
+    }
   });
 
   test("the statement is read under the package's declared grammar its register row reviewed, and a write asks for a confirmation", async () => {

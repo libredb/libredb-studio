@@ -313,18 +313,25 @@ export function withEngineRecord(
 }
 
 /**
- * Studio's own catalog with the grants of each engine `changes` names replaced by its record's grants and the change: a
- * crafted catalog, for the tests that hold a reader of a grant to the installed record rather than to Studio's tables.
+ * Studio's own catalog with the grants of each engine `changes` names replaced by its record's grants and the change,
+ * and the statement grammar of each engine `statementGrammar` names replaced by the value named for it: a crafted
+ * catalog, for the tests that hold a reader of a grant to the installed record rather than to Studio's tables.
  *
  * @throws {Error} Naming the engine, for an engine Studio's catalog holds no record of.
  */
-export function craftedCatalog(changes: Readonly<Record<string, Partial<EngineGrants>>>): ServerCatalog {
+export function craftedCatalog(
+  changes: Readonly<Record<string, Partial<EngineGrants>>>,
+  statementGrammar: Readonly<Record<string, EngineRecord["statementGrammar"]>> = {},
+): ServerCatalog {
   let catalog = composeServerCatalog([], [], STUDIO_GRANT_REGISTER);
   for (const [id, change] of Object.entries(changes)) {
     catalog = withEngineRecord(catalog, id, (engine) => ({
       ...engine,
       grants: Object.freeze({ ...engine.grants, ...change }),
     }));
+  }
+  for (const [id, grammar] of Object.entries(statementGrammar)) {
+    catalog = withEngineRecord(catalog, id, (engine) => ({ ...engine, statementGrammar: grammar }));
   }
   return catalog;
 }

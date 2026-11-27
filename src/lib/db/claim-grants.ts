@@ -86,14 +86,15 @@
  * text request is its bundled `readsSqlText` and exempt forms with its row's redaction and grammar digest
  * (`legacySqlTextRequest`), and its language data request its row's language digest (`legacyLanguageDataRequest`); a
  * package engine's are its admitted declaration's, with the digests of its grammar and of its statement language data
- * computed on the server by the server catalog's composer, so no module the browser loads hashes either. A legacy
- * engine's row is its legacy row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module
- * loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served
- * engine the register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's
- * review notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations
- * (clauses M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the
- * browser as on the server. Studio's review of whether an engine's connections serve one session and whether agent mode
- * executes statements on it, two host facts no declaration requests, is the same legacy rows' `servesOneSession` and
+ * computed on the server by the server catalog's composer, so no module the browser loads hashes either, its SQL text
+ * request being the restrictive one, with no digest, where it states no SQL text. A legacy engine's row is its legacy
+ * row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads, with
+ * `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine the
+ * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
+ * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
+ * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
+ * the server. Studio's review of whether an engine's connections serve one session and whether agent mode executes
+ * statements on it, two host facts no declaration requests, is the same legacy rows' `servesOneSession` and
  * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
  * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
  * that no other module of Studio's source loads the register, that none but the claim projection and the listed
@@ -704,7 +705,7 @@ type BrowserGrantTables<K extends string> = Pick<ClaimGrants<K>, (typeof GRANT_M
  * `readsSqlText`, `confirmExemptForms` (`sqlText.grammar.confirmExemptForms`) and `redaction` as the declaration
  * states them, and `grammarSha256`, the digest of the grammar the declaration states (src/lib/db/grammar-digest.ts),
  * or null for none. The server catalog's composer hands a package engine's from its admitted declaration, the digest
- * computed on the server; a legacy engine's is its bundled readsSqlText and exempt forms with its legacy row's
+ * computed on the server, or the restrictive request with a null digest where its `sqlText` is null; a legacy engine's is its bundled readsSqlText and exempt forms with its legacy row's
  * redaction and digest (`legacySqlTextRequest`).
  */
 export interface SqlTextRequest {

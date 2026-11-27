@@ -232,15 +232,17 @@ export function confirmationVerdict(
 
 /**
  * The confirmation verdict of `statement` on an engine a provider package serves, read under `grammar`, the grammar its
- * declaration states, with `grants`, the SQL text grants of the engine's record (docs/providers/CONTRACT.md, clause
- * S-8): `confirmationVerdict`'s answer, with the reading `packageStatementAsks` for whether the gate asks and
- * `packageUnreadableRun` for `unreadable`, so every statement asks where no register row reviewed the grammar. No
+ * declaration states, or null where it states no SQL text, with `grants`, the SQL text grants of the engine's record
+ * (docs/providers/CONTRACT.md, clauses S-3 and S-8): `confirmationVerdict`'s answer, with the reading
+ * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`, so every statement asks
+ * where no register row reviewed the grammar, as none can for an engine that states no SQL text, and each throws a host
+ * defect for grants that say a row reviewed a grammar the record does not hold. No
  * vocabulary row of Studio's applies to such an engine, so no typed ask comes from one; on a production connection the
  * connection's name is asked (`escalatedAsk`), and refused where it has none.
  */
 export function packageConfirmationVerdict(
   statement: string,
-  grammar: SqlGrammar,
+  grammar: SqlGrammar | null,
   grants: PackageGateGrants,
   connectionName: string | undefined,
   connectionEnvironment: ConnectionEnvironment | undefined,

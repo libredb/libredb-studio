@@ -721,7 +721,7 @@ describe("the gate on an engine a provider package serves", () => {
     };
     const both = { readsSqlText: false, confirmExemptForms: [form] };
     const granted = declared(loose, both);
-    expect(granted.statementGrammar.confirmExemptForms).toEqual([form]);
+    expect(granted.statementGrammar?.confirmExemptForms).toEqual([form]);
     expect(granted.grants).toMatchObject({ reviewedGrammar: true, readsSqlText: false, confirmExemptForms: [form] });
     // Both claims granted: the form runs, and the text is neither checked for an unreadable run nor split.
     const spared = ["ALTER SESSION SET search_path = x", "SELECT 'never closed", "SELECT 1; DROP TABLE x"];

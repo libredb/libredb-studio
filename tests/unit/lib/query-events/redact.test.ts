@@ -112,6 +112,28 @@ describe("redactStatement", () => {
     });
   });
 
+  // An engine that states no SQL text has a record with no grammar, which no register row reviews, so the first refusal
+  // above covers it; a record with no grammar whose grants say a row reviewed one cannot be composed, and is refused as
+  // a host defect of its own rather than read.
+  test("redactStatement and maskCredentials refuse, as a host defect naming the engine, an engine whose record holds no grammar", async () => {
+    const literal = crypto.randomUUID();
+    const text = `SELECT '${literal}'`;
+    const refusal =
+      'The engine "postgres"\'s record grants a grammar its register row reviewed but holds no grammar: a host defect, since an engine that states no SQL text requests no grammar digest for a row to review.';
+    const unreviewed =
+      'The engine "postgres" holds no register row\'s review of its grammar, so the query event log keeps none of its text, and a caller handed its text to the redactor: a host defect.';
+    await withCatalog(craftedCatalog({}, { postgres: null }), () => {
+      expect(() => redactStatement(text, "postgres")).toThrow(refusal);
+      expect(() => maskCredentials(text, "postgres")).toThrow(refusal);
+      // The control: an engine whose record holds its grammar is read.
+      expect(redactStatement(text, "mysql").statement).toBe("SELECT ?");
+    });
+    await withCatalog(craftedCatalog({ postgres: { reviewedGrammar: false } }, { postgres: null }), () => {
+      expect(() => redactStatement(text, "postgres")).toThrow(unreviewed);
+      expect(() => maskCredentials(text, "postgres")).toThrow(unreviewed);
+    });
+  });
+
   test("a number ends where the span reader opens a literal, so no text of the literal is kept", () => {
     expect(redactStatement("SELECT 1.q'[it's]' FROM dual", "oracle").statement).toBe("SELECT ?? FROM dual");
   });

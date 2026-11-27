@@ -113,4 +113,14 @@ describe("unheldNamePointers", () => {
 
     expect(unheldNamePointers(none, HELD)).toEqual([]);
   });
+
+  test("an engine whose sqlText is null states no formatter language", () => {
+    const unheld = engine((draft) => {
+      draft.explainFormat = "unheld-plan";
+      draft.formatterLanguage = "unheldformat";
+    });
+
+    expect(unheldNamePointers({ ...unheld, sqlText: null }, HELD)).toEqual(["/editor/explainFormat"]);
+    expect(unheldNamePointers(unheld, HELD)).toEqual(["/editor/explainFormat", "/sqlText/grammar/formatterLanguage"]);
+  });
 });

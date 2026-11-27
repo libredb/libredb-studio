@@ -1,7 +1,7 @@
 /**
  * The names an engine declaration states that only Studio's own tables give meaning to: its explain format, its query
- * dialect, its query language, its Monaco language and its formatter language (docs/providers/CONTRACT.md, M-48, M-50,
- * S-4 and S-23). The SDK's schema admits each by its form alone, so the schema names no engine; Studio holds the
+ * dialect, its query language, its Monaco language and, where it states SQL text, its formatter language
+ * (docs/providers/CONTRACT.md, M-48, M-50, S-4 and S-23). The SDK's schema admits each by its form alone, so the schema names no engine; Studio holds the
  * membership rule here, on its own side.
  *
  * `unheldNamePointers` is pure and engine-neutral: it reads the tables it is handed (`HeldNames`), never one of
@@ -36,14 +36,14 @@ export interface NamingEngine {
     readonly language: Pick<Editor["language"], "queryLanguage" | "monacoId">;
   };
   readonly sqlText: {
-    readonly grammar: Pick<EngineDeclaration["sqlText"]["grammar"], "formatterLanguage">;
-  };
+    readonly grammar: Pick<NonNullable<EngineDeclaration["sqlText"]>["grammar"], "formatterLanguage">;
+  } | null;
 }
 
 /**
  * The JSON Pointer, relative to the engine, of every name `engine` states that `held` does not hold, in the manifest's
  * member order: the explain format and the dialect only where they are not null, then the query language, the Monaco
- * language and the formatter language.
+ * language and the formatter language, which an engine whose `sqlText` is null does not state.
  */
 export function unheldNamePointers(engine: NamingEngine, held: HeldNames): readonly string[] {
   const { explainFormat, dialect, language } = engine.editor;
@@ -52,7 +52,11 @@ export function unheldNamePointers(engine: NamingEngine, held: HeldNames): reado
     [dialect === null ? null : dialect.name, held.queryDialects, "/editor/dialect/name"],
     [language.queryLanguage, held.queryLanguages, "/editor/language/queryLanguage"],
     [language.monacoId, held.monacoLanguages, "/editor/language/monacoId"],
-    [engine.sqlText.grammar.formatterLanguage, held.formatterLanguages, "/sqlText/grammar/formatterLanguage"],
+    [
+      engine.sqlText === null ? null : engine.sqlText.grammar.formatterLanguage,
+      held.formatterLanguages,
+      "/sqlText/grammar/formatterLanguage",
+    ],
   ];
   return stated.filter(([name, names]) => name !== null && !names.includes(name)).map(([, , pointer]) => pointer);
 }
