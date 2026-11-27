@@ -851,7 +851,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 
 ### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
 
-The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68), each panel call to the open engine's panels and each tree call to its object model, and refuses an open context that names an engine the manifest does not declare; once an execute's answer frame is decoded, it refuses, as the host core does, an answer with a member `checkExecuteAnswer` refuses (C-112).
+The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68), each panel call to the open engine's panels and each tree call to its object model, and refuses an open context that names an engine the manifest does not declare; once an execute's answer frame is decoded, it refuses, as the host core does, an answer with a member `checkExecuteAnswer` refuses (C-112), and once a tree call's answer frame is decoded, an answer `checkTreeAnswer` refuses (C-62).
 An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close` under a cleanup context of its own (C-47), and a refused execute answer closes each result source it handed over, an item that is not an object refused at its index and a source whose `columns` or `rowCount` read throws closed with those before it.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
@@ -1038,15 +1038,15 @@ An end that fails is answered in the run's place, and the run's answer says the 
 A container's path and an object's path are opaque: the host sends each back exactly as it was answered and reads nothing in it but how many segments it has (M-89).
 The facet has no honours list: a provider honours every member of the request its action names (C-63).
 
-### C-62 (informative): A tree answer is read by reference
+### C-62 (normative): A tree answer is read through the SDK's check
 
-In process the host reads a tree answer by reference and decides nothing on its values, and Studio answers one that lacks the member its action answers, or carries `needsConfiguration` where C-61 does not allow it, as the provider's defect.
-The host's reader that checks a native provider's answer form against its action arrives with the first native provider.
+The host reads a tree answer with `checkTreeAnswer`, which refuses as `tree-answer-unreadable` an answer that is not its action's form, a key the form cannot have, a value outside the SDK's object tree types, more details than the request's limit and `needsConfiguration` where C-61 does not allow it, never calling a getter or naming a value; past the check it reads the answer by reference and decides nothing on its values.
+An optional member present with no value reads as absent.
 
 ### C-63 (informative): A provider honours every member of a tree request
 
 A provider's `objects.tree` honours every member of the request its action names: it lists the containers under the `parent` it is sent, and stops a `describeMany` read at the `limit` it is sent, saying so in `truncated`, never at a cap of its own it does not state.
-No package implements `objects.tree` yet, and neither the host's reader nor a kit case checks this of a package.
+No package in this repository implements `objects.tree` yet, and no kit case checks this of a package; the host's check reads the answer's form, not what the provider honoured.
 
 ### C-66 (normative): The metadata session and the host's session capacity class
 
@@ -1237,7 +1237,7 @@ The host core's execute, cancel on a stop, end of a scope, tree, maintenance, mo
 ### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 
 Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
-The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is the package's defect on every grant, logged naming the rule and the pointer and answered naming the rule, with the pointer only where a row grants the package's words: a malformed batch or row, a refinement its open answered that the host refuses, or an execute answer member that `checkExecuteAnswer` refuses as `execute-answer-unreadable` (its result list, its first result's columns or row count, its execution time, its warning list or a warning).
+The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is the package's defect on every grant, logged naming the rule and the pointer and answered naming the rule, with the pointer only where a row grants the package's words: a malformed batch or row, a refinement its open answered that the host refuses, an execute answer member that `checkExecuteAnswer` refuses as `execute-answer-unreadable` (its result list, its first result's columns or row count, its execution time, its warning list or a warning), or a tree answer that `checkTreeAnswer` refuses as `tree-answer-unreadable`.
 A package's open that fails is answered as a not-sent connection error, in Studio's sentence naming its code where no row grants its words and in its own words through core's scrub where one does.
 
 ### C-114 (normative): A package carries its drivers bundled into its own modules
