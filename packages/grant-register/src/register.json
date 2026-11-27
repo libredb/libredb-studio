@@ -41,7 +41,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "bd9e2ce282af18e46d49598a7dd71310c59fc369a4d01f7eabd3b6edab79e65c"
+      "grammarSha256": "bd9e2ce282af18e46d49598a7dd71310c59fc369a4d01f7eabd3b6edab79e65c",
+      "languageSha256": null
     },
     "reasons": {
       "agentCredentialForm": "A service-account key JSON, from which the provider mints its own token at the scope it asks for."
@@ -86,7 +87,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "58394dadd8d98cb30432a7a45ee2c8bae297cd4b9ec6c7f872cd22af4a8be6e9"
+      "grammarSha256": "58394dadd8d98cb30432a7a45ee2c8bae297cd4b9ec6c7f872cd22af4a8be6e9",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one SELECT of that keyspace or of system_schema (docs/providers/cassandra.md section 14).",
@@ -137,7 +139,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "e92329108b9b8a398d7641e0fcb74e309b72a446c7e46e2e419504b2f6fe1fc4"
+      "grammarSha256": "e92329108b9b8a398d7641e0fcb74e309b72a446c7e46e2e419504b2f6fe1fc4",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).",
@@ -186,7 +189,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "bae829a4b4b81cb2d13cbc5e286b9d2b58094b7938a346b3bac09ec5ba94f32c"
+      "grammarSha256": "bae829a4b4b81cb2d13cbc5e286b9d2b58094b7938a346b3bac09ec5ba94f32c",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user whose only roles are query_select on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it, and a fence that sends one SELECT (docs/providers/couchbase.md section 15).",
@@ -237,7 +241,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "2b6be9c13c8d8d453023a7acb4429d4a29c2613f7671212adde886ca0bb723d1"
+      "grammarSha256": "2b6be9c13c8d8d453023a7acb4429d4a29c2613f7671212adde886ca0bb723d1",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "No read-only mode: the provider sends the statement the editor holds, as Db2's does.",
@@ -283,7 +288,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "fed30e2ef394b30ad5a5249fdafd92fb84afde6bdb3fa68e0612ce64e73cf6ee"
+      "grammarSha256": "fed30e2ef394b30ad5a5249fdafd92fb84afde6bdb3fa68e0612ce64e73cf6ee",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user checked before every statement, on the statement's own connection, to hold nothing but CONNECT and SELECT (docs/providers/db2.md section 10.1).",
@@ -330,7 +336,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "d5cf430b0e8c1f66a64d0cf5a7910dc2f29c9ed3d80a035b0d7b97bc1a003726"
+      "grammarSha256": "d5cf430b0e8c1f66a64d0cf5a7910dc2f29c9ed3d80a035b0d7b97bc1a003726",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Druid native SQL refuses a write, but that is the engine's grammar: Studio sends the statement the editor holds.",
@@ -376,7 +383,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "399ed678ad79dac9e87920db725c1e966518463bc5c63c19f8f80b12c4ffc396"
+      "grammarSha256": "399ed678ad79dac9e87920db725c1e966518463bc5c63c19f8f80b12c4ffc396",
+      "languageSha256": null
     },
     "reasons": {
       "readsFileAccessPosture": "The engine whose editor handle opens under the posture: external access off for every role but admin, and for every role on a seed a non-admin role can use. SQLite refuses a denied handle instead.",
@@ -431,7 +439,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "b3a9996d6632deb419846df4acb1b56f2957e6c78192acdf2025bd0abe262308"
+      "grammarSha256": "b3a9996d6632deb419846df4acb1b56f2957e6c78192acdf2025bd0abe262308",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "As Druid: the SQL grammar has no write, and Studio sends whatever the editor holds.",
@@ -479,7 +488,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit and maintenance operation before any request while the mode holds (`write-policy.ts`).",
@@ -524,7 +534,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client builds only the read requests of its closed table, before any socket, and the provider offers no object edit and no maintenance operation.",
@@ -572,7 +583,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`src/lib/languages/influxql/policy.ts`) is the only boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request; the route table reaches no write endpoint.",
@@ -621,7 +633,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "3e7627b29dcaa935ae955eb55a67242a529b3e6f15de5e0d92e4aca0eadb9712"
+      "grammarSha256": "3e7627b29dcaa935ae955eb55a67242a529b3e6f15de5e0d92e4aca0eadb9712",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and the 3.12 planner refuses every write besides.",
@@ -667,7 +680,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the topic list, every end offset and every group's committed offsets unchanged after every provider surface.",
@@ -715,7 +729,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any socket, and the provider offers no object edit and no maintenance operation.",
@@ -762,7 +777,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Studio's own store: the editor sends `put` and `delete`, and no gate refuses them on a connection.",
@@ -816,7 +832,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "3a9ee2629afcb205d6c8e03d15edb4671265d80dc5debc7cdd1e25b00cf68346"
+      "grammarSha256": "3a9ee2629afcb205d6c8e03d15edb4671265d80dc5debc7cdd1e25b00cf68346",
+      "languageSha256": null
     },
     "reasons": {
       "agentCredentialForm": "The agent's bearer token for the database, sent instead of the connection's own.",
@@ -863,7 +880,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is a read (vector-family E8).",
@@ -911,7 +929,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than configured: the encoder names four read function codes and device identification, and there is no code in the provider that can build a write (#1723 MB-S1, `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).",
@@ -965,7 +984,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "agentExecution": "This engine has no read-only session: the connection's user is the boundary, proven, when a connection that sends statements opens, by the server's own account of its privileges and by a write the server must refuse, with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of a read's session as its deadline.",
@@ -1008,7 +1028,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no write to enforce against. The valve repeats the check on the bytes.",
@@ -1062,7 +1083,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "017c96a4eed714183e4ea0c545db705335a8ca7a7a91bb06c70275d4f32ce87b"
+      "grammarSha256": "017c96a4eed714183e4ea0c545db705335a8ca7a7a91bb06c70275d4f32ce87b",
+      "languageSha256": null
     },
     "reasons": {
       "agentExecution": "This engine has no read-only transaction of any kind, so the open verifies that the session's principal cannot write, and each statement is then admitted one at a time by asking the optimizer to compile it without running it.",
@@ -1101,7 +1123,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).",
@@ -1156,7 +1179,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "7ecefd131952e83c3cadec3c0741bd44c65d6687d5e9a474c750cf7cfa0176da"
+      "grammarSha256": "7ecefd131952e83c3cadec3c0741bd44c65d6687d5e9a474c750cf7cfa0176da",
+      "languageSha256": null
     },
     "reasons": {
       "agentExecution": "A two-layer boundary: a least-privilege principal, because DDL ends a read-only transaction through its implicit commit, and a read-only transaction (`START TRANSACTION READ ONLY`) for the writes the grants alone would not stop.",
@@ -1203,7 +1227,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: this version of the provider refuses every write before it is sent, offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.",
@@ -1251,7 +1276,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the request builder writes four read bodies and `<close-session>`, and no function in the provider builds an `<edit-config>` or any other write (`src/lib/db/providers/network/netconf/requests.ts`).",
@@ -1299,7 +1325,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the client seam names eight read services and none of them writes, so there is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).",
@@ -1351,7 +1378,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "0a90dd07fd435c4eb44f486b0084dc69ab307860c77153ccd1b7cbae163f0f5d"
+      "grammarSha256": "0a90dd07fd435c4eb44f486b0084dc69ab307860c77153ccd1b7cbae163f0f5d",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "As Elasticsearch, and the server's own DELETE can be switched on in 2.x.",
@@ -1403,7 +1431,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "3cffccea45ceaa9f849d13e65d7b8fa65766453c00c61baa842c1b9e6015b10e"
+      "grammarSha256": "3cffccea45ceaa9f849d13e65d7b8fa65766453c00c61baa842c1b9e6015b10e",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user set READ ONLY, checked before every statement on that statement's own session to reach nothing READ ONLY leaves open and to hold no grant on a schema Oracle maintains beyond the policy catalogs (docs/providers/oracle.md section 5.7).",
@@ -1445,7 +1474,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan` and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it holds (O1).",
@@ -1499,7 +1529,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "0f541b8aa712365a939312edb0917ee7bb560b0975319092f6c789eac066dbdf"
+      "grammarSha256": "0f541b8aa712365a939312edb0917ee7bb560b0975319092f6c789eac066dbdf",
+      "languageSha256": null
     },
     "reasons": {
       "serverLevelWithoutDatabase": "An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts); a connection string never does.",
@@ -1546,7 +1577,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the transport requests only the closed endpoint table `PATHS`, every one a read, and a live run left the TSDB's series count unchanged after every provider surface.",
@@ -1594,7 +1626,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it refuses every route that is not a read before any request (vector-family spec 4.4).",
@@ -1643,7 +1676,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the management client's closed route table holds GET routes only, and the AMQP client has no encoder for a publish, a get, a reject or any queue or exchange method, so no request path writes.",
@@ -1694,7 +1728,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Opened on its own: run_redis_read runs under the boundary agent mode uses, the closed table of metadata reads and an ACL user the server refuses every write probe before every command, on that command's own connection, with every answer projected to counts, types and sizes (docs/providers/redis.md section 16).",
@@ -1739,7 +1774,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only GET and HEAD.",
@@ -1786,7 +1822,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the statement grammar holds four read commands (get, next, walk, table), and the valve refuses a Set PDU on every datagram it can read (`src/lib/db/providers/network/snmp/valve.ts`).",
@@ -1848,7 +1885,8 @@
         ]
       ],
       "decidesAlone": false,
-      "grammarSha256": "ef4009ef7a241d0e9979323053f316a0fdfbfa9559acf03e5d6407ba06b5d5d1"
+      "grammarSha256": "ef4009ef7a241d0e9979323053f316a0fdfbfa9559acf03e5d6407ba06b5d5d1",
+      "languageSha256": null
     },
     "reasons": {
       "metadataReadChangesState": "Not marked though its provider declares `resumesBilledCompute`: this engine lists its catalog with `SHOW` statements that need no running warehouse.",
@@ -1891,7 +1929,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "cd205f2352246d37e1b2873d1cdcf23ce6696cbc4a769f3bc69b3564d7fc3c71"
+      "grammarSha256": "cd205f2352246d37e1b2873d1cdcf23ce6696cbc4a769f3bc69b3564d7fc3c71",
+      "languageSha256": null
     },
     "reasons": {
       "agentCredential": "Null although the granted agent credential form is the pair: this engine signs in with a secret and no user, so a user and a password cannot open it."
@@ -1929,7 +1968,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no will parameter at all, so no later edit can register a death certificate by passing a value (5.4).",
@@ -1979,7 +2019,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "3a9ee2629afcb205d6c8e03d15edb4671265d80dc5debc7cdd1e25b00cf68346"
+      "grammarSha256": "3a9ee2629afcb205d6c8e03d15edb4671265d80dc5debc7cdd1e25b00cf68346",
+      "languageSha256": null
     },
     "reasons": {
       "deniedFileAccessRefusal": "Its open refuses a denied handle before it opens anything, and the provider factory before it is built.",
@@ -2032,7 +2073,8 @@
       "readsSqlText": true,
       "confirmExemptForms": [],
       "decidesAlone": false,
-      "grammarSha256": "785de0c50e7f795f39d4bddd06e5d75345de2408f7656547459cf92b95c75133"
+      "grammarSha256": "785de0c50e7f795f39d4bddd06e5d75345de2408f7656547459cf92b95c75133",
+      "languageSha256": null
     },
     "reasons": {
       "statementRead": "Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out (backlog B166).",
@@ -2078,7 +2120,8 @@
       "readsSqlText": false,
       "confirmExemptForms": [],
       "decidesAlone": true,
-      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed"
+      "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
+      "languageSha256": null
     },
     "reasons": {
       "writeReach": "As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it refuses every route that is not a read, and every request that would wake a cold tenant, before any request.",

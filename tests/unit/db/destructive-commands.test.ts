@@ -33,9 +33,9 @@ import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { statementLanguageFamilyDirectory } from "../../helpers/statement-language-family";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in

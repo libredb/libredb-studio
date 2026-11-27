@@ -35,9 +35,9 @@ import {
   valueImportPaths,
   valueSpecifiers,
 } from "./provider-imports/scan";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ALLOWLIST_FILE = "tests/unit/lib/db/provider-imports/inward-allowlist.ts";

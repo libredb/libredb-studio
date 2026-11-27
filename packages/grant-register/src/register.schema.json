@@ -182,34 +182,9 @@
           "additionalProperties": false
         },
         "statementLanguage": {
-          "description": "The statement language agent mode sends the engine, or null where it sends none.",
-          "enum": [
-            "sql",
-            "kubectl",
-            "mongo",
-            "libredbkv",
-            "influxql",
-            "weaviateapi",
-            "qdrantapi",
-            "cypher",
-            "milvusrpc",
-            "rediscli",
-            "etcdctl",
-            "oxiacli",
-            "rabbitread",
-            "kafkaread",
-            "s3api",
-            "fsquery",
-            "snmpget",
-            "netconfrpc",
-            "modbusread",
-            "promql",
-            "opcuaread",
-            "mtconnectread",
-            "mqttread",
-            "sparkplugread",
-            null
-          ]
+          "description": "The statement language agent mode sends the engine, by its name, a lower-case letter then up to 31 lower-case letters or digits, or null where it sends none.",
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9]{0,31}$"
         },
         "agentReadings": {
           "description": "The curated operational readings agent mode may be offered on the engine, each once, in the order a gate offers them.",
@@ -270,6 +245,11 @@
           "description": "The SHA-256, in lower-case hex, of the canonical text of the grammar LibreDB reviewed the engine's SQL text claims with: the grammar as JSON with no white space, every object's members in ascending code-unit order and every list in its own order. Null where the row reviews no grammar, so every SQL text claim is read at its restrictive value.",
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "languageSha256": {
+          "description": "The SHA-256, in lower-case hex, of the canonical text of the statement language data LibreDB reviewed the engine with, in the form grammarSha256 states, or null where the row reviewed the engine as stating none. For an engine that states such data, the statement language, decidesAlone and readsSqlText false are granted only where this is the digest of the data it states.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [
@@ -299,7 +279,8 @@
         "readsSqlText",
         "confirmExemptForms",
         "decidesAlone",
-        "grammarSha256"
+        "grammarSha256",
+        "languageSha256"
       ],
       "additionalProperties": false
     },
@@ -333,7 +314,8 @@
         "readsSqlText": { "$ref": "#/$defs/text" },
         "confirmExemptForms": { "$ref": "#/$defs/text" },
         "decidesAlone": { "$ref": "#/$defs/text" },
-        "grammarSha256": { "$ref": "#/$defs/text" }
+        "grammarSha256": { "$ref": "#/$defs/text" },
+        "languageSha256": { "$ref": "#/$defs/text" }
       },
       "additionalProperties": false
     }

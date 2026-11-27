@@ -22,7 +22,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { RegisterStatementLanguage } from "@libredb/grant-register";
 import { DEFAULT_CONNECT_BUDGET_MS } from "@libredb/provider-sdk/calls";
 import {
   type AgentCredentialForm,
@@ -97,6 +96,7 @@ import {
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
+import { isAgentStatementLanguage } from "@/lib/agent/languages/client";
 import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
@@ -233,7 +233,12 @@ import {
   slotNameAt,
   valueAt,
 } from "./engine-declarations/declared-slots";
-import { legacyAgentCredentialTable, legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyAgentCredentialTable,
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
@@ -251,7 +256,7 @@ const hostPathFields = legacyRegisterTable("hostPathFields");
 const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
 const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 const agentReadings = legacyRegisterTable("agentReadings");
 const readsSqlTextRow = legacyRegisterTable("readsSqlText");
 const confirmExemptFormsRow = legacyRegisterTable("confirmExemptForms");
@@ -4387,7 +4392,6 @@ describe("the vocabularies", () => {
   test("the generated unions are Studio's own types", () => {
     const parity: [
       Equal<ManifestMaintenanceOperation, MaintenanceOperation>,
-      Equal<RegisterStatementLanguage, AgentStatementLanguageId>,
       Equal<FieldName, ConnectionField | SeedOnlyField>,
       Equal<AgentCredentialForm, SeedAgentCredential["form"]>,
       Equal<ManifestHostPathField, HostPathField>,
@@ -4458,16 +4462,22 @@ describe("the vocabularies", () => {
       true,
       true,
       true,
-      true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 36 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 35 }, () => true));
     // The SDK names a statement language by its form, not Studio's list: every language of Studio's agent is a name
     // of that form, so a declaration may request each.
     const form = new RegExp(SCHEMA.$defs.statementLanguage?.pattern ?? "^$");
     const agentLanguages = Object.keys(AGENT_WORKFLOW_VARIANTS);
     expect(agentLanguages.filter((language) => !form.test(language))).toEqual([]);
     expect(agentLanguages).toContain("sql");
+    // The register names a statement language by the same form, not Studio's list: every legacy row grants null or a
+    // language agent mode holds a pack for, which is what agentLanguageOfGrant reads it as.
+    const granted = Object.entries(legacyRegisterTable("statementLanguage")).filter(
+      ([, language]) => language !== null,
+    );
+    expect(granted.filter(([, language]) => !isAgentStatementLanguage(language as string))).toEqual([]);
+    expect(granted.length).toBeGreaterThan(0);
   });
 
   test("the generic fence tags are Studio's", () => {

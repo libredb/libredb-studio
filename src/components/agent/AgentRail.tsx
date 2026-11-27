@@ -34,6 +34,7 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
+import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
 /*
   The rail's single reading of what the selected mode executes. It is the safety strip's
   whole content, and the engine notice below is the same four levels read once more — so
@@ -1137,7 +1138,10 @@ export const AgentRail = React.memo(function AgentRail({
     engine that has none. `canHandOver` is the yes.
   */
   const handOverLanguage = (candidate: AgentRunWorkflowType): AgentStatementLanguageId | null => {
-    const language = connectionType === null ? "sql" : GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType];
+    const language =
+      connectionType === null
+        ? "sql"
+        : agentLanguageOfGrant(connectionType, GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType]);
     const offered =
       mode === "agent" &&
       language !== null &&

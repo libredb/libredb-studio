@@ -1101,6 +1101,23 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "/$defs/operationName",
     ],
   },
+  "M-87": {
+    tests: {
+      "packages/grant-register/tests/reader.test.ts": [
+        "a package row granting readsSqlText false or decidesAlone true with no language digest is refused by name",
+        "the statement language is a name of the form, and no row is refused for naming a language Studio has no module for",
+      ],
+      "tests/unit/db/claim-grants.test.ts": [
+        "the language and decidesAlone are granted for declared language data only under the digest the row reviewed",
+      ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package record's statement language, decides-alone and text-not-SQL grants are its register row's only for the statement language data the row reviewed, and one changed byte of that data grants none of them",
+      ],
+      "tests/unit/db/grant-register-legacy-rows.test.ts": [
+        "every legacy row's language digest equals the digest of its declaration's statement language data, null for null",
+      ],
+    },
+  },
   "V-1": {
     tests: {
       "packages/provider-sdk/tests/values/tags.test.ts": [

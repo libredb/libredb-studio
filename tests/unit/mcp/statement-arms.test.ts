@@ -45,10 +45,10 @@ import {
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyRegisterTable, legacyStatementLanguageTable } from "../../helpers/legacy-register";
 
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");

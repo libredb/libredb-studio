@@ -21,12 +21,16 @@ import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPE
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 
 const agentExecution = legacyRegisterEngines("agentExecution");
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 pinMcpTestEnvironment();
 

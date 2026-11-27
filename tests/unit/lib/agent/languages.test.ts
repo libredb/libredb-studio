@@ -14,6 +14,7 @@ import {
   AGENT_PACK_REQUIREMENTS,
   AGENT_PACK_SHORTFALL_SENTENCES,
   evidenceEventSpec,
+  agentLanguageOfGrant,
   isPackEvidenceEvent,
   languageClientPack,
   projectClientPacks,
@@ -603,6 +604,19 @@ describe("the client packs", () => {
       mqttread: null,
       sparkplugread: null,
     });
+  });
+
+  test("a granted statement language is read as the agent's language where agent mode holds its pack, and refused by name, naming the engine and the language, where it holds none", () => {
+    for (const id of Object.keys(LANGUAGE_IDS) as AgentStatementLanguageId[]) {
+      expect(agentLanguageOfGrant("postgres", id)).toBe(id);
+    }
+    expect(agentLanguageOfGrant("postgres", null)).toBeNull();
+    // A name of the register's form that no pack holds, and a prototype key, which is not a pack either.
+    for (const granted of ["acmeql", "constructor"]) {
+      expect(() => agentLanguageOfGrant("acme", granted)).toThrow(
+        `acme is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
+      );
+    }
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

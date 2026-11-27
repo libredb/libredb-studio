@@ -13,13 +13,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { RegisterGrants, RegisterRow } from "@libredb/grant-register";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
-import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
+import type { ProviderManifest, StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import {
   type EngineGrants,
   STUDIO_GRANT_REGISTER,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SSH_TUNNEL_SENTENCE,
 } from "@/lib/db/claim-grants";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
 import {
   type EngineRecord,
@@ -106,7 +107,8 @@ export function admittedFor(
 
 /**
  * Every member of a register row's grants at its claim's restrictive value, the three host members at the value an
- * engine with no row reads, and no reviewed grammar, `grammarSha256` null: `serverLevelWithoutDatabase` false, the
+ * engine with no row reads, no reviewed grammar, `grammarSha256` null, and no reviewed statement language data,
+ * `languageSha256` null: `serverLevelWithoutDatabase` false, the
  * restrictive value at the choice of database, since its two gates read it at opposite values.
  */
 const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
@@ -137,6 +139,7 @@ const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
   confirmExemptForms: Object.freeze([]),
   decidesAlone: false,
   grammarSha256: null,
+  languageSha256: null,
 });
 
 /**
@@ -194,6 +197,41 @@ export function withLoosestClaims(engine: EditableEngine): void {
     agentReadings: ["sessions", "health"],
   };
   (engine as Record<string, unknown>).agent = postgres.agent;
+}
+
+/**
+ * Statement language data a fixture package declares: `acmeql`, a request language whose statements name no operation,
+ * whose reader's answer is the confirmation gate's whole answer.
+ */
+export const ACME_LANGUAGE_DATA: NonNullable<StatementLanguageData> = Object.freeze({
+  name: "acmeql",
+  confirmation: Object.freeze({
+    operations: Object.freeze([]),
+    reader: "names-no-operation",
+    decidesAlone: true,
+    safetyAnalysis: false,
+    maxTextBytes: 4096,
+  }),
+});
+
+/** `engine` declaring the statement language data `data`, a copy of it, and nothing else changed. */
+export function withStatementLanguageData(
+  engine: EditableEngine,
+  data: NonNullable<StatementLanguageData> = ACME_LANGUAGE_DATA,
+): void {
+  (engine as Record<string, unknown>).statementLanguageData = structuredClone(data);
+}
+
+/**
+ * The digest of the statement language data `manifest`'s first engine declares, as the server catalog's composer
+ * computes it.
+ *
+ * @throws {Error} For a manifest whose first engine declares none.
+ */
+export function declaredLanguageSha256(manifest: ProviderManifest): string {
+  const data = manifest.engines[0]?.statementLanguageData ?? null;
+  if (data === null) throw new Error("the fixture manifest's first engine declares no statement language data");
+  return languageDataSha256(data);
 }
 
 /**

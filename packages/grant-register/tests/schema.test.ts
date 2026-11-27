@@ -186,7 +186,7 @@ describe("the reader and ajv", () => {
         { supersededBy: [] },
         "pair",
       ],
-      statementLanguage: ["sql", "sparkplugread", "mongo", "SQL", "", 1],
+      statementLanguage: ["sql", "sparkplugread", "mongo", "acmeql", "SQL", "", "9ql", 1],
       agentReadings: [["health"], [], ["sessions", "health"], ["health", "health"], ["locks"], "health", null],
       catalogReadCommandShaped: [true, null],
       servesOneSession: ["A sentence.", "", 1],

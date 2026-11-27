@@ -25,6 +25,7 @@ import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import {
   AGENT_PACK_REQUIREMENTS,
+  agentLanguageOfGrant,
   DEFAULT_STATEMENT_LANGUAGE,
   projectClientPacks,
   statementFamilyOf,
@@ -303,8 +304,19 @@ interface AgentAvailabilityTables {
   readonly reviewed: readonly DatabaseType[];
 }
 
+/** Each engine's granted statement language, read as the agent's language once at load (`agentLanguageOfGrant`). */
+const AGENT_STATEMENT_LANGUAGES = Object.freeze(
+  // agentLanguageOfGrant already narrows each value; the cast only restores the key set Object.fromEntries loses.
+  Object.fromEntries(
+    Object.entries(GRANTED_AGENT_STATEMENT_LANGUAGE).map(([type, granted]) => [
+      type,
+      agentLanguageOfGrant(type, granted),
+    ]),
+  ) as AgentAvailabilityTables["languages"],
+);
+
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
-  languages: GRANTED_AGENT_STATEMENT_LANGUAGE,
+  languages: AGENT_STATEMENT_LANGUAGES,
   variants: AGENT_WORKFLOW_VARIANTS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
   reviewed: GRANTED_AGENT_EXECUTION_ENGINES,

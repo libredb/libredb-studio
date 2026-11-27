@@ -61,12 +61,15 @@ import ts from "typescript";
 import {
   admittedFor,
   admittedManifest,
+  ACME_LANGUAGE_DATA,
+  declaredLanguageSha256,
   type EditableEngine,
   generatedDigest,
   packageRow,
   withFieldRules,
   withLegacyProviderOffers,
   withLoosestClaims,
+  withStatementLanguageData,
 } from "../../../helpers/package-catalog";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
@@ -813,8 +816,10 @@ describe("a package engine's register row", () => {
   };
 
   /**
-   * A row granting each claim its loosest value, the three host members and the agent overlay's command-shaped catalog
-   * read granted; it reviews no grammar, so its SQL text members grant nothing.
+   * A row granting each claim its loosest value a package row may grant with no reviewed statement language data, the
+   * three host members and the agent overlay's command-shaped catalog read granted: `readsSqlText` true and
+   * `decidesAlone` false, since the register refuses a package row granting either loosening with no language digest.
+   * It reviews no grammar, so its SQL text members grant nothing.
    */
   const LOOSEST_ROW = {
     writeReach: "none",
@@ -840,10 +845,11 @@ describe("a package engine's register row", () => {
     agentExecution: true,
     ownWords: "scrubbed",
     redaction: { kind: "sql", nameQuote: '"' },
-    readsSqlText: false,
+    readsSqlText: true,
     confirmExemptForms: [],
-    decidesAlone: true,
+    decidesAlone: false,
     grammarSha256: null,
+    languageSha256: null,
   } as const satisfies RegisterGrants;
 
   test("a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists", () => {
@@ -922,6 +928,8 @@ describe("a package engine's register row", () => {
       engine.sqlText.readsSqlText = false;
       engine.sqlText.redaction = { kind: "sql", nameQuote: '"' };
       (engine.sqlText.grammar as Record<string, unknown>).confirmExemptForms = [form];
+      // The language data the row reviewed, so its readsSqlText false and decidesAlone may be granted.
+      withStatementLanguageData(engine);
     });
     const text = admittedFor("acme-text", manifest);
     const reviewed = grammarSha256((manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar);
@@ -933,6 +941,7 @@ describe("a package engine's register row", () => {
           confirmExemptForms: [form],
           decidesAlone: true,
           grammarSha256: reviewed,
+          languageSha256: declaredLanguageSha256(manifest),
           ...grants,
         }),
       );
@@ -964,6 +973,62 @@ describe("a package engine's register row", () => {
     expect(sqlTextOf(grantsOf([text], sqlTextRow({ grammarSha256: other }), "acmetext"))).toEqual(restrictive);
     expect(sqlTextOf(grantsOf([text], sqlTextRow({ grammarSha256: null }), "acmetext"))).toEqual(restrictive);
     expect(sqlTextOf(grantsOf([text], STUDIO_GRANT_REGISTER, "acmetext"))).toEqual(restrictive);
+  });
+
+  test("a package record's statement language, decides-alone and text-not-SQL grants are its register row's only for the statement language data the row reviewed, and one changed byte of that data grants none of them", () => {
+    const declaring = (data: typeof ACME_LANGUAGE_DATA | null) => (engine: EditableEngine) => {
+      engine.agent = { statementLanguage: "acmeql", overlay: { dialect: null, grounding: null } };
+      engine.sqlText.readsSqlText = false;
+      if (data !== null) withStatementLanguageData(engine, data);
+    };
+    const changedByte = {
+      ...ACME_LANGUAGE_DATA,
+      confirmation: { ...ACME_LANGUAGE_DATA.confirmation, maxTextBytes: 4097 },
+    };
+    const manifest = admittedManifest("acmedata", declaring(ACME_LANGUAGE_DATA));
+    const changedManifest = admittedManifest("acmedata", declaring(changedByte));
+    const data = admittedFor("acme-data", manifest);
+    const changed = admittedFor("acme-data", changedManifest);
+    const plain = admittedFor("acme-data", admittedManifest("acmedata", declaring(null)));
+    const grammar = grammarSha256((manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar);
+    const reviewed = declaredLanguageSha256(manifest);
+    const rowOf = (pkg: AdmittedForCatalog, languageSha256: string | null) =>
+      registerOf(
+        packageRow(pkg, "acmedata", {
+          statementLanguage: "acmeql",
+          readsSqlText: false,
+          decidesAlone: true,
+          grammarSha256: grammar,
+          languageSha256,
+        }),
+      );
+    const looseningOf = ({ statementLanguage, decidesAlone, readsSqlText }: EngineGrants) => ({
+      statementLanguage,
+      decidesAlone,
+      readsSqlText,
+    });
+    const NONE = { statementLanguage: null, decidesAlone: false, readsSqlText: true };
+
+    // The data the row reviewed: the language, decides-alone and text-not-SQL are the row's.
+    const granted = grantsOf([data], rowOf(data, reviewed), "acmedata");
+    expect(looseningOf(granted)).toEqual({ statementLanguage: "acmeql", decidesAlone: true, readsSqlText: false });
+    // One changed byte of the data: none of the three, and every other grant as before.
+    expect(declaredLanguageSha256(changedManifest)).not.toBe(reviewed);
+    const unreviewed = grantsOf([changed], rowOf(changed, reviewed), "acmedata");
+    expect(looseningOf(unreviewed)).toEqual(NONE);
+    expect({ ...unreviewed, ...looseningOf(granted) }).toEqual(granted);
+    // A row stating the digest of other data: none of the three.
+    expect(looseningOf(grantsOf([data], rowOf(data, declaredLanguageSha256(changedManifest)), "acmedata"))).toEqual(
+      NONE,
+    );
+    // A row stating no digest grants no loosening claim, which the register refuses, nor the language of the data.
+    expect(() => rowOf(data, null)).toThrow("package-language-unreviewed at /0/grants/languageSha256");
+    const languageOnly = registerOf(
+      packageRow(data, "acmedata", { statementLanguage: "acmeql", grammarSha256: grammar, languageSha256: null }),
+    );
+    expect(looseningOf(grantsOf([data], languageOnly, "acmedata"))).toEqual(NONE);
+    // A package stating no data under a row that reviewed some: none of the three.
+    expect(looseningOf(grantsOf([plain], rowOf(plain, reviewed), "acmedata"))).toEqual(NONE);
   });
 
   test("a package engine requesting a statement language Studio has no module for is composed with no statement language granted", () => {

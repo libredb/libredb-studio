@@ -26,12 +26,16 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../../helpers/legacy-register";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 /**
  * The manifest against what each provider declares, as `engine-support.test.ts` holds `GRANTED_AGENT_EXECUTION_ENGINES` to

@@ -11,9 +11,9 @@ import { UnknownProviderError } from "@/lib/db/errors";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { legacyRegisterTable } from "../../../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 /**
  * The run resolver (#1821): the server facet one run reads, from its persisted statement language and its connection

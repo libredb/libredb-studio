@@ -16,16 +16,23 @@
  * rows are hand-reviewed data, written once and edited by review, never projected from a declaration. The SQL text
  * members, `redaction`, `readsSqlText`, `confirmExemptForms` and `decidesAlone`, are reviewed for one grammar, the one
  * whose digest the row's `grammarSha256` states (the SHA-256 of the grammar's canonical text, which the schema's
- * description of the member defines), and grant nothing under any other.
+ * description of the member defines), and grant nothing under any other. A row's `languageSha256` states the digest of
+ * the statement language data it reviewed the engine with, or null where it reviewed the engine as stating none, and
+ * for an engine that states such data `statementLanguage`, `decidesAlone` and `readsSqlText: false` are granted only
+ * under that digest. `statementLanguage` is a name of the engine id's form, not a list of Studio's languages, so a row
+ * may grant a language Studio holds no module for.
  *
  * The reader validates the register against its schema when it reads it (src/schema-subset.ts, which compiles no code,
- * so it runs in the browser and the VS Code webview as on the server), then refuses three code rules:
+ * so it runs in the browser and the VS Code webview as on the server), then refuses four code rules:
  * - `duplicate-key`: two rows with one key, two legacy rows of one engine, or two package rows of one name, version,
  *   digest and engine;
  * - `legacy-engine-not-served`: a legacy row of an engine the legacy adapter does not serve. The served set is the
  *   caller's, since this package imports nothing of Studio's;
  * - `package-command-redaction`: a package row granting a `command` redaction, whose reader Studio binds only for an
- *   engine its legacy adapter serves, through its own grammar function table, so a package row grants `sql` or `none`.
+ *   engine its legacy adapter serves, through its own grammar function table, so a package row grants `sql` or `none`;
+ * - `package-language-unreviewed`: a package row granting `readsSqlText: false` or `decidesAlone: true` with a null
+ *   `languageSha256`, so a package engine that states no statement language data is never granted either claim. A
+ *   legacy row is not subject to it: a legacy engine's language is Studio's own module, reviewed with Studio's code.
  * Every refusal of one read is reported together in one error, one line each, `<rule> at <JSON Pointer>: <sentence>`,
  * naming no value of the register beyond a key's name. The code rules are read only once the schema admits the
  * register.
@@ -39,36 +46,6 @@ import { schemaRefusals, where } from "./schema-subset";
 
 /** The key of a legacy row: the source name of Studio's legacy adapter. */
 export const LEGACY_KEY = "@libredb/studio";
-
-/**
- * A statement language agent mode may send an engine: the schema's `statementLanguage` enum but its null, held equal
- * to it by tests/types.test.ts.
- */
-export type RegisterStatementLanguage =
-  | "sql"
-  | "kubectl"
-  | "mongo"
-  | "libredbkv"
-  | "influxql"
-  | "weaviateapi"
-  | "qdrantapi"
-  | "cypher"
-  | "milvusrpc"
-  | "rediscli"
-  | "etcdctl"
-  | "oxiacli"
-  | "rabbitread"
-  | "kafkaread"
-  | "s3api"
-  | "fsquery"
-  | "snmpget"
-  | "netconfrpc"
-  | "modbusread"
-  | "promql"
-  | "opcuaread"
-  | "mtconnectread"
-  | "mqttread"
-  | "sparkplugread";
 
 /**
  * A curated operational reading agent mode may be offered on an engine: the schema's `agentReadings` item enum, held
@@ -113,7 +90,7 @@ export interface RegisterGrants {
     readonly form: "pair" | "dedicated-pair" | "secret";
     readonly supersededBy: readonly string[];
   } | null;
-  readonly statementLanguage: RegisterStatementLanguage | null;
+  readonly statementLanguage: string | null;
   readonly agentReadings: readonly RegisterAgentReading[];
   readonly catalogReadCommandShaped: boolean;
   readonly servesOneSession: string | null;
@@ -124,6 +101,7 @@ export interface RegisterGrants {
   readonly confirmExemptForms: readonly (readonly string[])[];
   readonly decidesAlone: boolean;
   readonly grammarSha256: string | null;
+  readonly languageSha256: string | null;
 }
 
 /** A package's key: its name, version and digest, in the providers lock's forms. */
@@ -189,6 +167,15 @@ export function parseGrantRegister(value: unknown, legacyEngines: readonly strin
     if ("package" in row && row.grants.redaction.kind === "command") {
       lines.push(
         `package-command-redaction at /${index}/grants/redaction: a package row grants no command redaction, since Studio binds a command reader only for an engine its legacy adapter serves`,
+      );
+    }
+    if (
+      "package" in row &&
+      row.grants.languageSha256 === null &&
+      (!row.grants.readsSqlText || row.grants.decidesAlone)
+    ) {
+      lines.push(
+        `package-language-unreviewed at /${index}/grants/languageSha256: a package row grants readsSqlText false or decidesAlone true only with the digest of the statement language data it reviewed`,
       );
     }
   });

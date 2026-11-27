@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import committed from "../src/register.json";
 import { LEGACY_KEY, parseGrantRegister, readGrantRegister } from "../src/index";
 import { schemaRefusals } from "../src/schema-subset";
-import { digest, ENGINE_A, ENGINE_B, grants, legacyRow, omit, packageRow } from "./helpers/rows";
+import { digest, ENGINE_A, ENGINE_B, grants, hexDigest, legacyRow, omit, packageRow } from "./helpers/rows";
 
 const SERVED = [ENGINE_A, ENGINE_B];
 
@@ -155,12 +155,88 @@ describe("refusals", () => {
         parseGrantRegister([legacyRow(ENGINE_A, { grants: omit(grants(), "grammarSha256") })], SERVED),
       ),
     ).toEqual(['missing-key at /0/grants: the key "grammarSha256" is missing, which the schema requires here']);
+    expect(refusalLines(() => parseGrantRegister(rowWith({ languageSha256: "AB" }), SERVED))).toEqual([
+      "pattern-mismatch at /0/grants/languageSha256: the value does not have the form the schema defines here",
+    ]);
+    expect(
+      refusalLines(() =>
+        parseGrantRegister([legacyRow(ENGINE_A, { grants: omit(grants(), "languageSha256") })], SERVED),
+      ),
+    ).toEqual(['missing-key at /0/grants: the key "languageSha256" is missing, which the schema requires here']);
     // Vacuity: a reviewed grammar's digest and an exempt form of keywords are admitted.
     const reviewed = {
-      grammarSha256: digest().slice("sha256:".length),
+      grammarSha256: hexDigest(),
+      languageSha256: hexDigest(),
       confirmExemptForms: [["ALTER", "SESSION", "SET"]],
     };
     expect(() => parseGrantRegister(rowWith(reviewed), SERVED)).not.toThrow();
+  });
+
+  test("a package row granting readsSqlText false or decidesAlone true with no language digest is refused by name", () => {
+    const line =
+      "package-language-unreviewed at /0/grants/languageSha256: a package row grants readsSqlText false or decidesAlone true only with the digest of the statement language data it reviewed";
+    const packageWith = (overrides: Record<string, unknown>) => [
+      packageRow(ENGINE_B, {}, { grants: grants(overrides) }),
+    ];
+
+    expect(refusalLines(() => parseGrantRegister(packageWith({ readsSqlText: false }), SERVED))).toEqual([line]);
+    expect(refusalLines(() => parseGrantRegister(packageWith({ decidesAlone: true }), SERVED))).toEqual([line]);
+    // Both claims on one row are one refusal, at the one member that would admit them.
+    expect(
+      refusalLines(() => parseGrantRegister(packageWith({ readsSqlText: false, decidesAlone: true }), SERVED)),
+    ).toEqual([line]);
+    // It is reported together with every other refusal of the read.
+    expect(
+      refusalLines(() =>
+        parseGrantRegister(
+          [
+            packageRow(ENGINE_B, {}, { grants: grants({ decidesAlone: true }) }),
+            packageRow(ENGINE_A, {}, { grants: grants({ redaction: { kind: "command", reader: "redactionReader" } }) }),
+          ],
+          SERVED,
+        ),
+      ),
+    ).toEqual([
+      line,
+      "package-command-redaction at /1/grants/redaction: a package row grants no command redaction, since Studio binds a command reader only for an engine its legacy adapter serves",
+    ]);
+    // Vacuity: a package row stating a language digest is admitted with both claims, and a legacy row with none.
+    const reviewed = { readsSqlText: false, decidesAlone: true, languageSha256: hexDigest() };
+    const admitted = parseGrantRegister(packageWith(reviewed), SERVED);
+    expect(admitted).toBeDefined();
+    expect(() =>
+      parseGrantRegister(
+        [legacyRow(ENGINE_A, { grants: grants({ readsSqlText: false, decidesAlone: true }) })],
+        SERVED,
+      ),
+    ).not.toThrow();
+    // A package row granting neither claim needs no language digest.
+    expect(() => parseGrantRegister(packageWith({}), SERVED)).not.toThrow();
+  });
+
+  test("the statement language is a name of the form, and no row is refused for naming a language Studio has no module for", () => {
+    const rowWith = (language: unknown) => [legacyRow(ENGINE_A, { grants: grants({ statementLanguage: language }) })];
+    const form = "the value does not have the form the schema defines here";
+
+    for (const language of ["SQL", "", "9ql", `a${"b".repeat(32)}`]) {
+      expect(refusalLines(() => parseGrantRegister(rowWith(language), SERVED))).toEqual([
+        `pattern-mismatch at /0/grants/statementLanguage: ${form}`,
+      ]);
+    }
+    expect(refusalLines(() => parseGrantRegister(rowWith(1), SERVED))).toEqual([
+      "wrong-type at /0/grants/statementLanguage: the value is not of the type the schema defines here, string or null",
+    ]);
+    // A language Studio has no module for, on a legacy row and on a package row, and the longest name of the form.
+    for (const language of ["acmeql", `a${"b".repeat(31)}`]) {
+      const register = parseGrantRegister(
+        [
+          legacyRow(ENGINE_A, { grants: grants({ statementLanguage: language }) }),
+          packageRow(ENGINE_B, {}, { grants: grants({ statementLanguage: language }) }),
+        ],
+        SERVED,
+      );
+      expect(register.rowFor({ legacy: LEGACY_KEY, engine: ENGINE_A })?.grants.statementLanguage).toBe(language);
+    }
   });
 
   test("a register that is not a list is refused at the top level", () => {

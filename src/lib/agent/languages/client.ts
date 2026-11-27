@@ -109,6 +109,21 @@ export function isAgentStatementLanguage(value: string): value is AgentStatement
   return LIVE_STATEMENT_LANGUAGES.has(value);
 }
 
+/**
+ * The agent's statement language for `engine`'s granted statement language `granted`: `granted` itself where it is
+ * null or a language this build holds a pack for. A grant reads a language as a name of the register's form, not as
+ * Studio's list, so this is the one place a granted name meets the agent's packs; every caller reaches only a legacy
+ * engine today, whose row grants an agent language, so a name with no pack is a host defect.
+ *
+ * @throws {Error} Naming the engine and the language, where agent mode holds no pack for `granted`.
+ */
+export function agentLanguageOfGrant(engine: string, granted: string | null): AgentStatementLanguageId | null {
+  if (granted === null || isAgentStatementLanguage(granted)) return granted;
+  throw new Error(
+    `${engine} is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
+  );
+}
+
 /** The client facet for `language`. The record is total, so a typed id always has one. */
 export function languageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {
   return CLIENT_PACKS[language];

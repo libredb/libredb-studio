@@ -43,7 +43,7 @@ import { namedList } from "@/lib/agent/engine-support";
 import { GRANTED_AGENT_EXECUTION_ENGINES, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { languageClientPack } from "@/lib/agent/languages/client";
+import { agentLanguageOfGrant, languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";
 import type { AgentPostureCopy, StatementBudgets } from "@/lib/agent/languages/pack";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -320,7 +320,8 @@ export function agentPosture(input: {
   readonly refusedHere?: string | null;
 }): AgentPosture {
   if (input.engine !== null) assertDatabaseType(input.engine);
-  const language = input.engine === null ? null : GRANTED_AGENT_STATEMENT_LANGUAGE[input.engine];
+  const language =
+    input.engine === null ? null : agentLanguageOfGrant(input.engine, GRANTED_AGENT_STATEMENT_LANGUAGE[input.engine]);
   if (input.mode === "planning") return planPosture(language);
   if (input.engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);

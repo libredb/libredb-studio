@@ -34,7 +34,8 @@
  *   review of the agent overlay's claim that its catalog read is a command, `grantEngineClaims` (./claim-grants)
  *   against the engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its
  *   package's name, version and digest, or, where the register holds none, each claim at its restrictive value; its
- *   SQL text claims only for the grammar the row reviewed, and whether it did;
+ *   SQL text claims only for the grammar the row reviewed, and whether it did, and its statement language,
+ *   decides-alone and text-not-SQL claims also only for the statement language data the row reviewed;
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *

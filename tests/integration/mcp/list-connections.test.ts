@@ -25,14 +25,18 @@ import {
   type SeedEntry,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
-import { legacyRegisterEngines, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  legacyRegisterEngines,
+  legacyRegisterTable,
+  legacyStatementLanguageTable,
+} from "../../helpers/legacy-register";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 const STAND_IN_AGENT_PASSWORD_MARKER = ["not", "a", "real", "agent", "password", "marker"].join("-");
 

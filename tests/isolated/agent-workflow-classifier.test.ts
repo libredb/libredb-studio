@@ -17,9 +17,9 @@ import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
-import { legacyRegisterTable } from "../helpers/legacy-register";
+import { legacyStatementLanguageTable } from "../helpers/legacy-register";
 
-const statementLanguage = legacyRegisterTable("statementLanguage");
+const statementLanguage = legacyStatementLanguageTable();
 
 interface GenerateTextCall {
   readonly model: unknown;

@@ -30,7 +30,14 @@ import type { DatabaseConnection } from "@/lib/types";
 import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { randomUUID } from "node:crypto";
-import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../../helpers/package-catalog";
+import {
+  admittedFor,
+  admittedManifest,
+  declaredLanguageSha256,
+  type EditableEngine,
+  packageRow,
+  withStatementLanguageData,
+} from "../../../helpers/package-catalog";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 
 const NOW = Date.UTC(2026, 10, 22, 12, 0, 0);
@@ -65,8 +72,9 @@ function request(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
 /**
  * The record the server catalog composes for a package serving engine `id`, its minimal manifest changed by `edit`:
  * against Studio's register, which holds no row for it, where `grants` is absent; otherwise against a register holding
- * its row granting `grants`, `grammarSha256` the digest of the grammar it declares unless `grants` names another, every
- * other member at its restrictive value.
+ * its row granting `grants`, `grammarSha256` the digest of the grammar it declares and `languageSha256` the digest of
+ * the statement language data it declares, or null where it declares none, unless `grants` names another, every other
+ * member at its restrictive value.
  */
 function packageEngine(
   id: string,
@@ -80,7 +88,13 @@ function packageEngine(
     grants === undefined
       ? STUDIO_GRANT_REGISTER
       : parseGrantRegister(
-          [packageRow(pkg, id, { grammarSha256: grammarSha256(declared), ...grants })],
+          [
+            packageRow(pkg, id, {
+              grammarSha256: grammarSha256(declared),
+              languageSha256: manifest.engines[0]?.statementLanguageData ? declaredLanguageSha256(manifest) : null,
+              ...grants,
+            }),
+          ],
           LEGACY_ENGINE_IDS,
         );
   const engine = composeServerCatalog([pkg], [], register).engines.get(id);
@@ -695,8 +709,12 @@ describe("the gate on an engine a provider package serves", () => {
 
   test("a package's loosening claims are counted only as its register row grants them for the grammar it reviewed: a granted text-not-SQL claim and exempt form spare, ungranted ones still ask", async () => {
     const form = ["ALTER", "SESSION", "SET"];
-    /** The declaration claims its text is not SQL and exempts ALTER SESSION SET. */
+    /**
+     * The declaration claims its text is not SQL and exempts ALTER SESSION SET, and states the statement language data
+     * its row reviews, without which no package row grants text-not-SQL.
+     */
     const loose = (declaration: EditableEngine) => {
+      withStatementLanguageData(declaration);
       const sqlText = declaration.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
       sqlText.readsSqlText = false;
       sqlText.grammar.confirmExemptForms = [form];
@@ -718,7 +736,7 @@ describe("the gate on an engine a provider package serves", () => {
       status: 428,
     });
     // A claim the row does not grant, and a claim only the row lists, is read at its restrictive value.
-    for (const engine of [declared(loose), declared(undefined, both)]) {
+    for (const engine of [declared(loose), declared(withStatementLanguageData, both)]) {
       for (const sql of [...spared, "DELETE FROM t"]) {
         expect([sql, await gateRun(packageRequest({ engine, sql }), clock)]).toMatchObject([
           sql,
