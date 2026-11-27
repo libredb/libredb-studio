@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "24a2a41ff063c0207e6f71dfc45ff49911c95c2e1ad245e42dcaf457693a0a09";
+export const MANIFEST_SCHEMA_SHA256 = "8a6ffebcf16dd3303d4cf494a27be99dd1964e814dd9e8f309ed63957779fe82";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -1459,7 +1459,7 @@ export type InlineEditRefusal = {
 
 /** The engine's object model, which an engine whose package offers objects.tree, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none. */
 export interface ObjectModel {
-  /** The engine's container levels, outermost first: none where every object is addressed by its bare name, one, or a catalog and the schema inside it. */
+  /** The engine's container levels, outermost first, exactly one of four lists: none where every object is addressed by its bare name, a lone schema, a lone catalog, or a catalog then the schema inside it. */
   readonly containerLevels: readonly ContainerLevel[];
   readonly containerPathShapes: ContainerPathShapes;
   /** engine: the schema level's segment of a container or object path is the engine's own spelling of a name of one or more parts joined by dots, each bare or quoted with the engine's identifier quote; null where every segment is a raw name. */
@@ -1481,7 +1481,7 @@ export interface ObjectModel {
   readonly maskedNameKinds: readonly ObjectKindId[];
 }
 
-/** One container level, in the engine's own words. id: its structural role, catalog for the outer of two levels and schema for the only or the inner one. */
+/** One container level, in the engine's own words. id: its structural role, catalog for the outer of two levels or a lone catalog, and schema for the inner of two levels or a lone schema, as containerLevels admits them. */
 export interface ContainerLevel {
   readonly id: "catalog" | "schema";
   /** The engine's own word for one container of the level, singular. */

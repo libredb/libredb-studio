@@ -5050,6 +5050,29 @@ describe("the object model", () => {
     ]);
   });
 
+  test("a container level list other than none, schema, catalog, or catalog then schema is refused at the levels' pointer", () => {
+    const level = (id: string, label: string) => ({ id, label, labelPlural: `${label}s` });
+    const leveled = (levels: { id: string; label: string; labelPlural: string }[]) =>
+      modelled((m) => (objectsOf(m).containerLevels = levels));
+
+    expect(refusalsFor(leveled([level("schema", "Schema"), level("catalog", "Catalog")]))).toEqual([
+      refusal("object-level-order", `${OBJECTS}/containerLevels`),
+    ]);
+    // Each list a shipped engine states is admitted: none, a lone schema, a lone catalog, and a catalog then the schema
+    // inside it.
+    expect(refusalsFor(leveled([]))).toEqual([]);
+    expect(refusalsFor(leveled([level("schema", "Schema")]))).toEqual([]);
+    expect(refusalsFor(leveled([level("catalog", "Database")]))).toEqual([]);
+    expect(refusalsFor(leveled([level("catalog", "Catalog"), level("schema", "Schema")]))).toEqual([]);
+    // A repeated level is the duplicate rule's refusal alone, not this one's too.
+    expect(refusalsFor(leveled([level("catalog", "Catalog"), level("catalog", "Folder")]))).toEqual([
+      refusal("object-level-duplicate", `${OBJECTS}/containerLevels/1/id`),
+    ]);
+    expect(
+      validator.validateEngine(leveled([level("schema", "Schema"), level("catalog", "Catalog")]).engines[0]),
+    ).toEqual({ admitted: false, refusals: [refusal("object-level-order", "/objects/containerLevels")] });
+  });
+
   test("a second row action stating activates for a kind an earlier activating action names is refused at its activates", () => {
     const twice = modelled((m) => {
       objectsOf(m).rowActions = [

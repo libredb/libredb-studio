@@ -133,6 +133,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "plan-estimate-prefix-executes",
   "object-model-missing",
   "object-level-duplicate",
+  "object-level-order",
   "object-kind-duplicate",
   "object-kind-unstated",
   "object-row-activation-duplicate",
@@ -837,8 +838,16 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
 }
 
 /**
+ * The container level lists an object model may state, outermost first, each as its level ids joined by commas: none, a
+ * lone schema, a lone catalog, and a catalog then the schema inside it. These are the lists the shipped engines state,
+ * and the ones Studio's object kind readers read, which take a catalog level for the outer one wherever it stands.
+ */
+const CONTAINER_LEVEL_LISTS: ReadonlySet<string> = new Set(["", "schema", "catalog", "catalog,schema"]);
+
+/**
  * The rules of an engine's object model the schema cannot state, at pointers under `at`: each container level id and
- * each object kind id once, the later repeat refused, and every kind the declaration names elsewhere one the model
+ * each object kind id once, the later repeat refused, the container levels one of `CONTAINER_LEVEL_LISTS`, refused at
+ * the levels' pointer (a list with a repeated level is the duplicate rule's refusal alone), and every kind the declaration names elsewhere one the model
  * states: a masked kind, a row action's kind, a child kind, an attached kind, a maintenance spec's kind and a catalog
  * capture's kind word. A repeated kind still counts as stated, so only the repeat itself is refused. At most one row
  * action states `activates` for a kind: a later activating action naming a kind an earlier one names is refused at its
@@ -857,6 +866,10 @@ function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
     if (levels.has(id)) refusals.push(schemaRefusal("object-level-duplicate", `${base}/containerLevels/${index}/id`));
     levels.add(id);
   });
+  const levelList = model.containerLevels.map(({ id }) => id).join(",");
+  if (levels.size === model.containerLevels.length && !CONTAINER_LEVEL_LISTS.has(levelList)) {
+    refusals.push(schemaRefusal("object-level-order", `${base}/containerLevels`));
+  }
   const stated = new Set<string>();
   model.objectKinds.forEach(({ id }, index) => {
     if (stated.has(id)) refusals.push(schemaRefusal("object-kind-duplicate", `${base}/objectKinds/${index}/id`));
@@ -1516,6 +1529,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The engine declaration at ${at} states no object model, which an engine of a package that offers objects.tree states.`;
     case "object-level-duplicate":
       return `The container level id at ${at} repeats the id of an earlier level of the engine's object model.`;
+    case "object-level-order":
+      return `The container levels at ${at} are not none, a schema, a catalog, or a catalog then the schema inside it.`;
     case "object-kind-duplicate":
       return `The object kind id at ${at} repeats the id of an earlier kind of the engine's object model.`;
     case "object-kind-unstated":
