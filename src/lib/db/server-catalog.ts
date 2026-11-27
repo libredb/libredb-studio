@@ -41,7 +41,8 @@
  * - `statementLanguageRow`: the engine's statement language row, the one the confirmation gate, the console text bound
  *   and the editor's refusal read (`statementLanguageRow` in ./statement-language-row), composed for a package from
  *   the statement language data its declaration states and for a legacy engine from Studio's code row of its id, once,
- *   when the record is composed; null where the engine's statements are SQL or it states no SQL text;
+ *   when the record is composed; null where the engine's statements are SQL, or where it states no SQL text and no
+ *   statement language data;
  * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
  *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
@@ -208,11 +209,11 @@ export interface EngineRecord {
    */
   readonly statementGrammar: SqlGrammar | null;
   /**
-   * The engine's statement language row, or null where its statements are SQL or it states no SQL text: what the
-   * confirmation gate reads beside the statement grammar, through the reading of the record (`readingOfRecord` in
-   * src/lib/sql/dangerous-query.ts), and what the console text bound and the editor's refusal are read from
-   * (`rowTextByteLimit` and `rowRefusal` in ./statement-language-row). The row's claims count only as `grants` grant
-   * them.
+   * The engine's statement language row, or null where its statements are SQL, or where it states no SQL text and no
+   * statement language data: what the confirmation gate reads beside the statement grammar, through the reading of the
+   * record (`readingOfRecord` in src/lib/sql/dangerous-query.ts), and what the console text bound and the editor's
+   * refusal are read from (`rowTextByteLimit` and `rowRefusal` in ./statement-language-row). The row's claims count
+   * only as `grants` grant them.
    */
   readonly statementLanguageRow: DestructiveVocabulary | null;
   /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */
