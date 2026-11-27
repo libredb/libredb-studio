@@ -1079,6 +1079,28 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
   },
+  "M-86": {
+    tests: {
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "an engine declaration states its statement language data or null, and the data's name equals its agent statement language",
+        "a statement language's confirmation states its operations, its reader kind, whether it decides alone, whether the safety analysis may read it and its byte bound, and names no function",
+        "the statement language name is a form, not Studio's list",
+        "statement language data named after the SQL family is refused at its name, since an engine that speaks SQL states null",
+        "a reader kind that names no operation lists no operation",
+        "an engine declaration's statement language data is refused at its own pointer under validateEngine",
+        "no statement language data refusal carries the name or the operation it refuses",
+      ],
+      "tests/unit/db/engine-declarations.test.ts": [
+        "every legacy declaration states its statement language data as null, which no projection reads",
+      ],
+    },
+    schema: [
+      "/$defs/statementLanguageData",
+      "/$defs/statementConfirmation",
+      "/$defs/operationReaderKind",
+      "/$defs/operationName",
+    ],
+  },
   "V-1": {
     tests: {
       "packages/provider-sdk/tests/values/tags.test.ts": [

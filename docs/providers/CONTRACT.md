@@ -451,11 +451,11 @@ An engine that speaks a statement language of its own, not SQL, states that lang
 The data names the language and states its confirmation part (M-86), the request form agent mode admits and the text agent mode shows, every member required as M-8 says, with the manifest schema as its vocabulary.
 Not every part of the data is in the schema yet, so nothing checks this.
 
-### M-86 (informative): The confirmation part of a statement language
+### M-86 (normative): The confirmation part of a statement language
 
 The confirmation part states the operations whose statements ask a confirmation, which of core's reader kinds names the operations a statement runs, and whether that reading is the confirmation's whole answer or the shared dangerous keywords are also read in the statement.
 It also states whether Studio may send the language's statements to the AI safety analysis, and the most UTF-8 bytes a statement may hold, past which Studio refuses the statement before it is sent, or null for no bound.
-It names no function of the package, and the schema has no such member yet, so nothing checks this.
+It names no function of the package, and no confirmation check reads it yet (C-38).
 
 ### M-87 (informative): A register row reviews an engine's statement language data
 
