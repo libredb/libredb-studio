@@ -26,6 +26,7 @@ import {
   budgetRefusalError,
   budgetStopError,
   HOST_DEFECT_PREFIX,
+  HostDefectError,
   refusalError,
   stopError,
 } from "@/lib/provider-host/access";
@@ -146,6 +147,45 @@ describe("the accessor", () => {
         expect(errorOutcome(error)).toBe("not-sent");
       }
     }
+  });
+
+  test("a refused record holding an object model refusal beside a refusal no row reads is a host defect naming every refusal, none dropped", () => {
+    const level: CallRefusal = { rule: "request-level-not-stated", pointer: "/container" };
+    const kind: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
+    const view = { caller: callerOf(), deadlineSentence };
+    const budget: BudgetView = { caller: callerOf(), timeRefusal: () => new StudioTimeBudgetRefusal(randomUUID()) };
+    const handled = new Set([
+      "call-signal-aborted",
+      "call-deadline-passed",
+      "row-over-page",
+      "facet-not-offered",
+      "request-level-not-stated",
+      "request-kind-not-stated",
+    ]);
+    const others = CALL_REFUSAL_RULES.filter((rule) => !handled.has(rule));
+
+    for (const rule of others) {
+      // A field the rows of a refusing session do not read: only offset and params are answered by name.
+      const other: CallRefusal = { rule, pointer: "/x", name: "readOnly", limit: 1, size: 2 };
+      for (const refusals of [
+        [level, other],
+        [other, kind],
+        [level, other, kind],
+      ]) {
+        for (const error of [
+          refusalError(refused(refusals, false), view),
+          budgetRefusalError(refused(refusals, false), budget),
+        ]) {
+          expect(error).toBeInstanceOf(HostDefectError);
+          expect((error as HostDefectError).refusals).toEqual(refusals);
+          expect(error.message).toBe(
+            `${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`,
+          );
+          expect(errorKind(error)).toBe("internal");
+        }
+      }
+    }
+    expect(others.length).toBeGreaterThan(0);
   });
 
   test("refused params of a session that refuses them are FacetNotOfferedError, not-sent", () => {

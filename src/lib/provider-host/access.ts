@@ -24,7 +24,8 @@
  * A tree request naming a container level or an object kind the session's object model does not state
  * (`request-level-not-stated`, `request-kind-not-stated`, clause M-89), on a package's session or the bridge's, is
  * `StudioObjectModelRefusal`, Studio's own, one sentence per refusal in order and never a value of the request,
- * answered `not-sent`.
+ * answered `not-sent`. A record holding such a refusal beside a rule no row reads is the host defect below, naming
+ * every refusal it holds.
  *
  * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
  * legacy caller asks for and is sent a scope only where it offers `console.endScope`, so no provider can cause one: a
@@ -159,13 +160,16 @@ const MODEL_REFUSAL_SENTENCES: Readonly<Partial<Record<CallRefusal["rule"], stri
 /**
  * The error of a tree request naming a level or a kind the session's object model does not state, refused before the
  * call and marked not-sent: one of Studio's sentences per such refusal, in order; undefined when the record holds none.
+ * A record holding such a refusal beside any other rule is the host defect of every refusal it holds, so no rule is
+ * dropped from the answer.
  */
-function objectModelError(refusals: readonly CallRefusal[]): StudioObjectModelRefusal | undefined {
+function objectModelError(refusals: readonly CallRefusal[]): StudioObjectModelRefusal | HostDefectError | undefined {
   const sentences = refusals.flatMap((refusal) => {
     const sentence = MODEL_REFUSAL_SENTENCES[refusal.rule];
     return sentence === undefined ? [] : [sentence];
   });
   if (sentences.length === 0) return undefined;
+  if (sentences.length < refusals.length) return new HostDefectError(refusals);
   return new StudioObjectModelRefusal(sentences.join(" "));
 }
 
