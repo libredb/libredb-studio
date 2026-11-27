@@ -1131,6 +1131,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declarations.test.ts": [
         "every declaration states its statement language data, Kafka's as data and every other as null, and only the statement language module projects it",
       ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "a package engine's declared language data, reviewed by its row with decidesAlone granted, runs a SQL write, answers 413 past its stated byte bound, and one changed byte reads the statement as SQL",
+      ],
     },
     schema: [
       "/$defs/statementLanguageData",
