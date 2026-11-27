@@ -22,6 +22,7 @@ import {
   type AgentCredentialForm,
   type AgentCredentialFormClaim,
   type AgentLanguageText,
+  type AgentMcpText,
   type AgentRequestForm,
   type AgentText,
   type AgentRequestKeyCheck,
@@ -942,23 +943,51 @@ export const AGENT_TEXT_FILLS = Object.freeze({
 });
 
 /**
+ * The values Studio fills into each text of a statement language's MCP statement tool, by the text's name under
+ * `statementLanguageData.agent.mcp.text`: engines, the served engines' names; limits, the result limits every statement
+ * tool shares; shown, the number of rows a cut result returned. A text names only its own values in a fill, which
+ * `agentTextRefusals` holds as it holds `AGENT_TEXT_FILLS`; core fills each text from this table. A table of its own,
+ * since the tool may be null where every group of `AGENT_TEXT_FILLS` is required. Frozen whole, each list included.
+ */
+export const AGENT_MCP_TEXT_FILLS = Object.freeze({
+  title: fills(),
+  description: fills("engines", "limits"),
+  fewerFields: fills(),
+  readPast: fills("shown"),
+  rowOverCap: fills(),
+} as const satisfies { readonly [Name in keyof AgentMcpText]: readonly string[] });
+
+/**
+ * The fills of the texts in `texts`, at pointers under `at`, their group's pointer, that name a value Studio does not
+ * fill into that text: one rule for every agent text, `fills` listing the values each text of the group takes.
+ */
+function textFillRefusals(
+  texts: Readonly<Record<string, AgentText>>,
+  fills: Readonly<Record<string, readonly string[]>>,
+  at: string,
+): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  for (const [name, taken] of Object.entries(fills)) {
+    const parts = texts[name] as AgentText;
+    if (typeof parts === "string") continue;
+    parts.forEach((part, index) => {
+      if (typeof part !== "string" && !taken.includes(part.fill)) {
+        refusals.push(schemaRefusal("agent-text-fill-unknown", `${at}/${name}/${index}/fill`));
+      }
+    });
+  }
+  return refusals;
+}
+
+/**
  * The fills of an agent text, at pointers under `at`, the text's pointer, that name a value Studio does not fill into
  * that text (`AGENT_TEXT_FILLS`).
  */
 function agentTextRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
-  const refusals: SchemaRefusal[] = [];
-  for (const [group, members] of Object.entries(AGENT_TEXT_FILLS)) {
-    for (const [name, fills] of Object.entries(members as Readonly<Record<string, readonly string[]>>)) {
-      const parts = (text as unknown as Record<string, Record<string, AgentText>>)[group][name];
-      if (typeof parts === "string") continue;
-      parts.forEach((part, index) => {
-        if (typeof part !== "string" && !fills.includes(part.fill)) {
-          refusals.push(schemaRefusal("agent-text-fill-unknown", `${at}/${group}/${name}/${index}/fill`));
-        }
-      });
-    }
-  }
-  return refusals;
+  const groups = text as unknown as Readonly<Record<string, Readonly<Record<string, AgentText>>>>;
+  return Object.entries(AGENT_TEXT_FILLS).flatMap(([group, members]) =>
+    textFillRefusals(groups[group] as Readonly<Record<string, AgentText>>, members, `${at}/${group}`),
+  );
 }
 
 /**
@@ -1016,8 +1045,8 @@ function requestFormRefusals(form: AgentRequestForm, at: string): SchemaRefusal[
  * the engine's agent statement language where both are stated; it is never the SQL family's name, since an engine that
  * speaks SQL states null; a reader kind that names no operation lists none, since no reader could ever answer one it
  * lists; and an agent part is stated only for an engine whose agent mode sends a statement, with a request form read
- * whole (`requestFormRefusals`) and a text whose fills each name a value Studio fills into that text
- * (`agentTextRefusals`).
+ * whole (`requestFormRefusals`), a text, and an MCP statement tool's texts where it states one, whose fills each name a
+ * value Studio fills into that text (`agentTextRefusals`, `textFillRefusals`).
  */
 function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const data = engine.statementLanguageData;
@@ -1037,6 +1066,10 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
     if (requested === null) refusals.push(schemaRefusal("statement-language-agent-unspoken", `${pointer}/agent`));
     refusals.push(...requestFormRefusals(data.agent.request, `${pointer}/agent/request`));
     refusals.push(...agentTextRefusals(data.agent.text, `${pointer}/agent/text`));
+    if (data.agent.mcp !== null) {
+      const texts = data.agent.mcp.text as Readonly<Record<keyof AgentMcpText, AgentText>>;
+      refusals.push(...textFillRefusals(texts, AGENT_MCP_TEXT_FILLS, `${pointer}/agent/mcp/text`));
+    }
   }
   return refusals;
 }

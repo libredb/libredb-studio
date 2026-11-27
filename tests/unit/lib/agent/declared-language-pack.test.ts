@@ -247,7 +247,11 @@ describe("the composer of a data-declared language", () => {
 
   test("a declared read's repair identity is one for one read however it is written, and a refused request is identified by its text", () => {
     const form = acmereadForm();
-    const { fingerprint } = composeDeclaredServerPack("acmeread", { request: form, text: acmereadText() }, "x").adapter;
+    const { fingerprint } = composeDeclaredServerPack(
+      "acmeread",
+      { request: form, text: acmereadText(), mcp: null },
+      "x",
+    ).adapter;
     const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
     for (const request of CORPUS) {
@@ -284,7 +288,11 @@ describe("the composer of a data-declared language", () => {
     expect(fingerprint('{"read":"nope"}')).toBe(fingerprint('{"read":"nope"}'));
     expect(fingerprint('{"read":"nope"}')).not.toBe(fingerprint('{ "read":"nope"}'));
     // The language's name is part of the identity.
-    const other = composeDeclaredServerPack("acmereadtwo", { request: form, text: acmereadText() }, "x").adapter;
+    const other = composeDeclaredServerPack(
+      "acmereadtwo",
+      { request: form, text: acmereadText(), mcp: null },
+      "x",
+    ).adapter;
     expect(other.fingerprint('{"read":"topics"}')).not.toBe(fingerprint('{"read":"topics"}'));
   });
 
@@ -297,7 +305,7 @@ describe("the composer of a data-declared language", () => {
 
 /** The server facet composed from `text` and the crafted form. */
 function serverOf(text: AgentLanguageText) {
-  return composeDeclaredServerPack("acmeread", { request: acmereadForm(), text }, "x");
+  return composeDeclaredServerPack("acmeread", { request: acmereadForm(), text, mcp: null }, "x");
 }
 
 /** The crafted text with its text `group`.`name` replaced by `parts`. */

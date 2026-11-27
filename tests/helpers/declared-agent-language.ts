@@ -1,7 +1,7 @@
 /**
  * A crafted statement language an engine declares as data, `acmeread`, for the tests of the agent's composer and of the
- * registries that hold a data-declared language (src/lib/agent/languages/declared-client.ts, declared-server.ts). No
- * shipped declaration states agent data yet, so these tests read this one.
+ * registries that hold a data-declared language (src/lib/agent/languages/declared-client.ts, declared-server.ts,
+ * declared-mcp.ts). No shipped declaration states agent data yet, so these tests read this one.
  *
  * Every string of its text carries a marker generated at run time, so an assertion that finds a text in a composed
  * member finds the declared text and nothing else by accident; each text Studio fills a value into names its fills as
@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentLanguageText,
+  AgentMcpTool,
   AgentRequestForm,
   AgentRequestRefusal,
   StatementLanguageData,
@@ -109,6 +110,25 @@ export function acmereadForm(): AgentRequestForm {
   };
 }
 
+/**
+ * The MCP statement tool of `acmeread`, `run_acme_read`: every string marked, the description filled with the engines
+ * and the limits and the way past a cut result with the rows shown. Its engines hold no table, so inspect_schema points
+ * to it.
+ */
+export function acmereadMcp(): NonNullable<AgentMcpTool> {
+  return {
+    tool: "run_acme_read",
+    holdsNoTables: true,
+    text: {
+      title: marked("mcpTitle"),
+      description: [marked("mcpDescription"), " Runs on ", { fill: "engines" }, ". ", { fill: "limits" }, "."],
+      fewerFields: marked("fewerFields"),
+      readPast: ["read past the ", { fill: "shown" }, " rows returned, ", marked("readPast")],
+      rowOverCap: marked("rowOverCap"),
+    },
+  };
+}
+
 /** The statement language data `name` states: a request language naming no operation, with `acmeread`'s agent part. */
 export function acmereadData(name = "acmeread"): NonNullable<StatementLanguageData> {
   return {
@@ -120,6 +140,6 @@ export function acmereadData(name = "acmeread"): NonNullable<StatementLanguageDa
       safetyAnalysis: false,
       maxTextBytes: null,
     },
-    agent: { request: acmereadForm(), text: acmereadText() },
+    agent: { request: acmereadForm(), text: acmereadText(), mcp: acmereadMcp() },
   };
 }

@@ -54,6 +54,7 @@ function acmereadData(): NonNullable<StatementLanguageData> {
         reads: [{ value: "topics", refuses: [], checks: [] }],
       },
       text: acmereadText(),
+      mcp: null,
     },
   };
 }

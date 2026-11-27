@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  AGENT_MCP_TEXT_FILLS,
   AGENT_TEXT_FILLS,
   compileManifestValidator,
   type ManifestRefusal,
@@ -615,13 +616,37 @@ function agentText(): Json {
   };
 }
 
-/** The fixture's statement language data `acmeread`, whose agent part states the form and the text, changed by `change`. */
+/** The pointer of the MCP statement tool of the fixture's one engine's statement language data. */
+const MCP_PART = `${LANGUAGE_DATA}/agent/mcp`;
+
+/**
+ * An MCP statement tool as data: its texts in both shapes a text takes, the description and the way past a cut result
+ * written as parts naming every fill they take.
+ */
+function agentMcp(): Json {
+  return {
+    tool: "run_acme_read",
+    holdsNoTables: true,
+    text: {
+      title: "Run a read-only Acme read",
+      description: ["Run one read-only Acme read. Runs on ", { fill: "engines" }, ". ", { fill: "limits" }, "."],
+      fewerFields: "An Acme read's columns are fixed, so none can be left out",
+      readPast: ["read past the ", { fill: "shown" }, ' rows returned, set "after" to the last name among them.'],
+      rowOverCap: "One row of this result is larger than the 32 KiB result limit. Read a narrower listing.",
+    },
+  };
+}
+
+/**
+ * The fixture's statement language data `acmeread`, whose agent part states the form, the text and the MCP tool,
+ * changed by `change`.
+ */
 function agentManifest(change: (agent: Json) => void = () => {}): Json {
   const changed = kafkaManifest();
   agentOf(changed).statementLanguage = "acmeread";
   changed.engines[0].statementLanguageData = {
     ...languageData("acmeread"),
-    agent: { request: requestForm(), text: agentText() },
+    agent: { request: requestForm(), text: agentText(), mcp: agentMcp() },
   };
   change(changed.engines[0].statementLanguageData.agent);
   return changed;
@@ -638,6 +663,11 @@ function requestManifest(change: (form: Json) => void = () => {}): Json {
 /** The Kafka fixture speaking `acmeread`, whose statement language data states the text of `agentText`, changed by `change`. */
 function textManifest(change: (text: Json) => void): Json {
   return agentManifest((agent) => change(agent.text));
+}
+
+/** The Kafka fixture speaking `acmeread`, whose statement language data states the MCP tool of `agentMcp`, changed by `change`. */
+function mcpManifest(change: (mcp: Json) => void): Json {
+  return agentManifest((agent) => change(agent.mcp));
 }
 
 /**
@@ -4363,7 +4393,7 @@ describe("rules the schema cannot state", () => {
     const unspoken = manifest((m) => {
       m.engines[0].statementLanguageData = {
         ...languageData("acmeread"),
-        agent: { request: requestForm(), text: agentText() },
+        agent: { request: requestForm(), text: agentText(), mcp: agentMcp() },
       };
     });
 
@@ -4455,6 +4485,87 @@ describe("rules the schema cannot state", () => {
     }
   });
 
+  test("a statement language's agent part states its MCP statement tool as data or null: the tool's name, whether its engines hold a table and its words, each a text or its parts with the values Studio fills, and names no function", () => {
+    const AGENT = `${LANGUAGE_DATA}/agent`;
+    const MCP_TEXT = `${MCP_PART}/text`;
+    const texts = ["title", "description", "fewerFields", "readPast", "rowOverCap"] as const;
+
+    for (const admitted of [
+      agentManifest(),
+      agentManifest((a) => (a.mcp = null)),
+      mcpManifest((m) => (m.holdsNoTables = false)),
+      mcpManifest((m) => (m.tool = "run_acme_query")),
+      mcpManifest((m) => (m.tool = "run_acme2_command")),
+      mcpManifest((m) => (m.tool = `run_${"a".repeat(55)}_read`)),
+      mcpManifest((m) => {
+        for (const name of texts) m.text[name] = `The ${name}.`;
+      }),
+      mcpManifest((m) => (m.text.title = Array.from({ length: 64 }, (_, index) => `part ${index} `))),
+    ]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+
+    const lackingMcp = agentManifest((a) => delete a.mcp);
+    expect(refusalsFor(lackingMcp)).toEqual([refusal("missing-key", AGENT, "mcp")]);
+    expect(validator.validateEngine(lackingMcp.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("missing-key", "/statementLanguageData/agent", "mcp")],
+    });
+    for (const member of ["tool", "holdsNoTables", "text"]) {
+      expect(refusalsFor(mcpManifest((m) => delete m[member]))).toEqual([refusal("missing-key", MCP_PART, member)]);
+    }
+    for (const name of texts) {
+      expect(refusalsFor(mcpManifest((m) => delete m.text[name]))).toEqual([refusal("missing-key", MCP_TEXT, name)]);
+    }
+
+    // No member names a function or a member Studio fixes: a stray one is refused, never read.
+    for (const stray of ["answersWarnings", "leastTimeout", "describe", "paging"]) {
+      expect(refusalsFor(mcpManifest((m) => (m[stray] = "describeTool")))).toEqual([
+        refusal("unknown-key", MCP_PART, stray),
+      ]);
+    }
+    expect(refusalsFor(mcpManifest((m) => (m.text.reached = "the broker")))).toEqual([
+      refusal("unknown-key", MCP_TEXT, "reached"),
+    ]);
+    expect(refusalsFor(mcpManifest((m) => (m.holdsNoTables = "yes")))).toEqual([
+      refusal("wrong-type", `${MCP_PART}/holdsNoTables`),
+    ]);
+
+    // The tool's name is the shape of every shipped statement tool's: run_, a lower-case word, then _read, _query or
+    // _command, never a metadata tool's name.
+    const TOOL = `${MCP_PART}/tool`;
+    for (const unlike of [
+      "Run_acme_read",
+      "acme_read",
+      "run_acme_write",
+      "run__read",
+      "run_1acme_read",
+      "run_acme-x_read",
+      "list_connections",
+      "inspect_schema",
+      "",
+    ]) {
+      expect(refusalsFor(mcpManifest((m) => (m.tool = unlike)))).toEqual([refusal("pattern-mismatch", TOOL)]);
+    }
+    expect(refusalsFor(mcpManifest((m) => (m.tool = `run_${"a".repeat(56)}_read`)))).toEqual([
+      refusal("out-of-range", TOOL),
+    ]);
+    expect(refusalsFor(mcpManifest((m) => (m.tool = 5)))).toEqual([refusal("wrong-type", TOOL)]);
+
+    // The part is null or an object: anything else is neither.
+    for (const unlike of ["run_acme_read", 5, [], true]) {
+      expect(refusalsFor(agentManifest((a) => (a.mcp = unlike)))).toEqual([refusal("wrong-type", MCP_PART)]);
+    }
+
+    // A text is a string or a list of parts, so anything else in either shape has neither shape.
+    for (const unlike of ["", [], [5], [{ read: "topics" }], [{}], 5, null, { fill: "shown" }]) {
+      expect(refusalsFor(mcpManifest((m) => (m.text.readPast = unlike)))).toEqual([
+        refusal("no-variant", `${MCP_TEXT}/readPast`),
+      ]);
+    }
+  });
+
   test("a declared text naming a value Studio does not fill into it is refused by name at the fill's pointer", () => {
     expect(AGENT_TEXT_FILLS).toEqual({
       copy: { subject: [], noun: [], writes: [], reached: [], defect: [] },
@@ -4524,6 +4635,46 @@ describe("rules the schema cannot state", () => {
     expect(refusalSentence(refusalsFor(unknown)[0] as ManifestRefusal)).toBe(
       `The fill at ${TEXT}/copy/noun/0/fill names a value Studio does not fill into that text.`,
     );
+
+    // The MCP statement tool's texts are held to their own table by the same rule.
+    const MCP_TEXT = `${MCP_PART}/text`;
+    expect(AGENT_MCP_TEXT_FILLS).toEqual({
+      title: [],
+      description: ["engines", "limits"],
+      fewerFields: [],
+      readPast: ["shown"],
+      rowOverCap: [],
+    });
+    expect(Object.isFrozen(AGENT_MCP_TEXT_FILLS)).toBe(true);
+    for (const fills of Object.values(AGENT_MCP_TEXT_FILLS)) expect(Object.isFrozen(fills)).toBe(true);
+    expect(Object.keys(definitions.agentMcpText.properties)).toEqual(Object.keys(AGENT_MCP_TEXT_FILLS));
+    for (const [name, fills] of Object.entries(AGENT_MCP_TEXT_FILLS)) {
+      const filled = mcpManifest((m) => (m.text[name] = ["Read ", ...fills.map((fill) => ({ fill })), "."]));
+      expect(refusalsFor(filled)).toEqual([]);
+    }
+    expect(
+      refusalsFor(
+        mcpManifest((m) => {
+          m.text.title = ["Run ", { fill: "shown" }];
+          m.text.description = [{ fill: "engines" }, { fill: "rows" }];
+          m.text.readPast = [{ fill: "engines" }];
+          m.text.rowOverCap = ["Over ", { fill: "limits" }];
+          m.text.fewerFields = [{ fill: "noun" }];
+        }),
+      ),
+    ).toEqual([
+      refusal("agent-text-fill-unknown", `${MCP_TEXT}/description/1/fill`),
+      refusal("agent-text-fill-unknown", `${MCP_TEXT}/fewerFields/0/fill`),
+      refusal("agent-text-fill-unknown", `${MCP_TEXT}/readPast/0/fill`),
+      refusal("agent-text-fill-unknown", `${MCP_TEXT}/rowOverCap/1/fill`),
+      refusal("agent-text-fill-unknown", `${MCP_TEXT}/title/1/fill`),
+    ]);
+    const unknownMcp = mcpManifest((m) => (m.text.readPast = [{ fill: "rows" }]));
+    expect(validator.validateEngine(unknownMcp.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-text-fill-unknown", "/statementLanguageData/agent/mcp/text/readPast/0/fill")],
+    });
+    expect(refusalsFor(agentManifest((a) => (a.mcp = null)))).toEqual([]);
   });
 
   test("an agent text holds no control character and no character that makes text read other than it is written", () => {
@@ -4549,6 +4700,12 @@ describe("rules the schema cannot state", () => {
       expect(
         refusalsFor(textManifest((t) => (t.posture.body = ["Bounded to ", { fill: "rows" }, ` rows${character}`]))),
       ).toEqual([refusal("no-variant", BODY)]);
+      expect(refusalsFor(mcpManifest((m) => (m.text.description = `Runs on Acme${character}.`)))).toEqual([
+        refusal("no-variant", `${MCP_PART}/text/description`),
+      ]);
+      expect(
+        refusalsFor(mcpManifest((m) => (m.text.readPast = ["read past the ", { fill: "shown" }, ` rows${character}`]))),
+      ).toEqual([refusal("no-variant", `${MCP_PART}/text/readPast`)]);
     }
 
     for (const ordinary of [
@@ -5281,6 +5438,8 @@ describe("refusals carry no value", () => {
     });
     formed.engines[0].statementLanguageData.name = declared;
     formed.engines[0].statementLanguageData.agent.text.copy.subject = [sentence, { fill }];
+    const mcpFill = `f${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    formed.engines[0].statementLanguageData.agent.mcp.text.readPast = [sentence, { fill: mcpFill }];
     Object.assign(agentOf(formed), { statementLanguage: null, overlay: null });
 
     const formRefusals = refusalsFor(formed);
@@ -5302,10 +5461,18 @@ describe("refusals carry no value", () => {
       ]),
     );
     for (const item of formRefusals) {
-      for (const value of [key, read, code, sentence, declared, fill]) {
+      for (const value of [key, read, code, sentence, declared, fill, mcpFill]) {
         expect(JSON.stringify(item)).not.toContain(value);
         expect(refusalSentence(item)).not.toContain(value);
       }
+    }
+
+    const tool = `run_${randomUUID().replaceAll("-", "")}_write`;
+    const toolRefusals = refusalsFor(mcpManifest((m) => (m.tool = tool)));
+    expect(toolRefusals).toEqual([refusal("pattern-mismatch", `${MCP_PART}/tool`)]);
+    for (const item of toolRefusals) {
+      expect(JSON.stringify(item)).not.toContain(tool);
+      expect(refusalSentence(item)).not.toContain(tool);
     }
   });
 

@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "d66b25c488bfcf87edd932e3ba862cfa3788e4794d6204d2b2a76f99d7a8c2e8";
+export const MANIFEST_SCHEMA_SHA256 = "2f08cf0ebe3e866190ab39fe8c237060095504f9bb1baf0d5c3a742e54257b23";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -700,11 +700,28 @@ export interface StatementConfirmation {
   readonly maxTextBytes: number | null;
 }
 
-/** What agent mode reads of a statement in the language, as data only, or null where agent mode sends the language no statement. request: the form core admits a model-written request by before the provider reads it. text: the words agent mode says the language in. The form is the agent's admission, never the boundary: the provider reads every request with its own reader before it sends anything, and the engine's structural boundary bounds what it sends. */
+/** What agent mode reads of a statement in the language, as data only, or null where agent mode sends the language no statement. request: the form core admits a model-written request by before the provider reads it. text: the words agent mode says the language in. mcp: the MCP statement tool the language is served as, or null where it has none. The form is the agent's admission, never the boundary: the provider reads every request with its own reader before it sends anything, and the engine's structural boundary bounds what it sends. */
 export type StatementLanguageAgent = {
   readonly request: AgentRequestForm;
   readonly text: AgentLanguageText;
+  readonly mcp: AgentMcpTool;
 } | null;
+
+/** The MCP statement tool a language is served as, as data only, or null where the language has none. tool: the tool's name, run_, a lower-case word and _read, _query or _command. holdsNoTables: true where the language's engines hold no object inspect_schema lists, so inspect_schema refuses them by name and points to this tool. text: the tool's words. Studio fixes the rest of the tool: it takes the request as a non-empty string under statement, takes no database key and no offset, refuses an input key it does not name, and fences the request with the language's request form. */
+export type AgentMcpTool = {
+  readonly tool: string;
+  readonly holdsNoTables: boolean;
+  readonly text: AgentMcpText;
+} | null;
+
+/** The words of a language's MCP statement tool, each a text: title, the tool's title, filled with no value; description, the tool's description up to the notice Studio closes it with, filled with engines, the served engines' names, and limits, the result limits every statement tool shares as one clause with no closing full stop; fewerFields, how a result cut by its size fits more rows, as the opening of a clause, filled with no value; readPast, how to read past the rows a cut result returned, as the end of a sentence that starts To, filled with shown, the number of rows it returned; rowOverCap, the answer when even the first row does not fit the result limit, filled with no value. What a refused request never reached is text.copy.reached. */
+export interface AgentMcpText {
+  readonly title: AgentText;
+  readonly description: AgentText;
+  readonly fewerFields: AgentText;
+  readonly readPast: AgentText;
+  readonly rowOverCap: AgentText;
+}
 
 /** The words agent mode says a language in, each a text: copy, the words its rules name the language's parts by; investigation, the investigation workflow's words; posture, what the safety strip says of a run; grounding, what a run is told of what it holds; advice, what a refused read is told. A text holds a value Studio fills only where its description names it. */
 export interface AgentLanguageText {

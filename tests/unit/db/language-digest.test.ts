@@ -41,6 +41,8 @@ function requestForm(
   change: (form: Record<string, any>) => void = () => {},
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft text each case changes one fact of.
   changeText: (text: Record<string, any>) => void = () => {},
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft MCP statement tool each case changes one fact of.
+  changeMcp: (mcp: Record<string, any>) => void = () => {},
 ): NonNullable<Data["agent"]> {
   const refusal = (code: string) => ({ code, sentence: `Refused as ${code}.` });
   const form = {
@@ -79,7 +81,24 @@ function requestForm(
   change(form);
   const text = agentText();
   changeText(text);
-  return { request: form, text } as NonNullable<Data["agent"]>;
+  const mcp = agentMcp();
+  changeMcp(mcp);
+  return { request: form, text, mcp } as NonNullable<Data["agent"]>;
+}
+
+/** An MCP statement tool whose description and way past a cut result are parts naming their fills. */
+function agentMcp() {
+  return {
+    tool: "run_acme_read",
+    holdsNoTables: true,
+    text: {
+      title: "Run a read-only Acme read",
+      description: ["Runs on ", { fill: "engines" }, ". ", { fill: "limits" }, "."],
+      fewerFields: "None can be left out",
+      readPast: ["read past the ", { fill: "shown" }, " rows returned, set after."],
+      rowOverCap: "One row is larger than the limit.",
+    },
+  };
 }
 
 /** An agent text whose posture body and row-cap advice are parts naming their fills, and every other text a string. */
@@ -144,7 +163,10 @@ describe("the language data digest", () => {
     expect(digests).not.toContain(digest);
     expect(new Set(digests).size).toBe(changed.length);
     expect(canonicalLanguageDataText(languageData((d) => (d.agent = requestForm())))).toStartWith(
-      '{"agent":{"request":{"common":[{"absent":null,"key":"topic","rule":{"characters":[{"from":"a","to":"z"}],',
+      '{"agent":{"mcp":{"holdsNoTables":true,"text":{"description":["Runs on ",{"fill":"engines"},". ",{"fill":"limits"},"."],',
+    );
+    expect(canonicalLanguageDataText(languageData((d) => (d.agent = requestForm())))).toContain(
+      '"request":{"common":[{"absent":null,"key":"topic","rule":{"characters":[{"from":"a","to":"z"}],',
     );
     // A list keeps its own order: two operations in another order are another fact.
     expect(
@@ -156,9 +178,10 @@ describe("the language data digest", () => {
 
   test("the agent part's request form is digested with the rest of the data: any changed sentence, code, bound or range changes the digest, and member order does not", () => {
     const stated = languageDataSha256(languageData((d) => (d.agent = requestForm())));
-    const { request, text } = requestForm();
+    const { request, text, mcp } = requestForm();
     const reordered = languageData((d) => {
       d.agent = {
+        mcp,
         text,
         request: {
           reads: request.reads,
@@ -191,9 +214,10 @@ describe("the language data digest", () => {
 
   test("the agent part's text is digested with the rest of the data: any changed byte, fill or part boundary changes the digest, and member order does not", () => {
     const stated = languageDataSha256(languageData((d) => (d.agent = requestForm())));
-    const { request, text } = requestForm();
+    const { request, text, mcp } = requestForm();
     const reordered = languageData((d) => {
       d.agent = {
+        mcp,
         text: {
           advice: { shape: text.advice.shape, rowCap: text.advice.rowCap },
           grounding: text.grounding,
@@ -218,6 +242,54 @@ describe("the language data digest", () => {
       languageData((d) => (d.agent = requestForm(undefined, (t) => (t.posture.body[1] = { fill: "seconds" })))),
       languageData((d) => (d.agent = requestForm(undefined, (t) => (t.posture.body[0] = "Bounded to")))),
       languageData((d) => (d.agent = requestForm(undefined, (t) => (t.advice.rowCap = "Ask for fewer rows.")))),
+    ];
+    const digests = changed.map((item) => languageDataSha256(item));
+    expect(digests).not.toContain(stated);
+    expect(new Set(digests).size).toBe(changed.length);
+  });
+
+  test("the agent part's MCP statement tool is digested with the rest of the data: any changed name, flag, byte, fill or part boundary changes the digest, and member order does not", () => {
+    const stated = languageDataSha256(languageData((d) => (d.agent = requestForm())));
+    const { request, text, mcp } = requestForm();
+    if (mcp === null) throw new Error("The fixture states an MCP statement tool.");
+    const reordered = languageData((d) => {
+      d.agent = {
+        mcp: {
+          text: {
+            rowOverCap: mcp.text.rowOverCap,
+            readPast: mcp.text.readPast,
+            fewerFields: mcp.text.fewerFields,
+            description: mcp.text.description,
+            title: mcp.text.title,
+          },
+          holdsNoTables: mcp.holdsNoTables,
+          tool: mcp.tool,
+        },
+        text,
+        request,
+      };
+    });
+
+    expect(languageDataSha256(reordered)).toBe(stated);
+    const changed = [
+      languageData((d) => (d.agent = requestForm(undefined, undefined, (m) => (m.tool = "run_acme_query")))),
+      languageData((d) => (d.agent = requestForm(undefined, undefined, (m) => (m.holdsNoTables = false)))),
+      languageData(
+        (d) => (d.agent = requestForm(undefined, undefined, (m) => (m.text.title = "Run a read-only Acme read!"))),
+      ),
+      languageData(
+        (d) => (d.agent = requestForm(undefined, undefined, (m) => (m.text.title = ["Run a read-only Acme read"]))),
+      ),
+      languageData(
+        (d) => (d.agent = requestForm(undefined, undefined, (m) => (m.text.title = ["Run a read-only ", "Acme read"]))),
+      ),
+      languageData(
+        (d) => (d.agent = requestForm(undefined, undefined, (m) => (m.text.description[1] = { fill: "limits" }))),
+      ),
+      languageData(
+        (d) => (d.agent = requestForm(undefined, undefined, (m) => (m.text.readPast[1] = { fill: "shewn" }))),
+      ),
+      languageData((d) => (d.agent = { ...requestForm(), mcp: null })),
     ];
     const digests = changed.map((item) => languageDataSha256(item));
     expect(digests).not.toContain(stated);
