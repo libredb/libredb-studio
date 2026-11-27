@@ -166,7 +166,7 @@ describe("the readers of the verdict", () => {
         text,
         selection: { start: 0, end: 0 },
         cursor: 0,
-        databaseType: "trino",
+        reading: readingOfType("trino"),
         capabilities,
         connectionName: "census",
       });

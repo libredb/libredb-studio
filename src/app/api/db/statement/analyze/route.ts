@@ -7,6 +7,8 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { analyzeStatement, type StatementAnalysis } from "@/lib/editor/statement-analysis";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { readingOfRecord } from "@/lib/sql/dangerous-query";
 import { type RunTargetRange, RunTargetRangeError } from "@/lib/sql/run-target";
 
 export const dynamic = "force-dynamic";
@@ -129,7 +131,8 @@ export async function POST(req: NextRequest) {
         text: fields.text,
         selection: fields.selection,
         cursor: fields.cursor,
-        databaseType: connection.type,
+        // The reading of the engine's record, never of the connection's type.
+        reading: readingOfRecord(servedEngineRecord(connection.type)),
         capabilities,
         connectionName: connection.name,
         connectionEnvironment: connection.environment,

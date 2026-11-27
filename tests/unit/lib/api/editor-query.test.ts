@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
@@ -36,15 +36,19 @@ import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib
 import { appendedBoundNote, applyQueryLimit } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
-import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
+import { standInRecord } from "../../../helpers/stand-in-record";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
+
+/** Postgres's record of the server's engine catalog: an engine whose statement language row states no text bound. */
+const POSTGRES = servedEngineRecord("postgres");
 
 /** The limiter's rule as a SQL provider applies it: a bound of ours, unless the text carries its own LIMIT. */
 function limiter(sql: string, options: QueryPrepareOptions = {}): PreparedQuery {
@@ -115,17 +119,11 @@ async function withCore<T>(core: HostCore, body: () => Promise<T>): Promise<T> {
 }
 
 describe("checkEditorQuery", () => {
-  let remove: (() => void) | undefined;
-  afterEach(() => {
-    remove?.();
-    remove = undefined;
-  });
-
   test("a large text passes on an engine that declares no text bound", () => {
     expect(
       checkEditorQuery({
         statement: "x".repeat(9 * 1024 * 1024),
-        type: "postgres",
+        engine: POSTGRES,
         options: { limit: 500, offset: 0 },
         queryTimeout: undefined,
       }),
@@ -136,14 +134,14 @@ describe("checkEditorQuery", () => {
   // step reads the statement's type, so a caller that skips its own check gets no gate here.
   test("a statement that is not a string is not refused on an engine that declares no text bound", () => {
     expect(
-      checkEditorQuery({ statement: { evil: 1 }, type: "postgres", options: {}, queryTimeout: undefined }),
+      checkEditorQuery({ statement: { evil: 1 }, engine: POSTGRES, options: {}, queryTimeout: undefined }),
     ).toBeNull();
-    expect(checkEditorQuery({ statement: 42, type: "postgres", options: {}, queryTimeout: undefined })).toBeNull();
+    expect(checkEditorQuery({ statement: 42, engine: POSTGRES, options: {}, queryTimeout: undefined })).toBeNull();
   });
 
   test("page bounds that are not non-negative safe integers are refused with the route's sentences", () => {
     const check = (options: unknown) =>
-      checkEditorQuery({ statement: "SELECT 1", type: "postgres", options, queryTimeout: undefined });
+      checkEditorQuery({ statement: "SELECT 1", engine: POSTGRES, options, queryTimeout: undefined });
     expect(check("500")).toEqual({ status: 400, error: "options must be an object" });
     expect(check({ limit: -1 })).toEqual({ status: 400, error: "options.limit must be a non-negative integer" });
     expect(check({ offset: 1.5 })).toEqual({ status: 400, error: "options.offset must be a non-negative integer" });
@@ -161,7 +159,7 @@ describe("checkEditorQuery", () => {
     const largest = Number.MAX_SAFE_INTEGER - 1;
     const statement = "SELECT n FROM t";
     const check = (options: unknown) =>
-      checkEditorQuery({ statement, type: "postgres", options, queryTimeout: undefined });
+      checkEditorQuery({ statement, engine: POSTGRES, options, queryTimeout: undefined });
     expect(check({ limit: largest, offset: largest })).toBeNull();
     expect(check({ limit: largest + 1 })).toEqual({
       status: 400,
@@ -184,7 +182,7 @@ describe("checkEditorQuery", () => {
   // make the host's deadline NaN or wrong, so it is refused by name before a provider is built.
   test("a statement timeout that is not a whole number of milliseconds from 1 to 2147483647 is refused by name", () => {
     const check = (queryTimeout: unknown) =>
-      checkEditorQuery({ statement: "SELECT 1", type: "postgres", options: {}, queryTimeout });
+      checkEditorQuery({ statement: "SELECT 1", engine: POSTGRES, options: {}, queryTimeout });
     const refused: EditorQueryRefusal = {
       status: 400,
       error: "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
@@ -198,9 +196,10 @@ describe("checkEditorQuery", () => {
   });
 
   test("a declared text bound refuses an oversize text in words and passes one at the bound", () => {
-    remove = installStandInVocabulary({ maxTextBytes: 64 });
+    // The bound is read from the record's statement language row, never from a table keyed by the connection's type.
+    const engine = standInRecord({ maxTextBytes: 64 });
     const check = (statement: unknown, options: unknown = {}) =>
-      checkEditorQuery({ statement, type: STAND_IN_TYPE, options, queryTimeout: undefined });
+      checkEditorQuery({ statement, engine, options, queryTimeout: undefined });
     expect(check("x".repeat(65))).toEqual({
       status: 413,
       error:
@@ -1413,9 +1412,9 @@ describe("the core's import closure stays free of Next", () => {
       expect.arrayContaining([
         "src/lib/api/first-result-set.ts",
         "src/lib/api/page-probe.ts",
-        "src/lib/db/destructive-commands.ts",
         "src/lib/db/errors.ts",
         "src/lib/db/query-cancel.ts",
+        "src/lib/db/statement-language-row.ts",
         "src/lib/db/types.ts",
         "src/lib/db/utils/query-limiter.ts",
         "src/lib/non-finite.ts",

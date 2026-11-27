@@ -8,14 +8,13 @@ import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   consoleTextByteLimit,
   codeStatementLanguageRow,
-  consoleTextOverLimit,
   statementRefusal,
   vocabularySendsToModel,
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
-import { rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
+import { consoleTextOverLimit, rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
 import { redisRefusal } from "@/lib/languages/rediscli/command-text";
 import { INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES, influxqlRefusal } from "@/lib/languages/influxql/policy";
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";

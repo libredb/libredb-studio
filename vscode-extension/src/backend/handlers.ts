@@ -25,7 +25,7 @@ import {
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import type {
   clearProviderCache,
   enabledProviderTypes,
@@ -259,13 +259,22 @@ export function createHandlers(
   // The run confirmation's issuer: this child's own secret and session, drawn once and held only in its memory, so a
   // token from another child or from before a restart is not verifiable (docs/VSCODE_EXTENSION.md section 7).
   const issuer = runConfirmationIssuerForProcess(RUN_CONFIRMATION_USER);
-  /** The run gate's request for a statement on an open record, as the query route builds it for one statement. */
-  const gateRequest = (record: OpenRecord, catalog: string | undefined, sql: string, confirmation: unknown) =>
+  /**
+   * The run gate's request for a statement on an open record, with the server catalog's record of its engine, as the
+   * query route builds it for one statement.
+   */
+  const gateRequest = (
+    record: OpenRecord,
+    engine: EngineRecord,
+    catalog: string | undefined,
+    sql: string,
+    confirmation: unknown,
+  ) =>
     ({
       route: RUN_ROUTE,
       issuer,
       connection: record.connection,
-      engine: servedEngineRecord(record.connection.type),
+      engine,
       catalog,
       sql,
       params: undefined,
@@ -478,11 +487,14 @@ export function createHandlers(
       const options = bounds as QueryPrepareOptions;
 
       const record = openRecord(connectionId);
+      // The server catalog's record of the connection's engine, read once for the text bound and the run gate.
+      const engine = servedEngineRecord(record.connection.type);
       // The bounds and the statement were read above, so what refuses here is the connection's statement timeout,
-      // invalid params, or a console text bound, which the route answers 413 with no code.
+      // invalid params, or the console text bound the engine's statement language row states, which the route answers
+      // 413 with no code.
       const refused = checkEditorQuery({
         statement,
-        type: record.connection.type,
+        engine,
         options,
         queryTimeout: record.connection.queryTimeout,
       });
@@ -491,7 +503,7 @@ export function createHandlers(
       }
       // The server's run gate, after the fields, the bounds and the text bound and before any provider, as the route
       // orders it: a request it answers builds no provider and runs nothing. A page read is classified like any run.
-      const gate = await gateRun(gateRequest(record, catalog, statement, fieldOf(params, "confirmation")));
+      const gate = await gateRun(gateRequest(record, engine, catalog, statement, fieldOf(params, "confirmation")));
       if (gate.kind === "answer") throw gateAnswerError(gate.status, gate.body);
 
       // A cancelled request is the caller going away, as a dropped browser request is the route's.
@@ -633,7 +645,8 @@ export function createHandlers(
       }
       // Nothing to run asks nothing.
       if (rule.editorLanguage === "sql" && target.statement === "") return { statement: "", confirmation: null };
-      const gate = await gateRun(gateRequest(record, catalog, target.statement, "ask"));
+      const engine = servedEngineRecord(record.connection.type);
+      const gate = await gateRun(gateRequest(record, engine, catalog, target.statement, "ask"));
       if (gate.kind === "run") return { ...target, confirmation: null };
       // Asked with "ask", the gate answers a 428 with its offer or a refusal, which is this request's answer.
       if (gate.status !== 428 || gate.body.confirmation === undefined) throw gateAnswerError(gate.status, gate.body);

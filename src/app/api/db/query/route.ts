@@ -155,11 +155,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    // The page bounds, the connection's statement timeout and the console text bound where the engine's record offers
-    // one, before any open (`src/lib/api/editor-query.ts`).
+    // The page bounds, the connection's statement timeout and the console text bound the engine's statement language
+    // row states, where it states one, before any open (`src/lib/api/editor-query.ts`).
     const refusal = checkEditorQuery({
       statement: sql,
-      type: engine.offers.consoleTextBound ? legacyConnection(engine, connection).type : undefined,
+      engine,
       options,
       queryTimeout: connection.queryTimeout,
     });

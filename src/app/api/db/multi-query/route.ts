@@ -17,7 +17,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { editorProvider } from "@/lib/api/editor-provider";
-import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { rowTextByteLimit } from "@/lib/db/statement-language-row";
 import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
 import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
 import { type EditorScript, openEditorScript } from "@/lib/api/editor-script";
@@ -307,10 +307,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeoutError }, { status: 400 });
     }
 
-    // A type that declares a console text bound runs one statement per request. The SQL splitter below would turn
-    // one console text into several requests, so such a type is sent to the single-statement route before anything
-    // is split or acquired.
-    if (consoleTextByteLimit(connection.type) !== undefined) {
+    // The server catalog's record of the connection's engine, read once: its statement language row states the console
+    // text bound, and the confirmation gate below reads the statement under its reading.
+    const engine = servedEngineRecord(connection.type);
+
+    // An engine whose statement language row states a console text bound runs one statement per request. The SQL
+    // splitter below would turn one console text into several requests, so such an engine is sent to the
+    // single-statement route before anything is split or acquired.
+    if (rowTextByteLimit(engine.statementLanguageRow) !== undefined) {
       return NextResponse.json(
         {
           error:
@@ -342,7 +346,7 @@ export async function POST(req: NextRequest) {
       route: "multi-query",
       issuer: runConfirmationIssuerForSession(guard.session),
       connection,
-      engine: servedEngineRecord(connection.type),
+      engine,
       catalog: requestCatalog(body),
       sql,
       params: undefined,

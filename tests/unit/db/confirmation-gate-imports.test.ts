@@ -19,13 +19,20 @@ import { valueImportClosure } from "../../helpers/value-import-closure";
 
 const ROOT = path.join(import.meta.dir, "..", "..", "..");
 
-/** The modules that classify a statement for the confirmation gate, on the server and in the browser. */
+/**
+ * The modules that classify a statement for the confirmation gate, on the server and in the browser, and the modules
+ * that compose or read an engine's statement language row: the two composers of the server's engine records and the
+ * editor query's text bound.
+ */
 const GATE_MODULES = [
   "src/lib/api/run-confirmation.ts",
   "src/lib/editor/statement-analysis.ts",
   "src/lib/sql/dangerous-query.ts",
   "src/lib/db/destructive-commands.ts",
   "src/lib/db/statement-language-row.ts",
+  "src/lib/provider-host/legacy-adapter/records.ts",
+  "src/lib/db/server-catalog-compose.ts",
+  "src/lib/api/editor-query.ts",
 ] as const;
 
 /** An engine that states its statement language as data, and the language's name. */

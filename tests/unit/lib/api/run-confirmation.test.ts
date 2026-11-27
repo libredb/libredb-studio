@@ -38,7 +38,8 @@ import {
   packageRow,
   withStatementLanguageData,
 } from "../../../helpers/package-catalog";
-import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
+import { standInRecord } from "../../../helpers/stand-in-record";
+import { STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 
 const NOW = Date.UTC(2026, 10, 22, 12, 0, 0);
 const clock = () => NOW;
@@ -247,82 +248,70 @@ describe("the run confirmation gate (FND-5)", () => {
   });
 
   test("a refused reading runs unconfirmed in advisory without the field, and is refused when asked or required", async () => {
-    const remove = installStandInVocabulary({
+    const engine = standInRecord({
       read: () => undefined,
       typedConfirmation: () => ({ type: "connection-name", targets: ["every key"] }),
     });
-    try {
-      const nameless = { ...postgres, type: STAND_IN_TYPE, name: "" };
-      const refused = { kind: "answer" as const, status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } };
-      expect(await gateRun(request({ connection: nameless, sql: "wipe" }), clock)).toEqual({
-        kind: "run",
-        unconfirmed: true,
-      });
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(await gateRun(request({ connection: nameless, sql: "wipe", confirmation: "ask" }), clock)).toEqual(
-        refused,
-      );
-      expect(
-        await gateRun(request({ connection: nameless, sql: "wipe", confirmation: { token: "x" } }), clock),
-      ).toEqual(refused);
-      process.env.LIBREDB_RUN_CONFIRMATION = "required";
-      expect(await gateRun(request({ connection: nameless, sql: "wipe" }), clock)).toEqual(refused);
-    } finally {
-      remove();
-    }
+    const nameless = { ...postgres, type: STAND_IN_TYPE, name: "" };
+    const refused = { kind: "answer" as const, status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } };
+    expect(await gateRun(request({ engine, connection: nameless, sql: "wipe" }), clock)).toEqual({
+      kind: "run",
+      unconfirmed: true,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(await gateRun(request({ engine, connection: nameless, sql: "wipe", confirmation: "ask" }), clock)).toEqual(
+      refused,
+    );
+    expect(
+      await gateRun(request({ engine, connection: nameless, sql: "wipe", confirmation: { token: "x" } }), clock),
+    ).toEqual(refused);
+    process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    expect(await gateRun(request({ engine, connection: nameless, sql: "wipe" }), clock)).toEqual(refused);
   });
 
   test("the row's typed confirmation rides on the 428", async () => {
-    const remove = installStandInVocabulary({
+    const engine = standInRecord({
       read: () => undefined,
       typedConfirmation: () => ({ type: "connection-name", targets: ["every key"] }),
     });
-    try {
-      const decision = await gateRun(
-        request({ connection: { ...postgres, type: STAND_IN_TYPE }, sql: "wipe", confirmation: "ask" }),
-        clock,
-      );
-      expect(decision).toMatchObject({
-        status: 428,
-        body: {
-          confirmation: { typedConfirmation: { type: "connection-name", expected: "Orders", targets: ["every key"] } },
-        },
-      });
-    } finally {
-      remove();
-    }
+    const decision = await gateRun(
+      request({ engine, connection: { ...postgres, type: STAND_IN_TYPE }, sql: "wipe", confirmation: "ask" }),
+      clock,
+    );
+    expect(decision).toMatchObject({
+      status: 428,
+      body: {
+        confirmation: { typedConfirmation: { type: "connection-name", expected: "Orders", targets: ["every key"] } },
+      },
+    });
   });
 
   test("a reader that throws asks, marked classificationFailed, and logs no text", async () => {
     const secret = crypto.randomUUID();
-    const remove = installStandInVocabulary({
+    const engine = standInRecord({
       read: () => {
         throw new RangeError(`the reader choked on ${secret}`);
       },
     });
-    try {
-      const connection = { ...postgres, type: STAND_IN_TYPE };
-      const decision = await gateRun(request({ connection, sql: secret, confirmation: "ask" }), clock);
-      expect(decision).toMatchObject({
-        status: 428,
-        body: { confirmation: { classificationFailed: true, unreadable: false, typedConfirmation: null } },
-      });
-      expect(error).toHaveBeenCalledTimes(1);
-      expect(error.mock.calls[0]).toEqual([
-        "The confirmation gate could not read a statement, so it asks for a confirmation",
-        undefined,
-        { route: "api/db/query", type: STAND_IN_TYPE, errorName: "RangeError" },
-      ]);
-      expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
-      // Its token confirms the failed reading, and the resend runs.
-      const token = tokenOf(decision);
-      expect(await gateRun(request({ connection, sql: secret, confirmation: { token } }), clock)).toEqual({
-        kind: "run",
-        unconfirmed: false,
-      });
-    } finally {
-      remove();
-    }
+    const connection = { ...postgres, type: STAND_IN_TYPE };
+    const decision = await gateRun(request({ engine, connection, sql: secret, confirmation: "ask" }), clock);
+    expect(decision).toMatchObject({
+      status: 428,
+      body: { confirmation: { classificationFailed: true, unreadable: false, typedConfirmation: null } },
+    });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toEqual([
+      "The confirmation gate could not read a statement, so it asks for a confirmation",
+      undefined,
+      { route: "api/db/query", type: STAND_IN_TYPE, errorName: "RangeError" },
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+    // Its token confirms the failed reading, and the resend runs.
+    const token = tokenOf(decision);
+    expect(await gateRun(request({ engine, connection, sql: secret, confirmation: { token } }), clock)).toEqual({
+      kind: "run",
+      unconfirmed: false,
+    });
   });
 
   test("an explain request is not classified", async () => {
@@ -549,31 +538,30 @@ describe("the production escalation and the typed check (6c)", () => {
   });
 
   test("a reader that throws on production asks for the name, and a nameless production connection is refused", async () => {
-    const remove = installStandInVocabulary({
+    const engine = standInRecord({
       read: () => {
         throw new RangeError("the reader choked");
       },
     });
-    try {
-      const connection = { ...production, type: STAND_IN_TYPE };
-      expect(await gateRun(request({ connection, sql: "wipe", confirmation: "ask" }), clock)).toMatchObject({
-        status: 428,
-        body: {
-          error: CONFIRMATION_TYPED_MESSAGE,
-          confirmation: {
-            classificationFailed: true,
-            unreadable: false,
-            typedConfirmation: { type: "connection-name", expected: name, targets: [] },
-          },
+    const connection = { ...production, type: STAND_IN_TYPE };
+    expect(await gateRun(request({ engine, connection, sql: "wipe", confirmation: "ask" }), clock)).toMatchObject({
+      status: 428,
+      body: {
+        error: CONFIRMATION_TYPED_MESSAGE,
+        confirmation: {
+          classificationFailed: true,
+          unreadable: false,
+          typedConfirmation: { type: "connection-name", expected: name, targets: [] },
         },
-      });
-      expect(
-        await gateRun(request({ connection: { ...connection, name: "" }, sql: "wipe", confirmation: "ask" }), clock),
-      ).toEqual({ kind: "answer", status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } });
-      expect(error).toHaveBeenCalledTimes(2);
-    } finally {
-      remove();
-    }
+      },
+    });
+    expect(
+      await gateRun(
+        request({ engine, connection: { ...connection, name: "" }, sql: "wipe", confirmation: "ask" }),
+        clock,
+      ),
+    ).toEqual({ kind: "answer", status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } });
+    expect(error).toHaveBeenCalledTimes(2);
   });
 
   test("a write on a nameless production connection is refused when asked and, in advisory, when no field is sent", async () => {
@@ -836,7 +824,7 @@ describe("one gate for every engine, reading the record's confirmation reader", 
     const run = (engine: EngineRecord, sql: string) =>
       gateRun(request({ connection: connectionOf(engine.id), engine, sql, confirmation: "ask" }), clock).then(outcome);
 
-    // Studio's statement vocabulary rows read a legacy engine's statements by its id.
+    // A legacy engine's record holds Studio's code row of its id, which reads its statements.
     expect(await run(servedEngineRecord("redis"), "FLUSHALL")).toBe("428");
     expect(await run(servedEngineRecord("snowflake"), "ALTER SESSION SET QUERY_TAG = 'x'")).toBe("run");
     // A package's engine is read under the grammar its declaration states, and neither ungranted claim is counted.
@@ -857,7 +845,9 @@ describe("one gate for every engine, reading the record's confirmation reader", 
     for (const engine of [...legacy, loose, packageEngine("acmeplain")]) {
       for (const sql of statements) {
         const { name, environment } = connectionOf(engine.id);
-        const expected = engine.offers.statementVocabulary
+        // A legacy engine's record reads as the reading of its type, and a package's as its own members, its explain
+        // claim under either value.
+        const expected = engine.offers.legacyProvider
           ? outcomeOf(() =>
               confirmationVerdict(sql, readingOfType(engine.id as DatabaseConnection["type"]), name, environment),
             )
@@ -866,7 +856,7 @@ describe("one gate for every engine, reading the record's confirmation reader", 
                 sql,
                 {
                   engine: engine.id,
-                  row: null,
+                  row: engine.statementLanguageRow,
                   grammar: engine.statementGrammar,
                   grants: engine.grants,
                   explainReading: "either",
@@ -882,31 +872,43 @@ describe("one gate for every engine, reading the record's confirmation reader", 
     expect(error).not.toHaveBeenCalled();
   });
 
-  test("a record that offers a legacy provider and not Studio's statement vocabulary is read under its declared grammar, never by its id", async () => {
-    // Its register row reviews the grammar it declares.
-    const crafted = packageEngine("acmegate", undefined, {});
-    const declared = { ...crafted, offers: { ...crafted.offers, legacyProvider: true, statementVocabulary: false } };
-    const run = (sql: string) =>
-      gateRun(
-        request({ connection: connectionOf("acmegate"), engine: declared, sql, confirmation: "ask" }),
-        clock,
-      ).then(outcome);
+  test("the gate reads the record's statement language row and never the connection's type, for a legacy and a package engine alike", async () => {
+    const run = (engine: EngineRecord, type: string, sql: string) =>
+      gateRun(request({ connection: connectionOf(type), engine, sql, confirmation: "ask" }), clock).then(outcome);
+    const reads = (type: DatabaseConnection["type"], sql: string) =>
+      outcomeOf(() => confirmationVerdict(sql, readingOfType(type), "Orders"));
 
-    // The declared grammar reads FLUSHALL as a read and DELETE as a write; a gate that read the id "acmegate" through
-    // Studio's statement vocabulary rows instead would ask about FLUSHALL.
-    expect(await run("FLUSHALL")).toBe("run");
-    expect(await run("DELETE FROM t")).toBe("428");
-    expect(error).not.toHaveBeenCalled();
-  });
+    // Postgres's record handed a row that names every statement's operation asks about a read, which the reading of
+    // the type postgres runs.
+    const naming: EngineRecord = Object.freeze({
+      ...servedEngineRecord("postgres"),
+      statementLanguageRow: Object.freeze({
+        operations: Object.freeze(new Set(["select"])),
+        read: () => ["select"],
+        decidesAlone: false,
+      }),
+    });
+    expect(reads("postgres", "SELECT 1")).toBe("run");
+    expect(await run(naming, "postgres", "SELECT 1")).toBe("428");
 
-  test("a record that offers Studio's statement vocabulary and no legacy provider is a host defect, raised rather than read as a classification failure", async () => {
-    const crafted = {
-      ...packageEngine("acmegate"),
-      offers: { ...packageEngine("acmegate").offers, statementVocabulary: true },
-    };
-    await expect(
-      gateRun(request({ connection: connectionOf("acmegate"), engine: crafted, sql: "SELECT 1" }), clock),
-    ).rejects.toThrow('The engine "acmegate" offers no legacy provider');
+    // Redis's record with no row runs FLUSHALL, which the reading of the type redis asks about.
+    const rowless: EngineRecord = Object.freeze({ ...servedEngineRecord("redis"), statementLanguageRow: null });
+    expect(reads("redis", "FLUSHALL")).toBe("428");
+    expect(await run(rowless, "redis", "FLUSHALL")).toBe("run");
+
+    // A package's record whose register row reviewed its grammar runs FLUSHALL with no row, and asks about it handed
+    // Redis's code row, which the type of its connection never names.
+    const reviewed = packageEngine("acmegate", undefined, {});
+    expect(await run(reviewed, "acmegate", "FLUSHALL")).toBe("run");
+    const redisRow = servedEngineRecord("redis").statementLanguageRow;
+    expect(redisRow).not.toBeNull();
+    const handed: EngineRecord = Object.freeze({ ...reviewed, statementLanguageRow: redisRow });
+    expect(await run(handed, "acmegate", "FLUSHALL")).toBe("428");
+    expect(await run(handed, "acmegate", "GET k")).toBe("run");
+
+    // A connection of type redis read with postgres's record answers postgres's record's verdict.
+    expect(await run(servedEngineRecord("postgres"), "redis", "FLUSHALL")).toBe(reads("postgres", "FLUSHALL"));
+    expect(await run(servedEngineRecord("postgres"), "redis", "FLUSHALL")).toBe("run");
     expect(error).not.toHaveBeenCalled();
   });
 });

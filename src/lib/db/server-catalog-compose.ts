@@ -26,9 +26,10 @@
  * grammar it reviewed, or, for an engine whose `sqlText` is null, with the restrictive request, which holds no digest,
  * so no row reviews a grammar for it and its record holds no statement grammar, and its statement language and the
  * claims that loosen the confirmation gate with the digest of the statement language data it declares
- * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, and gives each the package's
- * source, its digest and the session its declaration states, and the offers of an engine served through the provider
- * contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a
+ * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, compiles its statement language
+ * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none), reads its
+ * grammar's explain claim under either value, and gives each the package's source, its digest and the session its
+ * declaration states, and the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a
  * register of its own. It maps each engine a refused package's lock entry names, but a legacy one, to the codes it was
  * refused with. Every table keyed by engine id is transposed into each engine's own frozen record and the engines are
  * kept in Maps, so no engine-keyed plain object is read by a client's value.
@@ -42,6 +43,7 @@ import { packageFieldRules } from "./connection-form";
 import { grammarSha256 } from "./grammar-digest";
 import { languageDataSha256 } from "./language-digest";
 import { grammarFromFacts } from "./sql-grammar";
+import { statementLanguageRow } from "./statement-language-row";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
 import {
   projectCatalog,
@@ -64,8 +66,6 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   database: false,
   catalog: false,
   unboundedPage: false,
-  consoleTextBound: false,
-  statementVocabulary: false,
   sshTunnel: false,
   hostFiles: false,
   testCautions: false,
@@ -315,6 +315,11 @@ export function composeServerCatalog(
         // compiled once here; the gate counts only the exempt forms its record grants (docs/providers/CONTRACT.md,
         // clause S-8). An engine that states no SQL text has none (clause S-3).
         statementGrammar: engine.sqlText === null ? null : grammarFromFacts(engine.sqlText.grammar),
+        // The row compiled from the statement language data the declaration states, which the gate counts only as the
+        // grants above grant it; Studio holds no code row of a package's engine, whose id is never a legacy id.
+        statementLanguageRow: statementLanguageRow(id, engine.statementLanguageData, null),
+        // Neither explain value is the restrictive one, so the gate reads a package's statements under both (S-8).
+        explainReading: "either",
         offers: PACKAGE_OFFERS,
       }) as EngineRecord,
     );

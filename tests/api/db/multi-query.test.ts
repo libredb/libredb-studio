@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { type CallContext, CLEANUP_DEADLINE_MS, type EndScopeRequest } from "@libredb/provider-sdk/calls";
-import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
+import { installStandInRecord } from "../../helpers/stand-in-record";
+import { STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -1480,7 +1481,7 @@ describe("POST /api/db/multi-query: a type that declares a console text bound", 
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
-    remove = installStandInVocabulary({ maxTextBytes: 64 });
+    remove = installStandInRecord({ maxTextBytes: 64 });
   });
 
   afterEach(() => {

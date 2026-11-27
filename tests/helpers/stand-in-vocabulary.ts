@@ -5,10 +5,11 @@ import type { DatabaseType } from "@/lib/types";
 /**
  * A confirmation-gate vocabulary row of a test's own, under the type id `STAND_IN_TYPE`.
  *
- * A row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input the readers of the gate's `typedConfirmation` and
- * `safetyAnalysis` fields, `QuerySafetyDialog`, and the editor's `refuse` and `maxTextBytes` readers take (#1089;
- * Milvus's and Qdrant's rows are the shipped rows that declare the last two). So a test installs one here, which pins each rule
- * apart from any shipped vocabulary row, and removes it when it ends; the texts it is handed are read under Trino's
+ * A row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input the browser's readers of the gate's `typedConfirmation`
+ * and `safetyAnalysis` fields, `QuerySafetyDialog`, and the editor's `refuse` and `maxTextBytes` readers take by type
+ * (#1089; Milvus's and Qdrant's rows are the shipped rows that declare the last two). So a test installs one here, which
+ * pins each rule apart from any shipped vocabulary row, and removes it when it ends; a test of a server reader, which
+ * reads the engine's record and never this table, hands the same row on a record instead (`tests/helpers/stand-in-record.ts`); the texts it is handed are read under Trino's
  * grammar, as `SHIPS_A_STAND_IN_ROW` says. Every test file runs in a bun process of its own,
  * so no other file ever reads the table while the row is in it. etcd's row, the one shipped row that declares both
  * of the first two fields, is pinned with its own commands in describe("the etcd row") of

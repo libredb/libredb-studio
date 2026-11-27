@@ -9,7 +9,7 @@ import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destru
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
 import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/weaviateapi/destructive";
-import { rowTypedAsk } from "@/lib/db/statement-language-row";
+import { rowRefusal, rowTextByteLimit, rowTypedAsk } from "@/lib/db/statement-language-row";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";
@@ -122,29 +122,8 @@ export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
 }
 
 /**
- * The UTF-8 length of a text, counted without encoding it: a surrogate pair is one code point of four bytes, and a
- * lone surrogate counts three, as `TextEncoder` and `Buffer.byteLength` write it as U+FFFD.
- */
-function utf8Bytes(text: string): number {
-  let bytes = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const unit = text.charCodeAt(index);
-    if (unit < 0x80) {
-      bytes += 1;
-    } else if (unit < 0x800) {
-      bytes += 2;
-    } else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
-      bytes += 4;
-      index += 1;
-    } else {
-      bytes += 3;
-    }
-  }
-  return bytes;
-}
-
-/**
- * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none.
+ * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none: the bound
+ * of its code row (`rowTextByteLimit`), which the browser reads by type until it reads the engine's record.
  *
  * Undefined for every type with no row, including no type at all, and for every row that declares no bound. Any other
  * value that is not a type id is refused by name (`typeIdRow`, FND-1).
@@ -152,18 +131,12 @@ function utf8Bytes(text: string): number {
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
-  return codeStatementLanguageRow(databaseType)?.maxTextBytes;
-}
-
-/** The sentence a text over `limit` bytes is refused with, naming its size and the bound and never quoting it. */
-export function consoleTextOverLimit(text: string, limit: number): string | undefined {
-  const bytes = utf8Bytes(text);
-  if (bytes <= limit) return undefined;
-  return `The statement is ${bytes} bytes in UTF-8, over the ${limit}-byte limit for this connection type. Shorten it to run it.`;
+  return rowTextByteLimit(codeStatementLanguageRow(databaseType));
 }
 
 /**
- * Why this connection type's editor refuses this statement, or undefined to send it.
+ * Why this connection type's editor refuses this statement, or undefined to send it: the refusal of its code row
+ * (`rowRefusal`), which the browser reads by type until it reads the engine's record.
  *
  * The bound first, so a row's own verdict never reads an oversize text; then the row's `refuse`. Undefined for
  * every type with no row, including no type at all, and for every row that declares neither field. Any other value
@@ -172,11 +145,5 @@ export function consoleTextOverLimit(text: string, limit: number): string | unde
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
-  const facts = codeStatementLanguageRow(databaseType);
-  if (facts === null) return undefined;
-  if (facts.maxTextBytes !== undefined) {
-    const over = consoleTextOverLimit(query, facts.maxTextBytes);
-    if (over !== undefined) return over;
-  }
-  return facts.refuse?.(query);
+  return rowRefusal(codeStatementLanguageRow(databaseType), query);
 }

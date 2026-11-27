@@ -21,11 +21,8 @@ import {
 } from "@/lib/api/run-confirmation";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 import { TYPED_NAME_MISSING_REFUSAL } from "@/lib/editor/statement-analysis";
-import {
-  consoleTextByteLimit,
-  consoleTextOverLimit,
-  NON_SQL_DESTRUCTIVE_VOCABULARY,
-} from "@/lib/db/destructive-commands";
+import { consoleTextByteLimit, NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
+import { consoleTextOverLimit } from "@/lib/db/statement-language-row";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { servedEngineRecord } from "@/lib/db/server-catalog";

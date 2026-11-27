@@ -20,7 +20,7 @@ import { firstResultSet } from "@/lib/api/first-result-set";
 import { PACKAGE_WARNING_DEFECT, packageWarning, packageWarningList, packageWarnings } from "@/lib/api/package-errors";
 import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
-import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import { consoleTextOverLimit, rowTextByteLimit } from "@/lib/db/statement-language-row";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineRecord } from "@/lib/db/server-catalog";
@@ -67,18 +67,18 @@ import type { DatabaseType, QueryPagination, QueryResult, QueryWarning } from "@
  */
 
 /**
- * What `checkEditorQuery` reads: the statement as sent, the type whose console text bound applies, the connection's
- * statement timeout, and the page bounds as sent. The statement is `unknown` because the route hands over its body
+ * What `checkEditorQuery` reads: the statement as sent, the record of the engine whose console text bound applies, the
+ * connection's statement timeout, and the page bounds as sent. The statement is `unknown` because the route hands over its body
  * field unchecked; the caller still owns the `sql` and `queryId` field checks. The statement timeout is the
  * connection's own `queryTimeout`, which an inline connection carries unchecked.
  */
 export interface EditorQueryRequest {
   statement: unknown;
   /**
-   * The type whose console text bound applies, undefined for a connection whose engine's record offers none
-   * (`EngineOffers.consoleTextBound`): a package's engine, which has no row of Studio's keyed by its id.
+   * The server catalog's record of the connection's engine, whose statement language row states the console text bound
+   * that applies, or none (`EngineRecord.statementLanguageRow`), for a legacy engine and a package's alike.
    */
-  type: DatabaseType | undefined;
+  engine: EngineRecord;
   options: unknown;
   queryTimeout: unknown;
 }
@@ -115,9 +115,8 @@ export function queryTimeoutError(value: unknown): string | null {
 
 /**
  * Why this request is refused, or null when no check refuses it: the page bounds first, then the connection's
- * statement timeout, then the console text bound of a connection type that declares one (none where `type` is
- * undefined). Null does not mean the request can run: only a type with a text bound has its statement held to a string
- * here, so a new caller checks that the statement and the `queryId` are strings itself before it calls
+ * statement timeout, then the console text bound the engine's statement language row states, where it states one.
+ * Null does not mean the request can run: only an engine with a text bound has its statement held to a string here, so a new caller checks that the statement and the `queryId` are strings itself before it calls
  * `runEditorQuery`. The route checks that `sql` is present and is a string, and that `queryId` is a string, before it
  * calls this.
  */
@@ -127,11 +126,11 @@ export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusa
   const timeoutError = queryTimeoutError(request.queryTimeout);
   if (timeoutError !== null) return { status: 400, error: timeoutError };
 
-  // A connection type that declares a console text bound is held to it here, before the bound parameters, the
-  // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size
-  // and the bound and never repeats the text. The bound is read from the type in the body, after the JSON has been
-  // parsed: a streamed bound on the request itself would change every engine and is a separate decision.
-  const textLimit = consoleTextByteLimit(request.type);
+  // An engine whose statement language row states a console text bound is held to it here, before the bound
+  // parameters, the provider and the statement cache are reached, so an oversize text opens no socket. The answer
+  // names the size and the bound and never repeats the text. The bound is read from the engine's record, after the
+  // JSON has been parsed: a streamed bound on the request itself would change every engine and is a separate decision.
+  const textLimit = rowTextByteLimit(request.engine.statementLanguageRow);
   if (textLimit !== undefined) {
     if (typeof request.statement !== "string") return { status: 400, error: "sql must be a string" };
     const over = consoleTextOverLimit(request.statement, textLimit);

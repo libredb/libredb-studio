@@ -91,7 +91,8 @@ mock.module("@/lib/query-events/postgres-sink", () => ({
 const { createMockRequest, parseResponseJSON } = await import("../../helpers/mock-next");
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { forgetUsedRunConfirmations } = await import("@/lib/api/run-confirmation-token");
-const { installStandInVocabulary, STAND_IN_TYPE } = await import("../../helpers/stand-in-vocabulary");
+const { STAND_IN_TYPE } = await import("../../helpers/stand-in-vocabulary");
+const { installStandInRecord } = await import("../../helpers/stand-in-record");
 const query = await import("@/app/api/db/query/route");
 const multiQuery = await import("@/app/api/db/multi-query/route");
 const transaction = await import("@/app/api/db/transaction/route");
@@ -142,7 +143,7 @@ describe.each(ROUTES)("POST %s", (path, post, extra) => {
   }
 
   test("a decides-alone claim the record does not list is answered 428 when asked, before any provider", async () => {
-    remove = installStandInVocabulary({});
+    remove = installStandInRecord({});
     await expectAsked(await run(STAND_IN_TYPE, "DROP TABLE t", "ask"));
   });
 
@@ -168,7 +169,7 @@ describe.each(ROUTES)("POST %s", (path, post, extra) => {
     process.env.LIBREDB_RUN_CONFIRMATION = "required";
     await expectAsked(await run("trino", "DELETE FROM t"));
     await expectAsked(await run("druid", "SELECT 1; DROP TABLE t"));
-    remove = installStandInVocabulary({});
+    remove = installStandInRecord({});
     await expectAsked(await run(STAND_IN_TYPE, "DROP TABLE t"));
   });
 });
