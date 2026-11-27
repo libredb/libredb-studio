@@ -1,9 +1,11 @@
 /**
  * The host reads what a console execute answered, once, before it pumps a row, and refuses by name a member it cannot
  * read (docs/providers/CONTRACT.md, clause C-112); it reads what a tree call answered against its action's form the
- * same way (clause C-62), and what a source call answered against the SDK's closed source document (clause C-115).
+ * same way (clause C-62), what a source call answered against the SDK's closed source document (clause C-115), and
+ * what a monitoring panel, pool statistics, health, maintenance run or maintenance preview call answered against its SDK
+ * type (clause C-112).
  *
- * Each case hands `checkExecuteAnswer`, `checkTreeAnswer` or `checkSourceAnswer` one answer and asserts the exact refusal list: a pointer
+ * Each case hands one of the answer checks one answer and asserts the exact refusal list: a pointer
  * into the answer, the key where the answer has one it cannot have, and never a value of the answer. A getter is planted
  * where a member is read and counts its calls, so a case shows it was never called. Every planted value is generated at
  * run time.

@@ -2058,6 +2058,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a close that fails beside a refused answer is thrown with the refusal first",
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
         "a served tree answer outside its action's form is refused on the host side with the core's refusals",
+        "a served panel, pool statistics, health, maintenance run or preview answer outside the SDK's types is refused on the host side with the core's refusals",
       ],
     },
   },
@@ -3259,12 +3260,17 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an optional execute answer member present with no value reads as absent, as it does in a tree answer",
         "an execute answer whose reading throws is refused at the pointer being read, and the check never throws",
         "an execute answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it",
+        "a monitoring panel answer outside its panel's form, or a list past the request's limit, is refused as panel-answer-unreadable at its pointer, a key it cannot have named and no value carried",
+        "a pool statistics or health answer outside the SDK's types is refused by its rule at its pointer, a count held to a safe integer",
+        "a maintenance run answer whose rows have no fields, a key outside them or a value outside the value codec, and a preview outside its form, are refused by their rules",
+        "a getter in any of the five answers is refused and never called, an optional member present with no value reads as absent, and an inherited key name does not throw",
       ],
       "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
         "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
+        "a served panel, pool statistics, health, maintenance run or preview answer outside the SDK's types is refused on the host side with the core's refusals",
       ],
       "tests/unit/lib/provider-host/core/console.test.ts": [
         "a malformed execution time, row count or warning list is refused at the core as the package's defect",
@@ -3273,6 +3279,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/provider-host/core/objects.test.ts": [
         "a malformed tree answer is refused at the core as the package's defect",
+      ],
+      "tests/unit/lib/provider-host/core/monitoring.test.ts": [
+        "a malformed panel, pool statistics or health answer is refused at the core after the call, for a package's session and a bridged one alike",
+      ],
+      "tests/unit/lib/provider-host/core/maintenance.test.ts": [
+        "a malformed maintenance run or preview answer is refused at the core after the call",
+      ],
+      "tests/unit/lib/api/provider-maintenance.test.ts": [
+        "a run or a preview whose answer the core refused is thrown as a defect of Studio's bridge, never answered as a run not sent",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
@@ -3292,6 +3307,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a health failure answers the degraded success with Studio's sentence naming its code, and the session is still closed",
         "an open that fails answers Studio's sentence naming its code, not-sent, and a close that fails does not change the answer",
         "a host defect during a package engine's test is logged as Studio's, and the package's own error as the package's",
+        "a refused health answer reads as a degraded test naming the package's defect, logged once",
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
@@ -3301,6 +3317,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
         "a tree answer the core refused is the package's defect on both grants, and a package's tree error is answered by its grant",
+        "a health, panel, pool statistics, run or preview answer the core refused is the package's defect on both grants, and a package's own error of each is answered by its grant",
       ],
     },
   },
