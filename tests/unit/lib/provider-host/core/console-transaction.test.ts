@@ -456,7 +456,7 @@ describe("a statement sent inside a transaction", () => {
     expect(big.kind).toBe("page");
     if (big.kind === "page") big.release();
 
-    // Closing that fails beside the refusal reaches the caller as the closes' errors.
+    // Closing that fails beside the refusal rides on the refused record, never thrown past it.
     const closeFailure = new Error(marker());
     const failing = counted(async () => {
       throw closeFailure;
@@ -464,9 +464,8 @@ describe("a statement sent inside a transaction", () => {
     const missing = sessionOf(async () => ({ sessionState: "unknown" }), {
       execute: async () => ({ results: [failing.source], warnings: [], executionTimeMs: 2, pageApplied: true }),
     });
-    const caught = await failure(() => executeCall(missing.session, statementOf(), contextOf(), () => LIMITS, ports));
-    expect(caught).toBeInstanceOf(AggregateError);
-    expect((caught as AggregateError).errors).toEqual([closeFailure]);
+    const caught = await executeCall(missing.session, statementOf(), contextOf(), () => LIMITS, ports);
+    expect(caught).toMatchObject({ kind: "refused", called: true, closeFailures: [closeFailure] });
     expect(failing.seen.closes).toBe(1);
   });
 

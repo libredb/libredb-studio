@@ -20,7 +20,9 @@
  * Every execute answer, a provider package's and the bridge's alike, is read by `checkExecuteAnswer` right after it
  * answered, before the abort check and the pump (clause C-112): a result list, a first result's columns or row count,
  * an execution time, a warning list or a warning outside the SDK's types is refused as a record, `called` true, after
- * every source is closed once and none pulled. The page record carries the members the check read, its warnings a
+ * every source is closed once and none pulled: only an element of the list held as an object by its own data
+ * descriptor is closed, and a close that fails rides on the record as `closeFailures`, never thrown past the refusal
+ * (`refusedAnswer`). The page record carries the members the check read, its warnings a
  * fresh frozen list, so no caller re-checks them and none reads the session's answer again.
  *
  * An endScope call answers the outcome its session answered, `openTransaction`, read by reference as a cancel's
@@ -119,6 +121,8 @@ export interface RefusedRecord {
   readonly called: boolean;
   readonly refusals: readonly CallRefusal[];
   readonly cause?: unknown;
+  /** On a refused execute answer only: the error of each source whose close failed, when one did. */
+  readonly closeFailures?: readonly unknown[];
 }
 
 /**
@@ -329,17 +333,30 @@ function sessionTransaction(
 }
 
 /**
- * The record of an execute answer the host refused, `refusals` its refusals, after every one of `sources` is closed
- * once; an `AggregateError` of `message` when a close failed.
+ * The elements of `results`, a result list the host refused an answer over, that it can close: each element read
+ * through its own data descriptor whose value is an object, walked by index up to the first hole. An element that is
+ * an accessor is never called, and one that is no object is never closed.
  */
-async function refusedAnswer(
-  sources: readonly ResultSource[],
-  refusals: readonly CallRefusal[],
-  message: string,
-): Promise<RefusedRecord> {
-  const closeErrors = await closeEach(sources);
-  if (closeErrors.length > 0) throw new AggregateError(closeErrors, message);
-  return { kind: "refused", called: true, refusals };
+function closableSources(results: readonly unknown[]): readonly ResultSource[] {
+  const sources: ResultSource[] = [];
+  for (let index = 0; index < results.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(results, index);
+    if (descriptor === undefined) break;
+    if ("value" in descriptor && typeof descriptor.value === "object" && descriptor.value !== null) {
+      sources.push(descriptor.value as ResultSource);
+    }
+  }
+  return sources;
+}
+
+/**
+ * The record of an execute answer the host refused, `refusals` its refusals, after every source of `results` it can
+ * close (`closableSources`) is closed once. It never throws past the refusal: the error of each close that failed
+ * rides on the record as `closeFailures`, for the caller's one log line of the refusal.
+ */
+async function refusedAnswer(results: readonly unknown[], refusals: readonly CallRefusal[]): Promise<RefusedRecord> {
+  const closeFailures = await closeEach(closableSources(results));
+  return { kind: "refused", called: true, refusals, ...(closeFailures.length > 0 ? { closeFailures } : {}) };
 }
 
 /**
@@ -382,20 +399,8 @@ async function runExecute(
   // A statement sent inside a transaction answers the session state after it, read before anything else of the run.
   const inTransaction = Object.hasOwn(request, "transaction");
   const stateRefusals = inTransaction ? checkTransactionStatement(answer) : [];
-  if (stateRefusals.length > 0) {
-    return refusedAnswer(
-      sources,
-      stateRefusals,
-      "Closing the result sources of a statement whose state was refused failed.",
-    );
-  }
-  if (answerRefusals.length > 0) {
-    return refusedAnswer(
-      sources,
-      answerRefusals,
-      "Closing the result sources of an execute answer the host refused failed.",
-    );
-  }
+  if (stateRefusals.length > 0) return refusedAnswer(sources, stateRefusals);
+  if (answerRefusals.length > 0) return refusedAnswer(sources, answerRefusals);
   if (ctx.signal.aborted) {
     const closeErrors = await closeEach(sources);
     if (closeErrors.length > 0) throw new AggregateError(closeErrors, "Closing a stopped run's result sources failed.");
