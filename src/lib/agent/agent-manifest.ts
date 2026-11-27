@@ -136,32 +136,33 @@ function packRequirementProjection<Value>(
 }
 
 /**
- * What a workflow variant needs of an engine beyond its language, evaluated over the engine's id so a client can
- * answer it with no provider in hand. A requirement only one language's variants name is its pack's own
- * (`AgentPackVariantRequirement`).
+ * What a workflow variant needs of an engine beyond its language, evaluated over the engine's id, or its grants for
+ * `agent-readings`, so a client can answer it with no provider in hand. A requirement only one language's variants
+ * name is its pack's own (`AgentPackVariantRequirement`).
  */
 export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | "agent-readings" | AgentPackVariantRequirement;
 
+/** The requirements a list of engine ids answers: every one but `agent-readings`, which the engine's grants answer. */
+type AgentListedRequirement = Exclude<AgentVariantRequirement, "agent-readings">;
+
 /**
- * The engines each requirement holds on. `sql-catalog` and `sql-composers` are read from the engines' client dialects
+ * The engines each listed requirement holds on. `sql-catalog` and `sql-composers` are read from the engines' client dialects
  * (`enginesSupporting` in `languages/engines/client.ts`), which say client-safe what each server overlay supplies:
  * the engines that compose a catalog read, and those that compose both a catalog read and an estimating plan. A
  * statement workflow names the one it cannot run without, so a dialect with no estimating plan still opens every
  * workflow whose verdict cites none; the assessment verdict's table profile is deliberately not held (`client.ts`).
- * `agent-readings`, which the operations variant names, holds on every legacy engine Studio grants at least one curated
- * reading (its legacy grant of the claim `facets.agentReadings`), in catalog order; availability reads the requirement
- * from the engine's own grants instead (`operationsWorkflowOpens`), so a package engine's reading counts too.
- * A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
+ * A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`). `agent-readings`, which the
+ * operations variant names, has no list: it holds on an engine whose own grants hold at least one curated reading
+ * (`operationsWorkflowOpens`), so a package engine's reading counts too.
  * `agent-manifest.test.ts` holds both SQL requirements to the composed-SQL entry points in `composed-sql.ts` and each
  * pack requirement to the providers that declare its reading.
  */
-export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>> =
+export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentListedRequirement, readonly DatabaseType[]>> =
   Object.freeze({
     "sql-catalog": enginesSupporting("catalogRead"),
     "sql-composers": enginesSupporting("catalogRead", "planEstimate"),
-    "agent-readings": SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).agentReadings.length > 0),
     ...packRequirementProjection((spec) => spec.engines),
-  } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
+  } satisfies Record<AgentListedRequirement, readonly DatabaseType[]>);
 
 /**
  * Raised when the manifest is asked about a language it does not hold, or for a variant an agent run cannot do
@@ -346,7 +347,7 @@ interface AgentAvailabilityTables {
   readonly variants: Readonly<
     Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
   >;
-  readonly requirementEngines: Readonly<Record<AgentVariantRequirement, readonly string[]>>;
+  readonly requirementEngines: Readonly<Record<AgentListedRequirement, readonly string[]>>;
 }
 
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({

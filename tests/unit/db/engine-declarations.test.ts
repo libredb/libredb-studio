@@ -4374,10 +4374,7 @@ describe("the census", () => {
         Record<DatabaseType, AgentStatementLanguageId | null>
       >,
       variants: AGENT_WORKFLOW_VARIANTS,
-      requirementEngines: {
-        ...AGENT_REQUIREMENT_ENGINES,
-        "agent-readings": SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.agentReadings.length > 0),
-      },
+      requirementEngines: AGENT_REQUIREMENT_ENGINES,
       reviewed: legacyRegisterEngines("agentExecution"),
     };
     // The SQL record is total over the workflows, so every workflow of every language is among its keys.

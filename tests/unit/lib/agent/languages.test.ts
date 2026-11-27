@@ -721,7 +721,6 @@ describe("the names a pack owns are declared in the pack and merged for the core
     expect(Object.keys(AGENT_REQUIREMENT_ENGINES)).toEqual([
       "sql-catalog",
       "sql-composers",
-      "agent-readings",
       "cluster-usage-reading",
       "cluster-workload-reading",
     ]);

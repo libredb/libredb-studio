@@ -677,17 +677,9 @@ describe("workflowAvailability", () => {
     },
   );
 
-  test("AGENT_REQUIREMENT_ENGINES['agent-readings'] is every engine whose row offers a reading", () => {
-    const reviewed = legacyRegisterTable("agentReadings");
-    const offering = (Object.keys(reviewed) as DatabaseType[]).filter((type) => reviewed[type].length > 0);
-    expect([...AGENT_REQUIREMENT_ENGINES["agent-readings"]]).toEqual(offering);
-    expect(WITHOUT_READINGS.filter((type) => AGENT_REQUIREMENT_ENGINES["agent-readings"].includes(type))).toEqual([]);
-  });
-
-  test("the operations arm refuses an engine whose grants hold no agent reading, whatever the tables hold", () => {
+  test("the operations arm refuses an engine whose grants hold no agent reading", () => {
     const spark = legacyAgentEngine("spark");
     const unread = { id: spark.id, grants: { ...spark.grants, agentReadings: [] } };
-    expect(AGENT_REQUIREMENT_ENGINES["agent-readings"]).toContain("spark");
     expect(workflowAvailability("agent", "operations", unread)).toEqual({
       open: false,
       cause: "requirement-unmet",
@@ -750,7 +742,7 @@ describe("workflowAvailability", () => {
     });
   });
 
-  test("a variant that requires a curated reading holds it on the engine's own grants, whatever the tables list", () => {
+  test("a variant that requires a curated reading holds it on the engine's own grants", () => {
     const readingInvestigation = {
       ...partialLanguage,
       variants: {
@@ -760,7 +752,6 @@ describe("workflowAvailability", () => {
           investigation: { ...sqlInvestigation, requires: ["agent-readings"] },
         },
       },
-      requirementEngines: { ...partialLanguage.requirementEngines, "agent-readings": [] },
     } as const;
     const kubernetes = legacyAgentEngine("kubernetes");
     const unread = { id: kubernetes.id, grants: { ...kubernetes.grants, agentReadings: [] } };
