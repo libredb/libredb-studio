@@ -2,17 +2,26 @@
  * A workspace package imports only what it declares, and core reaches a package only by its name
  * (packages/README.md, "Imports"; docs/providers/CONTRACT.md, clauses M-17 and C-42).
  *
- * A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and
- * `@libredb/provider-sdk`; its tests may also import a `bun:` module such as `bun:test`. A built-in is a name of
- * Node.js's list as Studio commits it (src/lib/provider-host/node-builtins.ts), never what the running runtime serves,
- * so `bun`, `ws` and `undici`, which Bun serves as built-ins, are undeclared names. Nothing in a package
- * imports an `@/` path or climbs out of its directory, so a package never depends on another package's internals or on
+ * Every module a package holds, outside `node_modules` (its source, its tests and the build modules its `build` script
+ * runs), imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`; a
+ * module of its tests may also import a `bun:` module such as `bun:test`. A module outside the package's `src/` and
+ * `tests/` imports no `child_process`, so a build never starts a program it finds on the workspace's `PATH` rather than
+ * importing a tool it declares; this guards the repository's install, and the contract states no sentence for it. A
+ * built-in is a name of Node.js's list as Studio commits it (src/lib/provider-host/node-builtins.ts), never what the
+ * running runtime serves, so `bun`, `ws` and `undici`, which Bun serves as built-ins, are undeclared names. Nothing in a
+ * package imports an `@/` path or climbs out of its directory, so a package never depends on another package's
+ * internals or on
  * Studio's, and moving it to a repository of its own changes no import. Core (`src/`, `bin/`, `scripts/`, `tests/`,
  * `e2e/` and `vscode-extension/src/`) never reaches into `packages/` by path, so what core sees of a package is what
  * its `exports` publish. Core never imports a provider package, by name or by path, so a provider's code reaches
  * Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two
  * `@libredb/provider-` names it imports. No package but the kit depends on another provider package: the SDK alone,
  * and the kit in a package's tests and `devDependencies` only.
+ *
+ * A package's `build` script is `node <file>` for a JavaScript module it holds outside `src/` and `tests/`, judged
+ * against the package's listing, and the package has no `prebuild` or `postbuild` script, which `bun run build` runs
+ * around it, and no `bunfig.toml`, which can make that `node` run Bun. So every tool a build uses is an import the rule
+ * above judges.
  *
  * Specifiers are read with the scanner of `tests/unit/lib/db/provider-imports/scan.ts` (the TypeScript compiler's
  * `preProcessFile`), so a path in a comment or a string is never one. Inward, only core files whose text contains
@@ -52,6 +61,13 @@ function packageNameOf(specifier: string): string {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string);
 }
 
+/**
+ * The built-in that starts another program. A build module outside a package's `src/` and `tests/` imports none, since
+ * a program it started would be found on the workspace's `PATH`, which no import declares; a provider's own source may
+ * (a driver run in a child process).
+ */
+const STARTS_A_PROGRAM: ReadonlySet<string> = new Set(["child_process", "node:child_process"]);
+
 /** Why `specifier` in package file `file` breaks the package import rule, or null when it keeps it. */
 function packageSpecifierFailure(
   file: string,
@@ -60,6 +76,9 @@ function packageSpecifierFailure(
   declared: ReadonlySet<string>,
 ): string | null {
   const isTest = file.startsWith(`${directory}/tests/`);
+  if (!isTest && !file.startsWith(`${directory}/src/`) && STARTS_A_PROGRAM.has(specifier)) {
+    return `${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build imports every tool it uses, declared`;
+  }
   if (specifier.startsWith("/")) return `${file} imports "${specifier}", a path out of ${directory}`;
   if (specifier.startsWith(".")) {
     const target = path.posix.join(path.posix.dirname(file), specifier);
@@ -76,17 +95,18 @@ function packageSpecifierFailure(
   return `${file} imports "${specifier}", which ${directory}/package.json does not declare`;
 }
 
-/** Every breach of the package import rule under `root`, sorted. */
+/**
+ * Every breach of the package import rule under `root`, sorted. Every module of a package's directory is read, outside
+ * `node_modules`: its source, its tests and the build modules its `build` script runs, a module under `tests/` judged
+ * as a test and every other as source.
+ */
 function packageImportFailures(root: string): string[] {
   const failures: string[] = [];
   for (const { directory, manifest } of workspacePackageManifests(root)) {
     const declared = new Set(
       ["dependencies", "peerDependencies", "devDependencies"].flatMap((field) => Object.keys(manifest[field] ?? {})),
     );
-    for (const file of [
-      ...sourceFilesUnder(root, `${directory}/src`),
-      ...sourceFilesUnder(root, `${directory}/tests`),
-    ]) {
+    for (const file of sourceFilesUnder(root, directory)) {
       for (const specifier of moduleSpecifiers(readFileSync(path.join(root, file), "utf8"))) {
         const failure = packageSpecifierFailure(file, specifier, directory, declared);
         if (failure !== null) failures.push(failure);
@@ -220,6 +240,74 @@ function providerPackageImportFailures(root: string): string[] {
         failures.push(`${file} imports "${specifier}", a provider package: core imports none, by name or by path`);
       }
     }
+  }
+  return failures.sort();
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** The one form of a `build` script: `node` and one path, the pack step's own arguments appended after it. */
+const BUILD_FORM = /^node (\S+)$/;
+/** The extensions of a JavaScript module node runs without a loader. */
+const BUILD_MODULE = /\.(mjs|js|cjs)$/;
+
+/**
+ * Why `script`, the `build` script of the package at `directory`, does not run a build module the package holds, or
+ * null when it does. The module is judged against the package's listing (`files`, its repository-relative source
+ * files), never by opening its path, so a link, a directory or a missing path are alike no file of the package on
+ * every platform.
+ */
+function buildScriptFailure(directory: string, script: unknown, files: readonly string[]): string | null {
+  const where = `${directory}/package.json scripts.build`;
+  const match = typeof script === "string" ? BUILD_FORM.exec(script) : null;
+  if (match === null) return `${where} is ${JSON.stringify(script)}, not node <file>: run a module the package holds`;
+  const file = path.posix.normalize(match[1] as string);
+  if (file === ".." || file.startsWith("../") || file.startsWith("/")) {
+    return `${where} runs ${file}, a path out of ${directory}`;
+  }
+  if (file.startsWith("src/") || file.startsWith("tests/")) {
+    return `${where} runs ${file}, which lies in the package's src/ or tests/: run a build module outside them`;
+  }
+  if (!BUILD_MODULE.test(file)) return `${where} runs ${file}, which is not a JavaScript module (.mjs, .js or .cjs)`;
+  return files.includes(`${directory}/${file}`)
+    ? null
+    : `${where} runs ${file}, which is no regular file of ${directory}`;
+}
+
+/**
+ * Every workspace package under `root` whose build could run a tool it does not declare, sorted: a `build` script that
+ * is not `node <file>` for a JavaScript module the package holds outside `src/` and `tests/`; a `prebuild` or
+ * `postbuild` script, which `bun run build` runs around the build (measured with Bun 1.4.4, 2026-11-27); a `scripts`
+ * that is not an object; and a `bunfig.toml` in the package's directory, which `bun run` reads there and which can make
+ * the script's `node` run Bun, whose globals are tools no import shows. A package with no `build` script has nothing to
+ * judge but those.
+ */
+function buildScriptFailures(root: string): string[] {
+  const failures: string[] = [];
+  for (const { directory, manifest } of workspacePackageManifests(root)) {
+    if (readdirSync(path.join(root, directory)).includes("bunfig.toml")) {
+      failures.push(
+        `${directory} holds bunfig.toml, which bun run build reads in the package's directory: Bun is configured at the repository's root only`,
+      );
+    }
+    const scripts: unknown = manifest.scripts;
+    if (scripts === undefined) continue;
+    if (!isRecord(scripts)) {
+      failures.push(`${directory}/package.json scripts is not an object of named scripts`);
+      continue;
+    }
+    for (const [hook, when] of [
+      ["prebuild", "before"],
+      ["postbuild", "after"],
+    ] as const) {
+      if (hook in scripts) {
+        failures.push(`${directory}/package.json declares scripts.${hook}, which bun run build runs ${when} the build`);
+      }
+    }
+    if (!("build" in scripts)) continue;
+    const failure = buildScriptFailure(directory, scripts.build, sourceFilesUnder(root, directory));
+    if (failure !== null) failures.push(failure);
   }
   return failures.sort();
 }
@@ -580,5 +668,122 @@ describe("the package import rule", () => {
     } finally {
       removePlantedRoot(root);
     }
+  });
+
+  test("a provider package's build files import only what the package declares", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({
+          name: "@libredb/provider-alpha",
+          scripts: { build: "node build/run.mjs" },
+          devDependencies: { "alpha-bundler": "*" },
+        }),
+        "packages/provider-alpha/build/run.mjs": [
+          'import "alpha-bundler";',
+          'import "beta-bundler";',
+          'import "./helper.mjs";',
+          'import "node:fs";',
+          'import "bun:sqlite";',
+          'import "node:child_process";',
+        ].join("\n"),
+        "packages/provider-alpha/build/helper.mjs": [
+          'import "gamma-tool";',
+          'import "../../outside.mjs";',
+          'export const run = () => require("child_process");',
+        ].join("\n"),
+        "packages/provider-alpha/alpha.config.mjs": 'import "delta-tool";\n',
+        "packages/provider-alpha/src/index.ts": [`import "${SDK}";`, 'import "node:child_process";'].join("\n"),
+        "packages/provider-alpha/tests/a.test.ts": ['import "bun:test";', 'import "child_process";'].join("\n"),
+      },
+    });
+    const undeclared = (file: string, specifier: string): string =>
+      `packages/provider-alpha/${file} imports "${specifier}", which packages/provider-alpha/package.json does not declare`;
+    const startsAProgram = (file: string, specifier: string): string =>
+      `packages/provider-alpha/${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build imports every tool it uses, declared`;
+    try {
+      expect(packageImportFailures(root)).toEqual(
+        [
+          undeclared("alpha.config.mjs", "delta-tool"),
+          undeclared("build/helper.mjs", "gamma-tool"),
+          'packages/provider-alpha/build/helper.mjs imports "../../outside.mjs", a path out of packages/provider-alpha',
+          startsAProgram("build/helper.mjs", "child_process"),
+          undeclared("build/run.mjs", "beta-bundler"),
+          'packages/provider-alpha/build/run.mjs imports "bun:sqlite", a Bun runtime module, outside the package\'s tests',
+          startsAProgram("build/run.mjs", "node:child_process"),
+        ].sort(),
+      );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a provider package's build script runs a file the package holds", () => {
+    const pkg = (name: string, scripts: unknown, files: Record<string, string> = {}): Record<string, string> => ({
+      [`packages/${name}/package.json`]: JSON.stringify(scripts === undefined ? { name } : { name, scripts }),
+      ...Object.fromEntries(Object.entries(files).map(([file, text]) => [`packages/${name}/${file}`, text])),
+    });
+    const held = { "build.mjs": "export {};\n" };
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        ...pkg("out-relative", { build: "node ../outside.mjs" }),
+        ...pkg("out-absolute", { build: "node /opt/x.mjs" }),
+        ...pkg("out-parent", { build: "node .." }),
+        ...pkg("not-node", { build: "bundler src/index.ts --bundle" }),
+        ...pkg("two-commands", { build: "node build.mjs && node more.mjs" }, held),
+        ...pkg("missing", { build: "node build/missing.mjs" }),
+        // A directory named like a module: its listing's Dirent.isFile() is false on Linux, macOS and Windows alike,
+        // and no path is opened, so Windows' EISDIR never arises.
+        ...pkg("directory", { build: "node tools.mjs" }, { "tools.mjs/inner.mjs": "export {};\n" }),
+        ...pkg("typescript-entry", { build: "node build.ts" }, { "build.ts": "export {};\n" }),
+        ...pkg("in-source", { build: "node src/build.mjs" }, { "src/build.mjs": "export {};\n" }),
+        ...pkg("in-tests", { build: "node tests/build.mjs" }, { "tests/build.mjs": "export {};\n" }),
+        ...pkg("numeric", { build: 7 }),
+        ...pkg("scripts-string", "node build.mjs", held),
+        ...pkg("pre", { prebuild: "echo pre", build: "node build.mjs" }, held),
+        ...pkg("post", { build: "node build.mjs", postbuild: "echo post" }, held),
+        ...pkg("bunfig", { build: "node build.mjs" }, { ...held, "bunfig.toml": "[run]\nbun = true\n" }),
+        ...pkg("nested-ok", { build: "node build/run.mjs" }, { "build/run.mjs": "export {};\n" }),
+        ...pkg("dot-ok", { build: "node ./build.mjs" }, held),
+        ...pkg("cjs-ok", { build: "node build.cjs" }, { "build.cjs": "module.exports = {};\n" }),
+        ...pkg("no-scripts", undefined),
+        ...pkg("no-build", { test: "bun test" }),
+      },
+    });
+    const form = (name: string, script: string): string =>
+      `packages/${name}/package.json scripts.build is ${script}, not node <file>: run a module the package holds`;
+    try {
+      expect(buildScriptFailures(root)).toEqual(
+        [
+          "packages/out-relative/package.json scripts.build runs ../outside.mjs, a path out of packages/out-relative",
+          "packages/out-absolute/package.json scripts.build runs /opt/x.mjs, a path out of packages/out-absolute",
+          "packages/out-parent/package.json scripts.build runs .., a path out of packages/out-parent",
+          form("not-node", '"bundler src/index.ts --bundle"'),
+          form("two-commands", '"node build.mjs && node more.mjs"'),
+          form("numeric", "7"),
+          "packages/missing/package.json scripts.build runs build/missing.mjs, which is no regular file of packages/missing",
+          "packages/directory/package.json scripts.build runs tools.mjs, which is no regular file of packages/directory",
+          "packages/typescript-entry/package.json scripts.build runs build.ts, which is not a JavaScript module (.mjs, .js or .cjs)",
+          "packages/in-source/package.json scripts.build runs src/build.mjs, which lies in the package's src/ or tests/: run a build module outside them",
+          "packages/in-tests/package.json scripts.build runs tests/build.mjs, which lies in the package's src/ or tests/: run a build module outside them",
+          "packages/scripts-string/package.json scripts is not an object of named scripts",
+          "packages/pre/package.json declares scripts.prebuild, which bun run build runs before the build",
+          "packages/post/package.json declares scripts.postbuild, which bun run build runs after the build",
+          "packages/bunfig holds bunfig.toml, which bun run build reads in the package's directory: Bun is configured at the repository's root only",
+        ].sort(),
+      );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("the repository's packages' build scripts each run a file the package holds", () => {
+    expect(workspacePackageManifests(REPOSITORY_ROOT).length).toBeGreaterThan(0);
+    expect(buildScriptFailures(REPOSITORY_ROOT)).toEqual([]);
   });
 });

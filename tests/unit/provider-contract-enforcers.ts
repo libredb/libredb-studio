@@ -144,6 +144,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the repository's packages import only what they declare",
         "core reaches no workspace package by path",
         "a package source import of a name only Bun treats as a built-in fails as undeclared",
+        "a provider package's build files import only what the package declares",
+        "a provider package's build script runs a file the package holds",
       ],
     },
   },

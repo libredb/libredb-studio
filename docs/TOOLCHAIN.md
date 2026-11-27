@@ -739,7 +739,8 @@ The "Engine Smoke - Build Payload" job then runs `scripts/check-build-output.ts`
 
 ### The package import rule
 
-A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a `bun:` module; nothing in a package imports an `@/` path or a path out of its directory.
+Every module a package holds outside `node_modules`, its source, its tests and its build modules, imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and a module of its tests may also import a `bun:` module; nothing in a package imports an `@/` path or a path out of its directory.
+A package's `build` script is `node <file>` for a JavaScript module it holds outside `src/` and `tests/`, with no `prebuild` or `postbuild` script, which `bun run build` runs around it (measured with Bun 1.4.4, 2026-11-27), and no `bunfig.toml` in its directory, which can make that `node` run Bun; a build module imports no `child_process`, so every tool a build uses is an import the rule judges.
 Core, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name.
 Core never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
 `tests/unit/package-imports.test.ts` reads the specifiers with the TypeScript compiler's `preProcessFile`, through the provider import scanner, and plants a package and core files that break each rule.
@@ -804,6 +805,7 @@ It writes no lock: `bun run providers:lock` locks what it placed (C-91).
 
 Studio holds no bundler configuration of any package: the step runs the package's own `build` script, so what a driver needs to bundle stays in the package.
 It runs `bun run --shell=bun build -- --outdir <dir>`, Bun's own shell on every platform, with the package's directory as the working directory, so the build resolves its dependencies from the workspace's install.
+The package import rule holds what that build may run and import ("The package import rule" above).
 `<dir>` is an empty directory in a temporary directory outside the repository, removed when the package is done.
 The build sees the caller's `PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP` and `TMPDIR` alone, with `HOME` and `USERPROFILE` an empty directory of its own, plus the `NODE`, `PWD` and `npm_*` variables `bun run` adds; no `NODE_OPTIONS`, `NODE_PATH`, `BUN_*` or `LIBREDB_*` reaches it.
 A build has no deadline: a deadline on `bun run` ends `bun` and leaves the build's own children running (measured with Bun 1.4.4, 2026-11-27), so a build that never ends holds the step, and the CI job's timeout bounds a CI run.

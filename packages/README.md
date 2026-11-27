@@ -9,6 +9,7 @@ The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the prov
 
 A workspace package is a directory `packages/<name>/` holding a `package.json`.
 Its source is under `packages/<name>/src/` and its tests are under `packages/<name>/tests/`, with `packages/<name>/tests/live/` left to be run by hand, as the root's `tests/live/` is.
+A provider package also holds the build modules its `build` script runs, outside `src/` and `tests/` ("Provider packages" below), and the package import rule reads them as code.
 Nothing else under `packages/` is code.
 A file such as this README is not a package, and a directory without a `package.json` is refused by name by every gate that lists packages, so a stray directory never holds tests that silently do not run.
 
@@ -23,7 +24,7 @@ A package serves only the type-id its directory names, until the provider manife
 The agent leg has no place in a package yet, so a type-id whose granted statement language is non-null stays in the legacy layout until the change that moves it gives its package one.
 `tests/unit/db/provider-triad.test.ts` holds these rules for every shipped type-id, and `tests/helpers/provider-layout.ts` is how a test finds a provider's files in either layout.
 A provider package's manifest is `packages/provider-<type-id>/libredb-provider.json`, the artifact's own name and place.
-Its `package.json` has a `build` script that takes `--outdir <absolute directory>` and writes the manifest's `runtime.entry` and every other file the artifact needs there.
+Its `package.json` has a `build` script, `node <file>` for a JavaScript module the package holds outside `src/` and `tests/`, that takes `--outdir <absolute directory>` and writes the manifest's `runtime.entry` and every other file the artifact needs there.
 `bun run providers:pack` runs that script and places the artifact in a providers directory (`docs/TOOLCHAIN.md`, "The provider pack step (`providers:pack`)").
 
 ## Install
@@ -35,7 +36,9 @@ The linker is not recorded in `bun.lock`, so the setting has to travel with ever
 
 ## Imports
 
-A package imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a `bun:` module such as `bun:test`.
+Every module a package holds, its source, its tests and the modules its `build` script runs, imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and a module of its tests may also import a `bun:` module such as `bun:test`.
+A package's `build` script is `node <file>` for a module it holds outside `src/` and `tests/`, and the package has no `prebuild` or `postbuild` script, which `bun run build` runs around the build.
+In this repository a build module also imports no `child_process`, so a build never starts a program it finds on the workspace's `PATH`, and a package directory holds no `bunfig.toml`, which can make the build's `node` run Bun.
 A package never imports an `@/` path or a path out of its own directory, so it depends on no other package's internals and on none of Studio's, and moving it to a repository of its own changes no import.
 Studio's own code, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name, never by a path into `packages/`, so what Studio sees of a package is what its `exports` publish.
 Studio's own code never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
@@ -93,7 +96,7 @@ Every gate that finds its files by a `src/` or `tests/` path also reads a packag
 - knip analyses each package as a workspace, through the root `package.json` `workspaces`.
 - The root `tsc` checks every `.ts` file under the root, packages included.
 - The packed library check (`bun run lib:load`) fails on a dist or a packed manifest that names a package, and on a package dependency the root does not declare.
-- The package import rule (`tests/unit/package-imports.test.ts`) reads every package's `src/` and `tests/`, and every core file that names `packages/`, as "Imports" says.
+- The package import rule (`tests/unit/package-imports.test.ts`) reads every module of every package and its `build` script, and every core file that names `packages/`, as "Imports" says.
 - The VS Code extension's bundle checks (`vscode-extension/scripts/bundle-checks.mjs`) refuse package code in the host bundle, and let the webview bundle a package file only when a sql-grammar row reaches it.
 
 `tests/unit/package-gates.test.ts` plants a violation in a throwaway package for the install, Biome, ESLint and knip, and fails when one of them stops seeing it.
