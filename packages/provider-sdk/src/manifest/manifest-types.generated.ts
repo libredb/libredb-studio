@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "ed34b09519e5a8dc4350ce5cb5e7ae03200bccaf1c43bd049d4e4a59707fb60b";
+export const MANIFEST_SCHEMA_SHA256 = "8e6bca2458d869e8f04a9996f6b0e8fc6810503292a8fee6affa67647ddd156b";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -770,15 +770,15 @@ export type HistoryMask = {
 /** A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens. */
 export type CredentialFlag = string;
 
-/** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. */
-export interface SqlText {
+/** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement and the query event log keeps none of its text. */
+export type SqlText = {
   /** Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate and the query event log count only where Studio grants it, from the engine's register row for the grammar the row reviewed, and every other reader reads it as declared. */
   readonly readsSqlText: boolean;
   readonly grammar: GrammarFacts;
   readonly redaction: StatementRedaction;
   readonly updateTarget: UpdateTargetWords;
   readonly completion: CompletionReaders;
-}
+} | null;
 
 /** The engine's SQL grammar facts, one member per fact of the SDK's SqlGrammar, whose doc comments give each fact's rationale. A fact the SqlGrammar type may leave out is written at the reading its absence has, so a form the engine does not have is false or an empty list. */
 export interface GrammarFacts {
@@ -959,8 +959,8 @@ export interface CompletionReaders {
   readonly readQuotedQualifier: FunctionName | null;
 }
 
-/** The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts. */
-export interface SqlWriting {
+/** The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request, or null where the engine has no SQL writing. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts. */
+export type SqlWriting = {
   readonly escapeLiteral: FunctionName;
   readonly unescapeLiteral: FunctionName;
   readonly quoteIdentifier: FunctionName;
@@ -972,7 +972,7 @@ export interface SqlWriting {
   readonly export: ExportFacts;
   /** The pure function that writes the request inserting documents at an address, for an engine whose console text is a request rather than a statement; null where the test data generator writes an INSERT. */
   readonly insertDocuments: FunctionName | null;
-}
+} | null;
 
 /** What the inline edit reads for the engine: the type names that make a key column date-time, exact decimal and float64, each read against the first word of the column's declared type, lower-cased and with its wrappers off. */
 export interface InlineEditFacts {
@@ -1086,8 +1086,8 @@ export type CreateTableKey = {
 /** Whole SQL comment lines, each -- and a space, then text with no line break, then a line feed, up to 1024 characters in all, so the text written above a statement never becomes one. */
 export type CommentLines = string;
 
-/** What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills. */
-export type MigrationDdl = MigrationDdlRefused | MigrationDdlWritten;
+/** What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change, or null where the engine has no migration DDL. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills. */
+export type MigrationDdl = MigrationDdlRefused | MigrationDdlWritten | null;
 
 /** Migration DDL of an engine that writes no table DDL: the one comment line the migration holds in place of any statement, no transaction wrapper, and the reasons the line gives. */
 export interface MigrationDdlRefused {

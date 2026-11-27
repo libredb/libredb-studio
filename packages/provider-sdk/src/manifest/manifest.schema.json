@@ -1928,8 +1928,8 @@
       "pattern": "^--[a-z][a-z0-9-]{0,62}$"
     },
     "sqlText": {
-      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names.",
-      "type": "object",
+      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement and the query event log keeps none of its text.",
+      "type": ["object", "null"],
       "properties": {
         "readsSqlText": {
           "description": "Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate and the query event log count only where Studio grants it, from the engine's register row for the grammar the row reviewed, and every other reader reads it as declared.",
@@ -2459,8 +2459,8 @@
       "additionalProperties": false
     },
     "sqlWriting": {
-      "description": "The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts.",
-      "type": "object",
+      "description": "The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request, or null where the engine has no SQL writing. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts.",
+      "type": ["object", "null"],
       "properties": {
         "escapeLiteral": {
           "$ref": "#/$defs/functionName"
@@ -2851,13 +2851,16 @@
       "pattern": "^(?:-- [^\\r\\n\\u2028\\u2029]*\\n)+$"
     },
     "migrationDdl": {
-      "description": "What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills.",
+      "description": "What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change, or null where the engine has no migration DDL. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills.",
       "oneOf": [
         {
           "$ref": "#/$defs/migrationDdlRefused"
         },
         {
           "$ref": "#/$defs/migrationDdlWritten"
+        },
+        {
+          "type": "null"
         }
       ]
     },
