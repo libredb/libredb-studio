@@ -11,9 +11,10 @@
  * never enough: an engine whose record does not grant agent execution is refused by name, whatever its provider
  * implements.
  *
- * Its own module rather than a function of the grant reader, so the browser-safe agent manifest, which opens the start
- * of an agent run, reads the same grant as the list `GRANTED_AGENT_EXECUTION_ENGINES` (src/lib/db/claim-grants.ts)
- * with `includes` and loads no refusal of its own.
+ * Its own module rather than a function of the grant reader, so the browser-safe agent manifest, whose
+ * `workflowAvailability` opens the start of an agent run, reads the same grant from the engine it is handed (the
+ * engine record's `grants.agentExecution` on the server, `legacyAgentEngine` in the browser) and loads no refusal of
+ * its own.
  */
 import type { DatabaseType } from "@/lib/types";
 import { StudioProfileRefusal } from "./errors";
