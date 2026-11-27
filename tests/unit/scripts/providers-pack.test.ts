@@ -180,13 +180,26 @@ function listing(directory: string): string[] {
   return entries.sort();
 }
 
-/** Every regular file under `directory`, by relative POSIX path, with its bytes as hex. */
+/**
+ * Every regular file under `directory`, by relative POSIX path, with its bytes as hex; links unfollowed.
+ * The entry type comes from the directory listing and the bytes from one descriptor whose own stat confirms a regular file, so no path is checked and then read.
+ */
 function contents(directory: string): Record<string, string> {
   const files: Record<string, string> = {};
-  for (const line of listing(directory)) {
-    const relative = line.slice(0, line.indexOf(" "));
-    const file = path.join(directory, relative);
-    if (fs.lstatSync(file).isFile()) files[relative.split(path.sep).join("/")] = fs.readFileSync(file).toString("hex");
+  const pending = [""];
+  for (let relative = pending.pop(); relative !== undefined; relative = pending.pop()) {
+    for (const entry of fs.readdirSync(path.join(directory, relative), { withFileTypes: true })) {
+      const child = path.join(relative, entry.name);
+      if (entry.isDirectory()) pending.push(child);
+      if (!entry.isFile()) continue;
+      const descriptor = fs.openSync(path.join(directory, child), "r");
+      try {
+        if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${child} is no longer a regular file`);
+        files[child.split(path.sep).join("/")] = fs.readFileSync(descriptor).toString("hex");
+      } finally {
+        fs.closeSync(descriptor);
+      }
+    }
   }
   return files;
 }
