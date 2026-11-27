@@ -2404,7 +2404,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles",
       ],
       "vscode-extension/test/unit/backend-handlers.test.ts": [
-        "hands the core the connection, its record, the posture and the route only, so the core's deadline bounds the test",
+        "hands the core the connection, its record, the posture, the route and an unread failure record only, so the core's deadline bounds the test",
         "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code",
       ],
     },
