@@ -131,6 +131,12 @@ const FORMS: FixturePackage = {
       'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\nrequire("./two.cjs", 0);\n',
     // A script's sloppy forms: `await` as a name and a `with` statement.
     "dist/sloppy.cjs": 'var await = 1;\nwith (Math) { require("./sloppy-dep.cjs"); }\n',
+    // `await` read both ways: as an operator, as in an ES module, and as an identifier, as in a CommonJS file. Here the
+    // first reading holds a regular expression and the second a division around a require call, so the record holds the
+    // imports of both readings that parse.
+    "dist/both.cjs": 'globalThis.g = 1;\nawait / 1; require("both-dep"); 0 /g;\n',
+    // Only the reading with `await` as an operator parses here.
+    "dist/top.mjs": 'await import("./top-dep.mjs");\n',
     "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
     "dist/view.TSX": 'import "./never.mjs";\nexport const v = <div />;\n',
     "dist/types.d.ts": 'export * from "acme-typings";\nimport type { T } from "./t";\n',
@@ -150,6 +156,7 @@ const FORMS_RECORD = [
   { from: "bin/cr.js", specifier: "./cr-main.js", kind: "import" },
   { from: "bin/run.js", specifier: "./main.js", kind: "import" },
   { from: "dist/UPPER.MJS", specifier: "./upper.mjs", kind: "import" },
+  { from: "dist/both.cjs", specifier: "both-dep", kind: "require" },
   { from: "dist/c.cjs", specifier: "./dead.cjs", kind: "require" },
   { from: "dist/c.cjs", specifier: "./two.cjs", kind: "require" },
   { from: "dist/c.cjs", specifier: "fs", kind: "require" },
@@ -164,6 +171,7 @@ const FORMS_RECORD = [
   { from: "dist/index.mjs", specifier: "./template.mjs", kind: "import" },
   { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
   { from: "dist/sloppy.cjs", specifier: "./sloppy-dep.cjs", kind: "require" },
+  { from: "dist/top.mjs", specifier: "./top-dep.mjs", kind: "import" },
 ];
 
 describe("the lock command", () => {
@@ -354,6 +362,33 @@ describe("the lock command", () => {
         `providers:lock: ${path.join("acme-two", "notes.txt")}: not a version directory of the package`,
         "providers:lock: acme-two: two versions of one package",
         "providers:lock: notes.txt: neither a package nor the lock",
+        "providers:lock wrote nothing",
+        "",
+      ].join("\n"),
+    );
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("a link whose target does not exist is refused by name as an entry of the directory, of a scope and of a package directory", () => {
+    // A junction is a link Windows creates without privileges; Linux and macOS create a symbolic link. Each link's target
+    // is created, linked to and then removed, so the link dangles on all three platforms alike.
+    const providers = freshProviders();
+    const gone = path.join(scratch, `gone-${counter}`);
+    fs.mkdirSync(gone);
+    writeArtifact(providers, FOO);
+    writeArtifact(providers, BAR);
+    fs.symlinkSync(gone, path.join(providers, "acme-dangling"), "junction");
+    fs.symlinkSync(gone, path.join(providers, "@acme", "dangling"), "junction");
+    fs.symlinkSync(gone, path.join(providers, "acme-foo", "2.0.0"), "junction");
+    fs.rmdirSync(gone);
+
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout]).toEqual([1, ""]);
+    expect(run.stderr).toBe(
+      [
+        `providers:lock: ${path.join("@acme", "dangling")}: neither a package nor the lock`,
+        "providers:lock: acme-dangling: neither a package nor the lock",
+        `providers:lock: ${path.join("acme-foo", "2.0.0")}: not a version directory of the package`,
         "providers:lock wrote nothing",
         "",
       ].join("\n"),

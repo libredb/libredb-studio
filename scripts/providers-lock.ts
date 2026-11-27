@@ -9,13 +9,14 @@
  * whose name ends in `.js`, `.mjs` or `.cjs` in any letter case, reached by the entry or not. A file of any other
  * extension is listed and digested but not scanned; a TypeScript file among them is not scanned either, since
  * admission refuses a package holding one by its listing, whatever its imports. Each module file is read as strict
- * UTF-8 and parsed once by acorn (pinned to one version in package.json, since its version is the record's grammar),
- * with the latest syntax it reads, as a script that may also hold import and export declarations, top-level `await`
- * and top-level `return`, so a CommonJS file and an ES module are read alike. The only lexical difference between a
- * script and a module, an HTML-like comment (`<!--`, or `-->` at a line's start), is refused, so no file is read one
- * way here and another way by Node.js. A leading `#!` line ends at any line terminator, as in Node.js. The tree is
- * walked with an explicit stack, so only the parser's own depth bounds a file; that depth depends on the runtime's
- * stack, and a file nested past it is refused by name under Node.js and Bun alike, never raised.
+ * UTF-8 and parsed by acorn (pinned to one version in package.json, since its version is the record's grammar), with
+ * the latest syntax it reads, as a script that may also hold import and export declarations and top-level `return`,
+ * twice: once with top-level `await` an operator, as in an ES module, and once with it an identifier, as in a CommonJS
+ * file. The record holds the imports of every reading that parses, and a file neither reading parses is refused. The
+ * only lexical difference between a script and a module, an HTML-like comment (`<!--`, or `-->` at a line's start), is
+ * refused. A leading `#!` line ends at any line terminator, as in Node.js. The tree is walked with an explicit stack,
+ * so only the parser's own depth bounds a file; that depth depends on the runtime's stack, and a file nested past it
+ * is refused by name under Node.js and Bun alike, never raised.
  * Recorded, in dead branches too: import declarations, side-effect imports, re-exports with a source, `import()` of a
  * string or a template without substitution, and a call of the identifier `require` (an optional call included) whose
  * first argument is a string or a template without substitution, whatever follows it. Not recorded: a computed
@@ -34,7 +35,8 @@
  *
  * A `--dir` that names anything but a directory is refused alone. Otherwise it refuses, writing nothing and exiting 1
  * with every refusal on stderr, each naming its entry: an entry of the directory that is neither a package nor the
- * lock, a scope directory holding no package, an entry of a package directory that is not a version directory, a
+ * lock, a scope directory holding no package, an entry of a package directory that is not a version directory (at
+ * each of the three levels, a link whose target does not exist is such an entry), a
  * package directory holding no entry or two version directories or more, more packages than the lock reader admits
  * (`LOCK_ENTRY_CAP`), and every refusal an artifact draws (a link, a special file, a name outside the portable set, the
  * limits, a package.json or manifest it cannot read, more engine ids than an entry holds among them, a package.json
@@ -103,9 +105,17 @@ function inForm(value: string, form: StringForm): boolean {
   return value.length <= form.maxLength && form.pattern.test(value);
 }
 
-/** Whether `file` is a directory, following links. */
+/**
+ * Whether `file` is a directory, following links: a link whose target does not exist is not one, so it is refused by
+ * name as the entry it stands for. Any other failure to read it is raised.
+ */
 function isDirectory(file: string): boolean {
-  return fs.statSync(file).isDirectory();
+  try {
+    return fs.statSync(file).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return false;
+  }
 }
 
 /** Code-unit order. */
@@ -153,8 +163,32 @@ function isNode(value: unknown): value is AnyNode {
 }
 
 /**
- * The imports `bytes` makes statically, or null when they are not UTF-8 or the parser cannot read them: a syntax
- * error, an HTML-like comment, or nesting past the runtime's stack, which acorn reports as a syntax error.
+ * One reading of `text`: its tree and its comments, with top-level `await` an operator when `awaitOperator` holds and
+ * an identifier otherwise; or null when the parser cannot read it that way.
+ */
+function reading(text: string, awaitOperator: boolean): { program: AnyNode; comments: Comment[] } | null {
+  const comments: Comment[] = [];
+  try {
+    const program = parse(text, {
+      ecmaVersion: "latest",
+      sourceType: "script",
+      allowImportExportEverywhere: true,
+      allowAwaitOutsideFunction: awaitOperator,
+      allowReturnOutsideFunction: true,
+      allowHashBang: true,
+      onComment: comments,
+    });
+    return { program, comments };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return null;
+  }
+}
+
+/**
+ * The imports `bytes` makes statically in every reading that parses, or null when they are not UTF-8 or the parser
+ * reads them neither way: a syntax error, an HTML-like comment, or nesting past the runtime's stack, which acorn
+ * reports as a syntax error.
  */
 function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
   let text: string;
@@ -164,32 +198,20 @@ function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | nul
     if (!(error instanceof TypeError)) throw error;
     return null;
   }
-  const comments: Comment[] = [];
-  let program: AnyNode;
-  try {
-    program = parse(text, {
-      ecmaVersion: "latest",
-      sourceType: "script",
-      allowImportExportEverywhere: true,
-      allowAwaitOutsideFunction: true,
-      allowReturnOutsideFunction: true,
-      allowHashBang: true,
-      onComment: comments,
-    });
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    return null;
-  }
+  const readings = [reading(text, true), reading(text, false)].filter((read) => read !== null);
+  if (readings.length === 0) return null;
   if (
-    comments.some(
-      (comment) =>
-        comment.type === "Line" && (text.startsWith("<!--", comment.start) || text.startsWith("-->", comment.start)),
+    readings.some((read) =>
+      read.comments.some(
+        (comment) =>
+          comment.type === "Line" && (text.startsWith("<!--", comment.start) || text.startsWith("-->", comment.start)),
+      ),
     )
   ) {
     return null;
   }
   const found: { specifier: string; kind: ImportKind }[] = [];
-  const pending: AnyNode[] = [program];
+  const pending: AnyNode[] = readings.map((read) => read.program);
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     const recorded = recordedImport(node);
     if (recorded !== null) found.push(recorded);
