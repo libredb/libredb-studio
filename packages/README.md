@@ -42,6 +42,7 @@ In this repository a build module also imports no `child_process`, so a build ne
 A package never imports an `@/` path or a path out of its own directory, so it depends on no other package's internals and on none of Studio's, and moving it to a repository of its own changes no import.
 Studio's own code, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name, never by a path into `packages/`, so what Studio sees of a package is what its `exports` publish.
 Studio's own code never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
+Nor does it import a driver a provider package declares in its `dependencies`, `optionalDependencies` or `peerDependencies`, unless `CORE_IMPORTED_DRIVERS` in `scripts/check-build-output.ts` names that importer, so a driver leaves Studio with its engine.
 A package never imports or declares another provider package: only `@libredb/provider-sdk`, and `@libredb/provider-kit` in its tests and its `devDependencies`.
 A root file that imports a package by name needs the package in the root `devDependencies` as `"workspace:*"`, or knip reports it as unlisted.
 `tests/unit/package-imports.test.ts` holds these rules.

@@ -23,6 +23,12 @@
  * around it, and no `bunfig.toml`, which can make that `node` run Bun. So every tool a build uses is an import the rule
  * above judges.
  *
+ * Core imports no driver a provider package declares (the names of its `dependencies`, `optionalDependencies` and
+ * `peerDependencies`, the build output check's `DRIVER_FIELDS`), so a driver leaves Studio with its engine. The one
+ * exception is an entry of `CORE_IMPORTED_DRIVERS` in scripts/check-build-output.ts naming the driver and its
+ * importer, the closed list the build output check reads too; an entry excuses only while the check's own
+ * `exceptionProblem` passes it and a provider package declares its driver, and a stale entry fails by name.
+ *
  * Specifiers are read with the scanner of `tests/unit/lib/db/provider-imports/scan.ts` (the TypeScript compiler's
  * `preProcessFile`), so a path in a comment or a string is never one. Inward, only core files whose text contains
  * `packages/` are parsed: a relative, absolute or `file:` specifier that reaches the directory names it, written with
@@ -33,6 +39,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isNodeBuiltin } from "@/lib/provider-host/node-builtins";
+import {
+  CORE_IMPORTED_DRIVERS,
+  type CoreImportedDriver,
+  DRIVER_FIELDS,
+  exceptionProblem,
+} from "../../scripts/check-build-output";
 import { providerPackageDirectories, workspacePackageManifests } from "../../scripts/workspace-packages.mjs";
 import { plantedRoot, REPOSITORY_ROOT, removePlantedRoot } from "../helpers/planted-package";
 import { isSourcePath, moduleSpecifiers } from "./lib/db/provider-imports/scan";
@@ -308,6 +320,56 @@ function buildScriptFailures(root: string): string[] {
     if (!("build" in scripts)) continue;
     const failure = buildScriptFailure(directory, scripts.build, sourceFilesUnder(root, directory));
     if (failure !== null) failures.push(failure);
+  }
+  return failures.sort();
+}
+
+/**
+ * Every core import of a driver a provider package declares, and every stale exception, sorted. A driver is a name a
+ * provider package's `package.json` declares in a member of the build output check's `DRIVER_FIELDS`; core is the six
+ * roots of {@link CORE_ROOTS}, and only a core file whose text holds a driver's name is parsed. An import is excused
+ * only by an entry of `exceptions` naming that driver and that file, and only while the entry holds: the build output
+ * check's own `exceptionProblem` passes it and a provider package declares its driver; every other entry is a failure
+ * by its own sentence.
+ */
+function providerDriverImportFailures(root: string, exceptions: readonly CoreImportedDriver[]): string[] {
+  const declaredBy = new Map<string, string[]>();
+  const directories = providerPackageDirectories(root);
+  for (const { directory, manifest } of workspacePackageManifests(root)) {
+    if (!directories.includes(directory)) continue;
+    for (const field of DRIVER_FIELDS) {
+      const members: unknown = manifest[field];
+      for (const driver of Object.keys(isRecord(members) ? members : {})) {
+        const declaring = declaredBy.get(driver) ?? [];
+        if (!declaring.includes(directory)) declaring.push(directory);
+        declaredBy.set(driver, declaring);
+      }
+    }
+  }
+  const failures: string[] = [];
+  const excused: CoreImportedDriver[] = [];
+  for (const entry of exceptions) {
+    const problem =
+      exceptionProblem(entry, root) ??
+      (declaredBy.has(entry.driver)
+        ? null
+        : `check-build-output: the exception for ${entry.driver} imported by ${entry.importer}: no provider package declares ${entry.driver}`);
+    if (problem === null) excused.push(entry);
+    else failures.push(problem);
+  }
+  const drivers = [...declaredBy.keys()];
+  for (const file of drivers.length === 0 ? [] : CORE_ROOTS.flatMap((directory) => sourceFilesUnder(root, directory))) {
+    const text = readFileSync(path.join(root, file), "utf8");
+    if (!drivers.some((driver) => text.includes(driver))) continue;
+    for (const specifier of moduleSpecifiers(text)) {
+      const driver = packageNameOf(specifier);
+      const declaring = declaredBy.get(driver);
+      if (declaring === undefined) continue;
+      if (excused.some((entry) => entry.driver === driver && entry.importer === file)) continue;
+      failures.push(
+        `${file} imports "${specifier}", ${driver}, a driver ${declaring.join(", ")} declares: core imports none unless CORE_IMPORTED_DRIVERS in scripts/check-build-output.ts lists its importer`,
+      );
+    }
   }
   return failures.sort();
 }
@@ -785,5 +847,106 @@ describe("the package import rule", () => {
   test("the repository's packages' build scripts each run a file the package holds", () => {
     expect(workspacePackageManifests(REPOSITORY_ROOT).length).toBeGreaterThan(0);
     expect(buildScriptFailures(REPOSITORY_ROOT)).toEqual([]);
+  });
+
+  /** The refusal of `file`'s import of `specifier`, a module of `driver` that `directories` declare. */
+  const driverImport = (file: string, specifier: string, driver: string, directories: string): string =>
+    `${file} imports "${specifier}", ${driver}, a driver ${directories} declares: core imports none unless CORE_IMPORTED_DRIVERS in scripts/check-build-output.ts lists its importer`;
+
+  test("core imports no driver a provider package declares, but a listed exception by its importer", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({
+          name: "@libredb/provider-alpha",
+          dependencies: { "alpha-driver": "*" },
+          optionalDependencies: { "alpha-optional": "*" },
+          peerDependencies: { "alpha-peer": "*" },
+          devDependencies: { "alpha-tool": "*" },
+        }),
+        "packages/provider-beta/package.json": JSON.stringify({
+          name: "@libredb/provider-beta",
+          dependencies: { "alpha-driver": "*" },
+        }),
+        "packages/provider-sdk/package.json": JSON.stringify({ name: SDK, dependencies: { ajv: "*" } }),
+        "src/lib/a.ts": 'import { x } from "alpha-driver/sub";\nexport const a = x;\n',
+        "bin/b.ts": 'export const b = () => require("alpha-optional");\n',
+        "tests/unit/c.test.ts": 'import type { T } from "alpha-peer";\nexport type C = T;\n',
+        "e2e/d.ts": 'export const d = () => import("alpha-driver");\n',
+        "vscode-extension/src/e.ts": 'export * from "alpha-driver";\n',
+        "scripts/f.ts": 'import "alpha-tool";\n',
+        "src/lib/excepted.ts": 'import "alpha-driver";\n',
+        "src/lib/g.ts": '// import "alpha-driver";\nexport const name = "alpha-driver";\n',
+        "src/lib/h.ts": 'import Ajv from "ajv";\nexport const h = Ajv;\n',
+      },
+    });
+    const both = "packages/provider-alpha, packages/provider-beta";
+    const failures = [
+      driverImport("bin/b.ts", "alpha-optional", "alpha-optional", "packages/provider-alpha"),
+      driverImport("e2e/d.ts", "alpha-driver", "alpha-driver", both),
+      driverImport("src/lib/a.ts", "alpha-driver/sub", "alpha-driver", both),
+      driverImport("tests/unit/c.test.ts", "alpha-peer", "alpha-peer", "packages/provider-alpha"),
+      driverImport("vscode-extension/src/e.ts", "alpha-driver", "alpha-driver", both),
+    ];
+    try {
+      expect(providerDriverImportFailures(root, [{ driver: "alpha-driver", importer: "src/lib/excepted.ts" }])).toEqual(
+        failures,
+      );
+      expect(providerDriverImportFailures(root, [])).toEqual(
+        [...failures, driverImport("src/lib/excepted.ts", "alpha-driver", "alpha-driver", both)].sort(),
+      );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a listed exception whose importer no longer imports the driver fails by name", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({
+          name: "@libredb/provider-alpha",
+          dependencies: { "alpha-driver": "*" },
+        }),
+        "src/lib/no-longer.ts": "export const x = 1;\n",
+        "tests/unit/c.test.ts": 'import "alpha-driver";\n',
+        "src/lib/uses-beta.ts": 'import "beta-driver";\n',
+      },
+    });
+    const stale = (driver: string, importer: string, why: string): string =>
+      `check-build-output: the exception for ${driver} imported by ${importer}: ${why}`;
+    try {
+      expect(
+        providerDriverImportFailures(root, [
+          { driver: "alpha-driver", importer: "src/lib/no-longer.ts" },
+          { driver: "alpha-driver", importer: "src/lib/missing.ts" },
+          { driver: "alpha-driver", importer: "tests/unit/c.test.ts" },
+          { driver: "beta-driver", importer: "src/lib/uses-beta.ts" },
+        ]),
+      ).toEqual(
+        [
+          stale("alpha-driver", "src/lib/no-longer.ts", "the importer imports no module of alpha-driver"),
+          stale("alpha-driver", "src/lib/missing.ts", "the importer does not exist"),
+          stale(
+            "alpha-driver",
+            "tests/unit/c.test.ts",
+            "the importer is not under src/, bin/, scripts/ or vscode-extension/src/",
+          ),
+          stale("beta-driver", "src/lib/uses-beta.ts", "no provider package declares beta-driver"),
+          // An exception that fails is no exception: the test's import is refused as well.
+          driverImport("tests/unit/c.test.ts", "alpha-driver", "alpha-driver", "packages/provider-alpha"),
+        ].sort(),
+      );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("core imports no driver a provider package declares", () => {
+    expect(providerDriverImportFailures(REPOSITORY_ROOT, CORE_IMPORTED_DRIVERS)).toEqual([]);
   });
 });

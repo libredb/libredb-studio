@@ -743,6 +743,7 @@ Every module a package holds outside `node_modules`, its source, its tests and i
 A package's `build` script is `node <file>` for a JavaScript module it holds outside `src/` and `tests/`, with no `prebuild` or `postbuild` script, which `bun run build` runs around it (measured with Bun 1.4.4, 2026-11-27), and no `bunfig.toml` in its directory, which can make that `node` run Bun; a build module imports no `child_process`, so every tool a build uses is an import the rule judges.
 Core, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name.
 Core never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
+Core imports no driver a provider package declares in its `dependencies`, `optionalDependencies` or `peerDependencies`, unless `CORE_IMPORTED_DRIVERS` in `scripts/check-build-output.ts`, the closed list the build output check reads too, names that importer, and a stale entry fails by name.
 `tests/unit/package-imports.test.ts` reads the specifiers with the TypeScript compiler's `preProcessFile`, through the provider import scanner, and plants a package and core files that break each rule.
 A root file that imports a package by name needs the package in the root `devDependencies` as `"workspace:*"`: knip reports it as an unlisted dependency otherwise (measured with knip 6 on the SDK, 2026-11-23).
 
