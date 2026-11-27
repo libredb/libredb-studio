@@ -68,8 +68,8 @@ import type { DatabaseType, QueryPagination, QueryResult, QueryWarning } from "@
 
 /**
  * What `checkEditorQuery` reads: the statement as sent, the record of the engine whose console text bound applies, the
- * connection's statement timeout, and the page bounds as sent. The statement is `unknown` because the route hands over its body
- * field unchecked; the caller still owns the `sql` and `queryId` field checks. The statement timeout is the
+ * connection's statement timeout, and the page bounds as sent. The statement is `unknown` because the route hands over
+ * its body field unchecked; the caller still owns the `sql` and `queryId` field checks. The statement timeout is the
  * connection's own `queryTimeout`, which an inline connection carries unchecked.
  */
 export interface EditorQueryRequest {
@@ -116,9 +116,9 @@ export function queryTimeoutError(value: unknown): string | null {
 /**
  * Why this request is refused, or null when no check refuses it: the page bounds first, then the connection's
  * statement timeout, then the console text bound the engine's statement language row states, where it states one.
- * Null does not mean the request can run: only an engine with a text bound has its statement held to a string here, so a new caller checks that the statement and the `queryId` are strings itself before it calls
- * `runEditorQuery`. The route checks that `sql` is present and is a string, and that `queryId` is a string, before it
- * calls this.
+ * Null does not mean the request can run: only an engine with a text bound has its statement held to a string here, so
+ * a new caller checks that the statement and the `queryId` are strings itself before it calls `runEditorQuery`. The
+ * route checks that `sql` is present and is a string, and that `queryId` is a string, before it calls this.
  */
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);

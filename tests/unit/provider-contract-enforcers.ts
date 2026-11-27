@@ -2054,7 +2054,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   "C-38": {
     tests: {
       "tests/api/db/query-package-engine.test.ts": [
-        "a package engine's declared language data, reviewed by its row, asks for its operations and runs the rest",
+        "a package engine's declared language data, reviewed by its row with decidesAlone granted, runs a SQL write, answers 413 past its stated byte bound, and one changed byte reads the statement as SQL",
       ],
       "tests/unit/db/confirmation-gate-imports.test.ts": [
         "the confirmation gate imports no module of a statement language some engine declares as data",

@@ -846,7 +846,7 @@ describe("one gate for every engine, reading the record's confirmation reader", 
       for (const sql of statements) {
         const { name, environment } = connectionOf(engine.id);
         // A legacy engine's record reads as the reading of its type, and a package's as its own members, its explain
-        // claim under either value.
+        // claim under either value. Neither package declares statement language data, so its row is none.
         const expected = engine.offers.legacyProvider
           ? outcomeOf(() =>
               confirmationVerdict(sql, readingOfType(engine.id as DatabaseConnection["type"]), name, environment),
@@ -856,7 +856,7 @@ describe("one gate for every engine, reading the record's confirmation reader", 
                 sql,
                 {
                   engine: engine.id,
-                  row: engine.statementLanguageRow,
+                  row: null,
                   grammar: engine.statementGrammar,
                   grants: engine.grants,
                   explainReading: "either",

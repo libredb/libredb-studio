@@ -29,10 +29,11 @@
  * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, compiles its statement language
  * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none), reads its
  * grammar's explain claim under either value, and gives each the package's source, its digest and the session its
- * declaration states, and the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a
- * register of its own. It maps each engine a refused package's lock entry names, but a legacy one, to the codes it was
- * refused with. Every table keyed by engine id is transposed into each engine's own frozen record and the engines are
- * kept in Maps, so no engine-keyed plain object is read by a client's value.
+ * declaration states, and the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot
+ * hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a
+ * refused package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine
+ * id is transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain
+ * object is read by a client's value.
  */
 import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";

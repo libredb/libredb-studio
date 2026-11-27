@@ -499,7 +499,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(names(loose)).toEqual(["open", "execute", "execute", "execute"]);
   });
 
-  test("a package engine's declared language data, reviewed by its row, asks for its operations and runs the rest", async () => {
+  test("a package engine's declared language data, reviewed by its row with decidesAlone granted, runs a SQL write, answers 413 past its stated byte bound, and one changed byte reads the statement as SQL", async () => {
     // Its data names no operation and its reader names none, so with the decides-alone claim granted every statement
     // whose text reads runs, a SQL write included.
     const decides = hooksFor(DECIDES);
