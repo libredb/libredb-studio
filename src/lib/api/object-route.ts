@@ -654,7 +654,7 @@ export function requireSourceReader(
  * KEPT and joined rather than replaced: a second bound is a second fact.
  *
  * `parts.length` is bounded too, because the tuple type has no upper bound and the real response
- * size is `limit` times the part count. `SOURCE_PART_LIMIT` is four times the largest shape any
+ * size is `limit` times the part count. `SOURCE_PART_LIMIT` is twice the largest shape any
  * engine in the fleet produces, so no correct provider can reach it and a provider that does is a
  * defect rather than a database fact.
  *

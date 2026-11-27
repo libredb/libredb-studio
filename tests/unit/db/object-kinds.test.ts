@@ -1,4 +1,10 @@
 import { describe, test, expect } from "bun:test";
+import {
+  applySourceBound as sdkApplySourceBound,
+  SOURCE_CHARACTER_LIMIT as SDK_SOURCE_CHARACTER_LIMIT,
+  SOURCE_PART_LIMIT as SDK_SOURCE_PART_LIMIT,
+  sourceBoundTruncationReason as sdkSourceBoundTruncationReason,
+} from "@libredb/provider-sdk/calls";
 import { QueryError } from "@/lib/db/errors";
 import type {
   ContainerLevelSpec,
@@ -586,8 +592,15 @@ describe("the source bounds", () => {
     expect(SOURCE_CHARACTER_LIMIT).toBe(1_000_000);
   });
 
-  test("the part bound is four times the largest shape any engine in the fleet produces", () => {
+  test("the part bound is twice the largest shape any engine in the fleet produces", () => {
     expect(SOURCE_PART_LIMIT).toBe(8);
+  });
+
+  test("the source bounds, reason and bound helper are the SDK's", () => {
+    expect(SOURCE_CHARACTER_LIMIT).toBe(SDK_SOURCE_CHARACTER_LIMIT);
+    expect(SOURCE_PART_LIMIT).toBe(SDK_SOURCE_PART_LIMIT);
+    expect(sourceBoundTruncationReason).toBe(sdkSourceBoundTruncationReason);
+    expect(applySourceBound).toBe(sdkApplySourceBound);
   });
 
   test("the bound sentence names the number and the caller", () => {

@@ -43,7 +43,7 @@ function callsOf(offered: readonly string[] = [], honours: readonly string[] = [
       endScope: offer("console.endScope"),
       transaction: offer("console.transaction"),
     },
-    objects: { tree: offer("objects.tree") },
+    objects: { tree: offer("objects.tree"), source: offer("objects.source") },
     maintenance: { run: offer("maintenance.run"), preview: offer("maintenance.preview") },
     monitoring: { panel: offer("monitoring.panel"), poolStats: offer("monitoring.poolStats") },
   };
@@ -130,6 +130,10 @@ function implOf(
         log.push({ name: "tree", self: this === impl.objects, args });
         const { action } = args[1] as TreeRequest;
         return Promise.resolve(action === "containers" ? { containers: [] } : { objects: [] });
+      } as never,
+      source: function (this: unknown, ...args: unknown[]) {
+        log.push({ name: "source", self: this === impl.objects, args });
+        return Promise.resolve({ path: [], kind: "item", parts: [] });
       } as never,
     },
     maintenance: {
@@ -335,6 +339,38 @@ describe("a session opened on a provider package", () => {
         .kind,
     ).toBe("answered");
     expect(log.slice(before).map(({ name }) => name)).toEqual(["tree"]);
+  });
+
+  test("a package session that offers objects.source binds it with its handle first and states its declaration's object model", async () => {
+    const handle = { session: randomUUID() };
+    const log: Recorded[] = [];
+    const offering = await sessionOf(
+      implOf(async () => ({ handle }), log),
+      callsOf(["objects.source"]),
+    );
+    const withdrawn = await sessionOf(
+      implOf(async () => ({ handle, refine: { calls: { objects: { source: NOT } } } }), log),
+      callsOf(["objects.tree", "objects.source"]),
+    );
+    const neither = await sessionOf(
+      implOf(async () => ({ handle }), log),
+      callsOf(),
+    );
+
+    // The model is stated where either object facet is offered, and the source member only where source is.
+    expect(offering.objectModel).toBe(MODEL);
+    expect(Object.hasOwn(offering, "tree")).toBe(false);
+    expect(withdrawn.objectModel).toBe(MODEL);
+    expect(Object.hasOwn(withdrawn, "source")).toBe(false);
+    expect(Object.hasOwn(withdrawn, "tree")).toBe(true);
+    expect(Object.hasOwn(neither, "objectModel")).toBe(false);
+    expect(Object.hasOwn(neither, "source")).toBe(false);
+
+    const request = { path: [randomUUID()], kind: "item" };
+    const ctx = callContext();
+    await offering.source?.(request, ctx);
+    expect(log.map(({ name }) => name)).toEqual(["open", "open", "open", "source"]);
+    expect(log.at(-1)).toEqual({ name: "source", self: true, args: [handle, request, ctx] });
   });
 
   test("a refinement narrows the calls and the maintenance; a widening one is refused and the handle is closed under a cleanup context", async () => {
