@@ -4,5 +4,8 @@
   "description": "The out-of-tree acceptance's fixture: an in-memory provider written outside LibreDB Studio against @libredb/provider-sdk alone.",
   "license": "MIT",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  }
 }

@@ -1,6 +1,6 @@
 /**
  * The out-of-tree acceptance (scripts/out-of-tree-acceptance.ts) without a server: its command line, its run of the
- * issue's eight steps, its checks over captured output, the children it starts, the fixture provider it builds
+ * issue's eight steps, its checks over captured output, the children it starts, the fixture provider it packs
  * (tests/fixtures/out-of-tree-provider/) and the CI job that runs it.
  *
  * The script's IO (spawning, fetching) is exercised by the "Out-of-tree Provider Acceptance" job itself; scripts/ is
@@ -9,7 +9,18 @@
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -18,7 +29,6 @@ import {
   type Answer,
   artifactProblems,
   buildNeedles,
-  buildScanProblems,
   CHILD_TIMEOUTS_MS,
   childSpec,
   dependencyClosure,
@@ -37,7 +47,6 @@ import {
   readFixture,
   refusalLines,
   refusedProblems,
-  regularFiles,
   rowsProblems,
   runSteps,
   saveProblems,
@@ -56,6 +65,10 @@ import {
   bundleProblems,
   wordsOf,
 } from "../../../scripts/out-of-tree-acceptance";
+import * as acceptance from "../../../scripts/out-of-tree-acceptance";
+import { packProviders } from "../../../scripts/providers-pack";
+import { artifactDirectoryOf, lockEntryOf, writeArtifact } from "../../helpers/provider-artifacts";
+import { regularFiles } from "../../../scripts/check-build-output";
 import { moduleSpecifiers } from "../lib/db/provider-imports/scan";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -230,6 +243,8 @@ describe("the out-of-tree acceptance's run", () => {
 
   test("is the issue's eight steps, numbered 1 to 8 in order, and a list that is not is refused before any step runs", async () => {
     expect(STEP_TITLES).toHaveLength(8);
+    expect(STEP_TITLES[2]).toBe("pack the fixture provider outside the repository against the packed SDK");
+    expect(STEP_TITLES[3]).toBe("lock the provider package with the Node.js lock module");
     expect(stepListProblems(fakeSteps([]))).toEqual([]);
 
     const ran: number[] = [];
@@ -255,6 +270,7 @@ describe("the out-of-tree fixture", () => {
   test("is read from its package.json, manifest and expectations, one engine and no dependency, and an expectation with no statement or no row is refused", () => {
     expect(regularFiles(FIXTURE).map((file) => path.relative(FIXTURE, file).split(path.sep).join("/"))).toEqual([
       "acceptance.json",
+      "build.mjs",
       "libredb-provider.json",
       "package.json",
       "src/index.ts",
@@ -529,35 +545,72 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(installedSdkProblems({ ...installed, manifest: source }).join(" ")).toContain("dist");
   });
 
-  test("a bundle with an input outside the build directory, no input from the packed SDK's dist, or an import other than a node built-in is refused", () => {
+  test("a bundle with an input outside the build directory, no input from the packed SDK's dist, no read of the entry's source, or an import other than a node built-in is refused", () => {
     const sdkInput = "node_modules/@libredb/provider-sdk/dist/calls/index.js";
+    // The evidence build writes outside the package's directory, so its output is keyed relative to it.
+    const outfile = "../evidence/dist/index.mjs";
     const metafile = (inputs: string[], imports: { path: string }[]) => ({
       inputs: Object.fromEntries(inputs.map((input) => [input, {}])),
-      outputs: { "dist/index.mjs": { imports } },
+      outputs: { [outfile]: { imports } },
     });
     const good = metafile(["src/index.ts", "libredb-provider.json", sdkInput], [{ path: "node:crypto" }]);
-    expect(bundleProblems(good, "dist/index.mjs")).toEqual([]);
+    expect(bundleProblems(good, outfile, "src/index.ts")).toEqual([]);
     const outside = metafile(["src/index.ts", sdkInput, "../../repo/packages/provider-sdk/src/calls/index.ts"], []);
-    expect(bundleProblems(outside, "dist/index.mjs").join(" ")).toContain("outside");
-    expect(bundleProblems(metafile(["/abs/x.ts", sdkInput], []), "dist/index.mjs").join(" ")).toContain("outside");
-    expect(bundleProblems(metafile(["src/index.ts"], []), "dist/index.mjs").join(" ")).toContain("packed SDK");
+    expect(bundleProblems(outside, outfile, "src/index.ts").join(" ")).toContain("outside");
+    expect(
+      bundleProblems(metafile(["/abs/x.ts", "src/index.ts", sdkInput], []), outfile, "src/index.ts").join(" "),
+    ).toContain("outside");
+    expect(bundleProblems(metafile(["src/index.ts"], []), outfile, "src/index.ts").join(" ")).toContain("packed SDK");
+    expect(bundleProblems(good, outfile, "src/other.ts")).toEqual([
+      "the bundle did not read src/other.ts, the entry's source acceptance.json names",
+    ]);
     const importing = metafile(["src/index.ts", sdkInput], [{ path: "ajv" }]);
-    expect(bundleProblems(importing, "dist/index.mjs").join(" ")).toContain("ajv");
-    expect(bundleProblems({ inputs: {}, outputs: {} }, "dist/index.mjs").join(" ")).toContain("dist/index.mjs");
+    expect(bundleProblems(importing, outfile, "src/index.ts").join(" ")).toContain("ajv");
+    expect(bundleProblems({ inputs: {}, outputs: {} }, outfile, "src/index.ts").join(" ")).toContain(outfile);
   });
 
-  test("the lock command's output must name the lock file and the one package with its sha256 digest", () => {
+  test("the lock command's output must name the lock file and the one package with the digest the pack printed", () => {
     const lock = path.join(tmpdir(), "providers", STUDIO.lockFile);
-    const digest = "a".repeat(64);
-    const good = `Wrote ${lock}\nfixture-provider 1.0.0 sha256:${digest}\n`;
-    expect(lockOutputProblems(good, lock, "fixture-provider", "1.0.0")).toEqual([]);
-    expect(lockOutputProblems("", lock, "fixture-provider", "1.0.0")).not.toEqual([]);
-    expect(lockOutputProblems(good, lock, "other-provider", "1.0.0").join(" ")).toContain("other-provider");
+    const digest = `sha256:${"a".repeat(64)}`;
+    const good = `Wrote ${lock}\nfixture-provider 1.0.0 ${digest}\n`;
+    expect(lockOutputProblems(good, lock, "fixture-provider", "1.0.0", digest)).toEqual([]);
+    expect(lockOutputProblems(good.replaceAll("\n", "\r\n"), lock, "fixture-provider", "1.0.0", digest)).toEqual([]);
+    expect(lockOutputProblems("", lock, "fixture-provider", "1.0.0", digest)).not.toEqual([]);
+    expect(lockOutputProblems(good, lock, "other-provider", "1.0.0", digest).join(" ")).toContain("other-provider");
     const shortDigest = `Wrote ${lock}\nfixture-provider 1.0.0 sha256:abc\n`;
-    expect(lockOutputProblems(shortDigest, lock, "fixture-provider", "1.0.0")).not.toEqual([]);
-    const twoPackages = `${good}another 2.0.0 sha256:${digest}\n`;
-    expect(lockOutputProblems(twoPackages, lock, "fixture-provider", "1.0.0")).not.toEqual([]);
-    expect(lockOutputProblems(SAMPLES.lockStdout(lock), lock, fixture.name, fixture.version)).toEqual([]);
+    expect(lockOutputProblems(shortDigest, lock, "fixture-provider", "1.0.0", digest)).not.toEqual([]);
+    const twoPackages = `${good}another 2.0.0 ${digest}\n`;
+    expect(lockOutputProblems(twoPackages, lock, "fixture-provider", "1.0.0", digest)).not.toEqual([]);
+    const otherDigest = `sha256:${"b".repeat(64)}`;
+    expect(lockOutputProblems(good, lock, "fixture-provider", "1.0.0", otherDigest)[0]).toBe(
+      `the lock command locked fixture-provider 1.0.0 as ${digest}, not as ${otherDigest}, the digest the pack step printed`,
+    );
+    const sampled = SAMPLES.lockStdout(lock);
+    const sampledDigest = (sampled.trim().split("\n").at(-1) as string).split(" ").at(-1) as string;
+    expect(lockOutputProblems(sampled, lock, fixture.name, fixture.version, sampledDigest)).toEqual([]);
+  });
+
+  test("the pack step's output must be the one package with its sha256 digest", () => {
+    const digest = `sha256:${"c".repeat(64)}`;
+    expect(acceptance.packOutputProblems(`fixture-provider 1.0.0 ${digest}\n`, "fixture-provider", "1.0.0")).toEqual(
+      [],
+    );
+    expect(acceptance.packOutputProblems(`fixture-provider 1.0.0 ${digest}\r\n`, "fixture-provider", "1.0.0")).toEqual(
+      [],
+    );
+    for (const stdout of [
+      "",
+      `fixture-provider 1.0.0 ${digest}\nanother 2.0.0 ${digest}\n`,
+      `other-provider 1.0.0 ${digest}\n`,
+      "fixture-provider 1.0.0 sha256:abc\n",
+    ]) {
+      expect([stdout, acceptance.packOutputProblems(stdout, "fixture-provider", "1.0.0")]).toEqual([
+        stdout,
+        [
+          `the pack step did not print exactly one line "fixture-provider 1.0.0 sha256:<64 hex digits>"; it printed: ${JSON.stringify(stdout.split(/\r?\n/).filter((line) => line !== ""))}`,
+        ],
+      ]);
+    }
   });
 
   test("the artifact must hold exactly the package.json, the manifest and the bundle at the manifest's entry", () => {
@@ -793,38 +846,9 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     }
   });
 
-  test("the build scan finds a file equal to a fixture file or holding a needle across a chunk boundary, and a scan of no file fails", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "out-of-tree-scan-"));
-    try {
-      const write = (name: string, text: string): string => {
-        const file = path.join(directory, name);
-        writeFileSync(file, text);
-        return file;
-      };
-      const needles = buildNeedles({ ...fixture, name: "fixture-pkg", engines: [{ id: "fx", displayName: "Fx db" }] });
-      expect(needles).toEqual(["fixture-pkg", '"fx"', "'fx'", "`fx`", "Fx db"]);
-      const clean = write("clean.js", "a".repeat(40));
-      const across = write("across.js", `${"a".repeat(6)}fixture-pkg${"b".repeat(9)}`);
-      const quoted = write("quoted.js", `x=${"c".repeat(5)}'fx';`);
-      const copy = write("copy.ts", "the fixture's source");
-      const digests = new Set([new Bun.CryptoHasher("sha256").update("the fixture's source").digest("hex")]);
-      expect(buildScanProblems([clean], needles, digests, 4)).toEqual([]);
-      expect(buildScanProblems([across], needles, digests, 4).join(" ")).toContain("fixture-pkg");
-      expect(buildScanProblems([quoted], needles, digests, 4).join(" ")).toContain("'fx'");
-      expect(buildScanProblems([copy], needles, digests, 4).join(" ")).toContain("copy.ts");
-      expect(buildScanProblems([], needles, digests, 4).join(" ")).toContain("no file");
-      mkdirSync(path.join(directory, "nested"));
-      write(path.join("nested", "deep.js"), "x");
-      expect(regularFiles(directory).map((file) => path.basename(file))).toEqual([
-        "across.js",
-        "clean.js",
-        "copy.ts",
-        "deep.js",
-        "quoted.js",
-      ]);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+  test("the build scan's needles are the package name, each engine id quoted three ways and each display name", () => {
+    const needles = buildNeedles({ ...fixture, name: "fixture-pkg", engines: [{ id: "fx", displayName: "Fx db" }] });
+    expect(needles).toEqual(["fixture-pkg", '"fx"', "'fx'", "`fx`", "Fx db"]);
   });
 });
 
@@ -833,6 +857,9 @@ describe("the out-of-tree acceptance's children", () => {
     for (const [kind, timeout] of Object.entries(CHILD_TIMEOUTS_MS)) {
       expect([kind, Number.isFinite(timeout) && timeout > 0]).toEqual([kind, true]);
     }
+    for (const kind of ["providerBuild", "pack", "lock", "buildCheck"])
+      expect(Object.keys(CHILD_TIMEOUTS_MS)).toContain(kind);
+    expect(Object.keys(CHILD_TIMEOUTS_MS)).not.toContain("esbuild");
     const marker = randomUUID();
     const env = { PATH: "/usr/bin", HOME: "/tmp/home", JWT_SECRET: marker };
     const spec = childSpec("npm install", ["npm", "install", "sdk.tgz"], "/tmp/provider", env, 1000);
@@ -877,6 +904,278 @@ describe("the out-of-tree acceptance's children", () => {
     expect(path.dirname(env.STORAGE_SQLITE_PATH as string)).toBe(input.dataDirectory);
     expect(Object.keys(env).some((name) => /^(NODE_OPTIONS|NODE_PATH|npm_config_)/i.test(name))).toBe(false);
     expect(() => serverEnvironment({ ...input, providersDirectory: "providers" })).toThrow("absolute");
+  });
+});
+
+describe("the out-of-tree acceptance's pack, lock and build output steps", () => {
+  const launcher = createRequire(import.meta.url).resolve("esbuild/bin/esbuild");
+  const sdk = path.join(ROOT, "packages", "provider-sdk");
+
+  // The fixture's build and its acceptance run on Linux and macOS only (`platformProblem`): the build spawns `esbuild`
+  // from PATH, and Windows finds no extension-less launcher there. The directory junction below and every path are
+  // built with path.join and taken by real path, so macOS's /var to /private/var link changes nothing.
+  test.skipIf(process.platform === "win32")(
+    "step 3 builds the fixture through the pack step",
+    () => {
+      // Studio holds no bundler configuration of its fixture: the acceptance imports no esbuild and names no option.
+      const source = readText(SCRIPT);
+      expect(moduleSpecifiers(source).filter((specifier) => specifier.startsWith("esbuild"))).toEqual([]);
+      for (const option of ["--bundle", "--format=", "--platform=", "--target="]) {
+        expect([option, source.includes(option)]).toEqual([option, false]);
+      }
+      const packageJson = JSON.parse(readText(path.join(FIXTURE, "package.json"))) as { scripts?: { build?: string } };
+      expect(packageJson.scripts?.build).toBe("node build.mjs");
+
+      // The launcher's directory holds the launcher alone, so the build's PATH gains esbuild and nothing else.
+      const launcherDirectory = acceptance.esbuildLauncherDirectory(launcher);
+      expect(launcherDirectory).toBe(path.dirname(launcher));
+      expect(() => acceptance.esbuildLauncherDirectory(launcher, () => ["esbuild", "other-tool"])).toThrow(
+        `${path.dirname(launcher)} holds esbuild, other-tool, not esbuild alone`,
+      );
+
+      const temp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "out-of-tree-pack-")));
+      try {
+        const provider = path.join(temp, "provider");
+        cpSync(FIXTURE, provider, { recursive: true });
+        // The repository's SDK source stands in for the packed SDK step 3 installs.
+        mkdirSync(path.join(provider, "node_modules", "@libredb"), { recursive: true });
+        symlinkSync(sdk, path.join(provider, "node_modules", "@libredb", "provider-sdk"), "junction");
+        const home = path.join(temp, "home");
+        mkdirSync(home);
+        const callerPath = process.env.PATH ?? "";
+
+        const evidence = path.join(temp, "evidence");
+        const metafile = path.join(temp, "bundle-meta.json");
+        const evidenceSpec = acceptance.evidenceBuildSpec({
+          provider,
+          evidence,
+          metafile,
+          launcherDirectory,
+          callerPath,
+          home,
+        });
+        expect(evidenceSpec).toEqual({
+          label: "the fixture's build",
+          command: [
+            process.execPath,
+            "run",
+            "--shell=bun",
+            "build",
+            "--",
+            "--outdir",
+            evidence,
+            "--metafile",
+            metafile,
+          ],
+          cwd: provider,
+          env: { PATH: `${launcherDirectory}${path.delimiter}${callerPath}`, HOME: home },
+          timeoutMs: CHILD_TIMEOUTS_MS.providerBuild,
+        });
+        const providers = path.join(temp, "providers");
+        const packTemporary = path.join(temp, "pack");
+        const packSpec = acceptance.packSpec({
+          provider,
+          providers,
+          packTemporary,
+          launcherDirectory,
+          callerPath,
+          home,
+        });
+        expect(packSpec).toEqual({
+          label: "the pack step",
+          command: [process.execPath, path.join(ROOT, STUDIO.packScript), "--out", providers, provider],
+          cwd: ROOT,
+          env: { PATH: `${launcherDirectory}${path.delimiter}${callerPath}`, HOME: home, TMPDIR: packTemporary },
+          timeoutMs: CHILD_TIMEOUTS_MS.pack,
+        });
+        expect(packSpec.command.join(" ")).not.toContain("providers:pack");
+
+        const built = Bun.spawnSync([...evidenceSpec.command], {
+          cwd: evidenceSpec.cwd,
+          env: evidenceSpec.env,
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 60_000,
+        });
+        // `bun run` prints the script it runs on standard error, so only the exit code is held; a failure shows the output.
+        expect({ exitCode: built.exitCode, stderr: built.stderr.toString() }).toMatchObject({ exitCode: 0 });
+        const meta = JSON.parse(readText(metafile)) as { inputs: Record<string, unknown> };
+        const inside = Object.keys(meta.inputs).filter(
+          (input) => !input.startsWith("..") && !path.isAbsolute(input) && !input.includes("node_modules"),
+        );
+        expect(inside.sort()).toEqual(["libredb-provider.json", fixture.acceptance.entrySource]);
+
+        mkdirSync(providers);
+        mkdirSync(packTemporary);
+        const result = packProviders({
+          repositoryRoot: realpathSync.native(ROOT),
+          out: providers,
+          packageDirectories: [provider],
+          temporaryRoot: packTemporary,
+          environment: packSpec.env,
+        });
+        expect(result.refusals).toEqual([]);
+        const artifact = artifactDirectoryOf(providers, fixture);
+        expect(result.packed.map((pkg) => pkg.directory)).toEqual([artifact]);
+        const files = regularFiles(artifact).map((file) => path.relative(artifact, file).split(path.sep).join("/"));
+        expect(artifactProblems(files, fixture.entry)).toEqual([]);
+        expect(
+          readFileSync(path.join(artifact, fixture.entry)).equals(readFileSync(path.join(evidence, fixture.entry))),
+        ).toBe(true);
+
+        // With no esbuild on PATH, only Node.js, the pack step refuses the build by name.
+        const nodeOnly = path.join(temp, "node-only");
+        mkdirSync(nodeOnly);
+        symlinkSync(Bun.which("node") as string, path.join(nodeOnly, "node"));
+        const refused = packProviders({
+          repositoryRoot: realpathSync.native(ROOT),
+          out: providers,
+          packageDirectories: [provider],
+          temporaryRoot: packTemporary,
+          environment: { PATH: nodeOnly },
+        });
+        expect(refused.packed).toEqual([]);
+        expect(refused.refusals[0]).toStartWith(`providers:pack: ${provider}: its build exited 1, and printed:`);
+        expect(refused.refusals[0]).toContain("ENOENT");
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
+
+  // Runs on all three platforms: Node.js is on every CI runner's PATH, the paths are joined and compared as they are,
+  // and the lock command's lines are read with their line ends trimmed, since a Windows child ends them with CRLF.
+  test("step 4 locks with the shipped Node lock module", async () => {
+    expect(Object.keys(STUDIO)).not.toContain("lockScript");
+    expect([STUDIO.packScript, STUDIO.lockWrapper, STUDIO.lockModule, STUDIO.buildCheckScript]).toEqual([
+      "scripts/providers-pack.ts",
+      "docker/libredb-studio.mjs",
+      "providers-lock.mjs",
+      "scripts/check-build-output.ts",
+    ]);
+    const temp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "out-of-tree-lock-")));
+    try {
+      const lockDirectory = path.join(temp, "lock");
+      const placed = await acceptance.placeLockModule(lockDirectory);
+      expect(readdirSync(lockDirectory).sort()).toEqual(["libredb-studio.mjs", STUDIO.lockModule]);
+      expect(placed.wrapper).toBe(path.join(lockDirectory, "libredb-studio.mjs"));
+      expect(readFileSync(placed.wrapper).equals(readFileSync(path.join(ROOT, STUDIO.lockWrapper)))).toBe(true);
+      expect(placed.inputs).toBeGreaterThan(1);
+
+      // One planted package in two providers directories: one locked by the Node.js module, one by the Bun source.
+      const pkg = { name: "acceptance-lock-fixture", version: "1.0.0", engines: ["acmelockfixture"] };
+      const byNode = path.join(temp, "by-node");
+      const byBun = path.join(temp, "by-bun");
+      writeArtifact(byNode, pkg);
+      writeArtifact(byBun, pkg);
+      const digest = lockEntryOf(byNode, pkg).digest;
+
+      const node = Bun.which("node") as string;
+      const home = path.join(temp, "home");
+      mkdirSync(home);
+      const callerPath = process.env.PATH ?? "";
+      const spec = acceptance.lockSpec({ node, lockDirectory, providers: byNode, callerPath, home });
+      expect(spec).toEqual({
+        label: "the lock module",
+        command: [node, "--max-old-space-size=512", placed.wrapper, "providers", "lock", "--dir", byNode],
+        cwd: lockDirectory,
+        env: { PATH: callerPath, HOME: home },
+        timeoutMs: CHILD_TIMEOUTS_MS.lock,
+      });
+      expect(spec.command.join(" ")).not.toContain("providers:lock");
+      const locked = Bun.spawnSync([...spec.command], {
+        cwd: spec.cwd,
+        env: spec.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60_000,
+      });
+      expect([locked.exitCode, locked.stderr.toString()]).toEqual([0, ""]);
+      const lockFile = path.join(byNode, STUDIO.lockFile);
+      expect(lockOutputProblems(locked.stdout.toString(), lockFile, pkg.name, pkg.version, digest)).toEqual([]);
+
+      const bunLock = Bun.spawnSync(
+        [process.execPath, path.join(ROOT, "scripts", "providers-lock.ts"), "--dir", byBun],
+        {
+          cwd: ROOT,
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 60_000,
+        },
+      );
+      expect(bunLock.exitCode).toBe(0);
+      expect(readFileSync(lockFile).equals(readFileSync(path.join(byBun, STUDIO.lockFile)))).toBe(true);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("step 8 runs the build output check over the packed fixture and keeps its own scan of .next", () => {
+    const temp = path.join(tmpdir(), "acceptance-root");
+    const spec = acceptance.buildCheckSpec({
+      standalone: path.join(temp, "standalone"),
+      provider: path.join(temp, "provider"),
+      callerPath: "/usr/bin",
+      home: path.join(temp, "npm", "home"),
+    });
+    expect(spec).toEqual({
+      label: "the build output check",
+      command: [
+        process.execPath,
+        path.join(ROOT, STUDIO.buildCheckScript),
+        "--standalone",
+        path.join(temp, "standalone"),
+        path.join(temp, "provider"),
+      ],
+      cwd: ROOT,
+      env: { PATH: "/usr/bin", HOME: path.join(temp, "npm", "home") },
+      timeoutMs: CHILD_TIMEOUTS_MS.buildCheck,
+    });
+    // The run's own scan keeps the needles a compiled copy of the fixture carries, beside the check's package name.
+    expect(buildNeedles(fixture)).toEqual([
+      fixture.name,
+      ...fixture.engines.flatMap((engine) => [
+        `"${engine.id}"`,
+        `'${engine.id}'`,
+        `\`${engine.id}\``,
+        engine.displayName,
+      ]),
+    ]);
+  });
+
+  test("step 8's own scan reads the regular files under .next, accepting a link whose target lies in the standalone's .next or node_modules and naming one that leaves them", () => {
+    const standalone = realpathSync(mkdtempSync(path.join(tmpdir(), "acceptance-scan-")));
+    try {
+      const write = (relative: string, text: string) => {
+        const file = path.join(standalone, ...relative.split("/"));
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, text);
+      };
+      const link = (relative: string, target: string) => {
+        const file = path.join(standalone, ...relative.split("/"));
+        mkdirSync(path.dirname(file), { recursive: true });
+        symlinkSync(target, file, "junction");
+        return file;
+      };
+      write(".next/server/chunks/core.js", "export const core = 1;\n");
+      write("node_modules/gamma-driver/index.js", "module.exports = {};\n");
+      write("node_modules/@acme/epsilon-driver/index.js", "module.exports = {};\n");
+      write("public/logo.txt", "a public file\n");
+      // The shapes mirror Turbopack's external aliases measured on Studio's payload: one unscoped, one scoped.
+      link(".next/node_modules/gamma-driver-3a7c19e0b5d2f468", "../../node_modules/gamma-driver");
+      link(".next/node_modules/@acme/epsilon-driver-c6d2e8a0f47b1359", "../../../node_modules/@acme/epsilon-driver");
+      const relative = (files: string[]) =>
+        files.map((file) => path.relative(standalone, file).split(path.sep).join("/"));
+      expect(relative(acceptance.buildScanFiles(standalone))).toEqual([".next/server/chunks/core.js"]);
+
+      const away = link(".next/public-link", "../public");
+      expect(() => acceptance.buildScanFiles(standalone)).toThrow(
+        `${away} is a symbolic link or junction to ${path.join(standalone, "public")}, which lies outside ${path.join(standalone, ".next")} and ${path.join(standalone, "node_modules")}, so the scan would not read it`,
+      );
+    } finally {
+      rmSync(standalone, { recursive: true, force: true });
+    }
   });
 });
 

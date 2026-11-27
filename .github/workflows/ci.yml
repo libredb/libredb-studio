@@ -1123,6 +1123,22 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: 1
 
+      # No provider package's code, nor a driver it declares, passes through
+      # the Next.js build: scripts/check-build-output.ts fails by file when a
+      # file under the payload's .next or node_modules equals a file of a
+      # provider package's source or of one of its drivers, or holds the
+      # package's name. It reads the extracted payload and runs none of it.
+      # Every provider package of the repository is compared by itself; the
+      # out-of-tree fixture is named so the check compares a package before
+      # the first one lands in packages/.
+      - name: Extract the payload for the build output check
+        run: |
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1
+
+      - name: Check that the payload holds no provider package's files
+        run: bun scripts/check-build-output.ts --standalone "$RUNNER_TEMP/standalone" "$GITHUB_WORKSPACE/tests/fixtures/out-of-tree-provider"
+
       - name: Upload payload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -1268,11 +1284,13 @@ jobs:
   # alone, is admitted by the built standalone server with no change to
   # Studio's files: it answers a statement through the API, and one changed
   # byte of it is refused at the next boot (scripts/out-of-tree-acceptance.ts,
-  # issue #2520). The payload is downloaded and extracted under the runner's
-  # temporary directory, outside the checkout, because the script's step 7
-  # asserts that the checkout is unchanged. After bun install nothing reaches
-  # a registry: the SDK's dependencies are packed from this checkout's install
-  # and npm installs offline. A required check on main.
+  # issue #2520). It is built by its own build through the pack step and
+  # locked by the lock module under Node.js, and its step 8 runs the build
+  # output check over the payload. The payload is downloaded and extracted
+  # under the runner's temporary directory, outside the checkout, because the
+  # script's step 7 asserts that the checkout is unchanged. After bun install
+  # nothing reaches a registry: the SDK's dependencies are packed from this
+  # checkout's install and npm installs offline. A required check on main.
   out-of-tree-acceptance:
     name: Out-of-tree Provider Acceptance
     needs: [engine-payload]
