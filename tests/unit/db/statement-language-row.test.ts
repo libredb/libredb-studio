@@ -7,6 +7,7 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
 import { codeStatementLanguageRow, typeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { languageDataSha256 } from "@/lib/db/language-digest";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
@@ -21,6 +22,7 @@ import {
   statementLanguageRow,
 } from "@/lib/db/statement-language-row";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
+import type { DatabaseType } from "@/lib/types";
 import { type ConfirmationVerdict, confirmationVerdict } from "@/lib/editor/statement-analysis";
 import { readingOfRecord, type StatementReading } from "@/lib/sql/dangerous-query";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
@@ -241,76 +243,83 @@ describe("a statement language row's readers", () => {
     }
   });
 
-  test("kafka's statement language row is its declared data, granted under its register row's language digest", () => {
-    const declared = JSON.parse(
-      readFileSync(path.resolve(import.meta.dir, "../../../src/lib/db/engine-declarations/kafka.json"), "utf8"),
-    ).statementLanguageData as NonNullable<StatementLanguageData>;
-    expect(declared.name).toBe("kafkaread");
+  test("a legacy engine's statement language row is its declared data, granted under its register row's language digest", () => {
+    const declaredData = (type: DatabaseType) =>
+      JSON.parse(
+        readFileSync(path.resolve(import.meta.dir, `../../../src/lib/db/engine-declarations/${type}.json`), "utf8"),
+      ).statementLanguageData as StatementLanguageData;
+    const stating = SHIPPED_DATABASE_TYPES.filter((type) => declaredData(type) !== null);
+    // A census pin: the legacy engines whose declaration states statement language data, a set that leaves with them.
+    expect(stating).toEqual(["kafka"]);
 
-    // Studio holds no code row for Kafka: its row is compiled from its declaration's data, once, and the browser's
-    // by-type resolver and the legacy record hold the same frozen object.
-    expect(codeStatementLanguageRow("kafka")).toBeNull();
-    const kafka = typeStatementLanguageRow("kafka");
-    if (kafka === null) throw new Error("kafka has no statement language row");
-    expect(typeStatementLanguageRow("kafka")).toBe(kafka);
-    expect(LEGACY_ENGINES.get("kafka")?.statementLanguageRow).toBe(kafka);
-    expect(Object.isFrozen(kafka)).toBe(true);
-    expect([...kafka.operations]).toEqual([]);
-    for (const text of ["", '{"read": "topics"}', "DELETE FROM t"]) expect(kafka.read(text)).toEqual([]);
-    // It decides alone, sends to the safety analysis and bounds no text, exactly as the code row it replaces did.
-    expect(Object.keys(kafka).sort()).toEqual(["decidesAlone", "operations", "read"]);
-    expect(kafka.decidesAlone).toBe(true);
-    expect(rowTextByteLimit(kafka)).toBeUndefined();
-    expect(JSON.stringify(statementLanguageRow("kafka", declared, null))).toBe(JSON.stringify(kafka));
+    let ran = 0;
+    for (const type of stating) {
+      const declared = declaredData(type) as NonNullable<StatementLanguageData>;
+      // Studio holds no code row for the engine: its row is compiled from its declaration's data, once, and the
+      // browser's by-type resolver and the legacy record hold the same frozen object.
+      expect(codeStatementLanguageRow(type)).toBeNull();
+      const compiled = typeStatementLanguageRow(type);
+      if (compiled === null) throw new Error(`${type} has no statement language row`);
+      expect(typeStatementLanguageRow(type)).toBe(compiled);
+      const record = LEGACY_ENGINES.get(type);
+      if (record === undefined) throw new Error(`the legacy adapter serves no ${type}`);
+      expect(record.statementLanguageRow).toBe(compiled);
+      expect(Object.isFrozen(compiled)).toBe(true);
+      expect([...compiled.operations]).toEqual([...declared.confirmation.operations]);
+      expect(compiled.decidesAlone).toBe(declared.confirmation.decidesAlone);
+      expect(rowTextByteLimit(compiled)).toBe(declared.confirmation.maxTextBytes ?? undefined);
+      expect(JSON.stringify(statementLanguageRow(type, declared, null))).toBe(JSON.stringify(compiled));
 
-    // Its register row reviewed the digest of exactly this data, so the claims count: the row is the gate's whole
-    // answer, the text is not SQL, and agent mode sends the language.
-    const grants = legacyEngineGrants("kafka");
-    expect([grants.decidesAlone, grants.readsSqlText, grants.statementLanguage]).toEqual([true, false, "kafkaread"]);
-    expect(rowDecidesAlone(kafka, grants)).toBe(true);
-    const record = LEGACY_ENGINES.get("kafka");
-    if (record === undefined) throw new Error("the legacy adapter serves no kafka");
-    for (const text of ['{"read": "topics"}', "DELETE FROM t", "SELECT 'a"]) {
-      expect([text, confirmationVerdict(text, readingOfRecord(record), "Keys")]).toStrictEqual([
-        text,
-        { decision: "run" },
-      ]);
+      // Its register row reviewed the digest of exactly this data, so the claims count: the text is not SQL, agent
+      // mode sends the language, and the row is the gate's whole answer where the data says it decides alone.
+      const grants = legacyEngineGrants(type);
+      expect([grants.readsSqlText, grants.statementLanguage]).toEqual([false, declared.name]);
+      expect(rowDecidesAlone(compiled, grants)).toBe(declared.confirmation.decidesAlone);
+      // A text the row names no operation for runs where the row decides alone.
+      const unnamed = ["", "DELETE FROM t", "SELECT 'a"].filter((text) => compiled.read(text)?.length === 0);
+      for (const text of declared.confirmation.decidesAlone ? unnamed : []) {
+        expect([type, text, confirmationVerdict(text, readingOfRecord(record), "Keys")]).toStrictEqual([
+          type,
+          text,
+          { decision: "run" },
+        ]);
+        ran += 1;
+      }
+
+      // The same data a byte changed is not what the row reviewed: no statement language, no decides-alone and no
+      // text-not-SQL, the restrictive values, so the gate reads every statement as SQL in front of the row, a write or
+      // a run it cannot read asking, and agent mode sends the engine no statement language.
+      const row = readGrantRegister(LEGACY_ENGINE_IDS).rowFor({ legacy: LEGACY_KEY, engine: type });
+      if (row === null) throw new Error(`the grant register holds no legacy ${type} row`);
+      const sqlText = {
+        readsSqlText: BUNDLED_SQL_TEXT[type].readsSqlText,
+        confirmExemptForms: BUNDLED_SQL_TEXT[type].grammar.confirmExemptForms,
+        redaction: row.grants.redaction,
+        grammarSha256: row.grants.grammarSha256,
+      };
+      const grantFor = (data: NonNullable<StatementLanguageData>) =>
+        grantEngineClaims(
+          type,
+          BUNDLED_CLAIM_REQUESTS[type],
+          sqlText,
+          { languageSha256: languageDataSha256(data) },
+          row,
+          SEED_ONLY_FIELDS,
+        );
+      // Vacuity: the committed data grants exactly the legacy record's grants.
+      expect(grantFor(declared)).toEqual(grants);
+      const last = declared.name.at(-1) === "a" ? "b" : "a";
+      const changed = { ...declared, name: `${declared.name.slice(0, -1)}${last}` };
+      expect(languageDataSha256(changed)).not.toBe(languageDataSha256(declared));
+      const planted = grantFor(changed);
+      expect([planted.decidesAlone, planted.readsSqlText, planted.statementLanguage]).toEqual([false, true, null]);
+      expect(rowDecidesAlone(compiled, planted)).toBe(false);
+      for (const text of ["DELETE FROM t", "SELECT 'a"]) {
+        const verdict = confirmationVerdict(text, { ...readingOfRecord(record), grants: planted }, "Keys");
+        expect([type, text, verdict.decision]).toEqual([type, text, "confirm"]);
+      }
     }
-
-    // The same data a byte changed is not what the row reviewed: no statement language, no decides-alone and no
-    // text-not-SQL, the restrictive values, so the gate reads every Kafka statement as SQL in front of the row, a write
-    // or a run it cannot read asking where the row alone ran it, and agent mode sends Kafka no statement language.
-    const row = readGrantRegister(LEGACY_ENGINE_IDS).rowFor({ legacy: LEGACY_KEY, engine: "kafka" });
-    if (row === null) throw new Error("the grant register holds no legacy kafka row");
-    const sqlText = {
-      readsSqlText: BUNDLED_SQL_TEXT.kafka.readsSqlText,
-      confirmExemptForms: BUNDLED_SQL_TEXT.kafka.grammar.confirmExemptForms,
-      redaction: row.grants.redaction,
-      grammarSha256: row.grants.grammarSha256,
-    };
-    const grantFor = (data: NonNullable<StatementLanguageData>) =>
-      grantEngineClaims(
-        "kafka",
-        BUNDLED_CLAIM_REQUESTS.kafka,
-        sqlText,
-        { languageSha256: languageDataSha256(data) },
-        row,
-        SEED_ONLY_FIELDS,
-      );
-    // Vacuity: the committed data grants exactly the legacy record's grants.
-    expect(grantFor(declared)).toEqual(grants);
-    const changed = structuredClone(declared);
-    const refusals = changed.agent?.request.refusals;
-    if (refusals === undefined) throw new Error("kafka's data states no agent request");
-    const empty = refusals.empty as { sentence: string };
-    empty.sentence = empty.sentence.replace("holds no read", "holds no reads");
-    expect(languageDataSha256(changed)).not.toBe(languageDataSha256(declared));
-    const planted = grantFor(changed);
-    expect([planted.decidesAlone, planted.readsSqlText, planted.statementLanguage]).toEqual([false, true, null]);
-    expect(rowDecidesAlone(kafka, planted)).toBe(false);
-    for (const text of ["DELETE FROM t", "SELECT 'a"]) {
-      const verdict = confirmationVerdict(text, { ...readingOfRecord(record), grants: planted }, "Keys");
-      expect([text, verdict.decision]).toEqual([text, "confirm"]);
-    }
+    // Vacuity: some row decided alone on a text it names no operation for, so the run half reads a verdict.
+    expect(ran).toBeGreaterThan(0);
   });
 });

@@ -23,7 +23,6 @@ import { logger } from "@/lib/logger";
 import { readingOfType } from "@/lib/sql/dangerous-query";
 import { type EngineConnection, type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
-import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
@@ -33,6 +32,7 @@ import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { randomUUID } from "node:crypto";
 import {
+  ACME_LANGUAGE_DATA,
   admittedFor,
   admittedManifest,
   declaredLanguageSha256,
@@ -738,15 +738,15 @@ describe("the gate on an engine a provider package serves", () => {
 
   test("a package engine with no SQL text whose register row grants its language's claims under the language digest runs a read with no confirmation, and asks with the row's digest one byte off", async () => {
     /**
-     * The declaration states no SQL text and Kafka's statement language confirmation data under another name: a
-     * request language whose reader names no operation and is the gate's whole answer.
+     * The declaration states no SQL text and the confirmation data of a request language whose reader names no
+     * operation and is the gate's whole answer, analysed for safety and bounded by no text size.
      */
-    const data = {
-      ...BUNDLED_STATEMENT_LANGUAGE_DATA.kafka,
+    const data: NonNullable<StatementLanguageData> = {
+      ...ACME_LANGUAGE_DATA,
       name: "acmeread",
-      agent: null,
-    } as NonNullable<StatementLanguageData>;
-    const kafkaShaped = (declaration: EditableEngine) => {
+      confirmation: { ...ACME_LANGUAGE_DATA.confirmation, safetyAnalysis: true, maxTextBytes: null },
+    };
+    const requestShaped = (declaration: EditableEngine) => {
       withStatementLanguageData(declaration, data);
       const members = declaration as Record<string, unknown>;
       members.sqlText = null;
@@ -754,7 +754,7 @@ describe("the gate on an engine a provider package serves", () => {
       members.migrationDdl = null;
     };
     const both = { readsSqlText: false, decidesAlone: true };
-    const granted = packageEngine("acmegate", kafkaShaped, both);
+    const granted = packageEngine("acmegate", requestShaped, both);
     expect(granted.statementGrammar).toBeNull();
     expect(granted.grants).toMatchObject({ reviewedGrammar: false, readsSqlText: false, decidesAlone: true });
     for (const sql of ['{"read": "topics"}', '{"read": "partitions", "topic": "delete"}']) {
@@ -765,11 +765,11 @@ describe("the gate on an engine a provider package serves", () => {
     }
 
     // The row's language digest one byte off, and a row granting neither claim: the gate asks about every statement.
-    const reviewed = declaredLanguageSha256(admittedManifest("acmegate", kafkaShaped));
+    const reviewed = declaredLanguageSha256(admittedManifest("acmegate", requestShaped));
     const changed = `${reviewed.slice(0, -1)}${reviewed.endsWith("0") ? "1" : "0"}`;
     for (const engine of [
-      packageEngine("acmegate", kafkaShaped, { ...both, languageSha256: changed }),
-      packageEngine("acmegate", kafkaShaped, {}),
+      packageEngine("acmegate", requestShaped, { ...both, languageSha256: changed }),
+      packageEngine("acmegate", requestShaped, {}),
     ]) {
       expect(engine.grants).toMatchObject({ reviewedGrammar: false, readsSqlText: true, decidesAlone: false });
       expect(await gateRun(packageRequest({ engine, sql: '{"read": "topics"}' }), clock)).toMatchObject({

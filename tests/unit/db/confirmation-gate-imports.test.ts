@@ -11,9 +11,9 @@
  * for a package's engine, every file under the package's directory. That package branch matches a closure member by
  * its path, so it sees a package module the gate reaches by a path; a gate module importing the package by its name is
  * refused by tests/unit/package-imports.test.ts ("core imports no provider package, by name or by path"), and the two
- * tests hold the package case together. Kafka's declaration states its language, kafkaread, as data, so the check
- * runs on a real declaration; the controls below plant other engines' languages to show it names a gate module of
- * each kind.
+ * tests hold the package case together. The check runs on every declaration, committed or a package's, that states its
+ * language as data, a census the test pins; the controls below plant other engines' languages to show it names a gate
+ * module of each kind.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -105,6 +105,7 @@ function declaredLanguageModules(closure: readonly string[], declared: readonly 
 describe("the confirmation gate's imports", () => {
   test("the confirmation gate imports no module of a statement language some engine declares as data", () => {
     const declared = declaredLanguages();
+    // A census pin: every engine whose declaration states its language as data, a set that leaves with those engines.
     expect(declared).toEqual([{ engine: "kafka", name: "kafkaread" }]);
     const closure = gateClosure();
     expect(declaredLanguageModules(closure, declared)).toEqual([]);

@@ -766,7 +766,12 @@ describe("Studio's grant of each agent mode claim", () => {
       "opcua",
       "sparkplug",
     ]);
-    expect(GRANTED_AGENT_READINGS.kafka).toEqual(["health"]);
+    expect(
+      SHIPPED_DATABASE_TYPES.some((type) => {
+        const readings = GRANTED_AGENT_READINGS[type];
+        return readings.length > 0 && readings.length < CURATED_OPERATION_KINDS.length;
+      }),
+    ).toBe(true);
     expect(GRANTED_AGENT_READINGS.postgres).toEqual([...CURATED_OPERATION_KINDS]);
   });
 
@@ -801,10 +806,10 @@ describe("Studio's grant of each agent mode claim", () => {
 
     // A language Studio has no module for is a request like any other: no row, or a row granting another, reads null.
     expect(languageOf(UNRECORDED, "acmeql", undefined)).toBeNull();
-    expect(languageOf("kafka", "acmeql", "kafkaread")).toBeNull();
-    expect(languageOf("kafka", "acmeql", null)).toBeNull();
+    expect(languageOf(UNRECORDED, "acmeql", "acmeread")).toBeNull();
+    expect(languageOf(UNRECORDED, "acmeql", null)).toBeNull();
     // A request equal to the row is granted the row's own name.
-    expect(languageOf("kafka", "kafkaread", "kafkaread")).toBe("kafkaread");
+    expect(languageOf(UNRECORDED, "acmeread", "acmeread")).toBe("acmeread");
     // One outside the form is refused by name, never read at a default.
     expect(() => languageOf(UNRECORDED, "Acme QL", undefined)).toThrow(
       `${UNRECORDED} requests agent.statementLanguage "Acme QL", which is not a value of the claim`,
@@ -828,7 +833,14 @@ describe("Studio's grant of each agent mode claim", () => {
     expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
     expect(of("postgres", ["sessions"], two)).toEqual([]);
     expect(of("postgres", [], two)).toEqual([]);
-    expect(of("kafka", [...CURATED_OPERATION_KINDS])).toEqual(["health"]);
+    // A request holding every reading reads each shipped engine's legacy row, partial or empty.
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) =>
+          JSON.stringify(of(type, [...CURATED_OPERATION_KINDS])) !==
+          JSON.stringify(legacyRow(type).grants.agentReadings),
+      ),
+    ).toEqual([]);
     expect(of("mqtt", [...CURATED_OPERATION_KINDS])).toEqual([]);
     // No row: the empty list, whatever the request.
     expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
@@ -1192,26 +1204,46 @@ describe("Studio's grant of an engine's statement language data", () => {
   const NAMES: StatementRedaction = { kind: "sql", nameQuote: '"' };
   const FORMS = [["DROP", "PLANTED"]];
 
+  /** The digest of the grammar the planted engine's SQL text request states, which its row reviewed. */
+  const GRAMMAR = digest();
+  /** The planted engine's requests: postgres's, requesting the statement language `acmeread`, no language of Studio's. */
+  const REQUESTED = request({}, {}, {}, {}, { statementLanguage: "acmeread" as never });
+  /** The seed-only rows, holding none for the planted engine. */
+  const SEED_ONLY = { ...SEED_ONLY_FIELDS, [UNRECORDED]: null };
   /**
-   * The grants of kafka, whose legacy row grants its language `kafkaread`, `readsSqlText: false` and `decidesAlone`
-   * for the grammar it reviewed, requesting language data whose digest is `requested` against its legacy row stating
+   * A register row for the planted engine granting its language `acmeread`, `readsSqlText: false` and `decidesAlone`
+   * for the grammar it reviewed, with a redaction and an exempt form, and the grants `changes` names changed.
+   */
+  const plantedRow = (changes: Partial<RegisterGrants>): RegisterRow =>
+    rowWith(UNRECORDED, {
+      statementLanguage: "acmeread",
+      readsSqlText: false,
+      decidesAlone: true,
+      grammarSha256: GRAMMAR,
+      redaction: NAMES,
+      confirmExemptForms: FORMS,
+      ...changes,
+    });
+
+  /**
+   * The grants of the planted engine requesting language data whose digest is `requested` against its row stating
    * `reviewed`. Its redaction and exempt forms are requested and granted so the test sees they stay under the grammar
    * digest alone.
    */
-  const kafkaGrants = (requested: unknown, reviewed: string | null) => {
+  const languageGrants = (requested: unknown, reviewed: string | null) => {
     const { statementLanguage, decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar } =
       grantEngineClaims(
-        "kafka",
-        BUNDLED_CLAIM_REQUESTS.kafka,
-        { ...legacySqlText("kafka"), redaction: NAMES, confirmExemptForms: FORMS },
+        UNRECORDED,
+        REQUESTED,
+        { readsSqlText: false, confirmExemptForms: FORMS, redaction: NAMES, grammarSha256: GRAMMAR },
         { languageSha256: requested as string | null },
-        rowWith("kafka", { languageSha256: reviewed, redaction: NAMES, confirmExemptForms: FORMS }),
-        SEED_ONLY_FIELDS,
+        plantedRow({ languageSha256: reviewed }),
+        SEED_ONLY,
       );
     return { statementLanguage, decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar };
   };
   const GRANTED = {
-    statementLanguage: "kafkaread",
+    statementLanguage: "acmeread",
     decidesAlone: true,
     readsSqlText: false,
     redaction: NAMES,
@@ -1224,19 +1256,13 @@ describe("Studio's grant of an engine's statement language data", () => {
     const reviewed = digest();
 
     // The data the row reviewed: the language, decidesAlone and readsSqlText false are the row's.
-    expect(kafkaGrants(reviewed, reviewed)).toEqual(GRANTED);
+    expect(languageGrants(reviewed, reviewed)).toEqual(GRANTED);
     // Other data, data the row reviewed as absent, and no data under a row that reviewed some: none of the three.
-    expect(kafkaGrants(reviewed, digest())).toEqual(UNREVIEWED);
-    expect(kafkaGrants(reviewed, null)).toEqual(UNREVIEWED);
-    expect(kafkaGrants(null, reviewed)).toEqual(UNREVIEWED);
+    expect(languageGrants(reviewed, digest())).toEqual(UNREVIEWED);
+    expect(languageGrants(reviewed, null)).toEqual(UNREVIEWED);
+    expect(languageGrants(null, reviewed)).toEqual(UNREVIEWED);
     // No data, reviewed as stating none: the grant reads as it did before the review of language data existed.
-    expect(kafkaGrants(null, null)).toEqual(GRANTED);
-    const { statementLanguage, decidesAlone, readsSqlText } = legacyEngineGrants("kafka");
-    expect({ statementLanguage, decidesAlone, readsSqlText }).toEqual({
-      statementLanguage: "kafkaread",
-      decidesAlone: true,
-      readsSqlText: false,
-    });
+    expect(languageGrants(null, null)).toEqual(GRANTED);
     // No row: every claim at its restrictive value, whatever the data.
     const unrowed = grantEngineClaims(
       UNRECORDED,
@@ -1244,7 +1270,7 @@ describe("Studio's grant of an engine's statement language data", () => {
       UNRECORDED_SQL_TEXT,
       { languageSha256: reviewed },
       null,
-      { ...SEED_ONLY_FIELDS, [UNRECORDED]: null },
+      SEED_ONLY,
     );
     expect([unrowed.statementLanguage, unrowed.decidesAlone, unrowed.readsSqlText]).toEqual([null, false, true]);
     // A request digest outside the form is refused by name, naming the request member and the engine.
@@ -1253,8 +1279,8 @@ describe("Studio's grant of an engine's statement language data", () => {
       [1, "1"],
       [reviewed.toUpperCase(), JSON.stringify(reviewed.toUpperCase())],
     ] as const) {
-      expect(() => kafkaGrants(value, reviewed)).toThrow(
-        `kafka requests statementLanguageData.languageSha256 ${shown}, which is not a value of the claim`,
+      expect(() => languageGrants(value, reviewed)).toThrow(
+        `${UNRECORDED} requests statementLanguageData.languageSha256 ${shown}, which is not a value of the claim`,
       );
     }
   });
@@ -1264,29 +1290,20 @@ describe("Studio's grant of an engine's statement language data", () => {
     /** `reviewed` with its last hex digit changed: the digest of data one byte off. */
     const changed = `${reviewed.slice(0, -1)}${reviewed.endsWith("0") ? "1" : "0"}`;
     /**
-     * The SQL text grants of kafka stating no SQL text, as the server catalog's composer requests it for such an
-     * engine (`UNRECORDED_SQL_TEXT`, no grammar digest), and language data of digest `requested`, against kafka's
-     * legacy row reviewing no grammar, `reviewed` as its language digest, a redaction and an exempt form, and
-     * `changes`; or against no row where `changes` is null.
+     * The SQL text grants of the planted engine stating no SQL text, as the server catalog's composer requests it for
+     * such an engine (`UNRECORDED_SQL_TEXT`, no grammar digest), and language data of digest `requested`, against its
+     * row reviewing no grammar, `reviewed` as its language digest, a redaction and an exempt form, and `changes`; or
+     * against no row where `changes` is null.
      */
     const noSqlTextGrants = (requested: string | null, changes: Partial<RegisterGrants> | null) => {
-      const row =
-        changes === null
-          ? null
-          : rowWith("kafka", {
-              grammarSha256: null,
-              languageSha256: reviewed,
-              redaction: NAMES,
-              confirmExemptForms: FORMS,
-              ...changes,
-            });
+      const row = changes === null ? null : plantedRow({ grammarSha256: null, languageSha256: reviewed, ...changes });
       const { decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar } = grantEngineClaims(
-        "kafka",
-        BUNDLED_CLAIM_REQUESTS.kafka,
+        UNRECORDED,
+        REQUESTED,
         UNRECORDED_SQL_TEXT,
         { languageSha256: requested },
         row,
-        SEED_ONLY_FIELDS,
+        SEED_ONLY,
       );
       return { decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar };
     };
@@ -1297,8 +1314,8 @@ describe("Studio's grant of an engine's statement language data", () => {
       confirmExemptForms: [],
       reviewedGrammar: false,
     } as const;
-    // Vacuity: kafka's legacy row grants both claims, so the base the cases change grants them.
-    const { readsSqlText, decidesAlone } = legacyRow("kafka").grants;
+    // Vacuity: the planted row grants both claims, so the base the cases change grants them.
+    const { readsSqlText, decidesAlone } = plantedRow({}).grants;
     expect({ readsSqlText, decidesAlone }).toEqual({ readsSqlText: false, decidesAlone: true });
 
     // The language data the row reviewed: readsSqlText and decidesAlone as the row grants them, and the claims that
@@ -1317,12 +1334,12 @@ describe("Studio's grant of an engine's statement language data", () => {
     // A request that carries a grammar digest under a row that reviews none: the engine states SQL text no row
     // reviewed, so nothing is granted.
     const stating = grantEngineClaims(
-      "kafka",
-      BUNDLED_CLAIM_REQUESTS.kafka,
+      UNRECORDED,
+      REQUESTED,
       { ...UNRECORDED_SQL_TEXT, grammarSha256: digest() },
       { languageSha256: reviewed },
-      rowWith("kafka", { grammarSha256: null, languageSha256: reviewed }),
-      SEED_ONLY_FIELDS,
+      plantedRow({ grammarSha256: null, languageSha256: reviewed }),
+      SEED_ONLY,
     );
     expect([stating.readsSqlText, stating.decidesAlone, stating.reviewedGrammar]).toEqual([true, false, false]);
   });
