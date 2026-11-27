@@ -706,14 +706,30 @@ describe("providers:pack", () => {
       expect(path.relative(planted, outdir).startsWith("..")).toBe(true);
       expect(path.basename(outdir)).toBe("artifact");
 
-      // Every caller variable the step does not name is absent; `bun run` adds NODE, PWD and npm_* of its own.
+      // The build sees the variable names a control child sees, started with the same command and spawn API in the
+      // same package directory with exactly the environment the step names: the caller's variables it passes, and
+      // HOME and USERPROFILE at an empty directory. A variable `bun run` or the platform adds to every child (NODE, PWD
+      // and npm_* on every platform, __CF_USER_TEXT_ENCODING on macOS, HOMEDRIVE and USERNAME on Windows) is measured
+      // by the control, not named, so a caller variable the step passed by mistake fails on every platform.
       const named = new Set(["path", "pathext", "systemroot", "windir", "comspec", "temp", "tmp", "tmpdir"]);
-      const added = (key: string): boolean => key === "NODE" || key === "PWD" || key.startsWith("npm_");
-      const leaked = Object.keys(caller).filter(
-        (key) => !named.has(key.toLowerCase()) && !added(key) && key !== "HOME" && key !== "USERPROFILE",
-      );
-      expect(leaked).toContain(probe);
-      expect(seen.env.filter((key: string) => leaked.includes(key))).toEqual([]);
+      expect(Object.keys(caller).filter((key) => !named.has(key.toLowerCase()))).toContain(probe);
+      const controlEnvironment: Record<string, string> = {};
+      for (const [key, value] of Object.entries(caller)) {
+        if (value !== undefined && named.has(key.toLowerCase())) controlEnvironment[key] = value;
+      }
+      const controlHome = fresh("control-home");
+      const controlOut = fresh("control-out");
+      const control = Bun.spawnSync({
+        cmd: [process.execPath, "run", "--shell=bun", "build", "--", "--outdir", controlOut],
+        cwd: path.join(planted, "packages", "provider-probe"),
+        env: { ...controlEnvironment, HOME: controlHome, USERPROFILE: controlHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(control.exitCode).toBe(0);
+      const controlSeen = JSON.parse(fs.readFileSync(path.join(controlOut, "probe.json"), "utf8"));
+      expect([...seen.env].sort()).toEqual([...controlSeen.env].sort());
+      expect(seen.env).not.toContain(probe);
       expect(seen.env).not.toContain("NODE_OPTIONS");
       expect(seen.env).not.toContain("NODE_PATH");
 
