@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 /**
- * The isolation ratchet: counters of provider knowledge in Studio's core, in its non-engine packages and in the grant
- * register that may only fall, and of engines in packages that may only rise (issue #2514). Every `packages/`
- * directory is classified, so none holds engine knowledge no counter counts.
+ * The isolation ratchet: counters of provider knowledge in Studio's core, in its non-engine packages and of the grant
+ * register's legacy rows that may only fall, and of engines in packages that may only rise (issues #2514 and #2580).
+ * Every `packages/` directory is classified, so none holds engine knowledge no counter counts.
  * `tests/unit/isolation-ratchet.test.ts` measures the working tree and holds it to the committed baseline
  * `tests/unit/isolation-ratchet.baseline.json`, so a change that adds engine knowledge to core fails, and a change
  * that removes some fails too until it regenerates the baseline, so an improvement can never be undone silently.
  *
  * Run: bun scripts/isolation-ratchet.ts [--write]
- * With no argument it prints every counter, gate and report-only, one per line.
+ * With no argument it prints every counter, gate and report-only, one per line, then each report id list as one JSON
+ * array token.
  * `--write` (as `bun run isolation:baseline`) writes the baseline, and refuses, writing nothing, when an exception or
  * a non-engine package entry is stale, when a `packages/` directory is unclassified, or when any counter is worse than
  * the committed baseline: the command never raises a counter. It writes when no baseline exists yet.
@@ -31,11 +32,26 @@
  *   `.jsx`, `.mjs`, `.cjs`, `.mts` or `.cts`, outside `src/lib/db/providers/` (counted as legacy provider files) and
  *   `packages/`, except this script: its exception list quotes the excepted lines, so counting it would keep those ids
  *   named in core for as long as the list exists.
- * - Generated: a core source file whose base name holds `.generated.`. It counts toward generated lines only.
+ * - Generated: a core source file whose base name holds `.generated.`. It counts toward no hand-written counter, and
+ *   toward generated lines unless it is a statement language module.
+ * - Statement language modules: every file, of any extension, under `src/lib/languages/`; every file in a
+ *   subdirectory of `src/lib/agent/languages/`, its `engines/` included; every `src/lib/db/operations/<name>-admission.ts`
+ *   directly in that directory, matched by file name, so an engine-neutral module there must be named otherwise; and
+ *   the generated projection of declared statement language data, `STATEMENT_LANGUAGE_PROJECTION`, when the tree holds
+ *   it. A hand-written one stays hand-written core for the engine naming counters.
  * - Non-engine package files: every file, of any extension, under `packages/<directory>/` for each
  *   `NON_ENGINE_PACKAGES` entry, except those under that directory's `tests/`. No exception applies to them.
  * - Grant register files: every file, of any extension, under `packages/grant-register/`
  *   (`GRANT_REGISTER_DIRECTORY`), except those under its `tests/`. No exception applies to them.
+ * - Grant register rows: when the tree holds any grant register file, the rows of `GRANT_REGISTER_FILE`, read as JSON.
+ *   A missing file, text that is not JSON, a value that is not an array, a row that is not an object with a string
+ *   `engine`, or a row whose `reasons` is present and not an object is refused by name: a register the ratchet cannot
+ *   read never counts as zero rows. A tree with no grant register file has no rows.
+ *   A legacy row holds an own `legacy` member, whatever its value; a review note is a member of a row's `reasons`, legacy
+ *   or package row alike.
+ * - Single-engine statement languages: the string `grants.statementLanguage` values of the register's rows, each kept
+ *   when the rows granting it name exactly one distinct `engine`. A line names one by the engine naming rule above,
+ *   over these ids.
  * - Unclassified: a directory `packages/<directory>/` holding a file that is neither an engine package
  *   (`provider-<id>`), a `NON_ENGINE_PACKAGES` entry nor the grant register, so no counter would count it. A file
  *   directly under `packages/`, such as its README, is no directory and is passed over.
@@ -52,7 +68,11 @@
  * - `enginesInPackages`: engine ids from `packages/provider-<id>/`.
  * - `coreHandwritten.distinctEngineIds`, `.filesNamingAnEngine`, `.linesNamingAnEngine`: hand-written core source,
  *   after the exceptions.
- * - `coreGenerated.lines`: lines of generated core source.
+ * - `coreHandwritten.linesNamingASingleEngineLanguage`: lines naming a single-engine statement language in hand-written
+ *   core source outside the statement language modules, so language code relocated into another core module that names
+ *   its language raises a gate. No exception applies.
+ * - `coreGenerated.lines`: lines of generated core source outside the statement language modules.
+ * - `statementLanguages.lines`: lines of the statement language modules.
  * - `legacyProviders.files`: every file under `src/lib/db/providers/`.
  * - `agentLanguages.filesInLanguageDirs`: every file in a subdirectory of `src/lib/agent/languages/`.
  * - `languages.files`: every file under `src/lib/languages/`.
@@ -65,19 +85,26 @@
  *   whose first type argument is `DatabaseType`, and every mapped type `[K in DatabaseType]`, either optionally inside
  *   `Exclude<` or `Extract<`, across line breaks. A list such as `readonly DatabaseType[]` is not a key.
  * - `nonEnginePackages.linesNamingAnEngine`: lines naming an engine in non-engine package files.
- * - `grantRegister.linesNamingAnEngine`: lines naming an engine in grant register files. A row of the register names
- *   its engine, so the counter holds the legacy rows' engine-naming lines. A legacy row leaves when its engine moves
- *   into a package, and the engine's package row is counted the same way, so a move by itself does not lower it.
- * The baseline also lists the ids behind four id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`,
- * `nonEnginePackages.engineIdsNamed` and `grantRegister.engineIdsNamed`: an id named in core, in a non-engine package
- * or in the grant register that the baseline does not list is refused even when the count is unchanged, and a packaged
- * id that is gone is refused.
+ * - `grantRegister.legacyRows`: the grant register's legacy rows. A legacy row is deleted as its engine moves into a
+ *   package, and the legacy adapter's deletion leaves none, so the counter reaches 0. A package row counts toward no
+ *   gate counter.
+ * The baseline also lists the ids behind three id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`
+ * and `nonEnginePackages.engineIdsNamed`: an id named in core or in a non-engine package that the baseline does not
+ * list is refused even when the count is unchanged, and a packaged id that is gone is refused.
+ *
+ * Line gates, `LINE_GATES`: every generated core module and every statement language module is counted by exactly one
+ * of `coreGenerated.lines` and `statementLanguages.lines`, never both and never neither, so the projection of declared
+ * language data counts with its language and not as generated lines. A hand-written core module outside the statement
+ * language modules is counted by no line gate; its engine knowledge is counted by the naming gates.
  *
  * Report counters, printed and never compared: the engine id count, generated core files, lines of the legacy
  * provider, agent language and languages files and of the declarations, and over test code (`tests/`, `e2e/`,
  * `vscode-extension/test/`) the files and lines naming an engine (no exceptions), plus the test code and fixture files
  * under `tests/` and `e2e/` with an engine id as a path segment, and the core source files with an engine id as a path
- * segment.
+ * segment. Over the grant register, which Studio's repository keeps for every engine, packaged ones included: the lines
+ * naming an engine in its files (`grantRegister.linesNamingAnEngine`), with the ids they name printed as the report id
+ * list `grantRegister.engineIdsNamed`, and its files' lines, UTF-8 bytes and review notes (`grantRegister.lines`,
+ * `.bytes`, `.reviewNotes`), so a relocation of engine knowledge into the register shows by size.
  * An id is a path segment when it is bounded on each side by the path's start or end or by one of `/`, `_`, `.` or `-`,
  * matched case-sensitively.
  */
@@ -110,7 +137,9 @@ export const GATE_COUNTERS: readonly GateCounter[] = [
   { name: "coreHandwritten.distinctEngineIds", direction: "falls" },
   { name: "coreHandwritten.filesNamingAnEngine", direction: "falls" },
   { name: "coreHandwritten.linesNamingAnEngine", direction: "falls" },
+  { name: "coreHandwritten.linesNamingASingleEngineLanguage", direction: "falls" },
   { name: "coreGenerated.lines", direction: "falls" },
+  { name: "statementLanguages.lines", direction: "falls" },
   { name: "legacyProviders.files", direction: "falls" },
   { name: "agentLanguages.filesInLanguageDirs", direction: "falls" },
   { name: "languages.files", direction: "falls" },
@@ -120,7 +149,7 @@ export const GATE_COUNTERS: readonly GateCounter[] = [
   { name: "inwardImportPairs", direction: "falls" },
   { name: "engineKeyedTypePositions", direction: "falls" },
   { name: "nonEnginePackages.linesNamingAnEngine", direction: "falls" },
-  { name: "grantRegister.linesNamingAnEngine", direction: "falls" },
+  { name: "grantRegister.legacyRows", direction: "falls" },
 ];
 
 /** The report counters, printed and never compared. */
@@ -136,16 +165,29 @@ export const REPORT_COUNTERS = [
   "coreTests.codeFilesWithEngineInPath",
   "coreTests.fixtureFilesWithEngineInPath",
   "coreSource.filesWithEngineInPath",
+  "grantRegister.linesNamingAnEngine",
+  "grantRegister.lines",
+  "grantRegister.bytes",
+  "grantRegister.reviewNotes",
 ] as const;
 
 type ReportCounter = (typeof REPORT_COUNTERS)[number];
+
+/** The id lists printed with the report counters, never compared. */
+const REPORT_ID_LISTS = ["grantRegister.engineIdsNamed"] as const;
+
+type ReportIdList = (typeof REPORT_ID_LISTS)[number];
+
+/** The two line gates; every generated core module and every statement language module is counted by exactly one. */
+export const LINE_GATES = ["coreGenerated.lines", "statementLanguages.lines"] as const;
+
+type LineGate = (typeof LINE_GATES)[number];
 
 /** The id lists the baseline records, in its order. */
 const ID_LISTS = [
   "coreHandwritten.engineIdsNamed",
   "enginesInPackages.ids",
   "nonEnginePackages.engineIdsNamed",
-  "grantRegister.engineIdsNamed",
 ] as const;
 
 type IdList = (typeof ID_LISTS)[number];
@@ -158,11 +200,14 @@ export interface Baseline {
 
 /**
  * One measurement of a tree. `stale` names each exception or non-engine package entry that matches nothing, and
- * `unclassified` each `packages/<directory>/` no counter counts.
+ * `unclassified` each `packages/<directory>/` no counter counts. `lineGateFiles` lists, sorted, the files each line
+ * gate counted, so the one-gate rule is testable and a count can be traced to its files.
  */
 export interface Measurement {
   readonly baseline: Baseline;
   readonly report: Readonly<Record<ReportCounter, number>>;
+  readonly reportIds: Readonly<Record<ReportIdList, readonly string[]>>;
+  readonly lineGateFiles: Readonly<Record<LineGate, readonly string[]>>;
   readonly stale: readonly string[];
   readonly unclassified: readonly string[];
 }
@@ -197,6 +242,12 @@ export interface Tree {
 
 /** The directory under `packages/` of the grant register, `@libredb/grant-register`, counted on its own. */
 export const GRANT_REGISTER_DIRECTORY = "grant-register";
+
+/** The grant register's rows, read whenever the tree holds any grant register file. */
+export const GRANT_REGISTER_FILE = "packages/grant-register/src/register.json";
+
+/** The generated module that will hold the projection of declared statement language data. */
+export const STATEMENT_LANGUAGE_PROJECTION = "src/lib/db/engine-catalog/statement-language.generated.ts";
 
 export const NON_ENGINE_PACKAGES: readonly NonEnginePackage[] = [
   { directory: "provider-sdk", reason: "the contract SDK that providers build against, not an engine" },
@@ -408,6 +459,7 @@ const PACKAGE = /^packages\/provider-([^/]+)\//;
 const PACKAGE_DIRECTORY = /^packages\/([^/]+)\//;
 const AGENT_LANGUAGE_DIR_FILE = /^src\/lib\/agent\/languages\/[^/]+\/./;
 const LANGUAGES = "src/lib/languages/";
+const LANGUAGE_ADMISSION = /^src\/lib\/db\/operations\/[^/]+-admission\.ts$/;
 const PROVIDER_DOC = /^docs\/providers\/([^/]+)\.md$/;
 const PROVIDER_INTEGRATION_TEST = /^tests\/integration\/db\/[^/]+-provider\.test\.ts$/;
 const KEYED_TYPE =
@@ -486,6 +538,68 @@ function under(prefixes: readonly string[], file: string): boolean {
   return prefixes.some((prefix) => file.startsWith(prefix));
 }
 
+/** A grant register row as the ratchet counts it. */
+interface CountedRow {
+  readonly engine: string;
+  readonly legacy: boolean;
+  readonly reviewNotes: number;
+  readonly statementLanguage: string | null;
+}
+
+/** The grant register's rows, refusing by name a register that is missing or is not an array of rows. */
+function readRegisterRows(tree: Tree, files: readonly string[]): CountedRow[] {
+  if (!files.includes(GRANT_REGISTER_FILE)) {
+    throw new Error(
+      `${GRANT_REGISTER_FILE} is missing, and the grant register holds other files, so its rows cannot be counted`,
+    );
+  }
+  const text = tree.read(GRANT_REGISTER_FILE);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${GRANT_REGISTER_FILE} is not JSON: ${(error as Error).message}`, { cause: error });
+  }
+  if (!Array.isArray(value)) throw new Error(`${GRANT_REGISTER_FILE} is not a JSON array of rows`);
+  return value.map((row: unknown, index) => {
+    if (!isObject(row) || typeof row.engine !== "string") {
+      throw new Error(`${GRANT_REGISTER_FILE}: row ${index} is not an object with a string engine`);
+    }
+    if (row.reasons !== undefined && !isObject(row.reasons)) {
+      throw new Error(`${GRANT_REGISTER_FILE}: row ${index} (${row.engine}) has reasons that are not an object`);
+    }
+    const language = isObject(row.grants) ? row.grants.statementLanguage : null;
+    return {
+      engine: row.engine,
+      legacy: Object.hasOwn(row, "legacy"),
+      reviewNotes: row.reasons === undefined ? 0 : Object.keys(row.reasons).length,
+      statementLanguage: typeof language === "string" ? language : null,
+    };
+  });
+}
+
+/** The statement language ids exactly one engine speaks, over every row of the register. */
+function singleEngineLanguages(rows: readonly CountedRow[]): string[] {
+  const engines = new Map<string, Set<string>>();
+  for (const { engine, statementLanguage } of rows) {
+    if (statementLanguage === null) continue;
+    const speakers = engines.get(statementLanguage) ?? new Set<string>();
+    speakers.add(engine);
+    engines.set(statementLanguage, speakers);
+  }
+  return [...engines].filter(([, speakers]) => speakers.size === 1).map(([language]) => language);
+}
+
+/** Whether a file is a statement language module, counted by `statementLanguages.lines`. */
+function isStatementLanguageModule(file: string): boolean {
+  return (
+    file.startsWith(LANGUAGES) ||
+    AGENT_LANGUAGE_DIR_FILE.test(file) ||
+    LANGUAGE_ADMISSION.test(file) ||
+    file === STATEMENT_LANGUAGE_PROJECTION
+  );
+}
+
 /** Measures a tree: every gate and report counter, and the stale entries of the two lists. */
 export function measure(tree: Tree, lists: MeasureLists): Measurement {
   const files = [...new Set(tree.files)].sort();
@@ -510,7 +624,8 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     (file) =>
       under(CORE_ROOTS, file) && CODE_FILE.test(file) && !file.startsWith(LEGACY_PROVIDERS) && file !== THIS_SCRIPT,
   );
-  const generated = core.filter((file) => baseName(file).includes(".generated."));
+  const statementLanguageModules = files.filter(isStatementLanguageModule);
+  const generated = core.filter((file) => baseName(file).includes(".generated.") && !isStatementLanguageModule(file));
   const handwritten = core.filter((file) => !baseName(file).includes(".generated."));
   const inPath = (file: string) =>
     [...engineIds].some((id) => new RegExp(`(^|[/_.-])${escapeRegExp(id)}([/_.-]|$)`).test(file));
@@ -528,6 +643,15 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     (file) => file.startsWith(registerRoot) && !file.startsWith(`${registerRoot}tests/`),
   );
   const registerNaming = scanNaming(tree, registerFiles, pattern, [], new Set());
+  const registerRows = registerFiles.length === 0 ? [] : readRegisterRows(tree, files);
+  const singleLanguages = singleEngineLanguages(registerRows);
+  const languageNaming = scanNaming(
+    tree,
+    handwritten.filter((file) => !isStatementLanguageModule(file)),
+    singleLanguages.length === 0 ? null : namingPattern(singleLanguages),
+    [],
+    new Set(),
+  );
   const unclassified = [...new Set(files.map((file) => PACKAGE_DIRECTORY.exec(file)?.[1]))]
     .filter(
       (directory): directory is string =>
@@ -562,7 +686,9 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     "coreHandwritten.distinctEngineIds": naming.ids.size,
     "coreHandwritten.filesNamingAnEngine": naming.files,
     "coreHandwritten.linesNamingAnEngine": naming.lines,
+    "coreHandwritten.linesNamingASingleEngineLanguage": languageNaming.lines,
     "coreGenerated.lines": totalLines(tree, generated),
+    "statementLanguages.lines": totalLines(tree, statementLanguageModules),
     "legacyProviders.files": legacy.length,
     "agentLanguages.filesInLanguageDirs": agentLanguages.length,
     "languages.files": languages.length,
@@ -572,7 +698,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     inwardImportPairs: lists.inward.reduce((sum, entry) => sum + entry.modules.length, 0),
     engineKeyedTypePositions: keyed,
     "nonEnginePackages.linesNamingAnEngine": nonEngineNaming.lines,
-    "grantRegister.linesNamingAnEngine": registerNaming.lines,
+    "grantRegister.legacyRows": registerRows.filter((row) => row.legacy).length,
   };
   return {
     baseline: {
@@ -581,7 +707,6 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
         "coreHandwritten.engineIdsNamed": [...naming.ids].sort(),
         "enginesInPackages.ids": [...packaged].sort(),
         "nonEnginePackages.engineIdsNamed": [...nonEngineNaming.ids].sort(),
-        "grantRegister.engineIdsNamed": [...registerNaming.ids].sort(),
       },
     },
     report: {
@@ -596,7 +721,13 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
       "coreTests.codeFilesWithEngineInPath": pathTestFiles.filter((file) => TEST_CODE_FILE.test(file)).length,
       "coreTests.fixtureFilesWithEngineInPath": pathTestFiles.filter((file) => !TEST_CODE_FILE.test(file)).length,
       "coreSource.filesWithEngineInPath": core.filter(inPath).length,
+      "grantRegister.linesNamingAnEngine": registerNaming.lines,
+      "grantRegister.lines": totalLines(tree, registerFiles),
+      "grantRegister.bytes": registerFiles.reduce((sum, file) => sum + Buffer.byteLength(tree.read(file), "utf8"), 0),
+      "grantRegister.reviewNotes": registerRows.reduce((sum, row) => sum + row.reviewNotes, 0),
     },
+    reportIds: { "grantRegister.engineIdsNamed": [...registerNaming.ids].sort() },
+    lineGateFiles: { "coreGenerated.lines": generated, "statementLanguages.lines": statementLanguageModules },
     stale,
     unclassified,
   };
@@ -644,7 +775,6 @@ export function compareWithBaseline(baseline: Baseline, current: Baseline): Find
     }
   }
   findings.push(...namedIdFindings(baseline, current, "nonEnginePackages.engineIdsNamed", "a non-engine package"));
-  findings.push(...namedIdFindings(baseline, current, "grantRegister.engineIdsNamed", "the grant register"));
   return findings;
 }
 
@@ -767,6 +897,7 @@ export function main(argv: readonly string[], io: Io): number {
   if (!write) {
     for (const { name } of GATE_COUNTERS) io.log(`gate ${name} ${measured.baseline.counters[name]}`);
     for (const name of REPORT_COUNTERS) io.log(`report ${name} ${measured.report[name]}`);
+    for (const name of REPORT_ID_LISTS) io.log(`report ${name} ${JSON.stringify(measured.reportIds[name])}`);
     return 0;
   }
   if (measured.stale.length > 0) {

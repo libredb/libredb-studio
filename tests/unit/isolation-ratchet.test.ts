@@ -18,7 +18,9 @@ import {
   type Exception,
   GATE_COUNTERS,
   GRANT_REGISTER_DIRECTORY,
+  GRANT_REGISTER_FILE,
   type Io,
+  LINE_GATES,
   main,
   type Measurement,
   measure,
@@ -29,6 +31,7 @@ import {
   REPORT_COUNTERS,
   realIo,
   renderBaseline,
+  STATEMENT_LANGUAGE_PROJECTION,
 } from "../../scripts/isolation-ratchet";
 import { INWARD_IMPORTS } from "./lib/db/provider-imports/inward-allowlist";
 
@@ -72,6 +75,21 @@ function measureFiles(extra: Files, lists: Lists = {}, base: Files = BASE): Meas
 
 function gate(extra: Files, lists: Lists = {}, base: Files = BASE): Baseline["counters"] {
   return measureFiles(extra, lists, base).baseline.counters;
+}
+
+/** A legacy row of the grant register, keyed as the register keys it. */
+function legacyRow(engine: string): Record<string, unknown> {
+  return { legacy: "@libredb/studio", engine };
+}
+
+/** A package row of the grant register. */
+function packageRow(engine: string): Record<string, unknown> {
+  return { package: { name: `@libredb/provider-${engine}`, version: "1.0.0", digest: "sha256-x" }, engine };
+}
+
+/** The grant register file holding `rows`. */
+function register(rows: readonly unknown[]): Files {
+  return { [GRANT_REGISTER_FILE]: `${JSON.stringify(rows, null, 2)}\n` };
 }
 
 /** The comparison's messages for a tree measured against the base tree's baseline. */
@@ -402,47 +420,133 @@ describe("non-engine packages", () => {
 });
 
 describe("the grant register", () => {
+  const LEGACY_ROWS = "grantRegister.legacyRows";
   const REGISTER_LINES = "grantRegister.linesNamingAnEngine";
   const REGISTER_IDS = "grantRegister.engineIdsNamed";
+  /** An empty register, planted beside any other register file, since a register file without it is refused. */
+  const EMPTY_REGISTER: Files = { [GRANT_REGISTER_FILE]: "[]\n" };
 
-  test("a line naming an engine in the register package's source counts toward the register counter and toward no other", () => {
+  test("a legacy row of the grant register counts toward grantRegister.legacyRows, and a package row toward no gate counter", () => {
     const before = gate({});
-    const measured = measureFiles({
-      "packages/grant-register/src/register.json": '[\n  { "engine": "kafka" },\n  { "engine": "postgres" }\n]\n',
-      "packages/grant-register/src/index.ts": "export const LEGACY_KEY = 1;\n",
-    }).baseline;
+    const two = register([legacyRow("kafka"), legacyRow("postgres")]);
+    const withPackageRow = register([legacyRow("kafka"), legacyRow("postgres"), packageRow("mqtt")]);
+    const three = register([legacyRow("kafka"), legacyRow("postgres"), legacyRow("mqtt")]);
+    const one = register([legacyRow("kafka")]);
 
-    expect(GRANT_REGISTER_DIRECTORY).toBe("grant-register");
-    expect(before[REGISTER_LINES]).toBe(0);
-    expect(measured.counters[REGISTER_LINES]).toBe(2);
-    expect(measured.ids[REGISTER_IDS]).toEqual(["kafka", "postgres"]);
-    expect(measured.ids["nonEnginePackages.engineIdsNamed"]).toEqual([]);
-    const others: Record<string, number> = { ...measured.counters, [REGISTER_LINES]: 0 };
+    expect(GRANT_REGISTER_FILE).toBe("packages/grant-register/src/register.json");
+    expect(GATE_COUNTERS.at(-1)).toEqual({ name: LEGACY_ROWS, direction: "falls" });
+    expect(before[LEGACY_ROWS]).toBe(0);
+    expect(gate(two)[LEGACY_ROWS]).toBe(2);
+    const others: Record<string, number> = { ...gate(two), [LEGACY_ROWS]: 0 };
     expect(others).toEqual(before);
+    expect(gate(withPackageRow)).toEqual(gate(two));
+    expect(compareWithBaseline(measureFiles(two).baseline, measureFiles(withPackageRow).baseline)).toEqual([]);
+    expect(compareWithBaseline(measureFiles(two).baseline, measureFiles(three).baseline)).toEqual([
+      { kind: "worse", message: `${LEGACY_ROWS}: baseline 2, now 3; it may only fall` },
+    ]);
+    expect(compareWithBaseline(measureFiles(two).baseline, measureFiles(one).baseline)).toEqual([
+      { kind: "better", message: `${LEGACY_ROWS}: baseline 2, now 1, an improvement; ${REGENERATE}` },
+    ]);
+  });
+
+  test("the register's lines, bytes and review notes are printed as report counters and never compared", () => {
+    const small = measureFiles({
+      ...EMPTY_REGISTER,
+      "packages/grant-register/src/index.ts": "// é\n",
+      "packages/grant-register/tests/x.test.ts": "a\nb\nc\n",
+    });
+    const rows = [
+      { ...legacyRow("kafka"), reasons: { writeReach: "a", sshTunnel: "b" } },
+      { ...packageRow("mqtt"), reasons: { ownWords: "c" } },
+      legacyRow("postgres"),
+    ];
+    const noted = measureFiles(register(rows));
+    const renoted = measureFiles(
+      register([{ ...rows[0], reasons: { writeReach: "a much longer note" } }, rows[1], rows[2]]),
+    );
+    const text = `${JSON.stringify(rows, null, 2)}\n`;
+
+    expect(REPORT_COUNTERS).toContain("grantRegister.lines");
+    expect(REPORT_COUNTERS).toContain("grantRegister.bytes");
+    expect(REPORT_COUNTERS).toContain("grantRegister.reviewNotes");
+    expect(small.report["grantRegister.lines"]).toBe(2);
+    expect(small.report["grantRegister.bytes"]).toBe(9);
+    expect(small.report["grantRegister.reviewNotes"]).toBe(0);
+    expect(noted.report["grantRegister.lines"]).toBe(text.split("\n").length - 1);
+    expect(noted.report["grantRegister.bytes"]).toBe(new TextEncoder().encode(text).length);
+    expect(noted.report["grantRegister.reviewNotes"]).toBe(3);
+    expect(renoted.report["grantRegister.reviewNotes"]).toBe(2);
+    expect(renoted.report["grantRegister.bytes"]).not.toBe(noted.report["grantRegister.bytes"]);
+    expect(compareWithBaseline(noted.baseline, renoted.baseline)).toEqual([]);
+    const rendered = renderBaseline(noted.baseline);
+    for (const name of ["grantRegister.lines", "grantRegister.bytes", "grantRegister.reviewNotes", REGISTER_LINES]) {
+      expect(rendered).not.toContain(`"${name}"`);
+    }
+  });
+
+  test("an engine newly named in the grant register changes no gate counter and shows in the report id list", () => {
+    const before = measureFiles(register([legacyRow("kafka")]));
+    const after = measureFiles(register([legacyRow("kafka"), packageRow("postgres")]));
+
+    expect(REPORT_COUNTERS).toContain(REGISTER_LINES);
+    expect(before.report[REGISTER_LINES]).toBe(1);
+    expect(after.report[REGISTER_LINES]).toBe(2);
+    expect(before.reportIds[REGISTER_IDS]).toEqual(["kafka"]);
+    expect(after.reportIds[REGISTER_IDS]).toEqual(["kafka", "postgres"]);
+    expect(after.baseline.counters).toEqual(before.baseline.counters);
+    expect(compareWithBaseline(before.baseline, after.baseline)).toEqual([]);
+    expect(Object.keys(after.baseline.ids)).not.toContain(REGISTER_IDS);
   });
 
   test("a file under the register's tests/ does not count, and a JSON file of the register counts like a source file", () => {
-    expect(gate({ "packages/grant-register/tests/x.test.ts": 'x = "kafka";\n' })[REGISTER_LINES]).toBe(0);
-    expect(gate({ "packages/grant-register/src/tests/x.ts": 'x = "kafka";\n' })[REGISTER_LINES]).toBe(1);
-    expect(gate({ "packages/grant-register/src/register.schema.json": '"enum": ["kafka"]\n' })[REGISTER_LINES]).toBe(1);
+    const lines = (files: Files) => measureFiles(files).report[REGISTER_LINES];
+
+    expect(GRANT_REGISTER_DIRECTORY).toBe("grant-register");
+    expect(lines({ "packages/grant-register/tests/x.test.ts": 'x = "kafka";\n' })).toBe(0);
+    expect(lines({ ...EMPTY_REGISTER, "packages/grant-register/src/tests/x.ts": 'x = "kafka";\n' })).toBe(1);
     expect(
-      gate({ "packages/grant-register/package.json": '{ "description": "the `kafka` engine" }\n' })[REGISTER_LINES],
+      lines({ ...EMPTY_REGISTER, "packages/grant-register/src/register.schema.json": '"enum": ["kafka"]\n' }),
+    ).toBe(1);
+    expect(
+      lines({ ...EMPTY_REGISTER, "packages/grant-register/package.json": '{ "description": "the `kafka` engine" }\n' }),
     ).toBe(1);
   });
 
-  test("an engine id newly named in the register is refused at an unchanged line count", () => {
-    const file = "packages/grant-register/src/register.json";
-    const before = measureFiles({ [file]: '"engine": "kafka",\n' }).baseline;
-    const after = measureFiles({ [file]: '"engine": "postgres",\n' }).baseline;
+  test("a grant register file without register.json, or a register.json that is not an array of rows, is refused by name", () => {
+    const refusal = (files: Files) => {
+      try {
+        measureFiles(files);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("measure accepted the register");
+    };
+    const at = (text: string) => refusal({ [GRANT_REGISTER_FILE]: text });
 
-    expect(after.counters[REGISTER_LINES]).toBe(before.counters[REGISTER_LINES]);
-    expect(compareWithBaseline(before, after)).toEqual([
-      {
-        kind: "worse",
-        message: `${REGISTER_IDS}: postgres is named in the grant register and the baseline does not list it`,
-      },
-      { kind: "better", message: `${REGISTER_IDS}: kafka is no longer named in the grant register; ${REGENERATE}` },
-    ]);
+    expect(refusal({ "packages/grant-register/package.json": "{}\n" })).toBe(
+      `${GRANT_REGISTER_FILE} is missing, and the grant register holds other files, so its rows cannot be counted`,
+    );
+    expect(at("{")).toStartWith(`${GRANT_REGISTER_FILE} is not JSON: `);
+    expect(at("{}\n")).toBe(`${GRANT_REGISTER_FILE} is not a JSON array of rows`);
+    expect(at("[1]\n")).toBe(`${GRANT_REGISTER_FILE}: row 0 is not an object with a string engine`);
+    expect(at('[{"engine":"kafka"},{}]\n')).toBe(`${GRANT_REGISTER_FILE}: row 1 is not an object with a string engine`);
+    expect(at('[{"engine":"kafka","reasons":[]}]\n')).toBe(
+      `${GRANT_REGISTER_FILE}: row 0 (kafka) has reasons that are not an object`,
+    );
+    const cause = (() => {
+      try {
+        measureFiles({ [GRANT_REGISTER_FILE]: "{" });
+      } catch (error) {
+        return (error as Error).cause;
+      }
+      return undefined;
+    })();
+    expect(cause).toBeInstanceOf(SyntaxError);
+    const none = measureFiles({});
+    expect(none.baseline.counters[LEGACY_ROWS]).toBe(0);
+    expect(none.report["grantRegister.lines"]).toBe(0);
+    expect(none.report["grantRegister.bytes"]).toBe(0);
+    expect(none.report["grantRegister.reviewNotes"]).toBe(0);
   });
 
   test("a packages/ directory that is neither an engine package, a non-engine package nor the register is refused by name", () => {
@@ -453,6 +557,7 @@ describe("the grant register", () => {
       "packages/README.md": "# Packages\n",
       "packages/provider-kafka/src/index.ts": "",
       "packages/grant-register/package.json": "{}\n",
+      ...EMPTY_REGISTER,
     });
 
     expect(measured.unclassified).toEqual([
@@ -464,12 +569,139 @@ describe("the grant register", () => {
   });
 });
 
+describe("statement languages", () => {
+  const LANGUAGE_LINES = "statementLanguages.lines";
+  const SINGLE_LANGUAGE = "coreHandwritten.linesNamingASingleEngineLanguage";
+
+  test("a line of a statement language module, a language admission module or the language data projection counts toward statementLanguages.lines, and the projection toward no generated line", () => {
+    const before = measureFiles({});
+    const counted = [
+      "src/lib/languages/x/a.ts",
+      "src/lib/languages/x/notes.md",
+      "src/lib/languages/x/rows.generated.ts",
+      "src/lib/agent/languages/x/a.ts",
+      "src/lib/agent/languages/engines/client.ts",
+      "src/lib/db/operations/x-admission.ts",
+      STATEMENT_LANGUAGE_PROJECTION,
+    ];
+    const ignored = [
+      "src/lib/db/operations/descriptors.ts",
+      "src/lib/db/operations/x/y-admission.ts",
+      "src/lib/db/operations/x-admission.test.ts",
+      "src/lib/agent/languages/pack.ts",
+      "src/lib/db/engine-catalog/rows.generated.ts",
+      "tests/unit/db/operations/x-admission.ts",
+    ];
+
+    expect(STATEMENT_LANGUAGE_PROJECTION).toBe("src/lib/db/engine-catalog/statement-language.generated.ts");
+    expect(before.baseline.counters[LANGUAGE_LINES]).toBe(0);
+    for (const file of counted) {
+      const after = measureFiles({ [file]: "a\n" });
+
+      expect({
+        file,
+        lines: after.baseline.counters[LANGUAGE_LINES],
+        generated: after.baseline.counters["coreGenerated.lines"],
+        generatedFiles: after.report["coreGenerated.files"],
+      }).toEqual({ file, lines: 1, generated: 0, generatedFiles: 0 });
+    }
+    for (const file of ignored) {
+      expect({ file, lines: measureFiles({ [file]: "a\n" }).baseline.counters[LANGUAGE_LINES] }).toEqual({
+        file,
+        lines: 0,
+      });
+    }
+    const projection = measureFiles({ [STATEMENT_LANGUAGE_PROJECTION]: 'export const L = { kafka: "kafkaread" };\n' });
+    expect(projection.baseline.counters["coreHandwritten.linesNamingAnEngine"]).toBe(1);
+    const handwrittenLanguage = measureFiles({ "src/lib/languages/x/a.ts": 'x = "kafka";\n' });
+    expect(handwrittenLanguage.baseline.counters["coreHandwritten.linesNamingAnEngine"]).toBe(2);
+    expect(
+      compareWithBaseline(before.baseline, measureFiles({ "src/lib/db/operations/x-admission.ts": "a\n" }).baseline),
+    ).toEqual([{ kind: "worse", message: `${LANGUAGE_LINES}: baseline 0, now 1; it may only fall` }]);
+  });
+
+  test("every generated core module and every statement language module is counted by exactly one line gate, and a hand-written module by none", () => {
+    const counted: Record<string, string> = {
+      "src/lib/db/engine-catalog/rows.generated.ts": "coreGenerated.lines",
+      [STATEMENT_LANGUAGE_PROJECTION]: LANGUAGE_LINES,
+      "src/lib/languages/x/rows.generated.ts": LANGUAGE_LINES,
+      "src/lib/languages/x/a.ts": LANGUAGE_LINES,
+      "src/lib/agent/languages/x/a.ts": LANGUAGE_LINES,
+      "src/lib/db/operations/x-admission.ts": LANGUAGE_LINES,
+    };
+    const handwritten = ["src/lib/x.ts", "src/lib/db/operations/descriptors.ts", "src/lib/agent/languages/pack.ts"];
+    const measured = measureFiles(
+      Object.fromEntries([...Object.keys(counted), ...handwritten].map((file) => [file, "a\n"])),
+    );
+
+    expect(LINE_GATES).toEqual(["coreGenerated.lines", LANGUAGE_LINES]);
+    for (const [file, own] of Object.entries(counted)) {
+      const gates: string[] = LINE_GATES.filter((name) => measured.lineGateFiles[name].includes(file));
+      expect({ file, gates }).toEqual({ file, gates: [own] });
+    }
+    for (const file of [...handwritten, "src/lib/core.ts"]) {
+      const gates: string[] = LINE_GATES.filter((name) => measured.lineGateFiles[name].includes(file));
+      expect({ file, gates }).toEqual({ file, gates: [] });
+    }
+    expect(measured.lineGateFiles["coreGenerated.lines"]).toEqual(["src/lib/db/engine-catalog/rows.generated.ts"]);
+    expect(measured.lineGateFiles[LANGUAGE_LINES]).toEqual(
+      Object.keys(counted)
+        .filter((file) => counted[file] === LANGUAGE_LINES)
+        .sort(),
+    );
+    expect(measured.baseline.counters["coreGenerated.lines"]).toBe(1);
+    expect(measured.baseline.counters[LANGUAGE_LINES]).toBe(5);
+  });
+
+  test("a hand-written core line naming a single-engine statement language id counts toward the gate, and a language several engines speak does not", () => {
+    const rows = register([
+      { ...legacyRow("kafka"), grants: { statementLanguage: "kafkaread" } },
+      { ...legacyRow("postgres"), grants: { statementLanguage: "sql" } },
+      { ...packageRow("mysql"), grants: { statementLanguage: "sql" } },
+      { ...legacyRow("mqtt"), grants: { statementLanguage: null } },
+      legacyRow("etcd"),
+    ]);
+    const before = measureFiles(rows);
+    const named = measureFiles({
+      ...rows,
+      "src/lib/x.ts": 'a = "kafkaread";\nconst b = { kafkaread: 1 };\nc = "sql";\nd = "kafkaread-x";\n// kafkaread\n',
+    });
+
+    expect(GATE_COUNTERS).toContainEqual({ name: SINGLE_LANGUAGE, direction: "falls" });
+    expect(before.baseline.counters[SINGLE_LANGUAGE]).toBe(0);
+    expect(named.baseline.counters[SINGLE_LANGUAGE]).toBe(2);
+    expect(compareWithBaseline(before.baseline, named.baseline)).toEqual([
+      { kind: "worse", message: `${SINGLE_LANGUAGE}: baseline 0, now 2; it may only fall` },
+    ]);
+    for (const file of [
+      "src/lib/languages/kafkaread/a.ts",
+      "src/lib/agent/languages/kafkaread/a.ts",
+      "src/lib/agent/languages/engines/client.ts",
+      "src/lib/db/operations/kafkaread-admission.ts",
+      STATEMENT_LANGUAGE_PROJECTION,
+      "src/lib/db/engine-catalog/rows.generated.ts",
+      "src/lib/db/providers/stream/kafka.ts",
+      "tests/unit/x.test.ts",
+      "packages/provider-sdk/src/x.ts",
+    ]) {
+      const measured = measureFiles({ ...rows, [file]: 'x = "kafkaread";\n' });
+      expect({ file, lines: measured.baseline.counters[SINGLE_LANGUAGE] }).toEqual({ file, lines: 0 });
+    }
+    expect(measureFiles({ "src/lib/x.ts": 'a = "kafkaread";\n' }).baseline.counters[SINGLE_LANGUAGE]).toBe(0);
+  });
+});
+
 describe("direction and messages", () => {
   const worse: Record<string, Files> = {
     "coreHandwritten.distinctEngineIds": { "src/lib/core.ts": 'export const DEFAULT = ["postgres", "kafka"];\n' },
     "coreHandwritten.filesNamingAnEngine": { "src/lib/x.ts": 'x = "postgres";\n' },
     "coreHandwritten.linesNamingAnEngine": { "src/lib/core.ts": 'export const DEFAULT = "postgres";\n"postgres";\n' },
+    "coreHandwritten.linesNamingASingleEngineLanguage": {
+      ...register([{ ...legacyRow("kafka"), grants: { statementLanguage: "kafkaread" } }]),
+      "src/lib/x.ts": 'x = "kafkaread";\n',
+    },
     "coreGenerated.lines": { "src/lib/x.generated.ts": "a\n" },
+    "statementLanguages.lines": { "src/lib/db/operations/x-admission.ts": "a\n" },
     "legacyProviders.files": { "src/lib/db/providers/x.ts": "" },
     "agentLanguages.filesInLanguageDirs": { "src/lib/agent/languages/sql/x.ts": "" },
     "languages.files": { "src/lib/languages/x.ts": "" },
@@ -479,7 +711,7 @@ describe("direction and messages", () => {
     inwardImportPairs: {},
     engineKeyedTypePositions: { "src/lib/k.ts": "type K = Record<DatabaseType, 1>;\n" },
     "nonEnginePackages.linesNamingAnEngine": { "packages/provider-sdk/src/x.ts": 'x = "postgres";\n' },
-    "grantRegister.linesNamingAnEngine": { "packages/grant-register/src/x.ts": 'x = "postgres";\n' },
+    "grantRegister.legacyRows": register([legacyRow("kafka")]),
   };
 
   test.each(GATE_COUNTERS.filter((counter) => counter.direction === "falls").map((counter) => counter.name))(
@@ -657,9 +889,9 @@ describe("the baseline file", () => {
       "coreHandwritten.engineIdsNamed",
       "enginesInPackages.ids",
       "nonEnginePackages.engineIdsNamed",
-      "grantRegister.engineIdsNamed",
     ]);
     for (const name of REPORT_COUNTERS) expect(JSON.stringify(parsed)).not.toContain(`"${name}"`);
+    expect(JSON.stringify(parsed)).not.toContain('"grantRegister.engineIdsNamed"');
     expect(renderBaseline(measured.baseline).endsWith("}\n")).toBe(true);
     expect(parseBaseline(renderBaseline(measured.baseline))).toEqual(measured.baseline);
   });
@@ -702,11 +934,14 @@ describe("the baseline file", () => {
     expect(refusal(variant((copy) => delete copy.ids["nonEnginePackages.engineIdsNamed"]))).toBe(
       `${BASELINE_FILE}: id list nonEnginePackages.engineIdsNamed is missing${suffix}`,
     );
-    expect(refusal(variant((copy) => delete copy.counters["grantRegister.linesNamingAnEngine"]))).toBe(
-      `${BASELINE_FILE}: counter grantRegister.linesNamingAnEngine is missing${suffix}`,
+    expect(refusal(variant((copy) => delete copy.counters["grantRegister.legacyRows"]))).toBe(
+      `${BASELINE_FILE}: counter grantRegister.legacyRows is missing${suffix}`,
     );
-    expect(refusal(variant((copy) => delete copy.ids["grantRegister.engineIdsNamed"]))).toBe(
-      `${BASELINE_FILE}: id list grantRegister.engineIdsNamed is missing${suffix}`,
+    expect(refusal(variant((copy) => Object.assign(copy.counters, { "grantRegister.linesNamingAnEngine": 44 })))).toBe(
+      `${BASELINE_FILE}: counter grantRegister.linesNamingAnEngine is not a gate counter${suffix}`,
+    );
+    expect(refusal(variant((copy) => Object.assign(copy.ids, { "grantRegister.engineIdsNamed": [] })))).toBe(
+      `${BASELINE_FILE}: id list grantRegister.engineIdsNamed is not a baseline id list${suffix}`,
     );
     expect(refusal(variant((copy) => Object.assign(copy.ids, { "enginesInPackages.ids": [1] })))).toBe(
       `${BASELINE_FILE}: id list enginesInPackages.ids is not a list of strings${suffix}`,
@@ -804,9 +1039,18 @@ describe("the command line", () => {
 
     expect(main([], io)).toBe(0);
     const names = out.log.map((line) => line.split(" ")[1]);
-    expect(names).toEqual([...GATE_COUNTERS.map((counter) => counter.name), ...REPORT_COUNTERS]);
+    expect(names).toEqual([
+      ...GATE_COUNTERS.map((counter) => counter.name),
+      ...REPORT_COUNTERS,
+      "grantRegister.engineIdsNamed",
+    ]);
+    for (const line of out.log) expect(line.split(" ").length).toBe(3);
     expect(out.log[0]).toBe("gate enginesInPackages 0");
-    expect(out.log.at(-1)?.startsWith("report ")).toBe(true);
+    expect(out.log.at(-1)).toBe("report grantRegister.engineIdsNamed []");
+
+    const listed = fakeIo({ ...BASE, ...register([legacyRow("postgres"), legacyRow("kafka")]) }, null);
+    expect(main([], listed.io)).toBe(0);
+    expect(listed.out.log.at(-1)).toBe('report grantRegister.engineIdsNamed ["kafka","postgres"]');
 
     for (const argv of [["--check"], ["--write", "x"], ["x"]]) {
       const usage = fakeIo({ ...BASE }, null);
@@ -870,10 +1114,44 @@ describe("the working tree", () => {
       );
     }
     for (const name of REPORT_COUNTERS) console.log(`report ${name}: ${measured.report[name]}`);
+    console.log(
+      `report grantRegister.engineIdsNamed: ${JSON.stringify(measured.reportIds["grantRegister.engineIdsNamed"])}`,
+    );
 
     expect(measured.stale).toEqual([]);
     expect(measured.unclassified).toEqual([]);
     expect(compareWithBaseline(committed, measured.baseline)).toEqual([]);
     expect(committedText === renderBaseline(measured.baseline) ? "exact" : `not exact: ${REGENERATE}`).toBe("exact");
+  }, 10_000);
+
+  test("every generated and statement language module of the working tree is counted by exactly one line gate", () => {
+    const io = realIo(ROOT, path.join(ROOT, BASELINE_FILE));
+    const files = io.list();
+    const measured = measure(
+      { files, read: io.read },
+      { inward: INWARD_IMPORTS, exceptions: EXCEPTIONS, nonEnginePackages: NON_ENGINE_PACKAGES },
+    );
+    const coreGenerated = (file: string) =>
+      ["src/", "bin/", "scripts/", "vscode-extension/src/"].some((root) => file.startsWith(root)) &&
+      /\.(c|m)?(t|j)sx?$/.test(file) &&
+      !file.startsWith("src/lib/db/providers/") &&
+      path.posix.basename(file).includes(".generated.");
+    const statementLanguage = (file: string) =>
+      file.startsWith("src/lib/languages/") ||
+      /^src\/lib\/agent\/languages\/[^/]+\/./.test(file) ||
+      /^src\/lib\/db\/operations\/[^/]+-admission\.ts$/.test(file) ||
+      file === STATEMENT_LANGUAGE_PROJECTION;
+    const expected = files.filter((file) => coreGenerated(file) || statementLanguage(file)).sort();
+    const counted = LINE_GATES.flatMap((name) => measured.lineGateFiles[name]);
+
+    expect(counted.length).toBe(new Set(counted).size);
+    expect([...counted].sort()).toEqual(expected);
+    for (const name of LINE_GATES) {
+      const lines = measured.lineGateFiles[name].reduce((sum, file) => {
+        const text = io.read(file);
+        return sum + (text.match(/\n/g)?.length ?? 0) + (text !== "" && !text.endsWith("\n") ? 1 : 0);
+      }, 0);
+      expect({ name, lines }).toEqual({ name, lines: measured.baseline.counters[name] });
+    }
   }, 10_000);
 });
