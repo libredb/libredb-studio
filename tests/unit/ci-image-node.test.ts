@@ -6,7 +6,7 @@ import { parse } from "yaml";
 
 // The `Unit & Integration Tests` job runs the runtime-sensitive cases (the byte transport, the S3 client wire, the
 // RabbitMQ and MQTT dials, the Snowflake key intake, the Redis driver, the shutdown drain's channel, the built-in names
-// a provider package may import) once more on the Node release the image ships. That release used to be a literal in
+// a provider package may import, the lock command's scanner) once more on the Node release the image ships. That release used to be a literal in
 // ci.yml, which said it was the Dockerfile's runner stage: it stayed at 26.10.0 from #1696 on while Dependabot moved
 // the image through 26.11.1, 26.12.0, 26.12.1 and 26.13.0, because Dependabot reads the Dockerfiles and not a
 // workflow's setup-node input. So the job now reads the version from the Dockerfiles when it runs, and this file holds
@@ -41,6 +41,7 @@ const RUNTIME_FILES = [
   "tests/integration/db/redis-driver.test.ts",
   "tests/unit/lib/shutdown-drain-runtimes.test.ts",
   "tests/unit/lib/provider-host/node-builtins-runtimes.test.ts",
+  "tests/unit/scripts/providers-lock.test.ts",
 ];
 
 /** The Node release a Dockerfile's runner stage names, read here independently of the step's own reader. */

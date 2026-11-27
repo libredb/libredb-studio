@@ -1449,7 +1449,7 @@ describe("launcher providers lock", () => {
     );
     const home = path.join(planted, "home");
     fs.mkdirSync(home);
-    const env = { ...process.env, HOME: home, USERPROFILE: home };
+    const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
     delete env.PORT;
     delete env.LIBREDB_STUDIO_ARCHIVE;
     const node = Bun.which("node");

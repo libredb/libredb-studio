@@ -223,7 +223,8 @@ jobs:
       # from that release's sockets, and the shutdown drain's cases, which watch that release's experimental
       # http.server.request.start diagnostics channel, and the built-in names a provider package may import, each of
       # which that release must still serve in both forms, or its bare form resolves as a package through node_modules
-      # and its node: form fails at the import.
+      # and its node: form fails at the import, and the lock command's cases, whose module the images run on that
+      # release (its scanner's depth refusal depends on that release's stack).
       # The suite above runs every one of these files on Node 24, the engines floor, so they are not run on it again.
       # The release is read from the Dockerfiles when the job runs, not written here: Dependabot moves the image's Node
       # and never this file, and a literal here stayed at 26.10.0 through four image bumps from #1696 on.
@@ -254,12 +255,12 @@ jobs:
         with:
           node-version: ${{ steps.image-node.outputs.version }}
 
-      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases, the Snowflake key cases, the Redis driver cases, the shutdown drain's channel cases and the provider built-in names on the image's Node
+      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases, the Snowflake key cases, the Redis driver cases, the shutdown drain's channel cases, the provider built-in names and the lock command's scanner on the image's Node
         env:
           IMAGE_NODE: ${{ steps.image-node.outputs.version }}
         run: |
           test "$(node --version)" = "v$IMAGE_NODE"
-          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts tests/integration/db/redis-driver.test.ts tests/unit/lib/shutdown-drain-runtimes.test.ts tests/unit/lib/provider-host/node-builtins-runtimes.test.ts
+          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts tests/integration/db/redis-driver.test.ts tests/unit/lib/shutdown-drain-runtimes.test.ts tests/unit/lib/provider-host/node-builtins-runtimes.test.ts tests/unit/scripts/providers-lock.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check

@@ -61,6 +61,11 @@ ENV USER_PASSWORD=$USER_PASSWORD_BUILD
 # origin (issue #247). Explicit here: this bypasses the package.json build script.
 RUN node scripts/copy-monaco.mjs && npx next build
 
+# The lock command's module, dist/providers-lock.mjs, which the runner copies
+# for the image's `libredb-studio providers lock` (scripts/build-lock-module.mjs).
+# dist/ is not in the build context, so it is built here from source.
+RUN node scripts/build-lock-module.mjs
+
 # Drop the repo-root extras Next's output file tracing swept into the payload
 # (issue #124). Tracing walks the repository root, so `.next/standalone` carries
 # `src/`, `scripts/`, the lockfile, the tooling configs and this file - and the
@@ -298,6 +303,14 @@ COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
 # Secrets of the opted-in namespaces, so it is copied WITHOUT --chown as well:
 # no uid 1001 process may rewrite it.
 COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs
+# The lock command (docs/DISTRIBUTION.md, "Docker"): the module the builder
+# built and the wrapper that runs only `providers lock`, linked onto PATH as
+# `libredb-studio`. Copied WITHOUT --chown: no uid 1001 process may rewrite
+# what an operator runs.
+COPY --from=builder /usr/src/app/dist/providers-lock.mjs /usr/local/lib/libredb-studio/providers-lock.mjs
+COPY docker/libredb-studio.mjs /usr/local/lib/libredb-studio/libredb-studio.mjs
+RUN chmod 755 /usr/local/lib/libredb-studio/libredb-studio.mjs && \
+    ln -s /usr/local/lib/libredb-studio/libredb-studio.mjs /usr/local/bin/libredb-studio
 
 # Render uses PORT env variable, default to 3000
 EXPOSE 3000/tcp

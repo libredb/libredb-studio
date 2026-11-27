@@ -28,8 +28,10 @@
  * E2E job, which runs `e2e/embedded-samples.spec.ts` (it waits on
  * `.monaco-editor`) against every variant this workflow pushes.
  */
-import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { isSourcePath, moduleSpecifiers, resolveSpecifier } from "./lib/db/provider-imports/scan";
@@ -206,6 +208,20 @@ function matrixVariants(): { variant: string; dockerfile: string; suffix: string
   return JSON.parse(table) as { variant: string; dockerfile: string; suffix: string }[];
 }
 
+const STUB_USAGE = "Usage: stub lock usage";
+const wrapperScratches: string[] = [];
+
+afterAll(() => {
+  for (const directory of wrapperScratches) rmSync(directory, { recursive: true, force: true });
+});
+
+/** A temporary directory for the image wrapper and its stub lock module, removed after the file. */
+function wrapperScratch(): string {
+  const directory = mkdtempSync(join(tmpdir(), "image-wrapper-"));
+  wrapperScratches.push(directory);
+  return directory;
+}
+
 describe("published image variants", () => {
   test("the repo root holds exactly the three variants that are published", () => {
     // Pinned so a new Dockerfile is a conscious edit: it has to be added to the
@@ -266,6 +282,88 @@ describe("published image variants", () => {
     expect(lines.filter((line) => line.includes("docker/discover-kubernetes.mjs"))).toEqual([
       "COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs",
     ]);
+  });
+
+  test.each(VARIANTS)("%s carries the lock module and a wrapper that runs only providers lock", (variant) => {
+    const [builderText, runnerText] = readRepoFile(variant).split(/^FROM .* AS runner$/m);
+    const builder = instructions(builderText ?? "");
+    const nextBuild = builder.findIndex((line) => line.includes("npx next build"));
+    expect(nextBuild).toBeGreaterThanOrEqual(0);
+    expect(builder.indexOf("RUN node scripts/build-lock-module.mjs")).toBeGreaterThan(nextBuild);
+
+    // Root-owned, with no --chown: a uid 1001 process must not rewrite what an operator runs.
+    const runner = instructions(runnerText ?? "");
+    expect(runner.filter((line) => line.includes("providers-lock.mjs"))).toEqual([
+      "COPY --from=builder /usr/src/app/dist/providers-lock.mjs /usr/local/lib/libredb-studio/providers-lock.mjs",
+    ]);
+    const wrapper = runner.filter((line) => line.startsWith("COPY ") && line.includes("docker/libredb-studio.mjs"));
+    const chmod = commands(runnerText ?? "").filter((command) =>
+      /^(?:RUN\s+)?chmod \S+ \/usr\/local\/lib\/libredb-studio\/libredb-studio\.mjs$/.test(command),
+    );
+    // Executable in the file's own style: Debian runs chmod, as for its entrypoint; the Alpine files COPY --chmod.
+    expect([...wrapper, ...chmod]).toEqual(
+      wrapper[0]?.startsWith("COPY --chmod=")
+        ? ["COPY --chmod=755 docker/libredb-studio.mjs /usr/local/lib/libredb-studio/libredb-studio.mjs"]
+        : [
+            "COPY docker/libredb-studio.mjs /usr/local/lib/libredb-studio/libredb-studio.mjs",
+            expect.stringMatching(/chmod 755 \/usr\/local\/lib\/libredb-studio\/libredb-studio\.mjs$/),
+          ],
+    );
+    expect(commands(runnerText ?? "")).toContainEqual(
+      expect.stringMatching(
+        /^(?:RUN\s+)?ln -s \/usr\/local\/lib\/libredb-studio\/libredb-studio\.mjs \/usr\/local\/bin\/libredb-studio$/,
+      ),
+    );
+  });
+
+  test("the image wrapper runs the lock module's main for providers lock only, and answers anything else with its usage, exit 2", () => {
+    const source = join(ROOT, "docker", "libredb-studio.mjs");
+    expect(existsSync(source)).toBe(true);
+    expect(readFileSync(source, "utf8").split("\n")[0]).toBe("#!/usr/bin/env node");
+    const directory = wrapperScratch();
+    copyFileSync(source, join(directory, "libredb-studio.mjs"));
+    writeFileSync(
+      join(directory, "providers-lock.mjs"),
+      [
+        `export const USAGE = ${JSON.stringify(STUB_USAGE)};`,
+        "export function main(argv) {",
+        "  console.log(JSON.stringify(argv));",
+        '  return argv.includes("--stub-fails") ? 1 : 0;',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    // The node on PATH, with a bounded heap and a timeout; a child's lines end with CRLF on Windows.
+    const run = (...args: string[]) => {
+      const result = spawnSync("node", ["--max-old-space-size=256", join(directory, "libredb-studio.mjs"), ...args], {
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      if (result.error) throw result.error;
+      const lines = (text: string) => text.split(/\r?\n/).filter(Boolean);
+      return { code: result.status, out: lines(result.stdout), err: lines(result.stderr) };
+    };
+    const target = join(directory, "providers");
+
+    expect(run("providers", "lock", "--dir", target)).toEqual({
+      code: 0,
+      out: [JSON.stringify(["--dir", target])],
+      err: [],
+    });
+    expect(run("providers", "lock", "--dir", target, "--stub-fails")).toEqual({
+      code: 1,
+      out: [JSON.stringify(["--dir", target, "--stub-fails"])],
+      err: [],
+    });
+    for (const args of [[], ["start"], ["--help"], ["providers"], ["providers", "key"], ["lock", "providers"]]) {
+      expect([args, run(...args)]).toEqual([args, { code: 2, out: [], err: [STUB_USAGE] }]);
+    }
+  });
+
+  test("the image wrapper imports only the lock module beside it", () => {
+    const source = join(ROOT, "docker", "libredb-studio.mjs");
+    expect(existsSync(source)).toBe(true);
+    expect([...moduleSpecifiers(readFileSync(source, "utf8"))]).toEqual(["./providers-lock.mjs"]);
   });
 
   test.each(VARIANTS)("%s starts as root so the entrypoint can chown the volume and drop privileges", (variant) => {

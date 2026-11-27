@@ -497,6 +497,18 @@ picks its own bind address at startup and prefers `::`, so it is reachable over 
 without a flag; add `-e HOSTNAME=0.0.0.0` to pin it to IPv4 - see
 [Network exposure](#network-exposure-bind-address).
 
+Every image carries the lock command for a providers directory as `libredb-studio`, which serves only `providers lock`:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -v "<absolute directory>:/providers" \
+  --entrypoint libredb-studio ghcr.io/libredb/libredb-studio:<tag> \
+  providers lock --dir /providers
+```
+
+`--user` runs the command as you, so the lock it writes into your directory is your file: without it the command runs as the container's root, or, through the image's entrypoint, as the image's uid 1001, which cannot write into a directory it does not own.
+`--entrypoint` runs the command alone, without the server entrypoint's bind-address check and its line on stderr.
+What it writes, prints and refuses is described under [Locking a providers directory](#locking-a-providers-directory).
+
 ### Image tag model
 
 Published by [`.github/workflows/docker-build-push.yml`](../.github/workflows/docker-build-push.yml):
@@ -936,7 +948,7 @@ npx @libredb/studio providers lock --dir /absolute/path/of/the/directory
 ```
 
 The launcher runs the command before and without any download: it reads no cache, starts no server and writes nothing outside the directory.
-The command ships in the npm package; Homebrew, the Linux packages, Snap, Windows and the desktop app do not serve it yet.
+The command ships in the npm package and in the three images (see [Docker](#docker)); Homebrew, the Linux packages, Snap, Windows and the desktop app do not serve it yet.
 The directory must be absolute, and holds each package as `<name>/<version>/` or `@<scope>/<name>/<version>/`.
 The command writes the lock through a temporary file in the directory and a rename, prints `Wrote <directory>/providers.lock.json` and one line per package with its name, version and digest, and exits 0.
 The same directory always gives the same bytes.
