@@ -37,8 +37,9 @@ The linker is not recorded in `bun.lock`, so the setting has to travel with ever
 ## Imports
 
 Every module a package holds, its source, its tests and the modules its `build` script runs, imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and a module of its tests may also import a `bun:` module such as `bun:test`.
-A package's `build` script is `node <file>` for a module it holds outside `src/` and `tests/`, and the package has no `prebuild` or `postbuild` script, which `bun run build` runs around the build.
-In this repository a build module also imports no `child_process`, so a build never starts a program it finds on the workspace's `PATH`, and a package directory holds no `bunfig.toml`, which can make the build's `node` run Bun.
+A package's `build` script is `node <file>` for a module it holds outside `src/` and `tests/`, named by a path of letters, digits, `.`, `_`, `-` and `/` with no `..` segment, and the package has no `prebuild` or `postbuild` script, which `bun run build` runs around the build.
+In this repository a build module, a module outside `src/` and `tests/`, also imports no `child_process`, and a package directory holds no `bunfig.toml` in any case of its letters, which can make the build's `node` run Bun.
+The rule reads the specifiers written in a module, so a computed `import()` or a `createRequire` call is not judged.
 A package never imports an `@/` path or a path out of its own directory, so it depends on no other package's internals and on none of Studio's, and moving it to a repository of its own changes no import.
 Studio's own code, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name, never by a path into `packages/`, so what Studio sees of a package is what its `exports` publish.
 Studio's own code never imports a provider package, by name or by path, so a provider's code reaches Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.

@@ -5,23 +5,25 @@
  * Every module a package holds, outside `node_modules` (its source, its tests and the build modules its `build` script
  * runs), imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`; a
  * module of its tests may also import a `bun:` module such as `bun:test`. A module outside the package's `src/` and
- * `tests/` imports no `child_process`, so a build never starts a program it finds on the workspace's `PATH` rather than
- * importing a tool it declares; this guards the repository's install, and the contract states no sentence for it. A
- * built-in is a name of Node.js's list as Studio commits it (src/lib/provider-host/node-builtins.ts), never what the
- * running runtime serves, so `bun`, `ws` and `undici`, which Bun serves as built-ins, are undeclared names. Nothing in a
- * package imports an `@/` path or climbs out of its directory, so a package never depends on another package's
- * internals or on
- * Studio's, and moving it to a repository of its own changes no import. Core (`src/`, `bin/`, `scripts/`, `tests/`,
- * `e2e/` and `vscode-extension/src/`) never reaches into `packages/` by path, so what core sees of a package is what
- * its `exports` publish. Core never imports a provider package, by name or by path, so a provider's code reaches
- * Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two
- * `@libredb/provider-` names it imports. No package but the kit depends on another provider package: the SDK alone,
- * and the kit in a package's tests and `devDependencies` only.
+ * `tests/` imports no `child_process`, so a build module starts no program by a specifier the rule reads; this guards
+ * the repository's install, and the contract states no sentence for it. A built-in is a name of Node.js's list as
+ * Studio commits it (src/lib/provider-host/node-builtins.ts), never what the running runtime serves, so `bun`, `ws` and
+ * `undici`, which Bun serves as built-ins, are undeclared names. Nothing in a package imports an `@/` path or climbs
+ * out of its directory, so a package never depends on another package's internals or on Studio's, and moving it to a
+ * repository of its own changes no import. Core (`src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and
+ * `vscode-extension/src/`) never reaches into `packages/` by path, so what core sees of a package is what its `exports`
+ * publish. Core never imports a provider package, by name or by path, so a provider's code reaches Studio only through
+ * admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two `@libredb/provider-` names it imports.
+ * No package but the kit depends on another provider package: the SDK alone, and the kit in a package's tests and
+ * `devDependencies` only, every module a package holds read as the import rule reads it.
  *
- * A package's `build` script is `node <file>` for a JavaScript module it holds outside `src/` and `tests/`, judged
- * against the package's listing, and the package has no `prebuild` or `postbuild` script, which `bun run build` runs
- * around it, and no `bunfig.toml`, which can make that `node` run Bun. So every tool a build uses is an import the rule
- * above judges.
+ * A package's `build` script is `node <file>` for a JavaScript module it holds outside `src/` and `tests/`, named by a
+ * path of letters, digits, `.`, `_`, `-` and `/` with no `..` segment and judged against the package's listing, and
+ * the package has no `prebuild` or `postbuild` script, which `bun run build` runs around it, and no `bunfig.toml` in
+ * any case of its letters, which can make that `node` run Bun. So the modules a build runs are judged by the rule
+ * above like the package's source, by the specifiers the scanner reads: a computed `import()` or a `createRequire`
+ * call is not read, and a build module may import the package's own `src/`, where `child_process` is allowed. Nothing
+ * more is claimed.
  *
  * Core imports no driver a provider package declares (the names of its `dependencies`, `optionalDependencies` and
  * `peerDependencies`, the build output check's `DRIVER_FIELDS`), so a driver leaves Studio with its engine. The one
@@ -89,7 +91,7 @@ function packageSpecifierFailure(
 ): string | null {
   const isTest = file.startsWith(`${directory}/tests/`);
   if (!isTest && !file.startsWith(`${directory}/src/`) && STARTS_A_PROGRAM.has(specifier)) {
-    return `${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build imports every tool it uses, declared`;
+    return `${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build module starts no program`;
   }
   if (specifier.startsWith("/")) return `${file} imports "${specifier}", a path out of ${directory}`;
   if (specifier.startsWith(".")) {
@@ -133,9 +135,11 @@ const DEPENDENCY_FIELDS = ["dependencies", "peerDependencies", "optionalDependen
 
 /**
  * Every way a workspace package under `root` depends on another provider package, sorted (docs/providers/CONTRACT.md,
- * clause C-42): a name starting `@libredb/provider-` that its source or tests import, or that its `package.json`
- * declares, other than the SDK and its own name. The kit is admitted in a package's tests and in its `devDependencies`
- * only. The kit's own package is outside the rule, and its rule is the kit's.
+ * clause C-42): a name starting `@libredb/provider-` that a module of the package imports, or that its `package.json`
+ * declares, other than the SDK and its own name. The modules read are those of {@link packageImportFailures}, every
+ * module outside `node_modules`, a module under `tests/` as a test and every other, a build module among them, as
+ * source. The kit is admitted in a package's tests and in its `devDependencies` only. The kit's own package is outside
+ * the rule, and its rule is the kit's.
  */
 function providerDependenceFailures(root: string): string[] {
   const failures: string[] = [];
@@ -154,10 +158,7 @@ function providerDependenceFailures(root: string): string[] {
         }
       }
     }
-    for (const file of [
-      ...sourceFilesUnder(root, `${directory}/src`),
-      ...sourceFilesUnder(root, `${directory}/tests`),
-    ]) {
+    for (const file of sourceFilesUnder(root, directory)) {
       const isTest = file.startsWith(`${directory}/tests/`);
       for (const specifier of moduleSpecifiers(readFileSync(path.join(root, file), "utf8"))) {
         const name = packageNameOf(specifier);
@@ -261,23 +262,34 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** The one form of a `build` script: `node` and one path, the pack step's own arguments appended after it. */
 const BUILD_FORM = /^node (\S+)$/;
+/**
+ * The characters a build path may hold: letters, digits, `.`, `_`, `-` and `/`. The pack step runs the script through
+ * Bun's shell, which would read any other, such as `;`, `|`, `&`, `$`, a quote or a bracket, as shell syntax.
+ */
+const BUILD_PATH = /^[A-Za-z0-9._/-]+$/;
 /** The extensions of a JavaScript module node runs without a loader. */
 const BUILD_MODULE = /\.(mjs|js|cjs)$/;
 
 /**
  * Why `script`, the `build` script of the package at `directory`, does not run a build module the package holds, or
- * null when it does. The module is judged against the package's listing (`files`, its repository-relative source
- * files), never by opening its path, so a link, a directory or a missing path are alike no file of the package on
- * every platform.
+ * null when it does. The path holds only the characters of {@link BUILD_PATH}, does not start with `/` and has no `..`
+ * segment, so the shell reads it as one plain path. The module is judged against the package's listing (`files`, its
+ * repository-relative source files), never by opening its path, so a link, a directory or a missing path are alike no
+ * file of the package on every platform.
  */
 function buildScriptFailure(directory: string, script: unknown, files: readonly string[]): string | null {
   const where = `${directory}/package.json scripts.build`;
   const match = typeof script === "string" ? BUILD_FORM.exec(script) : null;
   if (match === null) return `${where} is ${JSON.stringify(script)}, not node <file>: run a module the package holds`;
-  const file = path.posix.normalize(match[1] as string);
+  const written = match[1] as string;
+  if (!BUILD_PATH.test(written)) {
+    return `${where} runs ${written}, which holds a character other than a letter, a digit, '.', '_', '-' or '/'`;
+  }
+  const file = path.posix.normalize(written);
   if (file === ".." || file.startsWith("../") || file.startsWith("/")) {
     return `${where} runs ${file}, a path out of ${directory}`;
   }
+  if (written.split("/").includes("..")) return `${where} runs ${written}, which holds a '..' segment`;
   if (file.startsWith("src/") || file.startsWith("tests/")) {
     return `${where} runs ${file}, which lies in the package's src/ or tests/: run a build module outside them`;
   }
@@ -288,19 +300,20 @@ function buildScriptFailure(directory: string, script: unknown, files: readonly 
 }
 
 /**
- * Every workspace package under `root` whose build could run a tool it does not declare, sorted: a `build` script that
- * is not `node <file>` for a JavaScript module the package holds outside `src/` and `tests/`; a `prebuild` or
- * `postbuild` script, which `bun run build` runs around the build (measured with Bun 1.4.4, 2026-11-27); a `scripts`
- * that is not an object; and a `bunfig.toml` in the package's directory, which `bun run` reads there and which can make
- * the script's `node` run Bun, whose globals are tools no import shows. A package with no `build` script has nothing to
- * judge but those.
+ * Every workspace package under `root` whose build breaks the build rule, sorted: a `build` script that is not
+ * `node <file>` for a JavaScript module the package holds outside `src/` and `tests/`, by a path {@link BUILD_PATH}
+ * admits; a `prebuild` or `postbuild` script, which `bun run build` runs around the build (measured with Bun 1.4.4,
+ * 2026-11-27); a `scripts` that is not an object; and a `bunfig.toml` in the package's directory, which `bun run`
+ * reads there and which can make the script's `node` run Bun, whose globals are tools no import shows. The name is
+ * compared in any case, since the file systems of macOS and Windows find `bunfig.toml` under any case of its letters.
+ * A package with no `build` script has nothing to judge but those.
  */
 function buildScriptFailures(root: string): string[] {
   const failures: string[] = [];
   for (const { directory, manifest } of workspacePackageManifests(root)) {
-    if (readdirSync(path.join(root, directory)).includes("bunfig.toml")) {
+    for (const name of readdirSync(path.join(root, directory)).filter((n) => n.toLowerCase() === "bunfig.toml")) {
       failures.push(
-        `${directory} holds bunfig.toml, which bun run build reads in the package's directory: Bun is configured at the repository's root only`,
+        `${directory} holds ${name}, which bun run build reads in the package's directory: Bun is configured at the repository's root only`,
       );
     }
     const scripts: unknown = manifest.scripts;
@@ -327,10 +340,13 @@ function buildScriptFailures(root: string): string[] {
 /**
  * Every core import of a driver a provider package declares, and every stale exception, sorted. A driver is a name a
  * provider package's `package.json` declares in a member of the build output check's `DRIVER_FIELDS`; core is the six
- * roots of {@link CORE_ROOTS}, and only a core file whose text holds a driver's name is parsed. An import is excused
- * only by an entry of `exceptions` naming that driver and that file, and only while the entry holds: the build output
- * check's own `exceptionProblem` passes it and a provider package declares its driver; every other entry is a failure
- * by its own sentence.
+ * roots of {@link CORE_ROOTS}, and only a core file whose text holds a driver's name is parsed. A specifier that is a
+ * Node built-in by Studio's committed list (`isNodeBuiltin`, the list admission reads) is never a driver import, since
+ * Node.js loads the built-in for it though a package declares an npm package of that name; a subpath such as
+ * `events/sub` is no built-in and loads the package, so it is read as one. An import is excused only by an entry of
+ * `exceptions` naming that driver and that file, and only while the entry holds: the build output check's own
+ * `exceptionProblem` passes it and a provider package declares its driver; every other entry is a failure by its own
+ * sentence.
  */
 function providerDriverImportFailures(root: string, exceptions: readonly CoreImportedDriver[]): string[] {
   const declaredBy = new Map<string, string[]>();
@@ -362,6 +378,8 @@ function providerDriverImportFailures(root: string, exceptions: readonly CoreImp
     const text = readFileSync(path.join(root, file), "utf8");
     if (!drivers.some((driver) => text.includes(driver))) continue;
     for (const specifier of moduleSpecifiers(text)) {
+      // Node.js resolves a specifier of its list to the built-in, never to a package of that name.
+      if (isNodeBuiltin(specifier)) continue;
       const driver = packageNameOf(specifier);
       const declaring = declaredBy.get(driver);
       if (declaring === undefined) continue;
@@ -764,7 +782,7 @@ describe("the package import rule", () => {
     const undeclared = (file: string, specifier: string): string =>
       `packages/provider-alpha/${file} imports "${specifier}", which packages/provider-alpha/package.json does not declare`;
     const startsAProgram = (file: string, specifier: string): string =>
-      `packages/provider-alpha/${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build imports every tool it uses, declared`;
+      `packages/provider-alpha/${file} imports "${specifier}", which starts a program, outside the package's src/ and tests/: a build module starts no program`;
     try {
       expect(packageImportFailures(root)).toEqual(
         [
@@ -839,6 +857,93 @@ describe("the package import rule", () => {
           "packages/bunfig holds bunfig.toml, which bun run build reads in the package's directory: Bun is configured at the repository's root only",
         ].sort(),
       );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a provider package's build path holds only letters, digits, '.', '_', '-' and '/', with no '..' segment", () => {
+    const pkg = (name: string, build: string, files: Record<string, string> = {}): Record<string, string> => ({
+      [`packages/${name}/package.json`]: JSON.stringify({ name, scripts: { build } }),
+      ...Object.fromEntries(Object.entries(files).map(([file, text]) => [`packages/${name}/${file}`, text])),
+    });
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        // A file named `a;b.mjs` is held, so only the path's characters refuse it: Linux, macOS and Windows all allow
+        // `;` in a file name, while the pack step's shell would run `node a` and then `b.mjs`.
+        ...pkg("semicolon", "node a;b.mjs", { "a;b.mjs": "export {};\n" }),
+        // No file is planted with a quote in its name, which Windows refuses; the path is refused before the listing.
+        ...pkg("quote", 'node "build.mjs"', { "build.mjs": "export {};\n" }),
+        ...pkg("dollar", "node $BUILD.mjs"),
+        ...pkg("inner-parent", "node build/../build.mjs", { "build.mjs": "export {};\n" }),
+        ...pkg("chars-ok", "node build_1/run-2.v3.mjs", { "build_1/run-2.v3.mjs": "export {};\n" }),
+      },
+    });
+    const characters = (name: string, file: string): string =>
+      `packages/${name}/package.json scripts.build runs ${file}, which holds a character other than a letter, a digit, '.', '_', '-' or '/'`;
+    try {
+      expect(buildScriptFailures(root)).toEqual(
+        [
+          characters("semicolon", "a;b.mjs"),
+          characters("quote", '"build.mjs"'),
+          characters("dollar", "$BUILD.mjs"),
+          "packages/inner-parent/package.json scripts.build runs build/../build.mjs, which holds a '..' segment",
+        ].sort(),
+      );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a package-root bunfig.toml is refused in any case, since macOS and Windows read file names regardless of case", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/mixed/package.json": JSON.stringify({ name: "mixed" }),
+        "packages/mixed/Bunfig.toml": "[run]\nbun = true\n",
+        "packages/upper/package.json": JSON.stringify({ name: "upper" }),
+        "packages/upper/BUNFIG.TOML": "[run]\nbun = true\n",
+        "packages/nested/package.json": JSON.stringify({ name: "nested" }),
+        "packages/nested/config/bunfig.toml": "[run]\nbun = true\n",
+      },
+    });
+    try {
+      expect(buildScriptFailures(root)).toEqual([
+        "packages/mixed holds Bunfig.toml, which bun run build reads in the package's directory: Bun is configured at the repository's root only",
+        "packages/upper holds BUNFIG.TOML, which bun run build reads in the package's directory: Bun is configured at the repository's root only",
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a provider package's build modules import no other provider package, and not the kit", () => {
+    const B = "@libredb/provider-b";
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-a/package.json": JSON.stringify({
+          name: "@libredb/provider-a",
+          scripts: { build: "node build/run.mjs" },
+          devDependencies: { [KIT]: "*" },
+        }),
+        "packages/provider-a/build/run.mjs": `import "${KIT}";\nimport "${SDK}";\n`,
+        "packages/provider-a/a.config.mjs": `export const b = () => import("${B}");\n`,
+        "packages/provider-a/tests/a.test.ts": `import "${KIT}";\n`,
+      },
+    });
+    try {
+      expect(providerDependenceFailures(root)).toEqual([
+        `packages/provider-a/a.config.mjs imports "${B}", another provider package`,
+        `packages/provider-a/build/run.mjs imports "${KIT}", the kit, which only a package's tests import`,
+      ]);
     } finally {
       removePlantedRoot(root);
     }
@@ -941,6 +1046,33 @@ describe("the package import rule", () => {
           driverImport("tests/unit/c.test.ts", "alpha-driver", "alpha-driver", "packages/provider-alpha"),
         ].sort(),
       );
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a core import that names a Node built-in is never a driver import, though a provider package declares that name", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({
+          name: "@libredb/provider-alpha",
+          dependencies: { events: "*" },
+          peerDependencies: { buffer: "*" },
+        }),
+        "src/lib/a.ts": 'import { EventEmitter } from "events";\nexport const a = EventEmitter;\n',
+        "src/lib/b.ts": 'import { EventEmitter } from "node:events";\nexport const b = EventEmitter;\n',
+        "bin/c.ts": 'export const c = () => require("buffer");\n',
+        // Node.js serves only the exact names of its list as built-ins, so a subpath loads the npm package.
+        "src/lib/d.ts": 'import "events/sub";\n',
+      },
+    });
+    try {
+      expect(providerDriverImportFailures(root, [])).toEqual([
+        driverImport("src/lib/d.ts", "events/sub", "events", "packages/provider-alpha"),
+      ]);
     } finally {
       removePlantedRoot(root);
     }

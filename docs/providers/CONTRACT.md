@@ -115,7 +115,7 @@ Both ends of a range are tested versions.
 ### M-17 (normative): A package imports only what it declares
 
 Every module a package holds, its source, its tests and the files its `build` script runs among them, imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and a module of its tests may also import a `bun:` module.
-Its `build` script is `node <file>` for a JavaScript module it holds outside its source and tests, and it has no `prebuild` or `postbuild` script.
+Its `build` script is `node <file>` for a JavaScript module it holds outside its source and tests, named by a path of letters, digits, `.`, `_`, `-` and `/` with no `..` segment, and it has no `prebuild` or `postbuild` script.
 No package imports a path into Studio's source, out of its own directory or into another provider package (C-42), and Studio reaches a package only by its package name.
 
 ### M-18 (normative): Package source reads no environment
@@ -959,7 +959,7 @@ No such call exists yet, so nothing checks this.
 
 ### C-42 (normative): A package depends on no other provider package
 
-No workspace package but the kit imports, in its source or its tests, or declares, in any dependency field of its `package.json`, a name starting `@libredb/provider-` other than `@libredb/provider-sdk` and its own.
+No workspace package but the kit imports, in any module it holds, its build modules among them, or declares, in any dependency field of its `package.json`, a name starting `@libredb/provider-` other than `@libredb/provider-sdk` and its own.
 The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its `devDependencies`.
 
 ### C-43 (normative): A provider depends on no load order
