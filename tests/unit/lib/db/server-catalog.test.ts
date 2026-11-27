@@ -21,6 +21,8 @@ import {
 } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
@@ -31,6 +33,7 @@ import {
 } from "@/lib/db/errors";
 import {
   assertLegacyProvider,
+  beginServerCatalogBoot,
   type EngineConnection,
   type EngineRecord,
   forgetServerCatalog,
@@ -40,8 +43,10 @@ import {
   legacyProviderRefusal,
   legacyProviderType,
   offersLegacyProvider,
+  serverCatalogBooting,
   serverCatalogInstalled,
   servedEngineRecord,
+  servedEngines,
   servedPackage,
   serverEngine,
 } from "@/lib/db/server-catalog";
@@ -82,6 +87,7 @@ const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const RECORD_KEYS = [
   "catalog",
   "connection",
+  "displayName",
   "explainReading",
   "fieldRules",
   "grants",
@@ -96,6 +102,7 @@ const RECORD_KEYS = [
 const OFFER_KEYS = [
   "catalog",
   "database",
+  "executionProfiles",
   "explain",
   "hostFiles",
   "legacyProvider",
@@ -310,6 +317,65 @@ describe("the accessor", () => {
     forgetServerCatalog();
     expect(serverCatalogInstalled()).toBe(false);
     expect<unknown>(serverEngine("acmeonce").kind).toBe("refused");
+  });
+
+  test("a boot that has begun is told apart from a process that installs no catalog, and its install or a forget ends it", () => {
+    // A process that runs no boot: nothing installed, no boot begun.
+    expect([serverCatalogInstalled(), serverCatalogBooting()]).toEqual([false, false]);
+    beginServerCatalogBoot();
+    expect([serverCatalogInstalled(), serverCatalogBooting()]).toEqual([false, true]);
+    // Every lookup answers from the legacy records while the boot is pending, as with nothing installed.
+    expect(servedEngines()).toBe(LEGACY_ENGINES);
+    expect(serverEngine("postgres").kind).toBe("served");
+    expect(() => beginServerCatalogBoot()).toThrow(
+      "The server's engine catalog's boot has begun in this process already: boot composes the catalog once.",
+    );
+    installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER));
+    expect([serverCatalogInstalled(), serverCatalogBooting()]).toEqual([true, false]);
+    expect(() => beginServerCatalogBoot()).toThrow(
+      "The server's engine catalog is already installed in this process: boot composes it once.",
+    );
+    forgetServerCatalog();
+    beginServerCatalogBoot();
+    forgetServerCatalog();
+    expect([serverCatalogInstalled(), serverCatalogBooting()]).toEqual([false, false]);
+  });
+
+  test("servedEngines answers every record in catalog order, the legacy records alone with nothing installed", () => {
+    expect(servedEngines()).toBe(LEGACY_ENGINES);
+    expect([...servedEngines().keys()]).toEqual([...SHIPPED_DATABASE_TYPES]);
+    const composed = composeServerCatalog(
+      [
+        admittedFor("acme-served-b", admittedManifest("acmeservedb")),
+        admittedFor("acme-served-a", admittedManifest("acmeserveda")),
+      ],
+      [],
+      STUDIO_GRANT_REGISTER,
+    );
+    installServerCatalog(composed);
+    expect(servedEngines()).toBe(composed.engines);
+    expect([...servedEngines().keys()]).toEqual([...composed.engines.keys()]);
+    expect([...servedEngines().keys()].slice(0, SHIPPED_DATABASE_TYPES.length)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect([...servedEngines().keys()].slice(SHIPPED_DATABASE_TYPES.length).sort()).toEqual([
+      "acmeserveda",
+      "acmeservedb",
+    ]);
+    // Every legacy record offers the execution profiles, and no package record does.
+    for (const engine of servedEngines().values()) {
+      expect([engine.id, engine.offers.executionProfiles]).toEqual([engine.id, engine.source.package === null]);
+    }
+    forgetServerCatalog();
+    expect(servedEngines()).toBe(LEGACY_ENGINES);
+  });
+
+  test("an engine record's display name is its connection form's label for a legacy engine and its declaration's for a package's", () => {
+    for (const id of SHIPPED_DATABASE_TYPES)
+      expect([id, servedRecord(id).displayName]).toEqual([id, CONNECTION_FORM[id].label]);
+    const named = admittedFor("acme-named", admittedManifest("acmenamed"));
+    installServerCatalog(composeServerCatalog([named], [], STUDIO_GRANT_REGISTER));
+    const declared = named.manifest.engines[0]?.displayName;
+    expect(typeof declared).toBe("string");
+    expect(servedRecord("acmenamed").displayName).toBe(declared as string);
   });
 });
 

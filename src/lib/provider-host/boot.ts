@@ -5,12 +5,14 @@
  *
  * `admitProvidersAtBoot()`:
  * 1. reads nothing when a server catalog is installed already, from another `register()` call or another bundle of the
- *    process, and answers true;
+ *    process, and answers true; otherwise begins the catalog's boot (`beginServerCatalogBoot`), which the install of
+ *    step 2 or 4 ends, before it reads the providers directory, so a reader composed once per installed catalog can tell
+ *    the pending boot from a process that installs none;
  * 2. with no providers directory set (`providersDirectory`, ./providers-dir), reads no lock, compiles no validator,
  *    installs the bundled catalog and answers true;
  * 3. otherwise runs `bootAdmission` under `PROVIDER_IMPORT_DEADLINE_MS`; a lock refused as a whole, a set directory that
  *    does not exist among them, prints the boot banner the other boot checks print, naming the lock and the rule, exits
- *    with 1 and answers false, installing no catalog;
+ *    with 1 and answers false, installing no catalog and leaving the boot begun;
  * 4. installs the catalog `composeServerCatalog` composes from the packages admitted and refused, and answers true.
  * Each composition is handed Studio's grant register, `STUDIO_GRANT_REGISTER` (src/lib/db/claim-grants.ts), in which
  * the composer looks up each admitted package engine's row by the package's name, version and the digest its lock
@@ -37,7 +39,7 @@ import { pathToFileURL } from "node:url";
 import type { ManifestValidator } from "@libredb/provider-sdk/manifest";
 import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
-import { installServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { beginServerCatalogBoot, installServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
 import {
   type AdmittedForCatalog,
   catalogConflicts,
@@ -194,6 +196,7 @@ function refuseBoot(refusal: LockRefusal): false {
  */
 export async function admitProvidersAtBoot(): Promise<boolean> {
   if (serverCatalogInstalled()) return true;
+  beginServerCatalogBoot();
   const directory = providersDirectory();
   if (directory === null) {
     installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER));

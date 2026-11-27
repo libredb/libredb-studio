@@ -231,6 +231,7 @@ describe("the legacy adapter's records", () => {
       sshTunnel: true,
       hostFiles: true,
       testCautions: true,
+      executionProfiles: true,
     });
     const version = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
     expect([LEGACY_SOURCE_NAME, LEGACY_SOURCE_VERSION]).toEqual(["@libredb/studio", version]);

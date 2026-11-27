@@ -71,6 +71,7 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: false,
   hostFiles: false,
   testCautions: false,
+  executionProfiles: false,
 });
 
 /** An admitted package as boot hands it to the composer. */
@@ -272,6 +273,7 @@ export function composeServerCatalog(
       id,
       Object.freeze({
         id: id as EngineId,
+        displayName: engine.displayName,
         source: Object.freeze({
           name: pkg.name,
           version: pkg.version,

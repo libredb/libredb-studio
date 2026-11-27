@@ -5,6 +5,7 @@
  *
  * Each record is composed when this module loads, once per process, from Studio's committed tables and never from a
  * declaration read at run time:
+ * - `displayName`: the label of its composed form entry (`CONNECTION_FORM`), which is its declaration's `displayName`;
  * - `catalog`: the engine's row of the generated catalog (`BUNDLED_CATALOG`);
  * - `connection`: its rows of the generated connection tables and flags, its credential warnings (none where the
  *   generated table holds no row) and its declared TLS modes (`BUNDLED_CONNECTION_FORMS`);
@@ -57,6 +58,7 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: true,
   hostFiles: true,
   testCautions: true,
+  executionProfiles: true,
 });
 
 /** Each engine's credential warnings, read by id as text: the generated table holds a row only for an engine with one. */
@@ -85,6 +87,7 @@ function fieldRulesOf(id: DatabaseType): FieldRuleSpec {
 function legacyRecord(id: DatabaseType): EngineRecord {
   return Object.freeze({
     id: id as string as EngineId,
+    displayName: CONNECTION_FORM[id].label,
     source: LEGACY_SOURCE,
     catalog: BUNDLED_CATALOG[id],
     connection: Object.freeze({
