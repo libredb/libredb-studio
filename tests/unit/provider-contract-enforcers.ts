@@ -1336,10 +1336,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine declaration may state sqlText, sqlWriting and migrationDdl as null",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
-        "a package engine whose sqlText is null has no statement grammar and the restrictive value of every SQL text claim, whatever its register row grants",
+        "a package engine whose sqlText is null has no statement grammar, and a register row reviewing a grammar grants it the restrictive value of every SQL text claim",
       ],
       "tests/api/db/query-package-engine.test.ts": [
-        "a package engine with no SQL text facts is asked about every statement, and its query events keep no statement text",
+        "a package engine with no SQL text facts whose register row states a grammar digest is asked about every statement, and its query events keep no statement text",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.readsSqlText is the engine's SQL_GRAMMAR row's",

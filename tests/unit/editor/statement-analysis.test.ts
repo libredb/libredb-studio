@@ -981,10 +981,9 @@ describe("confirmationVerdict of a package engine's reading", () => {
     }
   });
 
-  test("a record with no grammar asks about every statement and reads none, whatever its grants", () => {
+  test("a record with no grammar and no statement language row asks about every statement and reads none, whatever its grants", () => {
     const form = ["ALTER", "SESSION", "SET"];
-    // No register row reviewed a grammar, as for every engine that states no SQL text: the loosening claims count for
-    // nothing.
+    // The record holds no grammar and no statement language row: the loosening claims count for nothing.
     const unreviewed: GateGrants = {
       reviewedGrammar: false,
       readsSqlText: false,
