@@ -1235,7 +1235,7 @@ The package's own words then go only to the server's log, each error and each wa
 ### C-114 (informative): A package carries its drivers bundled into its own modules
 
 A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a Node.js built-in (C-102), and a native addon stays refused (C-103).
-An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a `require` made by `createRequire`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
+An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a function made by `createRequire` and called under a name other than `require`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
 Nothing checks this clause yet beyond C-102 and C-103.
 
 ## Not yet in this contract
