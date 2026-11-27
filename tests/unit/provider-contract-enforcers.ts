@@ -2248,7 +2248,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "vscode-extension/test/unit/backend-handlers.test.ts": [
         "query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent",
         "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers",
-        "query/cancel with a token already cancelled calls nothing",
+        "query/cancel with a token already cancelled sends no cancel",
       ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "two concurrent first opens open one session",
