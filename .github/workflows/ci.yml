@@ -218,8 +218,9 @@ jobs:
       # the Snowflake key cases, whose missing and wrong passphrase codes come from that release's OpenSSL, and the
       # Redis driver cases, whose deepest readable reply depends on that release's stack and whose TLS errors come
       # from that release's sockets, and the shutdown drain's cases, which watch that release's experimental
-      # http.server.request.start diagnostics channel, and the bare built-in names a provider package may import, each
-      # of which that release must still serve, or it resolves as a package through node_modules.
+      # http.server.request.start diagnostics channel, and the built-in names a provider package may import, each of
+      # which that release must still serve in both forms, or its bare form resolves as a package through node_modules
+      # and its node: form fails at the import.
       # The suite above runs every one of these files on Node 24, the engines floor, so they are not run on it again.
       # The release is read from the Dockerfiles when the job runs, not written here: Dependabot moves the image's Node
       # and never this file, and a literal here stayed at 26.10.0 through four image bumps from #1696 on.

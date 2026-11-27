@@ -1,13 +1,14 @@
 /**
- * The bare built-in names admission admits (src/lib/provider-host/node-builtins.ts) on each Node.js release Studio
- * runs: every one is a built-in of that release, so none resolves as a package. A bare name a release no longer serves
- * is resolved by Node.js as a package, by walking node_modules directories up from the importing file and out of the
- * package's directory, so it must not be admitted bare.
+ * The built-in names admission admits (src/lib/provider-host/node-builtins.ts) on each Node.js release Studio runs on:
+ * every admitted name, in each form it is admitted in (a bare name and its `node:` form, a `node:`-only name), is a
+ * built-in of that release. A bare name a release no longer serves is resolved by Node.js as a package, by walking
+ * node_modules directories up from the importing file and out of the package's directory, and a `node:` name it no
+ * longer serves fails at the import, so an admitted name must be a built-in of every release in both forms.
  *
  * It runs one Node child per binary that NODE_TRANSPORT_NODES lists (or the node on PATH), so the required
  * "Unit & Integration Tests" job runs it on Node 24 in the suite and once more on the Node release the images' runner
- * stage names (tests/unit/ci-image-node.test.ts). A release that drops a name fails here by the name, on the pull
- * request that brings that release to the images.
+ * stage names (tests/unit/ci-image-node.test.ts). A release that drops a name fails here by the name, in either form,
+ * on the pull request that brings that release to the images.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -15,8 +16,11 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { isNodeBuiltin, NODE_BUILTIN_MODULES } from "@/lib/provider-host/node-builtins";
 
-/** Every name admission admits in its bare form. */
-const ADMITTED_BARE = NODE_BUILTIN_MODULES.filter((name) => !name.startsWith("node:") && isNodeBuiltin(name));
+/** Every name admission admits, in each form: the list's names and the `node:` form of each bare one. */
+const ADMITTED = [
+  ...NODE_BUILTIN_MODULES,
+  ...NODE_BUILTIN_MODULES.filter((name) => !name.startsWith("node:")).map((name) => `node:${name}`),
+].filter((name) => isNodeBuiltin(name));
 
 /** What one Node.js child reports. */
 type NodeReport = { node: string; version: string; notBuiltin: string[] };
@@ -39,7 +43,7 @@ beforeAll(async () => {
     join(dir, "child.mjs"),
     [
       'import { isBuiltin } from "node:module";',
-      `const names = ${JSON.stringify(ADMITTED_BARE)};`,
+      `const names = ${JSON.stringify(ADMITTED)};`,
       "const report = { version: process.version, notBuiltin: names.filter((name) => !isBuiltin(name)) };",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "",
@@ -68,9 +72,12 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("the bare built-in names on each Node.js release", () => {
-  test("every bare name admission admits is a built-in of each Node.js release Studio runs", () => {
-    expect(ADMITTED_BARE).toContain("fs");
+describe("the built-in names on each Node.js release", () => {
+  test("every name admission admits, bare and node: forms both, is a built-in of each Node.js release Studio runs on", () => {
+    expect({ fs: ADMITTED.includes("fs"), "node:fs": ADMITTED.includes("node:fs") }).toEqual({
+      fs: true,
+      "node:fs": true,
+    });
     expect(reports.length).toBe(binaries().length);
     for (const { node, version, notBuiltin } of reports) {
       expect({ node, version, notBuiltin }).toEqual({ node, version, notBuiltin: [] });

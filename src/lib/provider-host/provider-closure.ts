@@ -23,10 +23,11 @@
  * no resolver of its own for packages. The kind of each import stays in the record, as what the scanner saw, and no
  * rule here reads it.
  *
- * A `node:` name of the list that the importing runtime lacks, such as one a later Node.js drops or one Bun does not
- * serve, passes this check and fails at the package's import as `PROVIDER_LOAD_FAILED` with the loader's reason, since
- * a `node:` specifier never resolves through node_modules. A bare name a runtime does not serve would resolve as a
- * package instead, so the list admits a name the images' Node.js release dropped only in its `node:` form.
+ * Every admitted built-in is a built-in of every Node.js release Studio runs on, in each form admitted: a name of the
+ * floor's list a later release Studio runs on no longer serves is refused bare and as `node:`, since that release
+ * resolves the bare name as a package through node_modules and fails at the `node:` one. A name of the list Bun does
+ * not serve, such as `node:sea`, passes this check and fails at the package's import under Bun as
+ * `PROVIDER_LOAD_FAILED` with the loader's reason; Bun is not a runtime Studio's images or CLI run providers on.
  *
  * The limits: a computed `import()` or `require()` is not recorded, so not checked; the `main` of a package.json,
  * which a `require` of a directory reads, is not read. The check keeps a package from depending on modules outside its

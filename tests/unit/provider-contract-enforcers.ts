@@ -2911,14 +2911,14 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an absolute path, a URL, another scheme and a subpath import are outside",
         "the answer reads only the record, so it is the same on every platform",
         "a name only Bun treats as a built-in is outside the closure under every runtime",
-        "a bare name of the list that the images' Node.js no longer serves is outside, its node: form inside",
+        "a name of the list that a later Node.js release Studio runs on no longer serves is outside in both forms",
         "the built-in list is Node.js's, the same under Node.js and Bun",
       ],
       "tests/unit/lib/provider-host/node-builtins.test.ts": [
         "the committed built-in list equals Node.js's builtinModules at the engines floor",
       ],
       "tests/unit/lib/provider-host/node-builtins-runtimes.test.ts": [
-        "every bare name admission admits is a built-in of each Node.js release Studio runs",
+        "every name admission admits, bare and node: forms both, is a built-in of each Node.js release Studio runs on",
       ],
       "tests/unit/lib/provider-host/providers-lock.test.ts": [
         "a lock entry's import record is closed and capped, each import in its forms and listed once",
@@ -3114,6 +3114,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED",
       ],
       "tests/unit/lib/provider-host/provider-closure.test.ts": [
+        "every bare specifier, named by an import or a require, is outside whatever node_modules folder the package holds",
         "a name only Bun treats as a built-in is outside the closure under every runtime",
         "the built-in list is Node.js's, the same under Node.js and Bun",
       ],

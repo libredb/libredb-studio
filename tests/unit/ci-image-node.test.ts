@@ -5,14 +5,13 @@ import { join } from "node:path";
 import { parse } from "yaml";
 
 // The `Unit & Integration Tests` job runs the runtime-sensitive cases (the byte transport, the S3 client wire, the
-// RabbitMQ and MQTT dials, the Snowflake key intake, the Redis driver, the shutdown drain's channel, the bare built-in
-// names a provider package may import) once more on the Node release the image ships. That release used to be a
-// literal in ci.yml, which said it was the Dockerfile's runner stage: it stayed at 26.10.0 from #1696 on while
-// Dependabot moved the image through 26.11.1, 26.12.0, 26.12.1 and 26.13.0, because Dependabot reads the Dockerfiles
-// and not a workflow's setup-node input. So the job now reads the version from the Dockerfiles when it runs, and this
-// file holds that wiring: the step's own shell is run here against copies of the Dockerfiles, so a reader that stops
-// matching the runner stage, or stops refusing two images that disagree, fails here and not on a Dependabot pull
-// request.
+// RabbitMQ and MQTT dials, the Snowflake key intake, the Redis driver, the shutdown drain's channel, the built-in names
+// a provider package may import) once more on the Node release the image ships. That release used to be a literal in
+// ci.yml, which said it was the Dockerfile's runner stage: it stayed at 26.10.0 from #1696 on while Dependabot moved
+// the image through 26.11.1, 26.12.0, 26.12.1 and 26.13.0, because Dependabot reads the Dockerfiles and not a
+// workflow's setup-node input. So the job now reads the version from the Dockerfiles when it runs, and this file holds
+// that wiring: the step's own shell is run here against copies of the Dockerfiles, so a reader that stops matching the
+// runner stage, or stops refusing two images that disagree, fails here and not on a Dependabot pull request.
 
 const ROOT = join(import.meta.dir, "../..");
 
