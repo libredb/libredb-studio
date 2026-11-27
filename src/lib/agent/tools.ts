@@ -113,7 +113,6 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { grantedCatalogReadCommand } from "@/lib/db/claim-grants";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { typeIdRow } from "@/lib/db/type-id";
 import {
@@ -667,8 +666,8 @@ export interface AgentOperationRequest {
   readonly mapRows?: (rows: readonly Record<string, unknown>[]) => AgentCatalogRows;
   /**
    * The admission of the one statement the catalog read composed, for an engine whose overlay claims its catalog
-   * statement a command (`AgentCatalogRead.commandShaped`) and whose register row grants that claim
-   * (`grantedCatalogReadCommand`): the fence admits that statement, word for word, past its read-keyword allowlist.
+   * statement a command (`AgentCatalogRead.commandShaped`) and whose engine record grants that claim
+   * (`grants.catalogReadCommandShaped`): the fence admits that statement, word for word, past its read-keyword allowlist.
    * Only the catalog read sets it, and a statement other than the one it was minted for meets the fence unchanged.
    */
   readonly composed?: ComposedStatementAdmission;
@@ -3349,8 +3348,8 @@ function availabilityProbe(dialect: DatabaseConnection["type"]): string {
 
 /**
  * The admission a composed catalog read of an engine of type `type` carries: minted here, right after composing, and
- * only where Studio grants the overlay's claim that its catalog statement is a command, `grantedCatalogReadCommand`,
- * the request read from the engine's server overlay and the register row's review from the connection's engine record.
+ * only where the connection's engine record grants the overlay's claim that its catalog statement is a command,
+ * `grants.catalogReadCommandShaped`, the engine declaration's request granted against its register row.
  * The fence then admits this one statement by identity, and a retry's rewrite, which is another statement, meets the
  * fence unchanged.
  *
@@ -3361,11 +3360,7 @@ function catalogReadAdmission(
   type: DatabaseConnection["type"],
   sql: string,
 ): { readonly composed?: ComposedStatementAdmission } {
-  const read = engineServerDialect(type).catalogRead;
-  const requested = read !== "unsupported" && read.commandShaped === true;
-  return grantedCatalogReadCommand(type, requested, servedEngineRecord(type).grants)
-    ? { composed: admitComposedStatement(sql) }
-    : {};
+  return servedEngineRecord(type).grants.catalogReadCommandShaped ? { composed: admitComposedStatement(sql) } : {};
 }
 
 async function readCatalog(

@@ -68,9 +68,11 @@
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, as the
  * declaration states them, each member its own property, an agent credential form in the declaration's vocabulary,
  * `pair` included, a masking exemption as its column pattern and reason, a tunnel offered or refused with its sentence,
- * and a seed agent credential as its form and the fields that supersede it, or null, and its two agent mode claims,
- * `facets.agentReadings` and `agent.statementLanguage`, the curated readings it asks agent mode to offer and the
- * statement language it asks agent mode to send, or null. Every member is a claim: a request, which only Studio's
+ * and a seed agent credential as its form and the fields that supersede it, or null, and its three agent mode claims,
+ * `facets.agentReadings`, `agent.statementLanguage` and `agent.overlay.dialect.catalogRead.commandShaped`, the curated
+ * readings it asks agent mode to offer, the statement language it asks agent mode to send, or null, and whether its
+ * catalog read is a command, carried as `agent.catalogReadCommandShaped` and false where the overlay, its dialect or
+ * its catalog read is null. Every member is a claim: a request, which only Studio's
  * grant reader, src/lib/db/claim-grants.ts, reads, granting each against Studio's review of the claim for the engine,
  * which src/lib/db/claim-grants.ts states (clauses M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the evidence the write reach
  * request summarizes, is authored with them and never projected: no gate reads it.
@@ -82,8 +84,9 @@
  * row reviewed the digest of exactly this data (clause M-87), so a reader never reads the data as granted.
  *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
- * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
- * policy, MCP, connection and agent mode claims, which only the grant reader reads, and the confirmation gate's two,
+ * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes but `agent.overlay`, which it writes
+ * for a legacy engine from Studio's agent overlay registry, and none of them is a claim but the policy, MCP,
+ * connection and agent mode claims, which only the grant reader reads, and the confirmation gate's two,
  * `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where Studio's review record
  * lists them (docs/providers/CONTRACT.md, clause S-8). Each takes `AuthoredDeclaration`, those members alone: an
  * admitted `EngineDeclaration` is one, and so are the authored members the catalog generator's `--write` reads from a
@@ -162,7 +165,7 @@ export interface AuthoredDeclaration {
     readonly connectBudgetMs: Connection["connectBudgetMs"];
   };
   readonly facets: FacetClaims;
-  readonly agent: AgentClaims;
+  readonly agent: AuthoredAgent;
   readonly statementLanguageData: StatementLanguageEntry;
   readonly editor: {
     readonly commitKeyword: Editor["commitKeyword"];
@@ -246,8 +249,21 @@ export type ConnectionClaims = Pick<
 /** The facets claim a declaration authors: the curated readings it asks agent mode to offer. */
 export type FacetClaims = Pick<EngineDeclaration["facets"], "agentReadings">;
 
-/** The agent claim a declaration authors: the statement language it asks agent mode to send, or null. */
-export type AgentClaims = Pick<EngineDeclaration["agent"], "statementLanguage">;
+/**
+ * The agent claims a declaration authors, as the claim requests carry them: the statement language it asks agent mode
+ * to send, or null, and its agent overlay's claim that its catalog read is a command, `catalogReadCommandShaped`, the
+ * overlay's `dialect.catalogRead.commandShaped`, false where the overlay, its dialect or its catalog read is null.
+ */
+export interface AgentClaims {
+  readonly statementLanguage: EngineDeclaration["agent"]["statementLanguage"];
+  readonly catalogReadCommandShaped: boolean;
+}
+
+/**
+ * The agent segment a declaration authors as the projections read it: its statement language, and its overlay, which
+ * only the claim requests read, for its one claim, `dialect.catalogRead.commandShaped`.
+ */
+export type AuthoredAgent = Pick<EngineDeclaration["agent"], "statementLanguage" | "overlay">;
 
 /**
  * One engine's claim requests as its declaration authors them: its `policy` and `mcp` segments, its connection claims
@@ -759,7 +775,8 @@ export function projectSqlGenerators(declarations: readonly AuthoredDeclaration[
 
 /**
  * The policy, MCP, connection and agent mode claim requests of `declarations`, each entry the declaration's `policy`
- * and `mcp` segments, its connection claims, its agent readings and its statement language as it states them, members
+ * and `mcp` segments, its connection claims, its agent readings and its statement language as it states them, and its
+ * agent overlay's `dialect.catalogRead.commandShaped`, false where any level of it is null (`AgentClaims`), members
  * every declaration authors, in its own member order at every level. No other member is read: the authored
  * `safeguards`, which no gate reads, included.
  *
@@ -778,7 +795,10 @@ export function projectClaimRequests(declarations: readonly AuthoredDeclaration[
         agentCredential: connection.agentCredential,
       },
       facets: { agentReadings: facets.agentReadings },
-      agent: { statementLanguage: agent.statementLanguage },
+      agent: {
+        statementLanguage: agent.statementLanguage,
+        catalogReadCommandShaped: agent.overlay?.dialect?.catalogRead?.commandShaped === true,
+      },
     }),
   );
 }

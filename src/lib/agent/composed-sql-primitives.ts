@@ -131,10 +131,9 @@ export interface AgentCatalogRead {
    * and quotes every name it takes, which `engine-pack-contract.test.ts` holds.
    *
    * A claim (docs/providers/CONTRACT.md, clauses M-53 and M-54): an engine declaration requests it at
-   * `agent.overlay.dialect.catalogRead.commandShaped`, and the engine's server overlay is the request the fence reads
-   * while the overlay is outside any provider package. Studio grants it only where the engine's register row grants it
-   * as well (`grantedCatalogReadCommand` in `db/claim-grants.ts`), which the catalog read's admission asks before it
-   * mints the fence's admission.
+   * `agent.overlay.dialect.catalogRead.commandShaped`, which the census holds equal to this member, and Studio grants
+   * it only where the engine's register row grants it as well, the engine record's `grants.catalogReadCommandShaped`
+   * (`db/claim-grants.ts`), which the catalog read's admission reads before it mints the fence's admission.
    */
   readonly commandShaped?: true;
   /**

@@ -1,7 +1,7 @@
 /**
- * Studio's grant of each policy, MCP, connection, agent mode and SQL text claim an engine declaration requests, and of
- * its agent overlay's claim that its catalog read is a command (docs/providers/CONTRACT.md, clauses M-54, M-82 and
- * M-83): the one module that reads a request, `BUNDLED_CLAIM_REQUESTS` and a legacy engine's SQL text in
+ * Studio's grant of each policy, MCP, connection, agent mode and SQL text claim an engine declaration requests, its
+ * agent overlay's claim that its catalog read is a command among them (docs/providers/CONTRACT.md, clauses M-54, M-82
+ * and M-83): the one module that reads a request, `BUNDLED_CLAIM_REQUESTS` and a legacy engine's SQL text in
  * `BUNDLED_SQL_TEXT`, and Studio's review of each claim for each engine, and the module every gate reads in their
  * place.
  *
@@ -45,11 +45,8 @@
  * - `facets.agentReadings`, a set a gate offers: the intersection of the request and the row, in the row's order,
  *   always a fresh frozen list, and the empty list where no row exists.
  * - `agent.overlay.dialect.catalogRead.commandShaped`, restrictive when false: true only where the request and the row
- *   both are, `grantedCatalogReadCommand`. Its request is the engine's server overlay's `commandShaped`, which the
- *   catalog read's admission in src/lib/agent/tools.ts reads on the server and hands it, until the change that projects
- *   the agent overlays from the admitted declarations carries the request into `grantEngineClaims`; until then an
- *   engine's grants hold its row's review, `catalogReadCommandShaped`, false where no row exists, which only
- *   `grantedCatalogReadCommand` reads.
+ *   both are, `catalogReadCommandShaped`. Its request is the claim projection's `agent.catalogReadCommandShaped`, false
+ *   where the declaration's overlay, its dialect or its catalog read is null.
  * - The SQL text claims hold only for the grammar the row reviewed them with: the grammar is granted as reviewed,
  *   `reviewedGrammar`, only where the digest the request carries, `grammarSha256` (the SHA-256 of the grammar's
  *   canonical text, ./grammar-digest), is the row's `grammarSha256`, and under any other grammar, or where the row
@@ -87,7 +84,7 @@
  * `facets.agentReadings`, of the agent overlay's claim and of the SQL text claims for an engine is the engine's row of
  * the grant register, `@libredb/grant-register` (clause M-54): one call, `grantEngineClaims`, grants every claim of
  * one engine against its row, or at each claim's restrictive value where no row exists, for a legacy engine and a
- * package's alike, the agent overlay's claim apart, which `grantedCatalogReadCommand` grants. A legacy engine's SQL
+ * package's alike. A legacy engine's SQL
  * text request is its bundled `readsSqlText` and exempt forms with its row's redaction and grammar digest
  * (`legacySqlTextRequest`), and its language data request its row's language digest (`legacyLanguageDataRequest`); a
  * package engine's are its admitted declaration's, with the digests of its grammar and of its statement language data
@@ -103,8 +100,9 @@
  * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
  * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
  * that no other module of Studio's source loads the register, that none but the claim projection and the listed
- * readers of an engine record's grant reads a member named `agentReadings`, that none but the catalog read's admission
- * reads a member named `commandShaped` and none but this module one named `catalogReadCommandShaped`, and
+ * readers of an engine record's grant reads a member named `agentReadings`, that none but the claim projection and the
+ * catalog generator reads a member named `commandShaped` and none but this module and the catalog read's admission one
+ * named `catalogReadCommandShaped`, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
  *
@@ -192,6 +190,7 @@ interface ClaimRecords {
   readonly agentCredential: Rows<SeedAgentCredential | null>;
   readonly statementLanguage: Rows<StatementLanguage>;
   readonly agentReadings: Rows<readonly AgentReading[]>;
+  readonly catalogReadCommandShaped: Rows<boolean>;
 }
 
 /** An engine's seed-only fields as `grantEngineClaims` reads them, or null where it has none. */
@@ -224,6 +223,7 @@ interface ClaimGrants<K extends string> {
   readonly agentCredential: Readonly<Record<K, SeedAgentCredential | null>>;
   readonly statementLanguage: Readonly<Record<K, StatementLanguage>>;
   readonly agentReadings: Readonly<Record<K, readonly AgentReading[]>>;
+  readonly catalogReadCommandShaped: Readonly<Record<K, boolean>>;
 }
 
 /**
@@ -651,6 +651,12 @@ function grantAgentMode(engine: string, facets: FacetClaims, agent: AgentClaims,
   return {
     statementLanguage: language !== null && language === languageRow ? languageRow : null,
     agentReadings: Object.freeze((row ?? []).filter((reading) => readings.includes(reading))),
+    catalogReadCommandShaped: grantedFalse(
+      engine,
+      "agent.overlay.dialect.catalogRead.commandShaped",
+      agent.catalogReadCommandShaped,
+      records.catalogReadCommandShaped,
+    ),
   } as const;
 }
 
@@ -805,17 +811,17 @@ function grantSqlText(
  * statement language data it reviewed, or for the language data alone for an engine that states no SQL text:
  * - `decidesAlone`: whether the engine's statement vocabulary may decide the confirmation gate's answer alone, false
  *   where no grant covers it; a vocabulary row's own flag is its request;
- * the row's review of a claim whose request the grants do not hold:
- * - `catalogReadCommandShaped`: whether the row grants the agent overlay's claim that its catalog read is a command,
- *   false where no row exists; no grant until `grantedCatalogReadCommand` reads it with the overlay's request;
- * and one member that is no grant:
- * - `reviewedGrammar`: whether the row reviewed the grammar the request carries the digest of.
+ * and two members that are no grant:
+ * - `reviewedGrammar`: whether the row reviewed the grammar the request carries the digest of;
+ * - `requestsStatementLanguage`: whether the declaration requests a statement language, whatever the row grants, which
+ *   workflow availability reads to tell an engine whose requested language Studio has not reviewed from one that states
+ *   none.
  */
 export type EngineGrants = EngineGrant & {
   readonly ownWords: RegisterGrants["ownWords"];
   readonly servesOneSession: string | null;
   readonly agentExecution: boolean;
-  readonly catalogReadCommandShaped: boolean;
+  readonly requestsStatementLanguage: boolean;
   readonly redaction: RegisterRedaction;
   readonly readsSqlText: boolean;
   readonly confirmExemptForms: readonly (readonly string[])[];
@@ -843,6 +849,7 @@ const NO_ROW: ClaimRecords = Object.freeze({
   agentCredential: Object.freeze({}),
   statementLanguage: Object.freeze({}),
   agentReadings: Object.freeze({}),
+  catalogReadCommandShaped: Object.freeze({}),
 });
 
 /**
@@ -871,6 +878,7 @@ function rowRecords(engine: string, grants: RegisterGrants): ClaimRecords {
     agentCredential: legacyAgentCredentials({ [engine]: grants }, BODY_CONNECTION_FIELDS),
     statementLanguage: one(grants.statementLanguage),
     agentReadings: one(grants.agentReadings),
+    catalogReadCommandShaped: one(grants.catalogReadCommandShaped),
   });
 }
 
@@ -909,7 +917,7 @@ export function grantEngineClaims(
     ownWords: row === null ? "code-only" : row.grants.ownWords,
     servesOneSession: row === null ? null : row.grants.servesOneSession,
     agentExecution: row === null ? false : row.grants.agentExecution,
-    catalogReadCommandShaped: row === null ? false : row.grants.catalogReadCommandShaped,
+    requestsStatementLanguage: requested.agent.statementLanguage !== null,
     ...grantSqlText(engine, sqlText, row, reviewedLanguage, languageSha256 !== null),
   });
 }
@@ -974,25 +982,6 @@ export function legacyEngineGrants(id: string): EngineGrants {
     );
   }
   return grants;
-}
-
-/**
- * Studio's grant of engine `engine`'s agent overlay claim that its catalog read is a command, requested as `requested`,
- * against `grants`, the engine record's grants, which hold the engine's register row's review of the claim: true only
- * where the request and the row both are, so the statement fence admits the composed catalog statement by identity only
- * there. The request is the engine's server overlay's `commandShaped`, which only the catalog read's admission reads.
- *
- * @throws {Error} Naming the engine, the claim and the value, for a request that is not a boolean.
- */
-export function grantedCatalogReadCommand(
-  engine: string,
-  requested: unknown,
-  grants: Pick<EngineGrants, "catalogReadCommandShaped">,
-): boolean {
-  return (
-    booleanRequest(engine, "agent.overlay.dialect.catalogRead.commandShaped", requested) &&
-    grants.catalogReadCommandShaped
-  );
 }
 
 /**

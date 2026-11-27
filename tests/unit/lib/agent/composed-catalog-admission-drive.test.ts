@@ -26,8 +26,9 @@ afterAll(forgetHostCore);
  *
  * No shipped engine is that engine yet, so this file substitutes DuckDB's engine modules with a double that declares
  * exactly that dialect, and plants DuckDB's grants: the grant reader's `legacyEngineGrants`, which DuckDB's legacy
- * record holds, answers DuckDB's real grants with `catalogReadCommandShaped`, its register row's review of the claim,
- * read from `rowGrantsCommand` on every use, and every other engine's real grants. The real grant reader is captured as
+ * record holds, answers DuckDB's real grants with `catalogReadCommandShaped` as `grantEngineClaims` grants it, true only
+ * where the double's request, `declaresCommand`, and its register row's review, `rowGrantsCommand`, both are, read on
+ * every use, and every other engine's real grants. The real grant reader is captured as
  * a plain object before the substitution, and the substitute reads only that object. `mock.module` is process-wide, so
  * the substitution is made before anything that reaches the engine registry or the legacy records is loaded: every
  * such module is imported dynamically below it, and the runner gives this file its own process.
@@ -75,7 +76,7 @@ const REAL_CLAIM_GRANTS = { ...(await import("@/lib/db/claim-grants")) };
 const DUCKDB_GRANTS = Object.freeze(
   Object.defineProperty({ ...REAL_CLAIM_GRANTS.legacyEngineGrants("duckdb") }, "catalogReadCommandShaped", {
     enumerable: true,
-    get: () => rowGrantsCommand,
+    get: () => declaresCommand && rowGrantsCommand,
   }),
 );
 mock.module("@/lib/db/claim-grants", () => ({

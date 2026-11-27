@@ -234,6 +234,7 @@ export const AUTHORED_MEMBERS = [
   "facets.maintenanceSpecs",
   "facets.agentReadings",
   "agent.statementLanguage",
+  "agent.overlay",
   "statementLanguageData",
   "editor.commitKeyword",
   "editor.consentDeadline",
@@ -377,6 +378,7 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     },
     agent: {
       statementLanguage: read("agent.statementLanguage") as EngineDeclaration["agent"]["statementLanguage"],
+      overlay: read("agent.overlay") as EngineDeclaration["agent"]["overlay"],
     },
     statementLanguageData: read("statementLanguageData") as EngineDeclaration["statementLanguageData"],
     editor: {

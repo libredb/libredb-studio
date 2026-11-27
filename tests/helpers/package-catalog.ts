@@ -198,13 +198,18 @@ function kindWordsModel(kindWords: readonly { readonly kind: string }[]): Record
 /**
  * The loosest request of every claim the SDK's validator admits for an engine, each opposite its restrictive value:
  * postgres's agent segment and monitoring panels, read from its declaration, so its statement language is `sql`, with
- * an object model stating the kinds its catalog capture's kind words name (`kindWordsModel`).
+ * its catalog read requested as a command, and an object model stating the kinds its catalog capture's kind words name
+ * (`kindWordsModel`).
  */
 export function withLoosestClaims(engine: EditableEngine): void {
   const postgres = JSON.parse(
     readFileSync(path.join(REPOSITORY_ROOT, "src/lib/db/engine-declarations/postgres.json"), "utf8"),
   ) as {
-    agent: { overlay: { dialect: { catalogCapture: { kindWords: { kind: string }[] } } } };
+    agent: {
+      overlay: {
+        dialect: { catalogCapture: { kindWords: { kind: string }[] }; catalogRead: { commandShaped: boolean } };
+      };
+    };
     facets: Record<string, unknown>;
   };
   engine.policy = {
@@ -237,6 +242,7 @@ export function withLoosestClaims(engine: EditableEngine): void {
     monitoring: postgres.facets.monitoring,
     agentReadings: ["sessions", "health"],
   };
+  postgres.agent.overlay.dialect.catalogRead.commandShaped = true;
   (engine as Record<string, unknown>).agent = postgres.agent;
   (engine as Record<string, unknown>).objects = kindWordsModel(postgres.agent.overlay.dialect.catalogCapture.kindWords);
 }

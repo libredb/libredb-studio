@@ -1037,7 +1037,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the statement language data, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language and overlay, the statement language data, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1072,6 +1072,7 @@ describe("the committed declarations", () => {
       "facets.maintenanceSpecs",
       "facets.agentReadings",
       "agent.statementLanguage",
+      "agent.overlay",
       "statementLanguageData",
       "editor.commitKeyword",
       "editor.consentDeadline",
@@ -1125,7 +1126,7 @@ describe("the committed declarations", () => {
         connectBudgetMs: 140_000,
       },
       facets: bigquery.facets,
-      agent: { statementLanguage: null },
+      agent: { statementLanguage: null, overlay: null },
       statementLanguageData: null,
       editor: {
         commitKeyword: "COMMIT",
@@ -1175,13 +1176,17 @@ describe("the committed declarations", () => {
     expect(authored("libredb").connection.agentCredential).toBeNull();
     // The facets are authored whole: the monitoring panels, the maintenance operations and their specs, and the agent
     // readings, a request agent mode reads only as Studio's grant of it. The agent's statement language is a request
-    // too, and the rest of that segment is generated.
+    // too, and so is its overlay's claim that its catalog read is a command, read with the whole overlay, which the
+    // declaration generator writes from Studio's agent overlay registry.
     const facetMembers = ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"];
     expect(differing((type, declaration) => sameValue(authored(type).facets, declaration.facets))).toEqual([]);
     expect(differing((type) => sameList(Object.keys(authored(type).facets), facetMembers))).toEqual([]);
     expect(
       differing((type, declaration) =>
-        sameValue(authored(type).agent, { statementLanguage: declaration.agent.statementLanguage }),
+        sameValue(authored(type).agent, {
+          statementLanguage: declaration.agent.statementLanguage,
+          overlay: declaration.agent.overlay,
+        }),
       ),
     ).toEqual([]);
     // Vacuity: some engine requests a statement language, so the agent census reads a request.
@@ -2003,7 +2008,7 @@ const CLAIM_GRANTS: Readonly<Record<string, readonly string[]>> = {
   "agent.statementLanguage": ["statementLanguage"],
   "facets.agentReadings": ["agentReadings"],
   "sqlText.redaction": ["redaction"],
-  "agent.overlay.dialect.catalogRead.commandShaped": ["grantedCatalogReadCommand"],
+  "agent.overlay.dialect.catalogRead.commandShaped": ["catalogReadCommandShaped"],
   "sqlText.readsSqlText": ["readsSqlText"],
   "sqlText.grammar.confirmExemptForms": ["confirmExemptForms"],
 };
@@ -2016,8 +2021,8 @@ const UNCLAIMED_GRANT_MEMBERS: Readonly<Record<string, string>> = {
   decidesAlone:
     "a host fact the grant reader reads from no declaration yet, a statement vocabulary row's own flag being its request",
   reviewedGrammar: "no grant: whether the row reviewed the grammar the request carries the digest of",
-  catalogReadCommandShaped:
-    "the register row's review of the agent overlay's claim, which only grantedCatalogReadCommand reads with the request",
+  requestsStatementLanguage:
+    "no grant: whether the declaration requests a statement language, whatever the row grants, which workflow availability reads",
 };
 
 /**

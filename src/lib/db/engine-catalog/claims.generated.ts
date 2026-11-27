@@ -35,7 +35,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["sessions", "slow-queries", "table-stats", "storage", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: null }),
+    agent: Object.freeze({ statementLanguage: null, catalogReadCommandShaped: false }),
   }),
   cassandra: Object.freeze({
     policy: Object.freeze({
@@ -65,7 +65,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["sessions", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   clickhouse: Object.freeze({
     policy: Object.freeze({
@@ -100,7 +100,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   couchbase: Object.freeze({
     policy: Object.freeze({
@@ -139,7 +139,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   databend: Object.freeze({
     policy: Object.freeze({
@@ -174,7 +174,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: null }),
+    agent: Object.freeze({ statementLanguage: null, catalogReadCommandShaped: false }),
   }),
   db2: Object.freeze({
     policy: Object.freeze({
@@ -200,7 +200,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   druid: Object.freeze({
     policy: Object.freeze({
@@ -226,7 +226,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["sessions", "table-stats", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   duckdb: Object.freeze({
     policy: Object.freeze({
@@ -258,7 +258,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["table-stats", "index-stats", "storage", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   elasticsearch: Object.freeze({
     policy: Object.freeze({
@@ -287,7 +287,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: true }),
   }),
   etcd: Object.freeze({
     policy: Object.freeze({
@@ -313,7 +313,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "etcdctl" }),
+    agent: Object.freeze({ statementLanguage: "etcdctl", catalogReadCommandShaped: false }),
   }),
   firestore: Object.freeze({
     policy: Object.freeze({
@@ -343,7 +343,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "fsquery" }),
+    agent: Object.freeze({ statementLanguage: "fsquery", catalogReadCommandShaped: false }),
   }),
   influxdb: Object.freeze({
     policy: Object.freeze({
@@ -369,7 +369,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "influxql" }),
+    agent: Object.freeze({ statementLanguage: "influxql", catalogReadCommandShaped: false }),
   }),
   influxdb3: Object.freeze({
     policy: Object.freeze({
@@ -395,7 +395,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   kafka: Object.freeze({
     policy: Object.freeze({
@@ -425,7 +425,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "kafkaread" }),
+    agent: Object.freeze({ statementLanguage: "kafkaread", catalogReadCommandShaped: false }),
   }),
   kubernetes: Object.freeze({
     policy: Object.freeze({
@@ -451,7 +451,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "kubectl" }),
+    agent: Object.freeze({ statementLanguage: "kubectl", catalogReadCommandShaped: false }),
   }),
   libredb: Object.freeze({
     policy: Object.freeze({
@@ -481,7 +481,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "libredbkv" }),
+    agent: Object.freeze({ statementLanguage: "libredbkv", catalogReadCommandShaped: false }),
   }),
   libsql: Object.freeze({
     policy: Object.freeze({
@@ -509,7 +509,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["table-stats", "index-stats", "storage", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   milvus: Object.freeze({
     policy: Object.freeze({
@@ -535,7 +535,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "index-stats", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "milvusrpc" }),
+    agent: Object.freeze({ statementLanguage: "milvusrpc", catalogReadCommandShaped: false }),
   }),
   modbus: Object.freeze({
     policy: Object.freeze({
@@ -564,7 +564,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "modbusread" }),
+    agent: Object.freeze({ statementLanguage: "modbusread", catalogReadCommandShaped: false }),
   }),
   mongodb: Object.freeze({
     policy: Object.freeze({
@@ -599,7 +599,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "mongo" }),
+    agent: Object.freeze({ statementLanguage: "mongo", catalogReadCommandShaped: false }),
   }),
   mqtt: Object.freeze({
     policy: Object.freeze({
@@ -625,7 +625,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze([] as const) }),
-    agent: Object.freeze({ statementLanguage: "mqttread" }),
+    agent: Object.freeze({ statementLanguage: "mqttread", catalogReadCommandShaped: false }),
   }),
   mssql: Object.freeze({
     policy: Object.freeze({
@@ -660,7 +660,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   mtconnect: Object.freeze({
     policy: Object.freeze({
@@ -686,7 +686,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze([] as const) }),
-    agent: Object.freeze({ statementLanguage: "mtconnectread" }),
+    agent: Object.freeze({ statementLanguage: "mtconnectread", catalogReadCommandShaped: false }),
   }),
   mysql: Object.freeze({
     policy: Object.freeze({
@@ -721,7 +721,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   neo4j: Object.freeze({
     policy: Object.freeze({
@@ -749,7 +749,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["sessions", "table-stats", "index-stats", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "cypher" }),
+    agent: Object.freeze({ statementLanguage: "cypher", catalogReadCommandShaped: false }),
   }),
   netconf: Object.freeze({
     policy: Object.freeze({
@@ -775,7 +775,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "netconfrpc" }),
+    agent: Object.freeze({ statementLanguage: "netconfrpc", catalogReadCommandShaped: false }),
   }),
   opcua: Object.freeze({
     policy: Object.freeze({
@@ -801,7 +801,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze([] as const) }),
-    agent: Object.freeze({ statementLanguage: "opcuaread" }),
+    agent: Object.freeze({ statementLanguage: "opcuaread", catalogReadCommandShaped: false }),
   }),
   opensearch: Object.freeze({
     policy: Object.freeze({
@@ -827,7 +827,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: true }),
   }),
   oracle: Object.freeze({
     policy: Object.freeze({
@@ -862,7 +862,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   oxia: Object.freeze({
     policy: Object.freeze({
@@ -888,7 +888,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "oxiacli" }),
+    agent: Object.freeze({ statementLanguage: "oxiacli", catalogReadCommandShaped: false }),
   }),
   postgres: Object.freeze({
     policy: Object.freeze({
@@ -923,7 +923,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   prometheus: Object.freeze({
     policy: Object.freeze({
@@ -949,7 +949,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "promql" }),
+    agent: Object.freeze({ statementLanguage: "promql", catalogReadCommandShaped: false }),
   }),
   qdrant: Object.freeze({
     policy: Object.freeze({
@@ -975,7 +975,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "index-stats", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "qdrantapi" }),
+    agent: Object.freeze({ statementLanguage: "qdrantapi", catalogReadCommandShaped: false }),
   }),
   rabbitmq: Object.freeze({
     policy: Object.freeze({
@@ -1005,7 +1005,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "rabbitread" }),
+    agent: Object.freeze({ statementLanguage: "rabbitread", catalogReadCommandShaped: false }),
   }),
   redis: Object.freeze({
     policy: Object.freeze({
@@ -1031,7 +1031,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["sessions", "slow-queries", "storage", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "rediscli" }),
+    agent: Object.freeze({ statementLanguage: "rediscli", catalogReadCommandShaped: false }),
   }),
   s3: Object.freeze({
     policy: Object.freeze({
@@ -1057,7 +1057,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "dedicated-pair", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "s3api" }),
+    agent: Object.freeze({ statementLanguage: "s3api", catalogReadCommandShaped: false }),
   }),
   snmp: Object.freeze({
     policy: Object.freeze({
@@ -1087,7 +1087,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "snmpget" }),
+    agent: Object.freeze({ statementLanguage: "snmpget", catalogReadCommandShaped: false }),
   }),
   snowflake: Object.freeze({
     policy: Object.freeze({
@@ -1126,7 +1126,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
         "health",
       ] as const),
     }),
-    agent: Object.freeze({ statementLanguage: null }),
+    agent: Object.freeze({ statementLanguage: null, catalogReadCommandShaped: false }),
   }),
   spark: Object.freeze({
     policy: Object.freeze({
@@ -1152,7 +1152,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["health"] as const) }),
-    agent: Object.freeze({ statementLanguage: null }),
+    agent: Object.freeze({ statementLanguage: null, catalogReadCommandShaped: false }),
   }),
   sparkplug: Object.freeze({
     policy: Object.freeze({
@@ -1178,7 +1178,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: null,
     }),
     facets: Object.freeze({ agentReadings: Object.freeze([] as const) }),
-    agent: Object.freeze({ statementLanguage: "sparkplugread" }),
+    agent: Object.freeze({ statementLanguage: "sparkplugread", catalogReadCommandShaped: false }),
   }),
   sqlite: Object.freeze({
     policy: Object.freeze({
@@ -1211,7 +1211,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["table-stats", "index-stats", "storage", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   trino: Object.freeze({
     policy: Object.freeze({
@@ -1239,7 +1239,7 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
     facets: Object.freeze({
       agentReadings: Object.freeze(["sessions", "slow-queries", "table-stats", "storage", "health"] as const),
     }),
-    agent: Object.freeze({ statementLanguage: "sql" }),
+    agent: Object.freeze({ statementLanguage: "sql", catalogReadCommandShaped: false }),
   }),
   weaviate: Object.freeze({
     policy: Object.freeze({
@@ -1265,6 +1265,6 @@ export const BUNDLED_CLAIM_REQUESTS = Object.freeze({
       agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
     facets: Object.freeze({ agentReadings: Object.freeze(["table-stats", "index-stats", "health"] as const) }),
-    agent: Object.freeze({ statementLanguage: "weaviateapi" }),
+    agent: Object.freeze({ statementLanguage: "weaviateapi", catalogReadCommandShaped: false }),
   }),
 }) satisfies Readonly<Record<DatabaseType, ClaimRequestEntry>>;

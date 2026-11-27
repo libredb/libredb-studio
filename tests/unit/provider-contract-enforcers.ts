@@ -768,7 +768,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
         "an admitted package with no grant record reads every claim at its restrictive value",
         "a SQL text claim is granted from the engine's register row only for the grammar that row reviewed, and at its restrictive value otherwise",
-        "the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name",
+        "catalogReadCommandShaped is granted only where the declaration requests it and the row reviews it",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
@@ -1009,8 +1009,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
       ],
       "tests/unit/db/claim-grants.test.ts": [
-        "the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name",
-        "for every shipped engine, the granted command-shaped catalog read is its server overlay's request, and its register row grants it exactly where the overlay requests it",
+        "catalogReadCommandShaped is granted only where the declaration requests it and the row reviews it",
+        "for every shipped engine, the granted catalogReadCommandShaped is its declaration's request and its register row's review",
       ],
     },
   },

@@ -91,6 +91,14 @@ const NO_UNGRANTED_REFUSAL = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) 
   Record<DatabaseType, null>
 >;
 
+/**
+ * Whether each shipped engine requests a statement language: its request, which equals its legacy row's grant
+ * (tests/unit/db/engine-declarations.test.ts).
+ */
+const REQUESTS_STATEMENT_LANGUAGE = Object.fromEntries(
+  SHIPPED_DATABASE_TYPES.map((id) => [id, BUNDLED_CLAIM_REQUESTS[id].agent.statementLanguage !== null]),
+) as Readonly<Record<DatabaseType, boolean>>;
+
 /** Whether each shipped engine's grammar is the one its legacy row reviewed: true for every one, by construction. */
 const EVERY_GRAMMAR_REVIEWED = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, true])) as Readonly<
   Record<DatabaseType, true>
@@ -122,11 +130,13 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   serverLevelAtCatalogChoice: SERVER_LEVEL_AT_CATALOG_CHOICE,
   sshTunnel: grants.GRANTED_SSH_TUNNEL_REFUSAL,
   agentCredential: legacyAgentCredentialTable(),
-  statementLanguage: grants.GRANTED_AGENT_STATEMENT_LANGUAGE,
-  agentReadings: grants.GRANTED_AGENT_READINGS,
+  // A legacy engine's request equals its row, so the language and the readings granted are the row's.
+  statementLanguage: legacyRegisterTable("statementLanguage"),
+  agentReadings: legacyRegisterTable("agentReadings"),
   ownWords: legacyRegisterTable("ownWords"),
   servesOneSession: legacyRegisterTable("servesOneSession"),
   agentExecution: legacyRegisterTable("agentExecution"),
+  requestsStatementLanguage: REQUESTS_STATEMENT_LANGUAGE,
   catalogReadCommandShaped: legacyRegisterTable("catalogReadCommandShaped"),
   // A legacy engine's SQL text request carries its row's redaction and grammar digest and its declaration's
   // readsSqlText and exempt forms, which equal its row's (tests/unit/db/engine-declarations.test.ts), so each grant is
@@ -143,6 +153,7 @@ const COPIED_GRANT_MEMBERS: ReadonlySet<string> = new Set([
   "maskingExemptColumns",
   "hostPathFields",
   "agentCredential",
+  "agentReadings",
   "redaction",
   "confirmExemptForms",
 ]);
@@ -208,7 +219,7 @@ describe("the legacy adapter's records", () => {
         const granted = engine.grants[member as keyof EngineRecord["grants"]];
         // Equal rather than identical to the oracle only where the grant reader builds a new value: a masking
         // exemption, a host path field list the request adds to, an agent credential, whose superseding fields it
-        // narrows, a redaction and the exempt forms it keeps.
+        // narrows, the agent readings it intersects, a redaction and the exempt forms it keeps.
         if (COPIED_GRANT_MEMBERS.has(member)) expect([member, granted]).toEqual([member, table[id] as never]);
         else expect(granted).toBe(table[id] as never);
       }
