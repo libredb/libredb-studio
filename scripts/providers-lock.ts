@@ -19,9 +19,9 @@
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
  * package is refused at the next read. The sequence over one artifact directory, `artifactEntry`, is also the key
- * command's (scripts/providers-key.ts), so the digest it prints for a register row is the one this command writes. The command never imports the lock reader, and never imports or runs a
- * package's code. It does not judge engine id collisions: Studio's read does, and the command records what the
- * directory holds.
+ * command's (scripts/providers-key.ts), so the digest it prints for a register row is the one this command writes. The
+ * command never imports the lock reader, and never imports or runs a package's code. It does not judge engine id
+ * collisions: Studio's read does, and the command records what the directory holds.
  *
  * It refuses, writing nothing and exiting 1 with every refusal on stderr: an entry of the directory that is neither a
  * package nor the lock, a package directory holding anything but one version directory, and every refusal an artifact
