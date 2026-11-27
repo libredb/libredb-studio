@@ -329,7 +329,7 @@ The claim's form decides what "more restrictive" means:
 - a set a gate admits, refuses or keeps apart, `connection.hostPathFields`, is the union of request and grant, and a set a gate offers, `facets.agentReadings`, their intersection;
 - `connection.serverLevelWithoutDatabase` is granted per gate, as restrictive when true where a gate refuses on true and as restrictive when false where a gate honours only on true;
 - a claim whose values are not ordered, such as a statement language, an agent credential form, a redaction other than `none` or a single-writer file, is its grant where the request equals it and its restrictive value otherwise, a statement language only under M-87, and an unequal single-writer request leaves the engine refused by name at every open;
-- a SQL text claim, `sqlText.readsSqlText`, `sqlText.redaction` or an exempt form of `sqlText.grammar.confirmExemptForms`, is granted only for the grammar its register row reviewed, `grammarSha256`, `readsSqlText: false` also only under M-87, and is read at its restrictive value under any other grammar;
+- a SQL text claim, `sqlText.readsSqlText`, `sqlText.redaction` or an exempt form of `sqlText.grammar.confirmExemptForms`, is granted only for the grammar its register row reviewed, `grammarSha256`, `readsSqlText: false` also only under M-87, and is read at its restrictive value under any other grammar, except `readsSqlText: false` for an engine that states no SQL text, which M-87 grants under the language digest alone;
 - a requested refusal, of denied file access or of an SSH tunnel, keeps its own sentence, one offered against a refusing grant takes the grant's sentence, and one offered where no grant exists takes the host's own.
 
 ### M-55 (normative): The rules of an engine's claims
@@ -461,6 +461,7 @@ It names no function of the package.
 
 A register row states the digest of the statement language data it reviewed, `languageSha256`, or null for an engine that states none, and grants the engine's statement language, the claim that its confirmation reading is the whole answer and `readsSqlText: false` only where that is the digest of the data the engine states, so a changed byte of that data grants none of them until LibreDB reviews it again.
 A package row that grants `readsSqlText: false` or `decidesAlone: true` with a null digest is refused, so a package engine that states no statement language data is never granted either of the two.
+For an engine that states no SQL text, whose register row reviews no grammar, the row's grant of `readsSqlText: false` and of the whole-answer claim under the language digest alone makes the language's confirmation reading the gate's whole answer.
 
 ## Values
 
@@ -603,8 +604,8 @@ Where no register row reviews the grammar an engine declares, its query events k
 ### S-8 (normative): A claim that loosens the confirmation gate
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
-The gate counts such a claim only where the engine's register row grants it for the grammar that row reviewed (M-54, M-84), the query event log reads `readsSqlText` the same way, and every other reader reads it as declared.
-Where no register row reviews the grammar an engine declares, the gate asks about every statement of the engine; under a reviewed grammar it reads a provider package's statements under that grammar and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
+The gate counts such a claim only where the engine's register row grants it for the grammar that row reviewed (M-54, M-84), or `readsSqlText: false` under M-87 for an engine that states no SQL text, the query event log reads `readsSqlText` the same way, and every other reader reads it as declared.
+Where no register row reviews the grammar an engine declares, the gate asks about every statement of the engine, except an engine that states no SQL text whose row grants both claims M-87 names, which its language's confirmation reading alone answers; under a reviewed grammar it reads a provider package's statements under that grammar and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
 
 ### S-9 (normative): Update target words and completion quoting
 

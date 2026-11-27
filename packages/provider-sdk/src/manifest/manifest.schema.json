@@ -2483,7 +2483,7 @@
       "pattern": "^--[a-z][a-z0-9-]{0,62}$"
     },
     "sqlText": {
-      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement and the query event log keeps none of its text.",
+      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement, unless the register row grants under the engine's statement language data that its text is not SQL and that its language's reading is the whole answer, and the query event log keeps none of its text.",
       "type": ["object", "null"],
       "properties": {
         "readsSqlText": {

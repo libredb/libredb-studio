@@ -21,7 +21,12 @@ import { buildQueryEvent, contractConnectionId, queryEventPolicy, queryEventStar
 import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
 import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
 import { UnknownProviderError } from "@/lib/db/errors";
-import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import {
+  type EngineRecord,
+  forgetServerCatalog,
+  installServerCatalog,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
 import { type EngineGrants, STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
@@ -349,10 +354,19 @@ describe("buildQueryEvent", () => {
       members.migrationDdl = null;
     };
 
-    // Composed: a declaration with no SQL text, its row granting SQL text claims, which review no grammar of it.
+    // Composed: a declaration with no SQL text, its row granting SQL text claims, which review no grammar of it. Under
+    // the language digest the row reviewed, readsSqlText false and decidesAlone are granted, and still no grammar is
+    // reviewed, so the event keeps nothing of the text.
     installEngines({
       declare: statesNoSqlText,
-      row: { redaction: { kind: "sql", nameQuote: '"' }, readsSqlText: false },
+      row: { redaction: { kind: "sql", nameQuote: '"' }, readsSqlText: false, decidesAlone: true },
+    });
+    const { reviewedGrammar, readsSqlText, decidesAlone, redaction } = servedEngineRecord("acmeevents").grants;
+    expect({ reviewedGrammar, readsSqlText, decidesAlone, redaction }).toEqual({
+      reviewedGrammar: false,
+      readsSqlText: false,
+      decidesAlone: true,
+      redaction: { kind: "none" },
     });
     for (const capture of [NONE, REDACTED, FULL]) {
       expect(build(input(event), capture)).toMatchObject({

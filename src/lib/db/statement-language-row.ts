@@ -9,7 +9,8 @@ import type { TypedConfirmationAsk } from "@/lib/db/types";
  * asks the person to type, the console text bound it states and why it refuses a text.
  *
  * A row has the shape `DestructiveVocabulary` in `./destructive-vocabulary.ts` states. Null is no row: the engine's
- * statements are SQL, or it states no SQL text, and the gate reads them under its grammar or asks about every one.
+ * statements are SQL, or it states no SQL text and no statement language data, and the gate reads them under its
+ * grammar or asks about every one.
  * `statementLanguageRow` is the one answer to which row an engine has: the row compiled from the statement language
  * data its declaration states, else Studio's code row of a legacy engine whose language is still a module of Studio's,
  * else none. Both composers of the server's engine records call it, so a record holds its row (`EngineRecord` in

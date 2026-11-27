@@ -1258,6 +1258,74 @@ describe("Studio's grant of an engine's statement language data", () => {
       );
     }
   });
+
+  test("an engine with no SQL text is granted readsSqlText false and decidesAlone under its reviewed language digest alone, and nothing under a changed byte, a null digest, a row reviewing a grammar or a row granting neither", () => {
+    const reviewed = digest();
+    /** `reviewed` with its last hex digit changed: the digest of data one byte off. */
+    const changed = `${reviewed.slice(0, -1)}${reviewed.endsWith("0") ? "1" : "0"}`;
+    /**
+     * The SQL text grants of kafka stating no SQL text, as the server catalog's composer requests it for such an
+     * engine (`UNRECORDED_SQL_TEXT`, no grammar digest), and language data of digest `requested`, against kafka's
+     * legacy row reviewing no grammar, `reviewed` as its language digest, a redaction and an exempt form, and
+     * `changes`; or against no row where `changes` is null.
+     */
+    const noSqlTextGrants = (requested: string | null, changes: Partial<RegisterGrants> | null) => {
+      const row =
+        changes === null
+          ? null
+          : rowWith("kafka", {
+              grammarSha256: null,
+              languageSha256: reviewed,
+              redaction: NAMES,
+              confirmExemptForms: FORMS,
+              ...changes,
+            });
+      const { decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar } = grantEngineClaims(
+        "kafka",
+        BUNDLED_CLAIM_REQUESTS.kafka,
+        UNRECORDED_SQL_TEXT,
+        { languageSha256: requested },
+        row,
+        SEED_ONLY_FIELDS,
+      );
+      return { decidesAlone, readsSqlText, redaction, confirmExemptForms, reviewedGrammar };
+    };
+    const RESTRICTIVE = {
+      decidesAlone: false,
+      readsSqlText: true,
+      redaction: { kind: "none" },
+      confirmExemptForms: [],
+      reviewedGrammar: false,
+    } as const;
+    // Vacuity: kafka's legacy row grants both claims, so the base the cases change grants them.
+    const { readsSqlText, decidesAlone } = legacyRow("kafka").grants;
+    expect({ readsSqlText, decidesAlone }).toEqual({ readsSqlText: false, decidesAlone: true });
+
+    // The language data the row reviewed: readsSqlText and decidesAlone as the row grants them, and the claims that
+    // stay under a grammar digest, the redaction and the exempt forms, restrictive, with no grammar reviewed.
+    expect(noSqlTextGrants(reviewed, {})).toEqual({ ...RESTRICTIVE, decidesAlone: true, readsSqlText: false });
+    expect(noSqlTextGrants(reviewed, { decidesAlone: false })).toEqual({ ...RESTRICTIVE, readsSqlText: false });
+    expect(noSqlTextGrants(reviewed, { readsSqlText: true })).toEqual({ ...RESTRICTIVE, decidesAlone: true });
+    // A row granting neither, data one byte off, no data under a row that reviewed some, no data reviewed as stating
+    // none, a row that reviews a grammar the engine does not state, and no row: every claim at its restrictive value.
+    expect(noSqlTextGrants(reviewed, { readsSqlText: true, decidesAlone: false })).toEqual(RESTRICTIVE);
+    expect(noSqlTextGrants(changed, {})).toEqual(RESTRICTIVE);
+    expect(noSqlTextGrants(null, {})).toEqual(RESTRICTIVE);
+    expect(noSqlTextGrants(null, { languageSha256: null })).toEqual(RESTRICTIVE);
+    expect(noSqlTextGrants(reviewed, { grammarSha256: digest() })).toEqual(RESTRICTIVE);
+    expect(noSqlTextGrants(reviewed, null)).toEqual(RESTRICTIVE);
+    // A request that carries a grammar digest under a row that reviews none: the engine states SQL text no row
+    // reviewed, so nothing is granted.
+    const stating = grantEngineClaims(
+      "kafka",
+      BUNDLED_CLAIM_REQUESTS.kafka,
+      { ...UNRECORDED_SQL_TEXT, grammarSha256: digest() },
+      { languageSha256: reviewed },
+      rowWith("kafka", { grammarSha256: null, languageSha256: reviewed }),
+      SEED_ONLY_FIELDS,
+    );
+    expect([stating.readsSqlText, stating.decidesAlone, stating.reviewedGrammar]).toEqual([true, false, false]);
+  });
 });
 
 describe("Studio's grant of the agent overlay's command-shaped catalog read", () => {

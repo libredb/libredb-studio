@@ -23,11 +23,13 @@ import { logger } from "@/lib/logger";
 import { readingOfType } from "@/lib/sql/dangerous-query";
 import { type EngineConnection, type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseConnection } from "@/lib/types";
 import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { randomUUID } from "node:crypto";
 import {
@@ -73,9 +75,9 @@ function request(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
 /**
  * The record the server catalog composes for a package serving engine `id`, its minimal manifest changed by `edit`:
  * against Studio's register, which holds no row for it, where `grants` is absent; otherwise against a register holding
- * its row granting `grants`, `grammarSha256` the digest of the grammar it declares and `languageSha256` the digest of
- * the statement language data it declares, or null where it declares none, unless `grants` names another, every other
- * member at its restrictive value.
+ * its row granting `grants`, `grammarSha256` the digest of the grammar it declares, or null where it states no SQL
+ * text, and `languageSha256` the digest of the statement language data it declares, or null where it declares none,
+ * unless `grants` names another, every other member at its restrictive value.
  */
 function packageEngine(
   id: string,
@@ -84,14 +86,14 @@ function packageEngine(
 ): EngineRecord {
   const manifest = admittedManifest(id, edit);
   const pkg = admittedFor(`${id}-package`, manifest);
-  const declared = (manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar;
+  const { sqlText } = manifest.engines[0] as { sqlText: { grammar: unknown } | null };
   const register =
     grants === undefined
       ? STUDIO_GRANT_REGISTER
       : parseGrantRegister(
           [
             packageRow(pkg, id, {
-              grammarSha256: grammarSha256(declared),
+              grammarSha256: sqlText === null ? null : grammarSha256(sqlText.grammar),
               languageSha256: manifest.engines[0]?.statementLanguageData ? declaredLanguageSha256(manifest) : null,
               ...grants,
             }),
@@ -731,6 +733,50 @@ describe("the gate on an engine a provider package serves", () => {
           { kind: "answer", status: 428 },
         ]);
       }
+    }
+  });
+
+  test("a package engine with no SQL text whose register row grants its language's claims under the language digest runs a read with no confirmation, and asks with the row's digest one byte off", async () => {
+    /**
+     * The declaration states no SQL text and Kafka's statement language confirmation data under another name: a
+     * request language whose reader names no operation and is the gate's whole answer.
+     */
+    const data = {
+      ...BUNDLED_STATEMENT_LANGUAGE_DATA.kafka,
+      name: "acmeread",
+      agent: null,
+    } as NonNullable<StatementLanguageData>;
+    const kafkaShaped = (declaration: EditableEngine) => {
+      withStatementLanguageData(declaration, data);
+      const members = declaration as Record<string, unknown>;
+      members.sqlText = null;
+      members.sqlWriting = null;
+      members.migrationDdl = null;
+    };
+    const both = { readsSqlText: false, decidesAlone: true };
+    const granted = packageEngine("acmegate", kafkaShaped, both);
+    expect(granted.statementGrammar).toBeNull();
+    expect(granted.grants).toMatchObject({ reviewedGrammar: false, readsSqlText: false, decidesAlone: true });
+    for (const sql of ['{"read": "topics"}', '{"read": "partitions", "topic": "delete"}']) {
+      expect([sql, await gateRun(packageRequest({ engine: granted, sql }), clock)]).toEqual([
+        sql,
+        { kind: "run", unconfirmed: false },
+      ]);
+    }
+
+    // The row's language digest one byte off, and a row granting neither claim: the gate asks about every statement.
+    const reviewed = declaredLanguageSha256(admittedManifest("acmegate", kafkaShaped));
+    const changed = `${reviewed.slice(0, -1)}${reviewed.endsWith("0") ? "1" : "0"}`;
+    for (const engine of [
+      packageEngine("acmegate", kafkaShaped, { ...both, languageSha256: changed }),
+      packageEngine("acmegate", kafkaShaped, {}),
+    ]) {
+      expect(engine.grants).toMatchObject({ reviewedGrammar: false, readsSqlText: true, decidesAlone: false });
+      expect(await gateRun(packageRequest({ engine, sql: '{"read": "topics"}' }), clock)).toMatchObject({
+        kind: "answer",
+        status: 428,
+        body: { confirmation: { unreadable: false, typedConfirmation: null, classificationFailed: false } },
+      });
     }
   });
 

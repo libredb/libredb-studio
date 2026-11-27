@@ -388,7 +388,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(names(seen)).toEqual(["open", "execute"]);
   });
 
-  test("a package engine with no SQL text facts is asked about every statement, and its query events keep no statement text", async () => {
+  test("a package engine with no SQL text facts whose register row states a grammar digest is asked about every statement, and its query events keep no statement text", async () => {
     expect(engines.get(NOSQL)?.statementGrammar).toBeNull();
     expect(engines.get(NOSQL)?.grants.reviewedGrammar).toBe(false);
     const connection = connectionOf(NOSQL);

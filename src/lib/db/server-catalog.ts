@@ -36,11 +36,13 @@
  *   against the engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its
  *   package's name, version and digest, or, where the register holds none, each claim at its restrictive value; its
  *   SQL text claims only for the grammar the row reviewed, and whether it did, and its statement language,
- *   decides-alone and text-not-SQL claims also only for the statement language data the row reviewed;
+ *   decides-alone and text-not-SQL claims also only for the statement language data the row reviewed, the last two
+ *   under that data alone for an engine that states no SQL text;
  * - `statementLanguageRow`: the engine's statement language row, the one the confirmation gate, the console text bound
  *   and the editor's refusal read (`statementLanguageRow` in ./statement-language-row), composed for a package from
  *   the statement language data its declaration states and for a legacy engine from Studio's code row of its id, once,
- *   when the record is composed; null where the engine's statements are SQL or it states no SQL text;
+ *   when the record is composed; null where the engine's statements are SQL, or where it states no SQL text and no
+ *   statement language data;
  * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
  *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
@@ -199,18 +201,19 @@ export interface EngineRecord {
    * (`sqlText.grammar`), composed once by `grammarFromFacts` (./sql-grammar), which the confirmation gate reads with
    * the claims that loosen it its record grants for the grammar its register row reviewed, every statement asked where
    * no row reviewed it (`statementAsks` in src/lib/sql/dangerous-query.ts); null for a package whose
-   * declaration states `sqlText` as null, which no register row can review, so the gate asks about every statement and
-   * the query event log keeps none of its text; for a legacy engine, its row of Studio's grammar table
-   * (`sqlGrammarFor`), never null. The query event builder reads a statement and its error text under it too
+   * declaration states `sqlText` as null, which no register row can review, so the gate asks about every statement,
+   * unless its grants grant `readsSqlText: false` and its statement language row decides alone, which its row alone
+   * then answers, and the query event log keeps none of its text; for a legacy engine, its row of Studio's grammar
+   * table (`sqlGrammarFor`), never null. The query event builder reads a statement and its error text under it too
    * (`buildQueryEvent` in src/lib/query-events/build.ts).
    */
   readonly statementGrammar: SqlGrammar | null;
   /**
-   * The engine's statement language row, or null where its statements are SQL or it states no SQL text: what the
-   * confirmation gate reads beside the statement grammar, through the reading of the record (`readingOfRecord` in
-   * src/lib/sql/dangerous-query.ts), and what the console text bound and the editor's refusal are read from
-   * (`rowTextByteLimit` and `rowRefusal` in ./statement-language-row). The row's claims count only as `grants` grant
-   * them.
+   * The engine's statement language row, or null where its statements are SQL, or where it states no SQL text and no
+   * statement language data: what the confirmation gate reads beside the statement grammar, through the reading of the
+   * record (`readingOfRecord` in src/lib/sql/dangerous-query.ts), and what the console text bound and the editor's
+   * refusal are read from (`rowTextByteLimit` and `rowRefusal` in ./statement-language-row). The row's claims count
+   * only as `grants` grant them.
    */
   readonly statementLanguageRow: DestructiveVocabulary | null;
   /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */

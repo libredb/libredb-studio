@@ -223,7 +223,7 @@
           ]
         },
         "readsSqlText": {
-          "description": "Whether the confirmation gate reads the engine's statement text as SQL, granted false only for the grammar grammarSha256 names.",
+          "description": "Whether the confirmation gate reads the engine's statement text as SQL, granted false only for the grammar grammarSha256 names, or, for an engine that states no SQL text, where grammarSha256 is null, only for the statement language data languageSha256 names.",
           "type": "boolean"
         },
         "confirmExemptForms": {
@@ -238,11 +238,11 @@
           "uniqueItems": true
         },
         "decidesAlone": {
-          "description": "Whether the engine's statement vocabulary is the confirmation gate's whole answer, granted only for the grammar grammarSha256 names.",
+          "description": "Whether the engine's statement vocabulary is the confirmation gate's whole answer, granted only for the grammar grammarSha256 names, or, for an engine that states no SQL text, where grammarSha256 is null, only for the statement language data languageSha256 names.",
           "type": "boolean"
         },
         "grammarSha256": {
-          "description": "The SHA-256, in lower-case hex, of the canonical text of the grammar LibreDB reviewed the engine's SQL text claims with: the grammar as JSON with no white space, every object's members in ascending code-unit order and every list in its own order. Null where the row reviews no grammar, so every SQL text claim is read at its restrictive value.",
+          "description": "The SHA-256, in lower-case hex, of the canonical text of the grammar LibreDB reviewed the engine's SQL text claims with: the grammar as JSON with no white space, every object's members in ascending code-unit order and every list in its own order. Null where the row reviews no grammar, so every SQL text claim is read at its restrictive value, but readsSqlText and decidesAlone for an engine that states no SQL text, which the row grants under languageSha256 alone.",
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{64}$"
         },

@@ -1114,7 +1114,7 @@ describe("a package engine's register row", () => {
     ).toMatchObject({ statementLanguage: null, ownWords: "scrubbed" });
   });
 
-  test("a package engine whose sqlText is null has no statement grammar and the restrictive value of every SQL text claim, whatever its register row grants", () => {
+  test("a package engine whose sqlText is null has no statement grammar, and a register row reviewing a grammar grants it the restrictive value of every SQL text claim", () => {
     const form = ["ALTER", "SESSION", "SET"];
     // Both engines state the same statement language data, so the row may grant the two loosening claims under its
     // digest, and only the grammar tells the two apart.
