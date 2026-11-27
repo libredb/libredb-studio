@@ -17,8 +17,9 @@
  * an open and a plain `Error` for an execute or a tree read, a tree answer the core refused (`checkTreeAnswer`)
  * included. Its one log line names each rule and pointer, and the words of each close
  * that failed after the refused answer, through core's scrub (`loggedDefect`). The client is answered each rule and
- * pointer where a register row grants the package's words, and each rule alone where none does
- * (`packageDefectAnswer`), since a pointer may hold a key the package chose. A `HostDefectError` whose refusals are
+ * pointer where a register row grants the package's words, each refusal's sentence through core's scrub, since its
+ * pointer and the key it names may hold a key the package chose, and each rule alone where none does
+ * (`packageDefectAnswer`). A `HostDefectError` whose refusals are
  * each about Studio's own request is Studio's defect, and is answered as Studio's own internal error. A legacy record's
  * provider is Studio's own code, so its failure is answered as raised.
  *
@@ -30,10 +31,11 @@
  * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through
  * the same scrub (`packageWarnings`).
  */
-import { type CallRefusalRule, callRefusalSentence, type Warning } from "@libredb/provider-sdk/calls";
+import { type CallRefusal, type CallRefusalRule, callRefusalSentence, type Warning } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
 import { ConnectionError, DatabaseError, markNotSent } from "@/lib/db/errors";
 import {
+  PROVIDER_TEXT_WITHHELD,
   type ProviderTextScrub,
   scrubProviderText,
   scrubProviderWarnings,
@@ -91,12 +93,29 @@ function isStudioDefect(error: unknown): error is HostDefectError {
 }
 
 /**
- * The words of `error`, a host defect with a refusal of what the package answered: the same refusals' sentences, each
- * naming its rule's place by its pointer, under `PACKAGE_DEFECT_PREFIX`, so they name the package as the author, where
- * the accessor's message names Studio.
+ * The sentence of `refusal`, a refusal of what the package answered, through core's scrub of the connection: its
+ * pointer and its name may hold a key the package chose, so the sentence is withheld whole (`PROVIDER_TEXT_WITHHELD`)
+ * where it, or a reference token of its pointer as the package wrote the key, holds a credential of the connection. A
+ * pointer writes `/` and `~` in a key as `~1` and `~0` (RFC 6901), which the scrub's readings do not undo, so each
+ * token is read unescaped too.
  */
-function packageDefectWords(error: HostDefectError): string {
-  return `${PACKAGE_DEFECT_PREFIX} ${error.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`;
+function scrubbedRefusalSentence(scrub: ProviderTextScrub, refusal: CallRefusal): string {
+  const sentence = callRefusalSentence(refusal);
+  const keys = refusal.pointer
+    .split("/")
+    .slice(1)
+    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const withheld = [sentence, ...keys].some((text) => scrubProviderText(scrub, text) === PROVIDER_TEXT_WITHHELD);
+  return withheld ? PROVIDER_TEXT_WITHHELD : sentence;
+}
+
+/**
+ * The words of `error`, a host defect with a refusal of what the package answered: the same refusals' sentences, each
+ * naming its rule's place by its pointer and each through core's scrub (`scrubbedRefusalSentence`), under
+ * `PACKAGE_DEFECT_PREFIX`, so they name the package as the author, where the accessor's message names Studio.
+ */
+function packageDefectWords(error: HostDefectError, scrub: ProviderTextScrub): string {
+  return `${PACKAGE_DEFECT_PREFIX} ${error.refusals.map((refusal) => scrubbedRefusalSentence(scrub, refusal)).join(" ")}`;
 }
 
 /**
@@ -104,7 +123,7 @@ function packageDefectWords(error: HostDefectError): string {
  * the words of each close that failed after the refused answer, each through core's scrub of the connection.
  */
 function loggedDefect(error: HostDefectError, scrub: ProviderTextScrub): Error {
-  const words = packageDefectWords(error);
+  const words = packageDefectWords(error, scrub);
   if (error.closeFailures.length === 0) return new Error(words);
   const closes = error.closeFailures.map((failure) =>
     scrubProviderText(scrub, failure instanceof Error ? failure.message : String(failure)),
@@ -114,11 +133,11 @@ function loggedDefect(error: HostDefectError, scrub: ProviderTextScrub): Error {
 
 /**
  * The words a client is answered for `error`, a host defect with a refusal of what the package answered, by `engine`'s
- * grant: `packageDefectWords` where its words are `"scrubbed"`, and otherwise each rule once, in Studio's sentence, with
- * no pointer, since a pointer may hold a key the package chose.
+ * grant: `packageDefectWords`, through core's scrub, where its words are `"scrubbed"`, and otherwise each rule once, in
+ * Studio's sentence, with no pointer, since a pointer may hold a key the package chose.
  */
-function packageDefectAnswer(engine: EngineRecord, error: HostDefectError): string {
-  if (engine.grants.ownWords === "scrubbed") return packageDefectWords(error);
+function packageDefectAnswer(engine: EngineRecord, error: HostDefectError, scrub: ProviderTextScrub): string {
+  if (engine.grants.ownWords === "scrubbed") return packageDefectWords(error, scrub);
   const rules = [...new Set(error.refusals.map((refusal) => refusal.rule))];
   return `${PACKAGE_DEFECT_PREFIX} it broke the ${rules.length === 1 ? "rule" : "rules"} ${rules.join(", ")}; the server's log names where.`;
 }
@@ -201,7 +220,7 @@ export function packageFailureAnswer(
   if (!isPackageFailure(engine, error)) return error;
   if (error instanceof HostDefectError) {
     logPackageError(call, loggedDefect(error, scrub), scrub, route);
-    const answer = packageDefectAnswer(engine, error);
+    const answer = packageDefectAnswer(engine, error, scrub);
     return call === "open" ? notSentConnectionError(answer) : new Error(answer);
   }
   logPackageError(call, error, scrub, route);

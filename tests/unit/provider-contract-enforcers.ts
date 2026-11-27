@@ -3241,6 +3241,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",
+        "a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
         "a tree answer the core refused is the package's defect on both grants, and a package's tree error is answered by its grant",

@@ -261,6 +261,47 @@ describe("packageFailureAnswer", () => {
     ).toEqual([]);
   });
 
+  test("a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read", () => {
+    // A password holding a slash and a tilde, which a JSON Pointer writes as ~1 and ~0, so it is found as written there too.
+    const slashed = `${randomUUID()}/~${randomUUID()}`;
+    const slashedScrub = providerTextScrub(
+      { id: "conn-2", name: "Keys", type: "postgres", host: "kv.local", password: slashed } as DatabaseConnection,
+      "any",
+    );
+    const escaped = slashed.replaceAll("~", "~0").replaceAll("/", "~1");
+    const clean: CallRefusal = { rule: "tree-answer-unreadable", pointer: "/objects/0/name" };
+    for (const [call, refusals, connectionScrub, password] of [
+      [
+        "execute",
+        [{ rule: "execute-answer-unreadable", pointer: `/warnings/0/${secret}`, name: secret }],
+        scrub,
+        secret,
+      ],
+      ["tree read", [{ rule: "tree-answer-unreadable", pointer: `/objects/0/${secret}`, name: secret }], scrub, secret],
+      [
+        "tree read",
+        [clean, { rule: "tree-answer-unreadable", pointer: `/counts/${escaped}/count` }],
+        slashedScrub,
+        slashed,
+      ],
+    ] as const) {
+      const malformed = refused([...refusals]);
+      const expected = `${PACKAGE_DEFECT_PREFIX} ${refusals.length === 2 ? `${callRefusalSentence(clean)} ` : ""}${PROVIDER_TEXT_WITHHELD}`;
+      let answered: unknown;
+      let logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        answered = packageFailureAnswer(GRANTED, call, malformed, connectionScrub, ROUTE);
+        logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+      } finally {
+        error.mockRestore();
+      }
+      expect((answered as Error).message).toBe(expected);
+      expect(logged).toEqual([[`A provider package's ${call} failed`, expected]]);
+      expect(JSON.stringify([(answered as Error).message, logged])).not.toContain(password.slice(0, 36));
+    }
+  });
+
   test("isPackageFailure holds exactly for the failures packageFailureAnswer answers and logs as the package's", () => {
     const defect = refused([{ rule: "batch-malformed", pointer: "/rows" }]);
     const studioDefect = refused([{ rule: "request-scope-not-offered", pointer: "/scope" }]);
