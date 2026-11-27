@@ -14,9 +14,11 @@
  * twice: once with top-level `await` an operator, as in an ES module, and once with it an identifier, as in a CommonJS
  * file. The record holds the imports of every reading that parses, and a file neither reading parses is refused. The
  * only lexical difference between a script and a module, an HTML-like comment (`<!--`, or `-->` at a line's start), is
- * refused. A leading `#!` line ends at any line terminator, as in Node.js. The tree is walked with an explicit stack,
- * so only the parser's own depth bounds a file; that depth depends on the runtime's stack, and a file nested past it
- * is refused by name under Node.js and Bun alike, never raised.
+ * refused. A leading `#!` line ends at any line terminator, as in Node.js. `new.target` outside a function runs in a
+ * CommonJS file, which Node.js wraps in a function, but the pinned parser has no option to read it there, so such a
+ * file is refused as one the parser cannot read. The tree is walked with an explicit stack, so only the parser's own
+ * depth bounds a file; that depth depends on the runtime's stack, and a file nested past it is refused by name under
+ * Node.js and Bun alike, never raised.
  * Recorded, in dead branches too: import declarations, side-effect imports, re-exports with a source, `import()` of a
  * string or a template without substitution, and a call of the identifier `require` (an optional call included) whose
  * first argument is a string or a template without substitution, whatever follows it. Not recorded: a computed
@@ -187,8 +189,8 @@ function reading(text: string, awaitOperator: boolean): { program: AnyNode; comm
 
 /**
  * The imports `bytes` makes statically in every reading that parses, or null when they are not UTF-8 or the parser
- * reads them neither way: a syntax error, an HTML-like comment, or nesting past the runtime's stack, which acorn
- * reports as a syntax error.
+ * reads them neither way: a syntax error, an HTML-like comment, `new.target` outside a function, or nesting past the
+ * runtime's stack, which acorn reports as a syntax error.
  */
 function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
   let text: string;

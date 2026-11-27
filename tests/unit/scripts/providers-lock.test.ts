@@ -128,7 +128,7 @@ const FORMS: FixturePackage = {
       "",
     ].join("\n"),
     "dist/c.cjs":
-      'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\nrequire("./two.cjs", 0);\n',
+      'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\nrequire("./two.cjs", 0);\nrequire?.("./optional.cjs");\nrequire(`./template.cjs`);\n',
     // A script's sloppy forms: `await` as a name and a `with` statement.
     "dist/sloppy.cjs": 'var await = 1;\nwith (Math) { require("./sloppy-dep.cjs"); }\n',
     // `await` read both ways: as an operator, as in an ES module, and as an identifier, as in a CommonJS file. Here the
@@ -158,6 +158,8 @@ const FORMS_RECORD = [
   { from: "dist/UPPER.MJS", specifier: "./upper.mjs", kind: "import" },
   { from: "dist/both.cjs", specifier: "both-dep", kind: "require" },
   { from: "dist/c.cjs", specifier: "./dead.cjs", kind: "require" },
+  { from: "dist/c.cjs", specifier: "./optional.cjs", kind: "require" },
+  { from: "dist/c.cjs", specifier: "./template.cjs", kind: "require" },
   { from: "dist/c.cjs", specifier: "./two.cjs", kind: "require" },
   { from: "dist/c.cjs", specifier: "fs", kind: "require" },
   { from: "dist/index.mjs", specifier: "./a.mjs", kind: "import" },
@@ -584,6 +586,27 @@ describe("the lock command", () => {
         },
         "providers:lock: acme-many 1.0.0: its module files hold more than 4096 imports",
       ],
+      [
+        // The other half of an HTML-like comment, `-->` at a line's start, is refused as well.
+        {
+          name: "acme-close",
+          version: "1.0.0",
+          engines: ["acmeclose"],
+          files: { "dist/index.mjs": 'import "./a.mjs";\n--> a comment in a script\n' },
+        },
+        "providers:lock: acme-close 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+      ],
+      [
+        // `new.target` outside a function runs in a CommonJS file, which Node.js wraps in a function, but the pinned
+        // parser has no option to read it there, so the file is refused, never skipped.
+        {
+          name: "acme-target",
+          version: "1.0.0",
+          engines: ["acmetarget"],
+          files: { "dist/target.cjs": 'module.exports = new.target;\nrequire("./a.cjs");\n' },
+        },
+        "providers:lock: acme-target 1.0.0: dist/target.cjs: its parser cannot read it, or it is not UTF-8",
+      ],
     ];
     for (const [pkg] of refused) writeArtifact(providers, pkg);
     const latin1 = { name: "acme-latin", version: "1.0.0", engines: ["acmelatin"] };
@@ -597,6 +620,7 @@ describe("the lock command", () => {
     expect(run.stderr).toBe(
       [
         refused[0]?.[1],
+        refused[7]?.[1],
         refused[3]?.[1],
         refused[4]?.[1],
         refused[5]?.[1],
@@ -604,6 +628,7 @@ describe("the lock command", () => {
         refused[2]?.[1],
         "providers:lock: acme-latin 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
         refused[6]?.[1],
+        refused[8]?.[1],
         "providers:lock wrote nothing",
         "",
       ].join("\n"),
