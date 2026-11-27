@@ -465,7 +465,7 @@ For an engine that states no SQL text, whose register row reviews no grammar, th
 
 ### M-88 (informative): A package engine's statement language in agent mode and on MCP
 
-A package engine's statement language data (M-85) will be served in agent mode and on MCP as a bundled engine's is, each part read only as the engine's register row grants it (M-87).
+A package engine's statement language data (M-85) will be served in agent mode and on MCP only as the engine's register row grants it (M-87).
 Until then agent mode and MCP refuse a package engine's connection as C-107 says, so nothing checks the first sentence yet.
 
 ## Values
@@ -1234,7 +1234,7 @@ The package's own words then go only to the server's log, each error and each wa
 
 ### C-114 (informative): A package carries its drivers bundled into its own modules
 
-A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a Node.js built-in (C-102), and a native addon stays refused (C-103).
+A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a built-in (C-102), and a native addon stays refused (C-103).
 An optional dependency a driver loads at run time through a load the lock does not record, such as a computed `import()` or a function made by `createRequire` and called under a name other than `require`, is bundled or removed by the package's build, never left to resolve outside the package's directory.
 Nothing checks this clause yet beyond C-102 and C-103.
 
