@@ -13,10 +13,17 @@
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
- * words under `PACKAGE_DEFECT_PREFIX`, naming each rule and pointer and none of the package's words, where the
- * accessor's message names Studio, as a not-sent `ConnectionError` for an open and a plain `Error` for an execute. A `HostDefectError` whose refusals are each about Studio's own request is Studio's
- * defect, and is answered as Studio's own internal error. A legacy record's provider is Studio's own code, so its
- * failure is answered as raised.
+ * words under `PACKAGE_DEFECT_PREFIX`, where the accessor's message names Studio, as a not-sent `ConnectionError` for
+ * an open and a plain `Error` for an execute. Its one log line names each rule and pointer, and the words of each close
+ * that failed after the refused answer, through core's scrub (`loggedDefect`). The client is answered each rule and
+ * pointer where a register row grants the package's words, and each rule alone where none does
+ * (`packageDefectAnswer`), since a pointer may hold a key the package chose. A `HostDefectError` whose refusals are
+ * each about Studio's own request is Studio's defect, and is answered as Studio's own internal error. A legacy record's
+ * provider is Studio's own code, so its failure is answered as raised.
+ *
+ * Every failure `packageFailureAnswer` answers as the package's (`isPackageFailure`) it logs, once; the query route,
+ * which renders the answer, passes `logged` to `createErrorResponse` (src/lib/api/errors.ts), so it writes no second
+ * line.
  *
  * A package's warnings reach the route as the host core checked and rebuilt them (`checkExecuteAnswer`); where no row
  * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through
@@ -82,13 +89,36 @@ function isStudioDefect(error: unknown): error is HostDefectError {
 }
 
 /**
- * The error logged for `error`, a host defect with a refusal of what the package answered: the same refusals' sentences
- * under `PACKAGE_DEFECT_PREFIX`, so the log names the package as the author, where the accessor's message names Studio.
+ * The words of `error`, a host defect with a refusal of what the package answered: the same refusals' sentences, each
+ * naming its rule's place by its pointer, under `PACKAGE_DEFECT_PREFIX`, so they name the package as the author, where
+ * the accessor's message names Studio.
  */
-function packageDefect(error: HostDefectError): Error {
-  return new Error(
-    `${PACKAGE_DEFECT_PREFIX} ${error.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`,
+function packageDefectWords(error: HostDefectError): string {
+  return `${PACKAGE_DEFECT_PREFIX} ${error.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`;
+}
+
+/**
+ * The error logged for `error`, a host defect with a refusal of what the package answered: `packageDefectWords`, then
+ * the words of each close that failed after the refused answer, each through core's scrub of the connection.
+ */
+function loggedDefect(error: HostDefectError, scrub: ProviderTextScrub): Error {
+  const words = packageDefectWords(error);
+  if (error.closeFailures.length === 0) return new Error(words);
+  const closes = error.closeFailures.map((failure) =>
+    scrubProviderText(scrub, failure instanceof Error ? failure.message : String(failure)),
   );
+  return new Error(`${words} Closing the result sources it handed over failed too: ${closes.join("; ")}.`);
+}
+
+/**
+ * The words a client is answered for `error`, a host defect with a refusal of what the package answered, by `engine`'s
+ * grant: `packageDefectWords` where its words are `"scrubbed"`, and otherwise each rule once, in Studio's sentence, with
+ * no pointer, since a pointer may hold a key the package chose.
+ */
+function packageDefectAnswer(engine: EngineRecord, error: HostDefectError): string {
+  if (engine.grants.ownWords === "scrubbed") return packageDefectWords(error);
+  const rules = [...new Set(error.refusals.map((refusal) => refusal.rule))];
+  return `${PACKAGE_DEFECT_PREFIX} it broke the ${rules.length === 1 ? "rule" : "rules"} ${rules.join(", ")}; the server's log names where.`;
 }
 
 /** Studio's sentence for a provider package's error of `call`, which names its code; its words go to the log only. */
@@ -112,11 +142,19 @@ export function isStudioFailure(error: unknown): boolean {
 
 /**
  * Logs `error`, a failure of a provider package's `call` that is not Studio's own (`isStudioFailure`), once as the
- * package's (`logPackageError`): a host defect with a refusal of what the package answered as `packageDefect`, so the
+ * package's (`logPackageError`): a host defect with a refusal of what the package answered as `loggedDefect`, so the
  * log names the package as its author.
  */
 export function logPackageFailure(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
-  logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
+  logPackageError(call, error instanceof HostDefectError ? loggedDefect(error, scrub) : error, scrub, route);
+}
+
+/**
+ * Whether `packageFailureAnswer` answers `error`, a failure of `engine`'s call, as the package's, and so logs it once:
+ * any failure of a record no legacy provider serves that is not Studio's own (`isStudioFailure`).
+ */
+export function isPackageFailure(engine: EngineRecord, error: unknown): boolean {
+  return !engine.offers.legacyProvider && !isStudioFailure(error);
 }
 
 /**
@@ -141,9 +179,10 @@ export function packageWarnings(
 /**
  * The error a route answers for `error`, a failure of the `call` of `engine`'s session, the one answer of a provider
  * package's failure on every route: a legacy record's failure (`offers.legacyProvider`) and Studio's own failure
- * (`isStudioFailure`) as raised; a host defect with a refusal of what the package answered logged once and answered in
- * `packageDefect`'s words, on both grants, as a `ConnectionError` marked not-sent for an open; and any other value logged once as the package's (`logPackageError`), on both
- * grants, then answered by the record's `grants.ownWords`. An open's is a `ConnectionError` marked not-sent, since an
+ * (`isStudioFailure`) as raised; a host defect with a refusal of what the package answered logged once as
+ * `loggedDefect` and answered in `packageDefectAnswer`'s words, on both grants, as a `ConnectionError` marked not-sent
+ * for an open; and any other value logged once as the package's (`logPackageError`), on both grants, then answered by
+ * the record's `grants.ownWords`. What it logs is exactly what `isPackageFailure` holds for. An open's is a `ConnectionError` marked not-sent, since an
  * open sends no statement: its message the error's own through core's scrub where the words are `"scrubbed"`, and
  * Studio's sentence naming its code where they are `"code-only"` or the value is no `Error` and has no words. An
  * execute's is the error as raised where the words are `"scrubbed"`, answered through core's scrub by the route, and a
@@ -157,11 +196,11 @@ export function packageFailureAnswer(
   scrub: ProviderTextScrub,
   route: string,
 ): unknown {
-  if (engine.offers.legacyProvider || isStudioFailure(error)) return error;
+  if (!isPackageFailure(engine, error)) return error;
   if (error instanceof HostDefectError) {
-    const defect = packageDefect(error);
-    logPackageError(call, defect, scrub, route);
-    return call === "open" ? notSentConnectionError(defect.message) : defect;
+    logPackageError(call, loggedDefect(error, scrub), scrub, route);
+    const answer = packageDefectAnswer(engine, error);
+    return call === "open" ? notSentConnectionError(answer) : new Error(answer);
   }
   logPackageError(call, error, scrub, route);
   const granted = engine.grants.ownWords === "scrubbed";

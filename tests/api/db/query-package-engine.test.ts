@@ -284,7 +284,10 @@ function hooksFor(
 /** The names of the calls `seen` recorded. */
 const names = (seen: Seen) => seen.calls.map(({ name }) => name);
 
-/** The message a malformed execute answer is answered with: the package's defect, each refusal at its pointer. */
+/**
+ * The words of a malformed execute answer's defect, each refusal at its pointer: its log line's on both grants, and its
+ * answer's where a register row grants the package's words.
+ */
 function packageDefectSentence(...refusals: (string | [string, string])[]): string {
   const read = refusals.map(
     (refusal): CallRefusal =>
@@ -293,6 +296,19 @@ function packageDefectSentence(...refusals: (string | [string, string])[]): stri
         : { rule: "execute-answer-unreadable", pointer: refusal[0], name: refusal[1] },
   );
   return `${PACKAGE_DEFECT_PREFIX} ${read.map(callRefusalSentence).join(" ")}`;
+}
+
+/** The message a code-only engine's client gets for a package's defect: the rules it broke, and no pointer. */
+function codeOnlyDefectSentence(...rules: string[]): string {
+  return `${PACKAGE_DEFECT_PREFIX} it broke the ${rules.length === 1 ? "rule" : "rules"} ${rules.join(", ")}; the server's log names where.`;
+}
+
+/**
+ * The message `engine`'s client gets for an execute answer refused at `refusals`: the pointers where its register row
+ * grants its own words, and the rule alone where it does not.
+ */
+function answeredDefect(engine: string, ...refusals: (string | [string, string])[]): string {
+  return engine === WORDS ? packageDefectSentence(...refusals) : codeOnlyDefectSentence("execute-answer-unreadable");
 }
 
 /** A connection of `engine` with its own id and a generated secret. */
@@ -763,11 +779,9 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
         "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words.",
       ]);
       expect(JSON.stringify([failed.body, refused.body])).not.toContain(secret);
-      // Each logged once, through core's scrub of the connection: the secret is withheld there too.
-      // Each package error logged once, through core's scrub of the connection, so the secret is withheld there too;
-      // the route's own line of the answer carries Studio's sentence.
-      const packageLines = error.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
-      expect(packageLines.map(([message]) => message)).toEqual([
+      // Each package error logged once, through core's scrub of the connection, so the secret is withheld there too,
+      // and the route writes no second line of the answer.
+      expect(error.mock.calls.map(([message]) => message)).toEqual([
         "A provider package's execute failed",
         "A provider package's open failed",
       ]);
@@ -808,6 +822,12 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
         500,
         "INTERNAL_ERROR",
         "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+      ]);
+      // One line per failed statement, the package's, on both grants: the route writes no second line of its own.
+      expect(error.mock.calls.map(([message]) => message)).toEqual([
+        "A provider package's execute failed",
+        "A provider package's execute failed",
+        "A provider package's execute failed",
       ]);
     } finally {
       error.mockRestore();
@@ -855,13 +875,13 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
 
   test("a package's open answering a refinement it cannot have is answered as a not-sent connection error on both grants, the refusal logged as the package's", async () => {
     const key = `k${randomUUID().replaceAll("-", "")}`;
-    // The host core refuses the open's answer, and the one open function raises that refusal in its own sentence.
-    const refusedWords = `The provider package's open was refused: ${callRefusalSentence({ rule: "refinement-key-unknown", pointer: `/${key}`, name: key })}`;
+    // The host core refuses the open's answer, and the one open function raises that refusal as the package's defect.
+    const refusedWords = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence({ rule: "refinement-key-unknown", pointer: `/${key}`, name: key })}`;
     const error = spyOn(logger, "error").mockImplementation(() => undefined);
     try {
       for (const [engine, answered] of [
         [WORDS, refusedWords],
-        [MAIN, "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words."],
+        [MAIN, codeOnlyDefectSentence("refinement-key-unknown")],
       ] as const) {
         const executed: string[] = [];
         setHooks(engine, {
@@ -881,13 +901,14 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
         ]);
         expect(executed).toEqual([]);
       }
-      // Logged once per engine as the package's, naming the rule and the pointer, beside the route's connection line.
-      const packageLines = error.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
-      expect(packageLines.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
+      // Logged once per engine as the package's, naming the rule and the pointer, and by no second line of the route's.
+      expect(error.mock.calls.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
         ["A provider package's open failed", refusedWords],
         ["A provider package's open failed", refusedWords],
       ]);
-      expect(error.mock.calls.map(([message]) => message)).not.toContain("Unhandled error");
+      expect(JSON.stringify(error.mock.calls.map(([message, logged]) => [message, String(logged)]))).not.toContain(
+        HOST_DEFECT_PREFIX,
+      );
     } finally {
       error.mockRestore();
       hooksFor(WORDS);
@@ -913,11 +934,11 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
         expect([refused.status, refused.body.code, refused.body.error]).toEqual([
           500,
           "INTERNAL_ERROR",
-          packageDefectSentence("/executionTimeMs"),
+          answeredDefect(engine, "/executionTimeMs"),
         ]);
       }
-      const packageLines = error.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
-      expect(packageLines.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
+      // One line per failure, naming the pointer on both grants: the route writes no second line of its own.
+      expect(error.mock.calls.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
         ["A provider package's execute failed", packageDefectSentence("/executionTimeMs")],
         ["A provider package's execute failed", packageDefectSentence("/executionTimeMs")],
       ]);
@@ -988,7 +1009,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
           expect([answered.status, answered.body.code, answered.body.error]).toEqual([
             500,
             "INTERNAL_ERROR",
-            packageDefectSentence(refusal as string | [string, string]),
+            answeredDefect(engine, refusal as string | [string, string]),
           ]);
           expect(JSON.stringify(answered.body)).not.toContain(secret);
         }
@@ -1142,17 +1163,25 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
           }),
       });
       const answered = await post({ connection, sql: "SELECT 1" });
+      // The client of a code-only engine is told the rule; the pointers, a key the package chose among them, go to the
+      // log only.
       expect([answered.status, answered.body.code, answered.body.error]).toEqual([
         500,
         "INTERNAL_ERROR",
-        packageDefectSentence(
-          ["/warnings/1/detail", "detail"],
-          "/warnings/2/message",
-          "/warnings/3/code",
-          "/warnings/4/severity",
-          "/warnings/5/message",
-          "/warnings/7",
-        ),
+        codeOnlyDefectSentence("execute-answer-unreadable"),
+      ]);
+      expect(error.mock.calls.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
+        [
+          "A provider package's execute failed",
+          packageDefectSentence(
+            ["/warnings/1/detail", "detail"],
+            "/warnings/2/message",
+            "/warnings/3/code",
+            "/warnings/4/severity",
+            "/warnings/5/message",
+            "/warnings/7",
+          ),
+        ],
       ]);
       // No warning is logged as one: the answer was refused before any warning reached the route.
       expect(warn.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"))).toEqual([]);
@@ -1196,7 +1225,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
         expect([refused.status, refused.body.code, refused.body.error]).toEqual([
           500,
           "INTERNAL_ERROR",
-          packageDefectSentence("/warnings"),
+          answeredDefect(engine, "/warnings"),
         ]);
         expect(walked).toBe(0);
         expect(JSON.stringify(refused.body)).not.toContain(secret);
@@ -1239,7 +1268,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
           expect([refused.status, refused.body.code, refused.body.error]).toEqual([
             500,
             "INTERNAL_ERROR",
-            packageDefectSentence(pointer),
+            answeredDefect(engine, pointer),
           ]);
           expect(JSON.stringify(refused.body)).not.toContain(secret);
         };

@@ -438,9 +438,9 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       expect(attributed()).toEqual({ studio: 1, open: 0, health: 0 });
       expect(seen).toEqual(["open", "close"]);
 
-      // A refinement that widens what the package declared is what the package answered: the package's defect,
-      // answered and logged in Studio's words naming the rule and the pointer, and, since an open sends no statement,
-      // answered as a connection error marked not-sent.
+      // A refinement that widens what the package declared is what the package answered: the package's defect, logged
+      // in Studio's words naming the rule and the pointer, and answered to this engine, which no row grants its own
+      // words, naming the rule alone; since an open sends no statement, as a connection error marked not-sent.
       error.mockClear();
       openOverride = () => Promise.reject(hostDefect({ rule: "refinement-widens", pointer: "/console" }));
       const widened = await routeAnswer(VALID);
@@ -449,7 +449,7 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
         503,
         "CONNECTION_ERROR",
         "not-sent",
-        defect,
+        `${PACKAGE_DEFECT_PREFIX} it broke the rule refinement-widens; the server's log names where.`,
       ]);
       expect(attributed()).toEqual({ studio: 0, open: 1, health: 0 });
       const logged = error.mock.calls.find(([line]) => line === "A provider package's open failed")?.[1];

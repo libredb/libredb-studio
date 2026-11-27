@@ -18,12 +18,13 @@
  * for Test Connection's one open (`openEngineOnce`), and inside `connectPhase` for the editor's cached open that
  * connects (`getOrCreateEditorSession`), which mark its errors not-sent.
  */
-import { callRefusalSentence, type EnvReader } from "@libredb/provider-sdk/calls";
+import type { EnvReader } from "@libredb/provider-sdk/calls";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { assertOpenable, type OpenPurpose } from "@/lib/db/open-check";
 import { type EngineConnection, type EngineRecord, servedPackage } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, ProviderExecutionContext, ProviderOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { HostDefectError } from "./access";
 import { type ContractSession, openContractSession } from "./core/contract-session";
 import { openLegacyEngine } from "./legacy-adapter/open";
 import { packageEnvironment, packageOpenContext } from "./open-context";
@@ -57,9 +58,12 @@ export type OpenedEngine =
 
 /**
  * Opens a session of `engine`'s package for `connection` through the package's `open`, with the context core builds;
- * see `packageOpenContext`. A stop answers the signal's reason; an answer the host refuses is a package defect, an
- * `Error` naming each refusal. A failure the package answers after the caller stopped waiting is logged by the
- * connection, its kind and its code, never its text.
+ * see `packageOpenContext`. A stop answers the signal's reason. An open the host refused is a `HostDefectError` carrying
+ * the refusals, the class the accessor builds for a refusal no row of it reads (./access.ts): a refinement the open
+ * answered is refused by rules whose author is the package, so every route answers it as the package's defect, naming
+ * each rule (`packageFailureAnswer` in src/lib/api/package-errors.ts), and a refusal of the call's start, its deadline
+ * passed or its signal aborted before `open` was called, by rules whose author is Studio. A failure the package
+ * answers after the caller stopped waiting is logged by the connection, its kind and its code, never its text.
  */
 async function openPackageEngine(
   engine: EngineRecord,
@@ -79,11 +83,7 @@ async function openPackageEngine(
   };
   const record = await openContractSession(served.record.impl, ctx, served.session, late);
   if (record.kind === "stopped") throw record.reason;
-  if (record.kind === "refused") {
-    throw new Error(
-      `The provider package's open was refused: ${record.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`,
-    );
-  }
+  if (record.kind === "refused") throw new HostDefectError(record.refusals);
   return { session: record.session, env };
 }
 
@@ -92,6 +92,7 @@ async function openPackageEngine(
  *
  * @throws {DatabaseConfigError} Not-sent, when the open check refuses the connection; or a refusal of the record's
  * open.
+ * @throws {HostDefectError} When the host refused a package's open, carrying the refusals (`openPackageEngine`).
  * @throws {Error} A host defect: a package's open without `within`, raised before the package's `open` is called.
  * @throws A provider constructor's or the package's error, by reference.
  */

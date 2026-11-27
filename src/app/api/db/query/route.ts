@@ -10,7 +10,7 @@ import { editorTarget } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, openWithinBudget, runEditorQuery } from "@/lib/api/editor-query";
-import { packageFailureAnswer } from "@/lib/api/package-errors";
+import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import {
   type EngineConnection,
@@ -117,6 +117,8 @@ export async function POST(req: NextRequest) {
   let submitted: string | null = null;
   let explainMode: ExplainMode | undefined;
   let stage: "request" | "admission" | "execution" = "request";
+  // Whether the failure the `catch` below answers was logged already, as a provider package's (`answeredFailure`).
+  const failure = { logged: false };
 
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
@@ -336,7 +338,7 @@ export async function POST(req: NextRequest) {
     const opening = connection;
     const target = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
       editorTarget(guard.session, opening, engine, requestCatalog(body), wait),
-    ).catch(answeredFailure(engine, "open", scrub));
+    ).catch(answeredFailure(engine, "open", scrub, failure));
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling
@@ -380,7 +382,7 @@ export async function POST(req: NextRequest) {
       signal: req.signal,
       route: ROUTE,
       scrub,
-    }).catch(answeredFailure(engine, "execute", scrub));
+    }).catch(answeredFailure(engine, "execute", scrub, failure));
     recordExecutedUnit(events, {
       connection,
       statement: submitted,
@@ -405,8 +407,9 @@ export async function POST(req: NextRequest) {
     } else if (stage === "admission" || (connection === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection, statement: submitted, started, error });
     }
-    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
-    return createErrorResponse(error, { route: ROUTE, scrub });
+    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub, and a
+    // package's failure `answeredFailure` logged gets no second line.
+    return createErrorResponse(error, { route: ROUTE, scrub, logged: failure.logged });
   }
 }
 
@@ -415,14 +418,17 @@ export async function POST(req: NextRequest) {
  * as Test Connection reads it (`packageFailureAnswer` in src/lib/api/package-errors.ts; docs/providers/CONTRACT.md,
  * clause C-112). A legacy engine's failure is answered as raised, through the connection's scrub; a package's open
  * failure as a not-sent connection error; a refusal of what a package answered as the package's defect; and a
- * package's own words only where its register row grants them, through core's `scrub`.
+ * package's own words only where its register row grants them, through core's `scrub`. A package's failure is logged
+ * there once (`isPackageFailure`), which `failure.logged` records for the route's answer, so it writes no second line.
  */
 function answeredFailure(
   engine: EngineRecord,
   call: "open" | "execute",
   scrub: ProviderTextScrub,
+  failure: { logged: boolean },
 ): (error: unknown) => never {
   return (error) => {
+    failure.logged = isPackageFailure(engine, error);
     throw packageFailureAnswer(engine, call, error, scrub, ROUTE);
   };
 }

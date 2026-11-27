@@ -796,7 +796,11 @@ describe("the sessions of a provider package's engine", () => {
       open: () => Promise.resolve({ handle: 1, refine: { calls: { console: { endScope: "offered" } } } }),
     });
     const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
-    expect((error as Error).message).toStartWith("The provider package's open was refused:");
+    // The host defect carrying the refusals, which every route answers as the package's defect by their rules.
+    expect(error).toBeInstanceOf(HostDefectError);
+    expect((error as InstanceType<typeof HostDefectError>).refusals.map((refusal) => refusal.rule)).toEqual([
+      "refinement-widens",
+    ]);
     expect(errorKind(error)).toBe("internal");
 
     record(MAIN);

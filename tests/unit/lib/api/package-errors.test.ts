@@ -2,7 +2,9 @@
  * How a route answers a failure of a provider package's call (docs/providers/CONTRACT.md, clause C-112,
  * `packageFailureAnswer` in src/lib/api/package-errors.ts): a legacy record's failure and Studio's own failure, a
  * `DatabaseError` or a refusal the host core raises about Studio's own request, are answered as raised; a refusal of
- * what the package answered is the package's defect, answered and logged under `PACKAGE_DEFECT_PREFIX` on both grants;
+ * what the package answered is the package's defect, answered and logged under `PACKAGE_DEFECT_PREFIX` on both grants,
+ * its log line naming each pointer and the closes that failed, and its answer each pointer only where a row grants the
+ * package's words;
  * any other value is the package's own error, logged once through core's scrub on both grants and answered by its
  * record's grant: an open's as a not-sent `ConnectionError`, an execute's as Studio's sentence naming its code or as
  * raised. A package's warnings reach the client only as Studio's sentence naming their count. The refused records are
@@ -12,7 +14,12 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { createErrorResponse } from "@/lib/api/errors";
-import { PACKAGE_DEFECT_PREFIX, packageFailureAnswer, packageWarnings } from "@/lib/api/package-errors";
+import {
+  isPackageFailure,
+  PACKAGE_DEFECT_PREFIX,
+  packageFailureAnswer,
+  packageWarnings,
+} from "@/lib/api/package-errors";
 import { ConnectionError, StudioOffsetRefusal } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
@@ -38,10 +45,18 @@ const LEGACY = engineOf(true, "scrubbed");
 const CODE_ONLY = engineOf(false, "code-only");
 const GRANTED = engineOf(false, "scrubbed");
 
-/** The error the accessor builds for a call the host refused with `refusals`, after the package was called. */
-function refused(refusals: CallRefusal[]): HostDefectError {
+/** The message a code-only engine's client gets for a package's defect: the rules it broke, and no pointer. */
+function codeOnlyDefectSentence(...rules: string[]): string {
+  return `${PACKAGE_DEFECT_PREFIX} it broke the ${rules.length === 1 ? "rule" : "rules"} ${rules.join(", ")}; the server's log names where.`;
+}
+
+/**
+ * The error the accessor builds for a call the host refused with `refusals`, after the package was called, with the
+ * errors of the closes that failed when given.
+ */
+function refused(refusals: CallRefusal[], closeFailures?: unknown[]): HostDefectError {
   const error = refusalError(
-    { kind: "refused", called: true, refusals },
+    { kind: "refused", called: true, refusals, ...(closeFailures === undefined ? {} : { closeFailures }) },
     { caller: new AbortController().signal, deadlineSentence: "The query ran past its timeout." },
   );
   if (!(error instanceof HostDefectError)) throw new Error(`expected a host defect, got ${error.name}`);
@@ -87,15 +102,19 @@ describe("packageFailureAnswer", () => {
       expect(lines).toEqual([]);
     }
 
-    // A refusal of what the package answered is its defect on both grants, answered and logged in Studio's words.
+    // A refusal of what the package answered is its defect on both grants, answered and logged in Studio's words: the
+    // pointer, which may hold a key the package chose, reaches the client only where a row grants the package's words.
     const key = `k${randomUUID().replaceAll("-", "")}`;
     const malformed = refused([{ rule: "execute-answer-unreadable", pointer: `/warnings/0/${key}`, name: key }]);
     const sentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(malformed.refusals[0] as CallRefusal)}`;
-    for (const engine of [CODE_ONLY, GRANTED]) {
+    for (const [engine, client] of [
+      [CODE_ONLY, codeOnlyDefectSentence("execute-answer-unreadable")],
+      [GRANTED, sentence],
+    ] as const) {
       const error = spyOn(logger, "error").mockImplementation(() => undefined);
       const answered = packageFailureAnswer(engine, "execute", malformed, scrub, ROUTE);
       expect(answered).not.toBeInstanceOf(HostDefectError);
-      expect((answered as Error).message).toBe(sentence);
+      expect((answered as Error).message).toBe(client);
       expect(error.mock.calls.map(([message, logged]) => [message, (logged as Error).message])).toEqual([
         ["A provider package's execute failed", sentence],
       ]);
@@ -105,7 +124,10 @@ describe("packageFailureAnswer", () => {
     // The same defect of an open sent no statement: a not-sent connection error in the same words, on both grants.
     const widened = refused([{ rule: "refinement-widens", pointer: "/calls/console/cancel" }]);
     const widenedSentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(widened.refusals[0] as CallRefusal)}`;
-    for (const engine of [CODE_ONLY, GRANTED]) {
+    for (const [engine, client] of [
+      [CODE_ONLY, codeOnlyDefectSentence("refinement-widens")],
+      [GRANTED, widenedSentence],
+    ] as const) {
       let answered: unknown;
       let logged: unknown[][] = [];
       const error = spyOn(logger, "error").mockImplementation(() => undefined);
@@ -116,7 +138,7 @@ describe("packageFailureAnswer", () => {
         error.mockRestore();
       }
       expect(answered).toBeInstanceOf(ConnectionError);
-      expect([(answered as Error).message, errorOutcome(answered)]).toEqual([widenedSentence, "not-sent"]);
+      expect([(answered as Error).message, errorOutcome(answered)]).toEqual([client, "not-sent"]);
       expect(logged).toEqual([["A provider package's open failed", widenedSentence]]);
     }
 
@@ -156,6 +178,51 @@ describe("packageFailureAnswer", () => {
       expect(errorOutcome(answered)).toBe("unknown");
       expect(lines).toEqual(["A provider package's execute failed"]);
     }
+  });
+
+  test("a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub", () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const closeWords = `close failed ${randomUUID()}`;
+    const malformed = refused(
+      [
+        { rule: "execute-answer-unreadable", pointer: "/executionTimeMs" },
+        { rule: "execute-answer-unreadable", pointer: `/warnings/0/${key}`, name: key },
+        { rule: "batch-malformed", pointer: "/rows" },
+      ],
+      [new Error(closeWords), new Error(`as ${secret} said`), "a thrown text"],
+    );
+    const sentences = malformed.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ");
+    const logged = `${PACKAGE_DEFECT_PREFIX} ${sentences} Closing the result sources it handed over failed too: ${closeWords}; ${PROVIDER_TEXT_WITHHELD}; a thrown text.`;
+    for (const [engine, client] of [
+      [CODE_ONLY, codeOnlyDefectSentence("execute-answer-unreadable", "batch-malformed")],
+      [GRANTED, `${PACKAGE_DEFECT_PREFIX} ${sentences}`],
+    ] as const) {
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        const answered = packageFailureAnswer(engine, "execute", malformed, scrub, ROUTE);
+        expect((answered as Error).message).toBe(client);
+        expect(error.mock.calls.map(([message, value]) => [message, (value as Error).message])).toEqual([
+          ["A provider package's execute failed", logged],
+        ]);
+        expect(JSON.stringify(error.mock.calls.map(([, value]) => String(value)))).not.toContain(secret);
+      } finally {
+        error.mockRestore();
+      }
+    }
+  });
+
+  test("isPackageFailure holds exactly for the failures packageFailureAnswer answers and logs as the package's", () => {
+    const defect = refused([{ rule: "batch-malformed", pointer: "/rows" }]);
+    const studioDefect = refused([{ rule: "request-scope-not-offered", pointer: "/scope" }]);
+    const own = new Error(randomUUID());
+    expect([
+      isPackageFailure(LEGACY, own),
+      isPackageFailure(CODE_ONLY, new StudioOffsetRefusal(randomUUID())),
+      isPackageFailure(GRANTED, studioDefect),
+      isPackageFailure(CODE_ONLY, defect),
+      isPackageFailure(GRANTED, own),
+      isPackageFailure(CODE_ONLY, "a thrown text"),
+    ]).toEqual([false, false, false, true, true, true]);
   });
 
   test("a host defect Studio raised while serving a package call answers and logs as Studio's own internal error", async () => {

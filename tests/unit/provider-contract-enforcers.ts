@@ -2052,6 +2052,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a served open is held to the maintenance of the engine its context names, which the module declares",
         "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources",
         "a close that fails beside a refused answer is thrown with the refusal first",
+        "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
       ],
     },
   },
@@ -3190,6 +3191,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/provider-host/core/console.test.ts": [
         "a malformed execution time, row count or warning list is refused at the core as the package's defect",
         "a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list",
+        "closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
@@ -3213,6 +3215,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/api/package-errors.test.ts": [
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
+        "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
       ],

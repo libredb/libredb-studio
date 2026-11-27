@@ -154,8 +154,9 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  * - the connect warnings and test-only cautions, where the record offers them (`offers.testCautions`);
  * - a failure of the open: answered by `packageFailureAnswer` (./package-errors), a package's as a not-sent connection
  *   error in its own words through core's scrub where its record grants them (`grants.ownWords` `"scrubbed"`) and in
- *   Studio's sentence naming its code where it does not, logged once as the package's on both grants, while a legacy
- *   provider's failure and Studio's own, a `DatabaseError` or a host defect of Studio's, are raised as themselves;
+ *   Studio's sentence naming its code where it does not, a refusal of what its open answered as the package's defect
+ *   naming its rules, logged once as the package's on both grants, while a legacy provider's failure and Studio's own,
+ *   a `DatabaseError` or a host defect of Studio's, are raised as themselves;
  * - the words of a health failure (`grants.ownWords`): `"scrubbed"`, its sentence passes core's scrub of
  *   `connection`; `"code-only"`, a package's is logged once as the package's and answered with Studio's sentence naming
  *   its code (`logPackageFailure` in ./package-errors), while Studio's own failure is raised as itself.
