@@ -11,9 +11,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { compileManifestValidator, type EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import { compileManifestValidator } from "@libredb/provider-sdk/manifest";
 import {
   admittedDeclarations,
+  type BundledDeclaration,
   ENGINE_CATALOG_MODULE,
   ENGINE_CLAIMS_MODULE,
   ENGINE_CONNECTION_FLAGS_MODULE,
@@ -80,8 +81,8 @@ import { fixtureEngineDeclaration } from "../../helpers/fixture-engine-declarati
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
 
-const ADMITTED: readonly EngineDeclaration[] = admittedDeclarations();
-const POSTGRES = ADMITTED.find((d) => d.id === "postgres") as EngineDeclaration;
+const ADMITTED: readonly BundledDeclaration[] = admittedDeclarations();
+const POSTGRES = ADMITTED.find((d) => d.id === "postgres") as BundledDeclaration;
 const FIXTURE = fixtureEngineDeclaration(POSTGRES);
 
 /** `list` in a fixed shuffled order: every third declaration first, then the rest, both reversed. */
@@ -506,7 +507,7 @@ describe("each projection of the admitted declarations, built with and without a
     // and language data requests its declaration states, as the server catalog's composer makes a package's, and each
     // set's grant reads the seed-only fields its own declarations project, as a loader's would.
     const legacyRows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
-    const grantsOf = (set: readonly EngineDeclaration[]) => {
+    const grantsOf = (set: readonly BundledDeclaration[]) => {
       const requests = projectClaimRequests(set);
       const seedOnly = projectConnectionTables(set).seedOnly;
       const declared = new Map(set.map((declaration) => [declaration.id, declaration]));
@@ -516,8 +517,8 @@ describe("each projection of the admitted declarations, built with and without a
           grantEngineClaims(
             id,
             requested,
-            declaredSqlTextRequest(declared.get(id) as EngineDeclaration),
-            declaredLanguageDataRequest(declared.get(id) as EngineDeclaration),
+            declaredSqlTextRequest(declared.get(id) as BundledDeclaration),
+            declaredLanguageDataRequest(declared.get(id) as BundledDeclaration),
             Object.hasOwn(legacyRows, id) ? legacyRows[id] : null,
             seedOnly,
           ),

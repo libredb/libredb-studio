@@ -5,8 +5,7 @@
  * at that slot. A name the table holds no function for at that slot is refused by name, with no default.
  */
 import { describe, expect, test } from "bun:test";
-import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
-import { admittedDeclarations } from "../../../../scripts/generate-engine-catalog";
+import { admittedDeclarations, type BundledDeclaration } from "../../../../scripts/generate-engine-catalog";
 import {
   CONNECTION_STRING_FUNCTIONS,
   type ConnectionStringFunctions,
@@ -16,7 +15,7 @@ import { type ConnectionStringEntry, projectConnectionStrings } from "@/lib/db/e
 import type { DatabaseType } from "@/lib/types";
 import { fixtureEngineDeclaration } from "../../../helpers/fixture-engine-declaration";
 
-const ADMITTED: readonly EngineDeclaration[] = admittedDeclarations();
+const ADMITTED: readonly BundledDeclaration[] = admittedDeclarations();
 const STRINGS = projectConnectionStrings(ADMITTED);
 
 /** The projected connection string entry of `type`. */
@@ -30,7 +29,7 @@ const sorted = (list: readonly string[]) => [...list].sort();
 
 describe("composing a connection string", () => {
   test("a declaration naming a function Studio holds none for is refused by name when its connection string is composed", () => {
-    const fixture = fixtureEngineDeclaration(ADMITTED.find((d) => d.id === "postgres") as EngineDeclaration);
+    const fixture = fixtureEngineDeclaration(ADMITTED.find((d) => d.id === "postgres") as BundledDeclaration);
     const naming = {
       ...fixture,
       connection: {
@@ -107,7 +106,7 @@ describe("composing a connection string", () => {
   });
 
   test("Studio's connection string function table holds exactly the functions the committed declarations name, each at its own slot", () => {
-    const named = (read: (d: EngineDeclaration) => string | null) =>
+    const named = (read: (d: BundledDeclaration) => string | null) =>
       Object.fromEntries(
         ADMITTED.flatMap((d) => {
           const name = read(d);

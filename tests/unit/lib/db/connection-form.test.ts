@@ -14,8 +14,8 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
 import * as fieldRules from "@/lib/db/connection-field-rules";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
-import type { EngineDeclaration, TlsMode } from "@libredb/provider-sdk/manifest";
-import { admittedDeclarations } from "../../../../scripts/generate-engine-catalog";
+import type { TlsMode } from "@libredb/provider-sdk/manifest";
+import { admittedDeclarations, type BundledDeclaration } from "../../../../scripts/generate-engine-catalog";
 import { CONNECTION_FORM_URI_MODE } from "@/lib/db/compatibility";
 import { CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import {
@@ -409,9 +409,9 @@ describe("CONNECTION_PICKER_ORDER", () => {
 });
 
 describe("CONNECTION_FORM, composed from each engine's declaration and Studio's function table", () => {
-  const ADMITTED: readonly EngineDeclaration[] = admittedDeclarations();
+  const ADMITTED: readonly BundledDeclaration[] = admittedDeclarations();
   const FORMS = projectConnectionForms(ADMITTED);
-  const declared = (type: DatabaseType): EngineDeclaration => {
+  const declared = (type: DatabaseType): BundledDeclaration => {
     const declaration = ADMITTED.find((d) => d.id === type);
     if (declaration === undefined) throw new Error(`no declaration of ${type}`);
     return declaration;
@@ -618,7 +618,7 @@ describe("CONNECTION_FORM, composed from each engine's declaration and Studio's 
   });
 
   test("Studio's function table holds exactly the functions the committed declarations name, each at its own slot", () => {
-    const named = (read: (d: EngineDeclaration) => readonly (string | null)[]) =>
+    const named = (read: (d: BundledDeclaration) => readonly (string | null)[]) =>
       Object.fromEntries(
         ADMITTED.flatMap((d) => {
           const names = read(d).filter((name): name is string => name !== null);
