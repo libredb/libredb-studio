@@ -41,7 +41,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
-import { type AgentStatementLanguageId, planDeliverableOf, requiredVariant } from "./agent-manifest";
+import { planDeliverableOf, requiredVariant } from "./agent-manifest";
 import { mergeDisjoint } from "./disjoint-merge";
 import { composedClaims, planArtifacts, recommendsIndex, verifyInvestigationGoal } from "./goal-claims";
 import type { AgentFamilyVerifierIds, AgentGoalRule, AgentPackShortfall } from "./languages/pack";
@@ -110,8 +110,8 @@ export type AgentGoalVerifierId =
    * frozen and the next change to it is `.2`.
    */
   | "agent-data-analysis.1"
-  /** Every family's own verifiers, one row per family in `AgentFamilyVerifierIds`. */
-  | AgentFamilyVerifierIds[AgentStatementLanguageId];
+  /** Every module family's own verifiers, one row per family in `AgentFamilyVerifierIds`. */
+  | AgentFamilyVerifierIds[keyof AgentFamilyVerifierIds];
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of

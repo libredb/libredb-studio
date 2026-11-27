@@ -7,13 +7,16 @@
  * the repair ledger's identity of one call, and the advice a refused read carries back. The adapters reach
  * `node:crypto`, which is why they are separate modules and why nothing a client component imports may reach them.
  *
- * The record is total over `AgentStatementLanguageId`, so a later language does not compile until it registers its
- * pack here. A language id the record does not hold can still arrive from a ledger, and reaching one is a named
- * error rather than a quiet fall back to SQL: a statement fingerprinted as SQL, or refused with a SQL sentence, is a
- * wrong answer that looks like a right one.
+ * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
+ * it registers its pack here, and then every language the bundled declarations state agent data for
+ * (`DECLARED_AGENT_LANGUAGES` in `client.ts`), composed from its data by `declared-server.ts`; a declared language
+ * contributes nothing to the merged tables below. A language id the record does not hold can still arrive from a
+ * ledger, and reaching one is a named error rather than a quiet fall back to SQL: a statement fingerprinted as SQL, or
+ * refused with a SQL sentence, is a wrong answer that looks like a right one.
  */
-import type { AgentStatementLanguageId } from "../agent-manifest";
+import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
+import { UNAVAILABLE_TEXT } from "../tool-contracts";
 import type { AgentRunWorkflowType } from "../types";
 import { INFLUXQL_SERVER_PACK } from "./influxql/server";
 import { KUBECTL_SERVER_PACK } from "./kubectl/server";
@@ -38,6 +41,8 @@ import { OPCUAREAD_SERVER_PACK } from "./opcuaread/server";
 import { MTCONNECTREAD_SERVER_PACK } from "./mtconnectread/server";
 import { MQTTREAD_SERVER_PACK } from "./mqttread/server";
 import { SPARKPLUGREAD_SERVER_PACK } from "./sparkplugread/server";
+import { DECLARED_AGENT_LANGUAGES } from "./client";
+import { composeDeclaredServerPack } from "./declared-server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -49,7 +54,7 @@ import { SQL_SERVER_PACK } from "./sql/server";
  */
 export const CURATED_CALL_LANGUAGE = "sql" as const satisfies AgentStatementLanguageId;
 
-const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerPack>> = Object.freeze({
+const MODULE_SERVER_PACKS = Object.freeze({
   sql: SQL_SERVER_PACK,
   kubectl: KUBECTL_SERVER_PACK,
   mongo: MONGO_SERVER_PACK,
@@ -74,7 +79,20 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   mtconnectread: MTCONNECTREAD_SERVER_PACK,
   mqttread: MQTTREAD_SERVER_PACK,
   sparkplugread: SPARKPLUGREAD_SERVER_PACK,
-} satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
+} satisfies Record<AgentModuleLanguageId, AgentLanguageServerPack>);
+
+/** Each declared language's server facet, composed from its data, a plan or a profile answered in Studio's words. */
+const DECLARED_SERVER_PACKS: Readonly<Record<string, AgentLanguageServerPack>> = Object.fromEntries(
+  DECLARED_AGENT_LANGUAGES.map(({ id, agent }) => [
+    id,
+    composeDeclaredServerPack(id, agent, UNAVAILABLE_TEXT.ANSWER_NOT_A_DATA_READ),
+  ]),
+);
+
+const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerPack>> = Object.freeze({
+  ...MODULE_SERVER_PACKS,
+  ...DECLARED_SERVER_PACKS,
+});
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
 export function languageServerPack(language: AgentStatementLanguageId): AgentLanguageServerPack {
@@ -137,10 +155,11 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
 );
 
 /**
- * The tool rules by language, then by workflow: each pack's own record, the very object it holds. The SQL record
- * is total. A language holds rules for the workflows it has a variant of, and no more: `systemPrompt` throws for an
- * agent-mode run whose language has none, which `requiredVariant` would already have refused. `operations` sends no
- * statement in any language, so every pack holds the SQL rules for it, `OPERATIONS_TOOL_RULE` in `shared.ts`.
+ * The tool rules by language, then by workflow: each pack's own record, the very object it holds, a declared
+ * language's after the module languages'. The SQL record is total. A language holds rules for the workflows it has a
+ * variant of, and no more: `systemPrompt` throws for an agent-mode run whose language has none, which `requiredVariant`
+ * would already have refused. `operations` sends no statement in any language, so every pack holds the SQL rules for
+ * it, `OPERATIONS_TOOL_RULE` in `shared.ts`.
  *
  * Exported so `tests/unit/lib/agent/tool-offer-census.test.ts` can hold every rule to the tools its variant offers:
  * a rule naming a tool the run does not hold costs the run a turn on "there is no tool called ..." (#350).
@@ -172,7 +191,8 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   mtconnectread: MTCONNECTREAD_SERVER_PACK.workflowToolRules,
   mqttread: MQTTREAD_SERVER_PACK.workflowToolRules,
   sparkplugread: SPARKPLUGREAD_SERVER_PACK.workflowToolRules,
-} satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
+  ...Object.fromEntries(Object.entries(DECLARED_SERVER_PACKS).map(([id, pack]) => [id, pack.workflowToolRules])),
+} satisfies Record<AgentModuleLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
  * Every pack's shortfall notices. Global by shortfall, because a resumed run is judged by its persisted verdict

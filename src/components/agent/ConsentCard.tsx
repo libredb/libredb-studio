@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, type RefObject } from "react";
 import { Info, Play } from "lucide-react";
-import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
+import type { AgentModuleLanguageId, AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { autoExecuteTerms } from "@/lib/agent/posture";
 import { executionUiFor } from "@/lib/db/execution-ui";
@@ -104,7 +104,7 @@ interface HandoverChip {
  * "no" is the part of the promise that does not hold literally. The terms popover carries
  * that full claim; the chip is its label, and sits beside it.
  */
-const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly HandoverChip[]>> = {
+const HANDOVER_CHIPS: Readonly<Record<AgentModuleLanguageId, readonly HandoverChip[]>> = {
   sql: [
     { text: "same read-only session", tone: "neutral" },
     { text: `${AGENT_HANDOVER_BUDGET.maxResultRows} rows`, tone: "neutral" },
@@ -134,6 +134,15 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   mqttread: [],
   sparkplugread: [],
 };
+
+/**
+ * The chips `language`'s hand-over shows: its row of `HANDOVER_CHIPS` for a module language, and none for a language
+ * declared as data, whose variants never hand an answer over (`declared-client.ts`), so there is no editor run to
+ * bound.
+ */
+function handoverChips(language: AgentStatementLanguageId): readonly HandoverChip[] {
+  return Object.hasOwn(HANDOVER_CHIPS, language) ? HANDOVER_CHIPS[language as AgentModuleLanguageId] : [];
+}
 
 export function ConsentCard({
   workflowType,
@@ -254,7 +263,7 @@ export function ConsentCard({
         {autoExecute && (
           <div data-testid="agent-consent-bounds" className="ml-5 flex flex-wrap items-center gap-1">
             {[
-              ...HANDOVER_CHIPS[language],
+              ...handoverChips(language),
               /*
                 The SQLite chip is the label of the sentence below it, not a second opinion:
                 the two are adjacent, so nothing can show the compressed form alone.

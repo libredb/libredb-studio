@@ -6,10 +6,14 @@
  * imports only the leaves `workflow-tool-sets.ts` and `execution-policy.ts`. The whole pack in `index.ts` holds the
  * very objects this record holds, which `tests/unit/lib/agent/languages.test.ts` asserts.
  *
- * The record is total over `AgentStatementLanguageId`, so a later language does not compile until it registers its
- * client facet here. Its keys are declared in the order the projections in `agent-manifest.ts` list them.
+ * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
+ * it registers its client facet here, and then every language the bundled declarations state agent data for
+ * (`DECLARED_STATEMENT_LANGUAGES`), composed from its data by `declared-client.ts`; the registries in `server.ts`,
+ * `index.ts` and `mcp.ts` read the same declared languages from `DECLARED_AGENT_LANGUAGES` here. Its keys are declared
+ * in the order the projections in `agent-manifest.ts` list them, the module languages first.
  */
-import type { AgentStatementLanguageId } from "../agent-manifest";
+import { DECLARED_STATEMENT_LANGUAGES } from "@/lib/db/declared-statement-languages";
+import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
@@ -35,6 +39,7 @@ import { MQTTREAD_CLIENT_PACK } from "./mqttread/client";
 import { SPARKPLUGREAD_CLIENT_PACK } from "./sparkplugread/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
+import { composeDeclaredClientPack, type DeclaredAgentLanguage, declaredAgentLanguages } from "./declared-client";
 import type {
   AgentEvidenceEventSpec,
   AgentEvidenceEventSpecs,
@@ -75,7 +80,7 @@ export function statementFamilyOf(language: AgentStatementLanguageId | undefined
  */
 export const RETIRED_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set<string>();
 
-const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>> = Object.freeze({
+const MODULE_CLIENT_PACKS = Object.freeze({
   sql: SQL_CLIENT_PACK,
   kubectl: KUBECTL_CLIENT_PACK,
   mongo: MONGO_CLIENT_PACK,
@@ -100,20 +105,38 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   mtconnectread: MTCONNECTREAD_CLIENT_PACK,
   mqttread: MQTTREAD_CLIENT_PACK,
   sparkplugread: SPARKPLUGREAD_CLIENT_PACK,
-} satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
+} satisfies Record<AgentModuleLanguageId, AgentLanguageClientPack>);
+
+/**
+ * The languages the bundled declarations state agent data for, in their order, read once at load: a declared name a
+ * module language holds, or one two data share, fails here by name (`declaredAgentLanguages`).
+ */
+export const DECLARED_AGENT_LANGUAGES: readonly DeclaredAgentLanguage[] = declaredAgentLanguages(
+  DECLARED_STATEMENT_LANGUAGES,
+  Object.keys(MODULE_CLIENT_PACKS),
+);
+
+const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>> = Object.freeze({
+  ...MODULE_CLIENT_PACKS,
+  ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map(({ id, agent }) => [id, composeDeclaredClientPack(agent.text)])),
+});
 
 const LIVE_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(Object.keys(CLIENT_PACKS));
 
-/** Whether `value` is exactly one of the statement languages this build holds a pack for. A prototype key is not one. */
+/**
+ * Whether `value` is exactly one of the statement languages this build holds a pack for, a module language or one the
+ * bundled declarations state as data. A prototype key is not one.
+ */
 export function isAgentStatementLanguage(value: string): value is AgentStatementLanguageId {
   return LIVE_STATEMENT_LANGUAGES.has(value);
 }
 
 /**
  * The agent's statement language for `engine`'s granted statement language `granted`: `granted` itself where it is
- * null or a language this build holds a pack for. A grant reads a language as a name of the register's form, not as
- * Studio's list, so this is the one place a granted name meets the agent's packs; every caller reaches only a legacy
- * engine today, whose row grants an agent language, so a name with no pack is a host defect.
+ * null or a language this build holds a pack for, a module language or one declared as data. A grant reads a language
+ * as a name of the register's form, not as Studio's list, so this is the one place a granted name meets the agent's
+ * packs; every caller reaches only a legacy engine today, whose row grants an agent language, so a name with no pack is
+ * a host defect.
  *
  * @throws {Error} Naming the engine and the language, where agent mode holds no pack for `granted`.
  */
@@ -124,7 +147,10 @@ export function agentLanguageOfGrant(engine: string, granted: string | null): Ag
   );
 }
 
-/** The client facet for `language`. The record is total, so a typed id always has one. */
+/**
+ * The client facet for `language`. The record holds every module language and every declared one, and a declared id is
+ * only ever branded for a language the record holds, so a typed id always has one.
+ */
 export function languageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {
   return CLIENT_PACKS[language];
 }
