@@ -74,17 +74,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
-  closeSync,
   copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
-  readdirSync,
   readFileSync,
-  readSync,
   realpathSync,
   rmSync,
   statSync,
@@ -97,6 +93,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { version as esbuildVersion } from "esbuild";
 import { SESSION_COOKIE } from "../src/lib/auth-cookies";
+import { regularFiles, scanProblems } from "./check-build-output";
 import { ancestorNodeModules } from "./check-lib-load.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -152,8 +149,6 @@ const KILL_GRACE_MS = 5_000;
 const TOOL_OUTPUT_LIMIT = 4 * 1024 * 1024;
 /** The first bytes of a server's output kept: its boot lines are the ones that matter. */
 const SERVER_OUTPUT_LIMIT = 16 * 1024 * 1024;
-/** The size of each read of the build scan. */
-const SCAN_CHUNK_BYTES = 1024 * 1024;
 
 /** npm's flags for every call: offline, with its own cache and empty user and global configs, running no script. */
 function npmFlags(npmDirectory: string): string[] {
@@ -766,20 +761,6 @@ export function porcelainProblems(stdout: string): string[] {
   return lines.length === 0 ? [] : [`the working tree is not clean: ${lines.join(" | ")}`];
 }
 
-/** Every regular file under `directory`, recursively, sorted; symbolic links are not followed. */
-export function regularFiles(directory: string): string[] {
-  const files: string[] = [];
-  const pending = [directory];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    for (const entry of readdirSync(next, { withFileTypes: true })) {
-      const child = path.join(next, entry.name);
-      if (entry.isDirectory()) pending.push(child);
-      else if (entry.isFile()) files.push(child);
-    }
-  }
-  return files.sort();
-}
-
 /** The roots step 7 scans for the fixture's engine ids, relative to the repository root. */
 export const NAMING_SCAN_ROOTS: readonly string[] = Object.freeze([...STUDIO.coreRoots, "packages"]);
 
@@ -812,49 +793,6 @@ export function buildNeedles(fixture: Pick<Fixture, "name" | "engines">): string
       engine.displayName,
     ]),
   ];
-}
-
-/** A file's SHA-256 and the needles it holds, read in chunks of `chunkSize` bytes with an overlap. */
-function scanFile(file: string, needles: readonly Buffer[], chunkSize: number): { digest: string; found: Buffer[] } {
-  const overlap = Math.max(0, ...needles.map((needle) => needle.length - 1));
-  const hash = createHash("sha256");
-  const found = new Set<Buffer>();
-  const descriptor = openSync(file, "r");
-  try {
-    const chunk = Buffer.alloc(chunkSize);
-    let tail = Buffer.alloc(0);
-    for (let read = readSync(descriptor, chunk); read > 0; read = readSync(descriptor, chunk)) {
-      const bytes = chunk.subarray(0, read);
-      hash.update(bytes);
-      const window = Buffer.concat([tail, bytes]);
-      for (const needle of needles) if (window.includes(needle)) found.add(needle);
-      tail = Buffer.from(window.subarray(Math.max(0, window.length - overlap)));
-    }
-  } finally {
-    closeSync(descriptor);
-  }
-  return { digest: hash.digest("hex"), found: [...found] };
-}
-
-/**
- * The problems of the build scan: each file of `files` that equals a fixture file (its SHA-256 is in `digests`) or
- * holds a needle; a scan of no file fails, since it would assert nothing.
- */
-export function buildScanProblems(
-  files: readonly string[],
-  needles: readonly string[],
-  digests: ReadonlySet<string>,
-  chunkSize: number = SCAN_CHUNK_BYTES,
-): string[] {
-  if (files.length === 0) return ["the build scan found no file to read"];
-  const needleBytes = needles.map((needle) => Buffer.from(needle, "utf8"));
-  return files.flatMap((file) => {
-    const { digest, found } = scanFile(file, needleBytes, chunkSize);
-    return [
-      ...(digests.has(digest) ? [`${file} is a copy of a fixture file`] : []),
-      ...found.map((needle) => `${file} holds ${needle.toString("utf8")}`),
-    ];
-  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1523,9 +1461,14 @@ async function repositoryUnchanged(ctx: Context): Promise<string> {
 async function buildHoldsNoFixture(ctx: Context): Promise<string> {
   const build = path.join(earlier(ctx.standalone, "a standalone build"), ".next");
   const needles = buildNeedles(ctx.fixture);
-  const digests = new Set(regularFiles(FIXTURE_DIRECTORY).map((file) => sha256(readFileSync(file))));
+  const digests = new Map(
+    regularFiles(FIXTURE_DIRECTORY).map((file) => [
+      sha256(readFileSync(file)),
+      `the fixture's ${path.relative(FIXTURE_DIRECTORY, file).split(path.sep).join("/")}`,
+    ]),
+  );
   const files = regularFiles(build);
-  assertNone(buildScanProblems(files, needles, digests));
+  assertNone(scanProblems(files, needles, digests));
   return `none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
 }
 

@@ -18,7 +18,6 @@ import {
   type Answer,
   artifactProblems,
   buildNeedles,
-  buildScanProblems,
   CHILD_TIMEOUTS_MS,
   childSpec,
   dependencyClosure,
@@ -37,7 +36,6 @@ import {
   readFixture,
   refusalLines,
   refusedProblems,
-  regularFiles,
   rowsProblems,
   runSteps,
   saveProblems,
@@ -56,6 +54,7 @@ import {
   bundleProblems,
   wordsOf,
 } from "../../../scripts/out-of-tree-acceptance";
+import { regularFiles } from "../../../scripts/check-build-output";
 import { moduleSpecifiers } from "../lib/db/provider-imports/scan";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -793,38 +792,9 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     }
   });
 
-  test("the build scan finds a file equal to a fixture file or holding a needle across a chunk boundary, and a scan of no file fails", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "out-of-tree-scan-"));
-    try {
-      const write = (name: string, text: string): string => {
-        const file = path.join(directory, name);
-        writeFileSync(file, text);
-        return file;
-      };
-      const needles = buildNeedles({ ...fixture, name: "fixture-pkg", engines: [{ id: "fx", displayName: "Fx db" }] });
-      expect(needles).toEqual(["fixture-pkg", '"fx"', "'fx'", "`fx`", "Fx db"]);
-      const clean = write("clean.js", "a".repeat(40));
-      const across = write("across.js", `${"a".repeat(6)}fixture-pkg${"b".repeat(9)}`);
-      const quoted = write("quoted.js", `x=${"c".repeat(5)}'fx';`);
-      const copy = write("copy.ts", "the fixture's source");
-      const digests = new Set([new Bun.CryptoHasher("sha256").update("the fixture's source").digest("hex")]);
-      expect(buildScanProblems([clean], needles, digests, 4)).toEqual([]);
-      expect(buildScanProblems([across], needles, digests, 4).join(" ")).toContain("fixture-pkg");
-      expect(buildScanProblems([quoted], needles, digests, 4).join(" ")).toContain("'fx'");
-      expect(buildScanProblems([copy], needles, digests, 4).join(" ")).toContain("copy.ts");
-      expect(buildScanProblems([], needles, digests, 4).join(" ")).toContain("no file");
-      mkdirSync(path.join(directory, "nested"));
-      write(path.join("nested", "deep.js"), "x");
-      expect(regularFiles(directory).map((file) => path.basename(file))).toEqual([
-        "across.js",
-        "clean.js",
-        "copy.ts",
-        "deep.js",
-        "quoted.js",
-      ]);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+  test("the build scan's needles are the package name, each engine id quoted three ways and each display name", () => {
+    const needles = buildNeedles({ ...fixture, name: "fixture-pkg", engines: [{ id: "fx", displayName: "Fx db" }] });
+    expect(needles).toEqual(["fixture-pkg", '"fx"', "'fx'", "`fx`", "Fx db"]);
   });
 });
 
