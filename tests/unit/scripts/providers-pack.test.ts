@@ -21,7 +21,7 @@ import path from "node:path";
 import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import { admitPackage, hostManifestValidator } from "@/lib/provider-host/admission";
 import { isNodeBuiltin } from "@/lib/provider-host/node-builtins";
-import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
+import { MANIFEST_BYTE_CAP, MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { packageRefusal } from "@/lib/provider-host/lock-refusals";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
 import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
@@ -125,6 +125,20 @@ function writingPackage(
 
 /** An entry module that loads nothing. */
 const PLAIN_ENTRY = { "dist/index.mjs": "export default {};\n" };
+
+/**
+ * A `build.mjs` that writes an entry module into `--outdir`, then runs `statements` with `own` the `node:fs` module, in
+ * the package's directory, the build's working directory: a build that changes its own package.
+ */
+function changingBuild(statements: readonly string[]): string {
+  return [writingBuild(PLAIN_ENTRY), 'import * as own from "node:fs";', ...statements, ""].join("\n");
+}
+
+/**
+ * Creating a file symlink on Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode, which a runner cannot count
+ * on, so the cases that plant a link at a package's file run on Linux and macOS only.
+ */
+const FILE_LINKS_REFUSED = process.platform === "win32";
 
 /**
  * The files of `packages/provider-alpha/`: the out-of-tree fixture's manifest and provider, an entry that re-exports
@@ -368,7 +382,7 @@ describe("providers:pack", () => {
       expect(pack(planted, out, [missing, array])).toEqual({
         packed: [],
         refusals: [missing, array].flatMap((directory) => [
-          `${PREFIX}: ${directory}: its package.json is missing, over its byte limit, or not a JSON object`,
+          `${PREFIX}: ${directory}: its package.json is missing, not a regular file, unreadable, over its byte limit, or not a JSON object`,
           wroteNothing(directory),
         ]),
       });
@@ -545,7 +559,7 @@ describe("providers:pack", () => {
           { code: "PROVIDER_PATH_OUTSIDE", rule: "entry-not-a-file" },
         ).sentence,
         wroteNothing(at("provider-noentry")),
-        `${PREFIX}: ${at("provider-nomanifest")}: it holds no ${MANIFEST_FILE_NAME}`,
+        `${PREFIX}: ${at("provider-nomanifest")}: its ${MANIFEST_FILE_NAME} is missing, not a regular file, unreadable, or over its byte limit`,
         wroteNothing(at("provider-nomanifest")),
         `${PREFIX}: ${at("provider-outside")}: its package.json names no package name and version in the lock's forms`,
         wroteNothing(at("provider-outside")),
@@ -561,6 +575,92 @@ describe("providers:pack", () => {
         packed: [],
         refusals: [`${PREFIX}: ${path.join(empty, "packages")} holds no provider package, and none was named`],
       });
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
+
+  test(
+    "a build that changes its package's manifest or package.json is refused by name, and a manifest over its byte limit before the build is refused",
+    () => {
+      const rewrittenManifest = `${minimalManifest("rewritesmanifest")}\n`;
+      const rewrittenPackage = packageJson("@libredb/provider-rewritespackage", { description: randomUUID() });
+      const planted = root({
+        ...writingPackage("provider-rewritesmanifest", "@libredb/provider-rewritesmanifest", PLAIN_ENTRY),
+        "packages/provider-rewritesmanifest/build.mjs": changingBuild([
+          `own.writeFileSync(${JSON.stringify(MANIFEST_FILE_NAME)}, ${JSON.stringify(rewrittenManifest)});`,
+        ]),
+        ...writingPackage("provider-rewritespackage", "@libredb/provider-rewritespackage", PLAIN_ENTRY),
+        "packages/provider-rewritespackage/build.mjs": changingBuild([
+          `own.writeFileSync("package.json", ${JSON.stringify(rewrittenPackage)});`,
+        ]),
+        ...writingPackage("provider-unchanged", "@libredb/provider-unchanged", PLAIN_ENTRY),
+        "packages/provider-unchanged/build.mjs": changingBuild([
+          `own.writeFileSync("notes.txt", "a build may write elsewhere in its package; the step does not look for it");`,
+        ]),
+        ...writingPackage("provider-overcap", "@libredb/provider-overcap", PLAIN_ENTRY),
+        [`packages/provider-overcap/${MANIFEST_FILE_NAME}`]: " ".repeat(MANIFEST_BYTE_CAP + 1),
+      });
+      const at = (directory: string): string => path.join(planted, "packages", directory);
+      const out = fresh("out");
+      const result = pack(planted, out);
+      expect(result.refusals).toEqual([
+        `${PREFIX}: ${at("provider-overcap")}: its ${MANIFEST_FILE_NAME} is missing, not a regular file, unreadable, or over its byte limit`,
+        wroteNothing(at("provider-overcap")),
+        `${PREFIX}: ${at("provider-rewritesmanifest")}: its build changed its ${MANIFEST_FILE_NAME}`,
+        wroteNothing(at("provider-rewritesmanifest")),
+        `${PREFIX}: ${at("provider-rewritespackage")}: its build changed its package.json`,
+        wroteNothing(at("provider-rewritespackage")),
+      ]);
+      expect(result.packed.map((packed) => packed.name)).toEqual(["@libredb/provider-unchanged"]);
+      expect(fs.readdirSync(path.join(out, "@libredb"))).toEqual(["provider-unchanged"]);
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
+
+  // FILE_LINKS_REFUSED: skipped on Windows only, where creating a file symlink needs a privilege a runner lacks.
+  test.skipIf(FILE_LINKS_REFUSED)(
+    "a manifest or package.json that is a link before the build, and a build that turns its manifest into a link to a file outside the package, are refused by name",
+    () => {
+      const elsewhere = fresh("elsewhere");
+      const outsideManifest = path.join(elsewhere, MANIFEST_FILE_NAME);
+      fs.writeFileSync(outsideManifest, minimalManifest("linksmanifest"));
+      const outsidePackage = path.join(elsewhere, "package.json");
+      fs.writeFileSync(outsidePackage, packageJson("@libredb/provider-linkedpackage"));
+      const planted = root({
+        ...writingPackage("provider-linkedmanifest", "@libredb/provider-linkedmanifest", PLAIN_ENTRY),
+        ...writingPackage("provider-linkedpackage", "@libredb/provider-linkedpackage", PLAIN_ENTRY),
+        // The link's target holds the very bytes the package held, so only its being a link is refused.
+        ...writingPackage(
+          "provider-linksmanifest",
+          "@libredb/provider-linksmanifest",
+          PLAIN_ENTRY,
+          minimalManifest("linksmanifest"),
+        ),
+        "packages/provider-linksmanifest/build.mjs": changingBuild([
+          `own.rmSync(${JSON.stringify(MANIFEST_FILE_NAME)});`,
+          `own.symlinkSync(${JSON.stringify(outsideManifest)}, ${JSON.stringify(MANIFEST_FILE_NAME)}, "file");`,
+        ]),
+      });
+      const at = (directory: string): string => path.join(planted, "packages", directory);
+      const linkedManifest = path.join(at("provider-linkedmanifest"), MANIFEST_FILE_NAME);
+      fs.rmSync(linkedManifest);
+      fs.symlinkSync(outsideManifest, linkedManifest, "file");
+      const linkedPackage = path.join(at("provider-linkedpackage"), "package.json");
+      fs.rmSync(linkedPackage);
+      fs.symlinkSync(outsidePackage, linkedPackage, "file");
+      const out = fresh("out");
+      expect(pack(planted, out)).toEqual({
+        packed: [],
+        refusals: [
+          `${PREFIX}: ${at("provider-linkedmanifest")}: its ${MANIFEST_FILE_NAME} is missing, not a regular file, unreadable, or over its byte limit`,
+          wroteNothing(at("provider-linkedmanifest")),
+          `${PREFIX}: ${at("provider-linkedpackage")}: its package.json is missing, not a regular file, unreadable, over its byte limit, or not a JSON object`,
+          wroteNothing(at("provider-linkedpackage")),
+          `${PREFIX}: ${at("provider-linksmanifest")}: its build changed its ${MANIFEST_FILE_NAME}`,
+          wroteNothing(at("provider-linksmanifest")),
+        ],
+      });
+      expect(fs.readdirSync(out)).toEqual([]);
     },
     BUNDLING_TIMEOUT_MS,
   );

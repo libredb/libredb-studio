@@ -782,6 +782,8 @@ A build has no deadline: a deadline on `bun run` ends `bun` and leaves the build
 
 A package's build writes its manifest's `runtime.entry` and every other file the artifact needs under `--outdir`, and nothing else: not `package.json` or `libredb-provider.json`, which the step copies from the package's directory, and nothing into the package's directory.
 It writes the same bytes for the same source and install, so no absolute path and no time stamp.
+The step reads `package.json` and `libredb-provider.json` once before the build, each a regular file never reached through a link, and places exactly those bytes in the artifact.
+A build that changed either, or left either other than a regular file, is refused by one sentence naming the file.
 esbuild 0.28.2 writes each input's path, relative to the package's directory with links followed, into a comment of the bundle (measured 2026-11-27), so a bundle's bytes are the same in every checkout only when every input lies inside the repository.
 
 What the build wrote is judged by the lock command's own sequence over one artifact directory (`artifactEntry`), then by admission's own checks before import, each finding named by file: an import outside the package by `closureOutside` with Node.js's built-in list, a TypeScript file, a native addon, and a manifest declaring `runtime.native`.

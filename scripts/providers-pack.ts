@@ -16,9 +16,10 @@
  * was written for it, while the other packages are still packed:
  *
  * 1. the package directory exists and is a directory;
- * 2. its package.json, read within the lock's byte cap, names a package name and version in the lock's forms, since
- *    they become path segments, and holds a non-empty string `scripts.build`;
- * 3. it holds `libredb-provider.json` as a regular file;
+ * 2. its package.json, a regular file read within the lock's byte cap, names a package name and version in the lock's
+ *    forms, since they become path segments, and holds a non-empty string `scripts.build`;
+ * 3. it holds `libredb-provider.json` as a regular file within the lock's byte cap. Each of the two files is read once
+ *    here, before the build (`packageFile`), and the artifact receives exactly those bytes;
  * 4. its build runs as `bun run --shell=bun build -- --outdir <temporary>/artifact`, Bun's own shell on every platform,
  *    with the package's directory as its working directory, so it resolves its dependencies from the workspace's
  *    install, and an environment of the caller's `PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP`
@@ -26,9 +27,11 @@
  *    `USERPROFILE` an empty directory beside `--outdir`; `bun run` adds `NODE`, `PWD` and `npm_*` variables of its
  *    own. A build that exits other than 0 is refused with its exit code and everything it printed. A build has no
  *    deadline: a deadline on `bun run` ends `bun` and leaves the build's own children running, and ending a process
- *    tree differs on every platform, so a build that never ends holds the step, and a CI job's timeout bounds a run;
- * 5. the build wrote no `package.json` and no `libredb-provider.json` at the root of its output, since the step copies
- *    both from the package's directory next;
+ *    tree differs on every platform, so a build that never ends holds the step, and a CI job's timeout bounds a run.
+ *    After the build, package.json and `libredb-provider.json` are read again the same way, and a package whose build
+ *    left either other than a regular file or with other bytes is refused by one sentence naming the file;
+ * 5. the build wrote no `package.json` and no `libredb-provider.json` at the root of its output, since the step places
+ *    both from the package's directory next, as it read them before the build;
  * 6. the artifact passes the lock command's own sequence over one directory (`artifactEntry`), refused with the
  *    sentence the lock command prints;
  * 7. every finding of admission's checks before import, each named: an import its closure judges outside the package
@@ -52,8 +55,8 @@
  *
  * The build's output lives in a temporary directory under the temporary root, removed whatever happened, so nothing is
  * written into the repository or into a package's directory by the step itself; a build that writes into its own
- * package's directory breaks its contract, and the step does not look for it. A host defect, a filesystem error the
- * step did not expect among them, is thrown.
+ * package's directory breaks its contract, and the step looks only at the two files it places. A host defect, a
+ * filesystem error the step did not expect among them, is thrown.
  *
  * The command prints every refusal on standard error, then `<name> <version> <digest>` per package placed on standard
  * output, in code-unit order of names, and answers 0 when nothing was refused, 1 when anything was; 2 for any
@@ -189,12 +192,25 @@ function buildEnvironment(environment: PackOptions["environment"], home: string)
   return { ...passed, HOME: home, USERPROFILE: home };
 }
 
+/**
+ * The bytes of the regular file `name` directly in `directory`, of at most `cap` bytes; undefined when it is missing,
+ * is not a regular file, is unreadable or is over `cap`. The entry's type comes from the directory listing, so a link
+ * at `name` is not a regular file and is never followed, and the bytes from one descriptor whose own stat confirms a
+ * regular file (`readBoundedFile`), so no path is checked and then read.
+ */
+function packageFile(directory: string, name: string, cap: number): Buffer | undefined {
+  const entry = fs.readdirSync(directory, { withFileTypes: true }).find((dirent) => dirent.name === name);
+  if (!entry?.isFile()) return undefined;
+  const read = readBoundedFile(path.join(directory, name), cap);
+  return read.ok ? read.bytes : undefined;
+}
+
 /** A package's name and version, read from its package.json, which holds a build script; or the sentence of its refusal. */
 function readPackageJson(directory: string): { name: string; version: string; bytes: Buffer } | string {
-  const read = readBoundedFile(path.join(directory, "package.json"), PACKAGE_JSON_BYTE_CAP);
-  const value = read.ok ? decodeJson(read.bytes)?.value : undefined;
-  if (!read.ok || !isObject(value)) {
-    return `${PREFIX}: ${directory}: its package.json is missing, over its byte limit, or not a JSON object`;
+  const bytes = packageFile(directory, "package.json", PACKAGE_JSON_BYTE_CAP);
+  const value = bytes === undefined ? undefined : decodeJson(bytes)?.value;
+  if (bytes === undefined || !isObject(value)) {
+    return `${PREFIX}: ${directory}: its package.json is missing, not a regular file, unreadable, over its byte limit, or not a JSON object`;
   }
   const { name, version, scripts } = value;
   if (!inForm(name, PACKAGE_NAME_FORM) || !inForm(version, PACKAGE_VERSION_FORM)) {
@@ -202,7 +218,7 @@ function readPackageJson(directory: string): { name: string; version: string; by
   }
   const build = isObject(scripts) ? scripts.build : undefined;
   if (typeof build !== "string" || build === "") return `${PREFIX}: ${directory}: its package.json has no build script`;
-  return { name, version, bytes: read.bytes };
+  return { name, version, bytes };
 }
 
 /** A runtime load the pack step refuses, by the words its sentence says of the module (C-114). */
@@ -403,10 +419,16 @@ function packOne(
   if (!stats.isDirectory()) return [`${PREFIX}: ${directory}: the package directory is not a directory`];
   const pkg = readPackageJson(directory);
   if (typeof pkg === "string") return [pkg];
-  const manifest = path.join(directory, MANIFEST_FILE_NAME);
-  if (!fs.lstatSync(manifest, { throwIfNoEntry: false })?.isFile()) {
-    return [`${PREFIX}: ${directory}: it holds no ${MANIFEST_FILE_NAME}`];
+  const manifest = packageFile(directory, MANIFEST_FILE_NAME, MANIFEST_BYTE_CAP);
+  if (manifest === undefined) {
+    return [
+      `${PREFIX}: ${directory}: its ${MANIFEST_FILE_NAME} is missing, not a regular file, unreadable, or over its byte limit`,
+    ];
   }
+  const placed = [
+    { file: "package.json", cap: PACKAGE_JSON_BYTE_CAP, bytes: pkg.bytes },
+    { file: MANIFEST_FILE_NAME, cap: MANIFEST_BYTE_CAP, bytes: manifest },
+  ] as const;
 
   const temporary = fs.mkdtempSync(path.join(temporaryRoot, "libredb-providers-pack-"));
   try {
@@ -426,15 +448,18 @@ function packOne(
       const printed = `${build.stdout.toString()}${build.stderr.toString()}`.trimEnd();
       return [`${PREFIX}: ${directory}: its build ${ended}, and printed:\n${printed}`];
     }
-    for (const file of ["package.json", MANIFEST_FILE_NAME]) {
+    for (const { file, cap, bytes } of placed) {
+      if (!packageFile(directory, file, cap)?.equals(bytes))
+        return [`${PREFIX}: ${directory}: its build changed its ${file}`];
+    }
+    for (const { file } of placed) {
       if (fs.lstatSync(path.join(artifact, file), { throwIfNoEntry: false }) !== undefined) {
         return [
           `${PREFIX}: ${directory}: its build wrote ${file}, which the pack step copies from the package's directory`,
         ];
       }
     }
-    fs.writeFileSync(path.join(artifact, "package.json"), pkg.bytes);
-    fs.copyFileSync(manifest, path.join(artifact, MANIFEST_FILE_NAME));
+    for (const { file, bytes } of placed) fs.writeFileSync(path.join(artifact, file), bytes);
 
     const named = { name: pkg.name, version: pkg.version };
     const entry = artifactEntry(artifact, named, PREFIX);
