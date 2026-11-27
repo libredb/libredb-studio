@@ -7,12 +7,13 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   consoleTextByteLimit,
-  codeStatementLanguageRow,
   statementRefusal,
+  typeStatementLanguageRow,
   vocabularySendsToModel,
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { consoleTextOverLimit, rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
 import { redisRefusal } from "@/lib/languages/rediscli/command-text";
@@ -37,18 +38,18 @@ import { legacyStatementLanguageTable } from "../../helpers/legacy-register";
 
 const statementLanguage = legacyStatementLanguageTable();
 
-/** Whether the gate's row reader asks about `query` on `type`'s code row: `rowNamesAsked` over `codeStatementLanguageRow`. */
+/** Whether the gate's row reader asks about `query` on `type`'s row: `rowNamesAsked` over `typeStatementLanguageRow`. */
 function rowAsks(query: string, type?: DatabaseType): boolean {
-  return rowNamesAsked(codeStatementLanguageRow(type), query);
+  return rowNamesAsked(typeStatementLanguageRow(type), query);
 }
 
 /**
- * Whether `type`'s code row is the gate's whole answer: `rowDecidesAlone` over `codeStatementLanguageRow` and the grants
+ * Whether `type`'s row is the gate's whole answer: `rowDecidesAlone` over `typeStatementLanguageRow` and the grants
  * Studio holds for the engine (`legacyEngineGrants`), the row read first, so a value that is not a type id is refused by
  * name before any grant is read.
  */
 function rowDecides(type?: DatabaseType): boolean {
-  const row = codeStatementLanguageRow(type);
+  const row = typeStatementLanguageRow(type);
   return type !== undefined && rowDecidesAlone(row, legacyEngineGrants(type));
 }
 
@@ -485,7 +486,6 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
       "etcd",
       "firestore",
       "influxdb",
-      "kafka",
       "kubernetes",
       "milvus",
       "modbus",
@@ -513,8 +513,10 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
 
   test("names no Kafka operation, because a read request has none to name", () => {
     // Not an omission: the editor text is one read request, and the provider refuses any key
-    // but the four it reads, so there is no operation a row could list.
-    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.kafka?.operations.size).toBe(0);
+    // but the four it reads, so there is no operation a row could list. Kafka's row is compiled
+    // from its declaration's statement language data, so the code table holds none.
+    expect(Object.hasOwn(NON_SQL_DESTRUCTIVE_VOCABULARY, "kafka")).toBe(false);
+    expect(typeStatementLanguageRow("kafka")?.operations.size).toBe(0);
   });
 
   // `readsSqlText` is the gate's other table. A type it reports as not SQL skips the SQL
@@ -523,7 +525,14 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
   // other fails here, so the gate's reading of it is decided rather than inherited.
   test("carries a row for a type exactly when readsSqlText says its text is not SQL", () => {
     const notSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type));
-    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([...notSql].sort());
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => typeStatementLanguageRow(type) !== null)).toEqual(notSql);
+    // The code table holds the rest: a type whose declaration states its language as data has its row compiled from
+    // it, and none here.
+    const declared = notSql.filter((type) => BUNDLED_STATEMENT_LANGUAGE_DATA[type] !== null);
+    expect(declared).toEqual(["kafka"]);
+    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(
+      notSql.filter((type) => !declared.includes(type)).sort(),
+    );
   });
 
   // The shared gate names no engine's vocabulary: each row is a module in its statement language's core family
@@ -1119,7 +1128,7 @@ describe("a type outside the union (FND-1)", () => {
   // states, a type id reads its row or none, and anything else is refused by name, so a prototype key never reaches an
   // `Object.prototype` member and a value that only spells a type id through coercion never reads that type's row.
   const READERS: readonly (readonly [string, (databaseType: DatabaseType | undefined) => unknown])[] = [
-    ["codeStatementLanguageRow", (type) => codeStatementLanguageRow(type)],
+    ["typeStatementLanguageRow", (type) => typeStatementLanguageRow(type)],
     ["vocabularyTypedConfirmation", (type) => vocabularyTypedConfirmation(type, "del /App/ --prefix")],
     ["vocabularySendsToModel", (type) => vocabularySendsToModel(type)],
     ["consoleTextByteLimit", (type) => consoleTextByteLimit(type)],
@@ -1135,7 +1144,7 @@ describe("a type outside the union (FND-1)", () => {
 
   test("with no type at all, each keeps the no-connection reading", () => {
     expect(READERS.map(([reader, read]) => [reader, read(undefined)])).toEqual([
-      ["codeStatementLanguageRow", null],
+      ["typeStatementLanguageRow", null],
       ["vocabularyTypedConfirmation", undefined],
       ["vocabularySendsToModel", true],
       ["consoleTextByteLimit", undefined],
@@ -1145,7 +1154,7 @@ describe("a type outside the union (FND-1)", () => {
 
   test("a type id with no row reads none, and one with a row reads it", () => {
     expect(READERS.map(([reader, read]) => [reader, read("postgres")])).toEqual([
-      ["codeStatementLanguageRow", null],
+      ["typeStatementLanguageRow", null],
       ["vocabularyTypedConfirmation", undefined],
       ["vocabularySendsToModel", true],
       ["consoleTextByteLimit", undefined],

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type AgentStatementLanguageId, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { type AgentModuleLanguageId, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { type AgentGoalVerifierId, hasGoalRule, RETIRED_GOAL_VERIFIERS } from "@/lib/agent/goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { type AgentRunHeaderVocabulary, RUN_HEADER_VOCABULARY, runHeaderRefusal } from "@/lib/agent/run-ledger-ids";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunMode, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
 /**
  * A run header persists three ids this build resolves (FND-1): the statement language the run is written in, the
@@ -14,8 +15,8 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
  * language and workflow pair a header can carry still resolvable.
  */
 
-/* Total over the language ids, so the compiler fails here when a language is added without a row. */
-const LIVE_LANGUAGES: Readonly<Record<AgentStatementLanguageId, true>> = {
+/* Total over the module language ids, so the compiler fails here when a module language is added without a row. */
+const LIVE_MODULE_LANGUAGES: Readonly<Record<AgentModuleLanguageId, true>> = {
   sql: true,
   kubectl: true,
   mongo: true,
@@ -29,7 +30,6 @@ const LIVE_LANGUAGES: Readonly<Record<AgentStatementLanguageId, true>> = {
   etcdctl: true,
   oxiacli: true,
   rabbitread: true,
-  kafkaread: true,
   s3api: true,
   fsquery: true,
   snmpget: true,
@@ -40,6 +40,12 @@ const LIVE_LANGUAGES: Readonly<Record<AgentStatementLanguageId, true>> = {
   mtconnectread: true,
   mqttread: true,
   sparkplugread: true,
+};
+
+/** Every language this build holds: the module languages, then each one a shipped declaration states as data. */
+const LIVE_LANGUAGES: Readonly<Record<string, true>> = {
+  ...LIVE_MODULE_LANGUAGES,
+  [shippedDeclaredLanguage("kafkaread")]: true,
 };
 
 /** The verifiers a run can still be judged by: every id with a rule. */

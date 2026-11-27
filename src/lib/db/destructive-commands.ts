@@ -9,10 +9,10 @@ import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destru
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
 import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/weaviateapi/destructive";
-import { rowRefusal, rowTextByteLimit, rowTypedAsk } from "@/lib/db/statement-language-row";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
+import { rowRefusal, rowTextByteLimit, rowTypedAsk, statementLanguageRow } from "@/lib/db/statement-language-row";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
-import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";
 import { MODBUS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/modbusread/destructive";
 import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mongo/destructive";
 import { MQTT_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mqttread/destructive";
@@ -28,6 +28,10 @@ import type { DatabaseType } from "@/lib/types";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
+ *
+ * An engine whose declaration states its statement language as data (`statementLanguageData`, projected into
+ * `BUNDLED_STATEMENT_LANGUAGE_DATA`) has its row compiled from that data instead (`typeStatementLanguageRow`), and no
+ * row in the table below.
  *
  * Each engine's row is declared in its statement language's core family module, `destructive.ts` under
  * `src/lib/languages/<language>/`, or under `src/lib/db/graph/cypher/` for Cypher, or, until the provider plugin
@@ -48,16 +52,17 @@ import type { DatabaseType } from "@/lib/types";
  */
 
 /**
- * The single type-to-facts table. It has a row for exactly the types that
- * `readsSqlText` in `@/lib/sql/grammar` reports as not SQL, and a test holds the two
- * tables to that. A type with no row here is one whose statements the SQL half of the
- * gate reads; a row would be a second, weaker opinion about the same text.
+ * The single type-to-facts table of Studio's code rows. It has a row for exactly the types that
+ * `readsSqlText` in `@/lib/sql/grammar` reports as not SQL whose language is still a module of
+ * Studio's; an engine whose declaration states its language as data has its row compiled from
+ * it, and a test holds the two tables to that. A type with no row here and no declared data is
+ * one whose statements the SQL half of the gate reads; a row would be a second, weaker opinion
+ * about the same text.
  */
 export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseType, DestructiveVocabulary>>> = {
   etcd: ETCD_DESTRUCTIVE_VOCABULARY,
   firestore: FIRESTORE_DESTRUCTIVE_VOCABULARY,
   influxdb: INFLUXDB_DESTRUCTIVE_VOCABULARY,
-  kafka: KAFKA_DESTRUCTIVE_VOCABULARY,
   kubernetes: KUBERNETES_DESTRUCTIVE_VOCABULARY,
   milvus: MILVUS_DESTRUCTIVE_VOCABULARY,
   modbus: MODBUS_DESTRUCTIVE_VOCABULARY,
@@ -92,6 +97,35 @@ export function codeStatementLanguageRow(databaseType?: DatabaseType): Destructi
 }
 
 /**
+ * The row of each type whose declaration states its statement language as data (`BUNDLED_STATEMENT_LANGUAGE_DATA`),
+ * compiled by the one resolver (`statementLanguageRow`) once, when this module loads, so every reader, in the browser
+ * and in the legacy record, reads the same frozen object and no statement recompiles a row. A type whose declaration
+ * states data while the table above still holds its code row fails here, by name, when the module loads.
+ */
+const DECLARED_ROWS: ReadonlyMap<string, DestructiveVocabulary> = new Map(
+  (Object.keys(BUNDLED_STATEMENT_LANGUAGE_DATA) as DatabaseType[]).flatMap((type) => {
+    const data = BUNDLED_STATEMENT_LANGUAGE_DATA[type];
+    const row = data === null ? null : statementLanguageRow(type, data, codeStatementLanguageRow(type));
+    return row === null ? [] : [[type, row] as const];
+  }),
+);
+
+/**
+ * The statement language row the confirmation gate reads for `databaseType` by type, as the one resolver orders it:
+ * the row compiled from the statement language data its declaration states (`DECLARED_ROWS`), else Studio's code row,
+ * read from the table on each call (`codeStatementLanguageRow`), else null; null for no type at all. The browser reads
+ * it by type until it reads the engine's record, and the legacy adapter's record holds the same object. Any other value
+ * that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
+ */
+export function typeStatementLanguageRow(databaseType?: DatabaseType): DestructiveVocabulary | null {
+  const codeRow = codeStatementLanguageRow(databaseType);
+  if (databaseType === undefined) return null;
+  return DECLARED_ROWS.get(databaseType) ?? codeRow;
+}
+
+/**
  * What this statement asks the person to type before it runs, or undefined where the gate's one click is the whole
  * confirmation (#1089, section 5.5).
  *
@@ -105,7 +139,7 @@ export function vocabularyTypedConfirmation(
   databaseType: DatabaseType | undefined,
   text: string,
 ): TypedConfirmationAsk | undefined {
-  return rowTypedAsk(codeStatementLanguageRow(databaseType), text);
+  return rowTypedAsk(typeStatementLanguageRow(databaseType), text);
 }
 
 /**
@@ -118,12 +152,12 @@ export function vocabularyTypedConfirmation(
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
-  return codeStatementLanguageRow(databaseType)?.safetyAnalysis !== false;
+  return typeStatementLanguageRow(databaseType)?.safetyAnalysis !== false;
 }
 
 /**
  * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none: the bound
- * of its code row (`rowTextByteLimit`), which the browser reads by type until it reads the engine's record.
+ * of its row (`rowTextByteLimit`), which the browser reads by type until it reads the engine's record.
  *
  * Undefined for every type with no row, including no type at all, and for every row that declares no bound. Any other
  * value that is not a type id is refused by name (`typeIdRow`, FND-1).
@@ -131,11 +165,11 @@ export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
-  return rowTextByteLimit(codeStatementLanguageRow(databaseType));
+  return rowTextByteLimit(typeStatementLanguageRow(databaseType));
 }
 
 /**
- * Why this connection type's editor refuses this statement, or undefined to send it: the refusal of its code row
+ * Why this connection type's editor refuses this statement, or undefined to send it: the refusal of its row
  * (`rowRefusal`), which the browser reads by type until it reads the engine's record.
  *
  * The bound first, so a row's own verdict never reads an oversize text; then the row's `refuse`. Undefined for
@@ -145,5 +179,5 @@ export function consoleTextByteLimit(databaseType?: DatabaseType): number | unde
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
-  return rowRefusal(codeStatementLanguageRow(databaseType), query);
+  return rowRefusal(typeStatementLanguageRow(databaseType), query);
 }

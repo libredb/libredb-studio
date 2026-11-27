@@ -9,8 +9,8 @@
  * under `statement`; the tool takes no `database` key and no offset, refuses an input key it does not name, and is
  * fenced by the language's own admission, its declared request form; it states no least timeout, so the shared least
  * holds; its answers carry none of the provider's warnings; and list_connections keeps a connection's database setting
- * in its row. These are the members kafkaread's and rabbitread's modules state. A language that needs more stays a
- * module until its engine's wave.
+ * in its row. These are the members rabbitread's module states, the module JSON request language it was modelled on. A
+ * language that needs more stays a module until its engine's wave.
  *
  * Each text is written as declared, as `declared-client.ts` writes the agent text: the values each text takes are the
  * SDK's `AGENT_MCP_TEXT_FILLS`, which the types below read, so a text the SDK fills and this module does not hand a
@@ -38,7 +38,7 @@ type AgentMcpTextFillValues<Name extends keyof AgentMcpTextFills> = {
   readonly [Fill in AgentMcpTextFills[Name] extends readonly (infer Each extends string)[] ? Each : never]: string;
 };
 
-/** The statement a declared tool takes: one non-empty string, as kafkaread's and rabbitread's tools take theirs. */
+/** The statement a declared tool takes: one non-empty string, as rabbitread's tool takes its own. */
 const DECLARED_STATEMENT_INPUT = z.string().min(1, "statement cannot be empty");
 
 /** MCP text `name` of `text`, filled with `values`, the values the SDK lists for that text. */

@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
  * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
- * M-75, M-77, M-78, M-79, M-80, M-81 and M-82).
+ * M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-85).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -27,6 +27,7 @@ import {
   ENGINE_SQL_GENERATORS_MODULE,
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
+  ENGINE_STATEMENT_LANGUAGE_MODULE,
   renderCatalog,
   renderClaimRequests,
   renderConnectionFlags,
@@ -39,6 +40,7 @@ import {
   renderSqlGenerators,
   renderSqlText,
   renderSqlWriting,
+  renderStatementLanguageData,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { readGrantRegister } from "@libredb/grant-register";
@@ -66,6 +68,7 @@ import {
   projectSqlGenerators,
   projectSqlText,
   projectSqlWriting,
+  projectStatementLanguageData,
   type SqlTextEntry,
   type SqlWritingEntry,
 } from "@/lib/db/engine-catalog/projection";
@@ -499,6 +502,26 @@ describe("each projection of the admitted declarations, built with and without a
       expect(requests).toEqual(built);
       expect(Object.keys(requests)).toEqual(Object.keys(built));
       expect(JSON.stringify(requests)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the statement language data built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectStatementLanguageData(ADMITTED);
+    const withFixture = projectStatementLanguageData([...ADMITTED, FIXTURE]);
+    expect(Object.hasOwn(withFixture, FIXTURE.id)).toBe(true);
+    expect(withFixture[FIXTURE.id]).toEqual(FIXTURE.statementLanguageData);
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+
+    const removed = projectStatementLanguageData([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderStatementLanguageData(removed)).toBe(
+      readFileSync(path.join(ROOT, ENGINE_STATEMENT_LANGUAGE_MODULE), "utf8"),
+    );
+    // The same answer whatever order the declarations are admitted in.
+    for (const order of [[...ADMITTED, FIXTURE].reverse(), shuffled([...ADMITTED, FIXTURE])]) {
+      expect(JSON.stringify(projectStatementLanguageData(order))).toBe(JSON.stringify(withFixture));
     }
   });
 

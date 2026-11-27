@@ -10,9 +10,9 @@ import {
   KAFKA_METADATA_ONLY,
   kafkaAgentFailure,
   kafkaAgentResult,
+  type KafkaAgentPlan,
   runKafkaAgentRead,
 } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
-import type { KafkaAgentPlan } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   type KafkaClusterMetadata,

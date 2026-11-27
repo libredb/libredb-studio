@@ -113,7 +113,457 @@
       "grounding": null
     }
   },
-  "statementLanguageData": null,
+  "statementLanguageData": {
+    "name": "kafkaread",
+    "confirmation": {
+      "operations": [],
+      "reader": "names-no-operation",
+      "decidesAlone": true,
+      "safetyAnalysis": true,
+      "maxTextBytes": null
+    },
+    "agent": {
+      "request": {
+        "kind": "json-object",
+        "maxCharacters": 4096,
+        "refusals": {
+          "tooLong": {
+            "code": "agent-too-large",
+            "sentence": "The read request is longer than 4096 characters, the most an agent read takes: shorten it. Nothing was sent."
+          },
+          "empty": {
+            "code": "request",
+            "sentence": "The request holds no read. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          },
+          "notAnObject": {
+            "code": "request",
+            "sentence": "A Kafka agent read is one JSON object. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          },
+          "repeatedKey": {
+            "code": "request",
+            "sentence": "The request writes a key twice. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          },
+          "unknownKey": {
+            "code": "request",
+            "sentence": "The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        "keys": [
+          "read",
+          "topic",
+          "after",
+          "limit"
+        ],
+        "selector": {
+          "key": "read",
+          "refusal": {
+            "code": "metadata-only",
+            "sentence": "That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        "common": [
+          {
+            "key": "limit",
+            "absent": null,
+            "rule": {
+              "kind": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50,
+              "refusal": {
+                "code": "request",
+                "sentence": "\"limit\" must be a whole number from 1 to 500. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+              }
+            }
+          }
+        ],
+        "reads": [
+          {
+            "value": "topics",
+            "refuses": [
+              {
+                "key": "topic",
+                "refusal": {
+                  "code": "request",
+                  "sentence": "This read lists the whole cluster and takes no \"topic\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                }
+              }
+            ],
+            "checks": [
+              {
+                "key": "after",
+                "absent": null,
+                "rule": {
+                  "kind": "name",
+                  "characters": [
+                    {
+                      "from": "a",
+                      "to": "z"
+                    },
+                    {
+                      "from": "A",
+                      "to": "Z"
+                    },
+                    {
+                      "from": "0",
+                      "to": "9"
+                    },
+                    {
+                      "from": ".",
+                      "to": "."
+                    },
+                    {
+                      "from": "_",
+                      "to": "_"
+                    },
+                    {
+                      "from": "-",
+                      "to": "-"
+                    }
+                  ],
+                  "minLength": 1,
+                  "maxLength": 249,
+                  "refused": [
+                    {
+                      "names": [
+                        ".",
+                        ".."
+                      ],
+                      "prefixes": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "\"after\" on the topic listing is the last topic name of the answer before, a Kafka topic name. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    }
+                  ],
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"after\" on the topic listing is the last topic name of the answer before, a Kafka topic name. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "value": "brokers",
+            "refuses": [
+              {
+                "key": "topic",
+                "refusal": {
+                  "code": "request",
+                  "sentence": "This read lists the whole cluster and takes no \"topic\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                }
+              }
+            ],
+            "checks": [
+              {
+                "key": "after",
+                "absent": null,
+                "rule": {
+                  "kind": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647,
+                  "default": null,
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"after\" on this read is the last node id or partition id of the answer before, a whole number from 0 to 2147483647. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "value": "partitions",
+            "refuses": [],
+            "checks": [
+              {
+                "key": "topic",
+                "absent": {
+                  "code": "request",
+                  "sentence": "This read names one topic in \"topic\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                },
+                "rule": {
+                  "kind": "name",
+                  "characters": [
+                    {
+                      "from": "a",
+                      "to": "z"
+                    },
+                    {
+                      "from": "A",
+                      "to": "Z"
+                    },
+                    {
+                      "from": "0",
+                      "to": "9"
+                    },
+                    {
+                      "from": ".",
+                      "to": "."
+                    },
+                    {
+                      "from": "_",
+                      "to": "_"
+                    },
+                    {
+                      "from": "-",
+                      "to": "-"
+                    }
+                  ],
+                  "minLength": 1,
+                  "maxLength": 249,
+                  "refused": [
+                    {
+                      "names": [
+                        ".",
+                        ".."
+                      ],
+                      "prefixes": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "\"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    },
+                    {
+                      "names": [
+                        "__consumer_offsets",
+                        "__transaction_state",
+                        "__share_group_state"
+                      ],
+                      "prefixes": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "That is one of Kafka's internal topics, which agent mode never names in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    },
+                    {
+                      "names": [],
+                      "prefixes": [
+                        "_",
+                        "connect-"
+                      ],
+                      "refusal": {
+                        "code": "metadata-only",
+                        "sentence": "That topic's name marks it as a platform's own (a leading underscore, as Schema Registry's and Confluent's topics have, or connect-, as Kafka Connect's have), so agent mode withholds it: it is never listed or named in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    }
+                  ],
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              },
+              {
+                "key": "after",
+                "absent": null,
+                "rule": {
+                  "kind": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647,
+                  "default": null,
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"after\" on this read is the last node id or partition id of the answer before, a whole number from 0 to 2147483647. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "value": "offsets",
+            "refuses": [],
+            "checks": [
+              {
+                "key": "topic",
+                "absent": {
+                  "code": "request",
+                  "sentence": "This read names one topic in \"topic\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                },
+                "rule": {
+                  "kind": "name",
+                  "characters": [
+                    {
+                      "from": "a",
+                      "to": "z"
+                    },
+                    {
+                      "from": "A",
+                      "to": "Z"
+                    },
+                    {
+                      "from": "0",
+                      "to": "9"
+                    },
+                    {
+                      "from": ".",
+                      "to": "."
+                    },
+                    {
+                      "from": "_",
+                      "to": "_"
+                    },
+                    {
+                      "from": "-",
+                      "to": "-"
+                    }
+                  ],
+                  "minLength": 1,
+                  "maxLength": 249,
+                  "refused": [
+                    {
+                      "names": [
+                        ".",
+                        ".."
+                      ],
+                      "prefixes": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "\"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    },
+                    {
+                      "names": [
+                        "__consumer_offsets",
+                        "__transaction_state",
+                        "__share_group_state"
+                      ],
+                      "prefixes": [],
+                      "refusal": {
+                        "code": "request",
+                        "sentence": "That is one of Kafka's internal topics, which agent mode never names in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    },
+                    {
+                      "names": [],
+                      "prefixes": [
+                        "_",
+                        "connect-"
+                      ],
+                      "refusal": {
+                        "code": "metadata-only",
+                        "sentence": "That topic's name marks it as a platform's own (a leading underscore, as Schema Registry's and Confluent's topics have, or connect-, as Kafka Connect's have), so agent mode withholds it: it is never listed or named in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                      }
+                    }
+                  ],
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              },
+              {
+                "key": "after",
+                "absent": null,
+                "rule": {
+                  "kind": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647,
+                  "default": null,
+                  "refusal": {
+                    "code": "request",
+                    "sentence": "\"after\" on this read is the last node id or partition id of the answer before, a whole number from 0 to 2147483647. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "text": {
+        "copy": {
+          "subject": "a Kafka cluster",
+          "noun": "read request",
+          "writes": "every produce, fetch, topic or config change and offset commit, and every read of a record, a config, a log directory or a consumer group",
+          "reached": "the broker",
+          "defect": "your read request"
+        },
+        "investigation": {
+          "classifierDescription": "a question about the cluster's topics, partitions, replicas, brokers or offset ranges, such as which topics are under-replicated or offline, how partitions and leaders are spread over brokers, or how far a topic's offsets reach, that is answered from what the run establishes",
+          "objective": "Your objective is a question about this Kafka cluster's metadata: its topics, partitions, replicas, brokers and offset ranges. Answer it from what you establish.",
+          "toolDescription": "Run one bounded metadata read of a Kafka cluster, written as one JSON object with at most the keys read, topic, after and limit. read is \"topics\" (each topic's partition count, replication factor and offline and under-replicated partitions), \"brokers\" (each broker's node id and rack, and the cluster id), \"partitions\" (one topic's partitions: leader, replicas, in-sync replicas, offline flag) or \"offsets\" (one topic's partitions: earliest offset, end offset and the span between them); \"partitions\" and \"offsets\" need \"topic\". limit is 1 to 500, default 50, and \"after\" is the last topic name, node id or partition id of the answer before, to read on. A record's key, value, headers and timestamp, a broker's host and port, configs, log directories and consumer groups are never read. An offset span is how far the offsets reach, not a message count: compaction, transaction markers and retention make the two differ. A request with any other key or read, or a limit past the row budget, is refused rather than answered in part, and you are told why.",
+          "toolRule": "Read the cluster with run_read_query, one JSON request at a time: {\"read\": \"topics\"}, {\"read\": \"brokers\"}, {\"read\": \"partitions\", \"topic\": \"orders\"} or {\"read\": \"offsets\", \"topic\": \"orders\"}, each with an optional \"limit\" and \"after\" and no other key. Name a topic exactly as the inventory names it. Kafka's internal topics are never read. Answers carry names, counts and offsets only: a record's key, value, headers and timestamp, a broker's host and port, configs, log directories and consumer groups are withheld, so what this run establishes is the cluster's topics, partitions, replicas, brokers and offset ranges, never what a record says or who consumes it. An offset span is how far a partition's offsets reach, not how many records it holds: compaction, transaction markers and retention make the two differ, so never report a span as a message count. A read whose answer says more follow is a page: read on with \"after\" set to the last topic, node id or partition of the answer. Report what the evidence supports, and nothing further."
+        },
+        "posture": {
+          "qualifier": [
+            "metadata only, ",
+            {
+              "fill": "rows"
+            },
+            " rows and ",
+            {
+              "fill": "seconds"
+            },
+            " s per read, over a client that holds only Metadata and ListOffsets"
+          ],
+          "title": "Agent mode reads Kafka's topics, partitions, brokers and offsets, over a client that holds only two reads",
+          "body": [
+            "Agent mode runs Kafka metadata reads it wrote itself, each one JSON request for the topic list, the broker list, one topic's partitions or one topic's earliest and end offsets, and answers names, counts and offsets only: topic names, partition and replica counts, leader and replica node ids, broker node ids and racks and the cluster id, never a record's key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group, bounded to ",
+            {
+              "fill": "rows"
+            },
+            " rows and ",
+            {
+              "fill": "seconds"
+            },
+            " seconds each and refused past them rather than cut. An offset span is reported as a span, never as a message count. Studio's agent client holds only the Metadata request, sent with topic auto-creation off, and the ListOffsets request at the earliest and latest offsets, so it cannot fetch, produce, create or delete a topic, commit an offset or change a config, and it never names an internal topic. Nothing reaches your editor."
+          ],
+          "handover": "A Kafka answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only."
+        },
+        "grounding": {
+          "omissionAdvice": "A topic is listed to agent mode by its partitions and offsets only. Read any topic with run_read_query, for example {\"read\": \"offsets\", \"topic\": \"orders\"} for each partition's earliest and end offsets of the topic orders.",
+          "ungrounded": [
+            "So nothing about this cluster has been established for you: not one ",
+            {
+              "fill": "noun"
+            },
+            " name. List the topics with run_read_query, {\"read\": \"topics\"}; answers carry names, counts and offsets only."
+          ]
+        },
+        "advice": {
+          "rowCap": [
+            "Ask for at most ",
+            {
+              "fill": "allowed"
+            },
+            " rows: a read answers one row per topic, broker or partition, up to its \"limit\", so write \"limit\": ",
+            {
+              "fill": "allowed"
+            },
+            " or less, and read on with \"after\" set to the last name or id you read."
+          ],
+          "shape": "The request's shape falls outside what a bounded metadata read may be, which is a decision about the contract rather than about a valid read request; a differently shaped read may still be admitted."
+        }
+      },
+      "mcp": {
+        "tool": "run_kafka_read",
+        "holdsNoTables": false,
+        "text": {
+          "title": "Run a read-only Kafka metadata read",
+          "description": [
+            "Run one read-only Kafka metadata read on a connection: one JSON object as text, {\"read\": \"topics\"} for the topics with their partition and replica counts, {\"read\": \"brokers\"} for broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} for one topic's partitions with their leader and replicas, or {\"read\": \"offsets\", \"topic\": \"orders\"} for each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id read, to read on. Metadata only: no record's key, value, headers or timestamp is ever fetched, a broker's host and port, configs, log directories and consumer groups are not read, Kafka's internal topics and a platform's own topics (a leading underscore, or connect-) are withheld, and an offset span is not a message count. Any other request is refused before the broker is reached. Runs on ",
+            {
+              "fill": "engines"
+            },
+            "; other engines refuse it. ",
+            {
+              "fill": "limits"
+            },
+            "; this tool takes no offset, so page inside the request with \"limit\" and \"after\": an answer that holds as many rows as its \"limit\" may have more after it, so read on with \"after\" until an answer holds fewer."
+          ],
+          "fewerFields": "A Kafka read's columns are fixed, so none can be left out",
+          "readPast": [
+            "read past the ",
+            {
+              "fill": "shown"
+            },
+            " rows returned, set \"after\" to the last topic name, node id or partition id among them."
+          ],
+          "rowOverCap": "One row of this result is larger than the 32 KiB result limit. Read a narrower listing, one topic's partitions or offsets, and run it again."
+        }
+      }
+    }
+  },
   "editor": {
     "commitKeyword": "COMMIT",
     "consentDeadline": null,

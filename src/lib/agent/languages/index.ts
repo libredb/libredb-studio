@@ -26,7 +26,6 @@ import { REDISCLI_PACK } from "./rediscli/index";
 import { ETCDCTL_PACK } from "./etcdctl/index";
 import { OXIACLI_PACK } from "./oxiacli/index";
 import { RABBITREAD_PACK } from "./rabbitread/index";
-import { KAFKAREAD_PACK } from "./kafkaread/index";
 import { S3API_PACK } from "./s3api/index";
 import { FSQUERY_PACK } from "./fsquery/index";
 import { SNMPGET_PACK } from "./snmpget/index";
@@ -56,7 +55,6 @@ const MODULE_PACKS = Object.freeze({
   etcdctl: ETCDCTL_PACK,
   oxiacli: OXIACLI_PACK,
   rabbitread: RABBITREAD_PACK,
-  kafkaread: KAFKAREAD_PACK,
   s3api: S3API_PACK,
   fsquery: FSQUERY_PACK,
   snmpget: SNMPGET_PACK,
@@ -109,7 +107,6 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   etcdctl: ETCDCTL_PACK.execution.arms,
   oxiacli: OXIACLI_PACK.execution.arms,
   rabbitread: RABBITREAD_PACK.execution.arms,
-  kafkaread: KAFKAREAD_PACK.execution.arms,
   s3api: S3API_PACK.execution.arms,
   fsquery: FSQUERY_PACK.execution.arms,
   snmpget: SNMPGET_PACK.execution.arms,
@@ -142,7 +139,6 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     ETCDCTL_PACK.execution.evidenceTools,
     OXIACLI_PACK.execution.evidenceTools,
     RABBITREAD_PACK.execution.evidenceTools,
-    KAFKAREAD_PACK.execution.evidenceTools,
     S3API_PACK.execution.evidenceTools,
     FSQUERY_PACK.execution.evidenceTools,
     SNMPGET_PACK.execution.evidenceTools,

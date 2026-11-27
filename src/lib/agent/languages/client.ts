@@ -7,12 +7,13 @@
  * very objects this record holds, which `tests/unit/lib/agent/languages.test.ts` asserts.
  *
  * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
- * it registers its client facet here, and then every language the bundled declarations state agent data for
- * (`DECLARED_STATEMENT_LANGUAGES`), composed from its data by `declared-client.ts`; the registries in `server.ts`,
+ * it registers its client facet here, and then every language the bundled declarations state agent data for, read
+ * from the statement language projection (`BUNDLED_STATEMENT_LANGUAGE_DATA`) in its id order, the engines that state
+ * none left out, and composed from its data by `declared-client.ts`; the registries in `server.ts`,
  * `index.ts` and `mcp.ts` read the same declared languages from `DECLARED_AGENT_LANGUAGES` here. Its keys are declared
  * in the order the projections in `agent-manifest.ts` list them, the module languages first.
  */
-import { DECLARED_STATEMENT_LANGUAGES } from "@/lib/db/declared-statement-languages";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
@@ -26,7 +27,6 @@ import { REDISCLI_CLIENT_PACK } from "./rediscli/client";
 import { ETCDCTL_CLIENT_PACK } from "./etcdctl/client";
 import { OXIACLI_CLIENT_PACK } from "./oxiacli/client";
 import { RABBITREAD_CLIENT_PACK } from "./rabbitread/client";
-import { KAFKAREAD_CLIENT_PACK } from "./kafkaread/client";
 import { S3API_CLIENT_PACK } from "./s3api/client";
 import { FSQUERY_CLIENT_PACK } from "./fsquery/client";
 import { SNMPGET_CLIENT_PACK } from "./snmpget/client";
@@ -94,7 +94,6 @@ const MODULE_CLIENT_PACKS = Object.freeze({
   etcdctl: ETCDCTL_CLIENT_PACK,
   oxiacli: OXIACLI_CLIENT_PACK,
   rabbitread: RABBITREAD_CLIENT_PACK,
-  kafkaread: KAFKAREAD_CLIENT_PACK,
   s3api: S3API_CLIENT_PACK,
   fsquery: FSQUERY_CLIENT_PACK,
   snmpget: SNMPGET_CLIENT_PACK,
@@ -112,7 +111,7 @@ const MODULE_CLIENT_PACKS = Object.freeze({
  * module language holds, or one two data share, fails here by name (`declaredAgentLanguages`).
  */
 export const DECLARED_AGENT_LANGUAGES: readonly DeclaredAgentLanguage[] = declaredAgentLanguages(
-  DECLARED_STATEMENT_LANGUAGES,
+  Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null),
   Object.keys(MODULE_CLIENT_PACKS),
 );
 
@@ -191,7 +190,6 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     ETCDCTL_CLIENT_PACK.evidenceEvents,
     OXIACLI_CLIENT_PACK.evidenceEvents,
     RABBITREAD_CLIENT_PACK.evidenceEvents,
-    KAFKAREAD_CLIENT_PACK.evidenceEvents,
     S3API_CLIENT_PACK.evidenceEvents,
     FSQUERY_CLIENT_PACK.evidenceEvents,
     SNMPGET_CLIENT_PACK.evidenceEvents,
@@ -226,7 +224,6 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     ETCDCTL_CLIENT_PACK.shortfallSentences,
     OXIACLI_CLIENT_PACK.shortfallSentences,
     RABBITREAD_CLIENT_PACK.shortfallSentences,
-    KAFKAREAD_CLIENT_PACK.shortfallSentences,
     S3API_CLIENT_PACK.shortfallSentences,
     FSQUERY_CLIENT_PACK.shortfallSentences,
     SNMPGET_CLIENT_PACK.shortfallSentences,
@@ -257,7 +254,6 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     ETCDCTL_CLIENT_PACK.readingRefusalHeadlines,
     OXIACLI_CLIENT_PACK.readingRefusalHeadlines,
     RABBITREAD_CLIENT_PACK.readingRefusalHeadlines,
-    KAFKAREAD_CLIENT_PACK.readingRefusalHeadlines,
     S3API_CLIENT_PACK.readingRefusalHeadlines,
     FSQUERY_CLIENT_PACK.readingRefusalHeadlines,
     SNMPGET_CLIENT_PACK.readingRefusalHeadlines,
@@ -291,7 +287,6 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     ETCDCTL_CLIENT_PACK.requirements,
     OXIACLI_CLIENT_PACK.requirements,
     RABBITREAD_CLIENT_PACK.requirements,
-    KAFKAREAD_CLIENT_PACK.requirements,
     S3API_CLIENT_PACK.requirements,
     FSQUERY_CLIENT_PACK.requirements,
     SNMPGET_CLIENT_PACK.requirements,

@@ -177,6 +177,13 @@ export const REGISTRIES: readonly Listed[] = [
       "each engine's SQL generator forms, generated from the declarations and compile-enforced over the type-id union",
   },
   {
+    path: "src/lib/db/engine-catalog/statement-language.generated.ts",
+    declaration: "BUNDLED_STATEMENT_LANGUAGE_DATA",
+    count: 1,
+    reason:
+      "each engine's statement language data, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
     declaration: "BUNDLED_SQL_TEXT",
     count: 1,

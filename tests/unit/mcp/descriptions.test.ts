@@ -21,6 +21,7 @@ import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPE
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
+import { shippedDeclaredMcpTool } from "../../helpers/shipped-declared-language";
 import {
   legacyRegisterEngines,
   legacyRegisterTable,
@@ -45,7 +46,7 @@ const RUN_SNMP_READ_ARM = mcpStatementArm("run_snmp_read");
 const RUN_OPCUA_READ_ARM = mcpStatementArm("run_opcua_read");
 const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
-const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const RUN_KAFKA_READ_ARM = mcpStatementArm(shippedDeclaredMcpTool("kafkaread"));
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 
 afterEach(async () => {

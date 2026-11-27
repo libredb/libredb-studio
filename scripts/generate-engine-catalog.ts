@@ -24,14 +24,17 @@
  * src/lib/db/query-generators/index.ts reads, so the schema diff never loads them; and
  * src/lib/db/engine-catalog/claims.generated.ts, each engine's policy, MCP, connection and agent mode claim requests
  * (clauses M-82 and M-83), which only src/lib/db/claim-grants.ts reads, so no gate reads a request but through
- * Studio's grant of it.
+ * Studio's grant of it; and src/lib/db/engine-catalog/statement-language.generated.ts, each engine's statement language
+ * data (clause M-85), which src/lib/db/destructive-commands.ts compiles into the confirmation row it reads by type, and
+ * src/lib/agent/languages/client.ts and src/lib/db/operations/descriptors.ts compose the agent's declared languages
+ * from, so no reader of another module loads the languages' text.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations is
  * parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
  * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
- * `projectQueryEditorFacts`, `projectSqlText`, `projectSqlWriting`, `projectMigrationDdl`, `projectSqlGenerators` and
- * `projectClaimRequests` (src/lib/db/engine-catalog/projection.ts).
+ * `projectQueryEditorFacts`, `projectSqlText`, `projectSqlWriting`, `projectMigrationDdl`, `projectSqlGenerators`,
+ * `projectClaimRequests` and `projectStatementLanguageData` (src/lib/db/engine-catalog/projection.ts).
  * `--write` projects each file's authored members, `AUTHORED_MEMBERS`, without admitting the whole file: a file whose
  * authored members just changed still holds the members the declaration generator wrote from the previous ones, so it
  * is admitted only once that generator has rewritten the rest. The command
@@ -96,6 +99,7 @@ import {
   type SqlTexts,
   type SqlWritingEntry,
   type SqlWritings,
+  type StatementLanguageDatas,
   projectCatalog,
   projectClaimRequests,
   projectConnectionForms,
@@ -107,6 +111,7 @@ import {
   projectSqlGenerators,
   projectSqlText,
   projectSqlWriting,
+  projectStatementLanguageData,
 } from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
@@ -171,6 +176,12 @@ export const ENGINE_SQL_GENERATORS_MODULE = "src/lib/db/engine-catalog/sql-gener
  * requests, which only src/lib/db/claim-grants.ts reads.
  */
 export const ENGINE_CLAIMS_MODULE = "src/lib/db/engine-catalog/claims.generated.ts";
+
+/**
+ * The generated statement language module in the repository: each engine's statement language data, which
+ * src/lib/db/destructive-commands.ts, src/lib/agent/languages/client.ts and src/lib/db/operations/descriptors.ts read.
+ */
+export const ENGINE_STATEMENT_LANGUAGE_MODULE = "src/lib/db/engine-catalog/statement-language.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -249,13 +260,12 @@ type SqlText = NonNullable<EngineDeclaration["sqlText"]>;
 
 /**
  * One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them: the
- * members the projections read, every SQL-family member stated, the whole `facets` segment, the statement language
- * data, and the SQL text's `redaction`, a claim, none of which a projection reads all of, and each of which the
- * declaration generator writes back as authored.
+ * members the projections read, the statement language data among them, every SQL-family member stated, the whole
+ * `facets` segment, and the SQL text's `redaction`, a claim, neither of which a projection reads all of, and each of
+ * which the declaration generator writes back as authored.
  */
 export type AuthoredMembers = SqlFamilyDeclaration & {
   readonly facets: EngineDeclaration["facets"];
-  readonly statementLanguageData: EngineDeclaration["statementLanguageData"];
   readonly sqlText: SqlTextEntry & { readonly redaction: SqlText["redaction"] };
 };
 
@@ -870,6 +880,21 @@ export function renderClaimRequests(requests: ClaimRequests): string {
   );
 }
 
+/**
+ * The text of the generated statement language module for `data`: a header, type imports only, and one frozen record,
+ * null for every engine that states none, read by src/lib/db/destructive-commands.ts, src/lib/agent/languages/client.ts
+ * and src/lib/db/operations/descriptors.ts.
+ */
+export function renderStatementLanguageData(data: StatementLanguageDatas): string {
+  return renderedEntryModule(
+    ENGINE_STATEMENT_LANGUAGE_MODULE,
+    "StatementLanguageEntry",
+    "Each engine's statement language data, null where it states none, read by its confirmation row and agent (M-85).",
+    "export const BUNDLED_STATEMENT_LANGUAGE_DATA",
+    data,
+  );
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -923,6 +948,10 @@ function main(argv: readonly string[]): number {
     { file: fileOf(ENGINE_MIGRATION_DDL_MODULE), text: renderMigrationDdl(projectMigrationDdl(declarations)) },
     { file: fileOf(ENGINE_SQL_GENERATORS_MODULE), text: renderSqlGenerators(projectSqlGenerators(declarations)) },
     { file: fileOf(ENGINE_CLAIMS_MODULE), text: renderClaimRequests(projectClaimRequests(declarations)) },
+    {
+      file: fileOf(ENGINE_STATEMENT_LANGUAGE_MODULE),
+      text: renderStatementLanguageData(projectStatementLanguageData(declarations)),
+    },
   ];
 
   if (mode === "--check") {

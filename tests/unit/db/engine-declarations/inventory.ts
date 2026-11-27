@@ -209,6 +209,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: projected("sqlWriting"),
   },
   {
+    module: "src/lib/db/engine-catalog/statement-language.generated.ts",
+    name: "BUNDLED_STATEMENT_LANGUAGE_DATA",
+    destination: projected("statementLanguageData"),
+  },
+  {
     module: "src/lib/db/engine-facets/index.ts",
     name: "ENGINE_FACETS",
     destination:

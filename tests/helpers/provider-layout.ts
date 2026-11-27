@@ -18,12 +18,16 @@
  * - the agent leg (a non-null statement language in the engine's legacy register row) has a place only in the legacy
  *   layout so far,
  *   `src/lib/agent/languages/<language>/engines/<type-id>.ts` beside that language's `client.ts`, so a type-id with
- *   such a row is refused in a package until the change that moves it gives the package a place for it.
+ *   such a row is refused in a package until the change that moves it gives the package a place for it;
+ * - a legacy type-id whose declaration (`src/lib/db/engine-declarations/<type-id>.json` under the root) states its
+ *   statement language as data (`statementLanguageData`) keeps no agent leg, its overlay being its declaration's
+ *   `agent.overlay`: either leg file left for that language is refused by name, since the change that writes a language
+ *   as data deletes its agent leg; a type-id that speaks a language needs its declaration to say which case it is in.
  *
  * Every path is absolute, built with `path.join(root, ...)`; messages name repository-relative paths joined with `/`,
  * so they read the same on every platform. The root is a parameter, so a test can run the rules on a planted root.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseType } from "@/lib/types";
 import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
@@ -147,12 +151,22 @@ function resolve(root: string, type: DatabaseType): Resolution {
   if (code.length > 1) problems.push(`${type} has code in more than one place: ${code.map(relative).join(", ")}.`);
   missing([legacyDoc, legacyTest]);
   let agent: ProviderTriad["agent"] = null;
-  if (language !== null) {
+  const declaration = ["src", "lib", "db", "engine-declarations", `${type}.json`];
+  if (language !== null && !isFile(root, declaration)) missing([declaration]);
+  if (language !== null && isFile(root, declaration)) {
     const engines = ["src", "lib", "agent", "languages", language, "engines"];
     const overlay = [...engines, `${type}.ts`];
     const client = [...engines, "client.ts"];
-    missing([overlay, client]);
-    agent = { overlay: path.join(root, ...overlay), client: path.join(root, ...client) };
+    if (statesLanguageData(root, declaration)) {
+      for (const leg of [overlay, client].filter((leg) => existsSync(path.join(root, ...leg)))) {
+        problems.push(
+          `${type} declares ${language} as data, so ${relative(leg)} has no place: the change that writes a language as data deletes its agent leg.`,
+        );
+      }
+    } else {
+      missing([overlay, client]);
+      agent = { overlay: path.join(root, ...overlay), client: path.join(root, ...client) };
+    }
   }
   return finish(problems, {
     type,
@@ -162,6 +176,17 @@ function resolve(root: string, type: DatabaseType): Resolution {
     integrationTest: path.join(root, ...legacyTest),
     agent,
   });
+}
+
+/** Whether the declaration file `declaration` under `root` states statement language data, not null. */
+function statesLanguageData(root: string, declaration: Segments): boolean {
+  const parsed = JSON.parse(readFileSync(path.join(root, ...declaration), "utf8")) as {
+    readonly statementLanguageData?: unknown;
+  };
+  if (!Object.hasOwn(parsed, "statementLanguageData")) {
+    throw new Error(`${relative(declaration)} states no statementLanguageData, not even null.`);
+  }
+  return parsed.statementLanguageData !== null;
 }
 
 function finish(problems: string[], triad: ProviderTriad): Resolution {

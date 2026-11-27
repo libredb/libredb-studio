@@ -178,8 +178,22 @@ const EXPECTED_CLAIM_READERS = [
   "src/lib/db/server-catalog-compose.ts",
 ];
 
+/**
+ * The statement language data a declaration authors, M-85, projected whole into its generated module. It is not a
+ * claim: the row compiled from its confirmation counts its decides-alone only through the engine's grants
+ * (`rowDecidesAlone`), and the agent reads its language only where the engine's grants grant it, which the register
+ * row's review of the data's digest decides (M-87), so no reader hands the data to a gate as granted.
+ */
+const STATEMENT_LANGUAGE_MEMBERS = ["statementLanguageData"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
+  {
+    path: "src/lib/agent/languages/client.ts",
+    members: STATEMENT_LANGUAGE_MEMBERS,
+    reason:
+      "the languages the bundled declarations state agent data for, read from the statement language projection and composed into the agent's client facets; agent mode sends a language only where the engine's grants grant it",
+  },
   {
     path: "src/lib/db/claim-grants.ts",
     members: [...CLAIM_REQUEST_MEMBERS, "sqlText.readsSqlText", "sqlText.grammar"],
@@ -224,6 +238,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/credential-warnings.ts",
     members: ["connection.credentialWarnings"],
     reason: "each engine's credential warnings, read from the connection tables",
+  },
+  {
+    path: "src/lib/db/destructive-commands.ts",
+    members: STATEMENT_LANGUAGE_MEMBERS,
+    reason:
+      "each engine's statement language row the confirmation gate reads by type, compiled from the statement language projection where a declaration states data; its decides-alone counts only where the engine's grants grant it (rowDecidesAlone)",
   },
   {
     path: "src/lib/db/editor-language/index.ts",
@@ -288,9 +308,10 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...MIGRATION_DDL_MEMBERS,
       ...SQL_GENERATOR_MEMBERS,
       ...CLAIM_REQUEST_MEMBERS,
+      ...STATEMENT_LANGUAGE_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms and the claim requests",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms, the claim requests and the statement language data",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
@@ -314,6 +335,11 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "each engine's SQL writing, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/statement-language.generated.ts",
+    members: STATEMENT_LANGUAGE_MEMBERS,
+    reason: "each engine's statement language data, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/execution-ui/index.ts",
     members: EXECUTION_UI_MEMBERS,
     reason: "each engine's execution UI, read from the generated execution UI record",
@@ -323,6 +349,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     members: MIGRATION_DDL_MEMBERS,
     reason:
       "each engine's migration DDL row, composed from the generated migration DDL and Studio's migration DDL function table, which binds each named function",
+  },
+  {
+    path: "src/lib/db/operations/descriptors.ts",
+    members: STATEMENT_LANGUAGE_MEMBERS,
+    reason:
+      "the generic read descriptor of each language the bundled declarations state agent data for, read from the statement language projection; a run reaches it only under a language the engine's grants grant",
   },
   {
     path: "src/lib/db/query-dialects.ts",

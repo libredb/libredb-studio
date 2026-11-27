@@ -6,10 +6,14 @@
  * `AgentEngineClientOverlays` types it as the family the engine's generated claim request names. The registry is
  * total over `AgentEngineType` and declared in the order postgres, sqlite, duckdb, mssql, mysql, mongodb, kubernetes,
  * and like the server registry it copies only `dialect` out of each engine module.
+ *
+ * An engine whose granted language its declaration states as data (`DECLARED_AGENT_LANGUAGES`) has no row: its family
+ * is its grant (`GRANTED_AGENT_STATEMENT_LANGUAGE`), and its client facet is the family's own object.
  */
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
-import { languageClientPack } from "../client";
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
+import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "../client";
 import { INFLUXDB_CLIENT_OVERLAY } from "../influxql/engines/client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
 import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
@@ -22,7 +26,6 @@ import { REDIS_CLIENT_OVERLAY } from "../rediscli/engines/client";
 import { ETCD_CLIENT_OVERLAY } from "../etcdctl/engines/client";
 import { OXIA_CLIENT_OVERLAY } from "../oxiacli/engines/client";
 import { RABBITMQ_CLIENT_OVERLAY } from "../rabbitread/engines/client";
-import { KAFKA_CLIENT_OVERLAY } from "../kafkaread/engines/client";
 import { S3_CLIENT_OVERLAY } from "../s3api/engines/client";
 import { FIRESTORE_CLIENT_OVERLAY } from "../fsquery/engines/client";
 import { SNMP_CLIENT_OVERLAY } from "../snmpget/engines/client";
@@ -83,7 +86,6 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   etcd: Object.freeze({ family: "etcdctl", overlay: dialectOnly(ETCD_CLIENT_OVERLAY) }),
   oxia: Object.freeze({ family: "oxiacli", overlay: dialectOnly(OXIA_CLIENT_OVERLAY) }),
   rabbitmq: Object.freeze({ family: "rabbitread", overlay: dialectOnly(RABBITMQ_CLIENT_OVERLAY) }),
-  kafka: Object.freeze({ family: "kafkaread", overlay: dialectOnly(KAFKA_CLIENT_OVERLAY) }),
   s3: Object.freeze({ family: "s3api", overlay: dialectOnly(S3_CLIENT_OVERLAY) }),
   firestore: Object.freeze({ family: "fsquery", overlay: dialectOnly(FIRESTORE_CLIENT_OVERLAY) }),
   snmp: Object.freeze({ family: "snmpget", overlay: dialectOnly(SNMP_CLIENT_OVERLAY) }),
@@ -97,22 +99,33 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
 } satisfies AgentEngineClientOverlays);
 
 /**
- * The family `type` speaks, read from the registry beside its overlay, or null for a type with no statement language
- * and for a name that is no own key (`toString`).
+ * The language `type` is granted where its declaration states that language as data, or null for every other type and
+ * for a name that is no own key (`toString`).
+ */
+function declaredFamily(type: DatabaseType): AgentStatementLanguageId | null {
+  const granted = Object.hasOwn(GRANTED_AGENT_STATEMENT_LANGUAGE, type) ? GRANTED_AGENT_STATEMENT_LANGUAGE[type] : null;
+  return DECLARED_AGENT_LANGUAGES.find(({ id }) => id === granted)?.id ?? null;
+}
+
+/**
+ * The family `type` speaks, read from the registry beside its overlay, or its granted language declared as data
+ * (`declaredFamily`), or null for a type with no statement language and for a name that is no own key (`toString`).
  */
 export function engineFamily(type: DatabaseType): AgentStatementLanguageId | null {
-  return Object.hasOwn(CLIENT_OVERLAYS, type) ? CLIENT_OVERLAYS[type as AgentEngineType].family : null;
+  return Object.hasOwn(CLIENT_OVERLAYS, type) ? CLIENT_OVERLAYS[type as AgentEngineType].family : declaredFamily(type);
 }
 
 /**
  * The client facet of `type`: its family's, with the engine's overlay applied, which is the family's own object while
- * the overlay is empty. A type that speaks no statement language has none, and asking is a named error.
+ * the overlay is empty, and always for a language declared as data, which has no overlay. A type that speaks no
+ * statement language has none, and asking is a named error.
  */
 export function engineClientPack(type: DatabaseType): AgentEnginePack["client"] {
   const entry = Object.hasOwn(CLIENT_OVERLAYS, type) ? CLIENT_OVERLAYS[type as AgentEngineType] : undefined;
-  if (entry === undefined) throw new Error(`no engine pack for ${type}`);
-  const overlay: { readonly dialect?: AgentEngineClientDialect } = entry.overlay;
-  return defineOverlay(languageClientPack(entry.family), overlay);
+  const family = entry?.family ?? declaredFamily(type);
+  if (family === null) throw new Error(`no engine pack for ${type}`);
+  const overlay: { readonly dialect?: AgentEngineClientDialect } | undefined = entry?.overlay;
+  return defineOverlay(languageClientPack(family), overlay);
 }
 
 /**

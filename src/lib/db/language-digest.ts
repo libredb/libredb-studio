@@ -4,7 +4,8 @@
  * hashes too. A grant register row states the digest of the language data LibreDB reviewed, so that the grant
  * reader grants the language, and the claims that loosen the confirmation gate, only for the data that digests to it.
  * The server catalog's composer is the one module of Studio's source that imports it, to hand a package engine's
- * digest to the grant reader; every legacy row states null, as every legacy declaration states no such data.
+ * digest to the grant reader; a legacy row states the digest of the data its declaration states, null for none, which
+ * the legacy request carries as its row's own (tests/unit/db/grant-register-legacy-rows.test.ts holds the two equal).
  *
  * Server-only: it hashes with node:crypto. No module the browser loads imports it:
  * tests/unit/db/grammar-digest-boundary.test.ts holds the composer its one importer and the grant reader's value

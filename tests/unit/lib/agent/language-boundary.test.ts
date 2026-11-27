@@ -190,7 +190,6 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "etcdctl"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "oxiacli"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "rabbitread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "kafkaread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "s3api"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "fsquery"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentModuleLanguageId: R1a "snmpget"`]: 1,
@@ -922,7 +921,6 @@ describe("the agent core names no language a pack owns", () => {
       "etcdctl",
       "oxiacli",
       "rabbitread",
-      "kafkaread",
       "s3api",
       "fsquery",
       "snmpget",
@@ -933,6 +931,7 @@ describe("the agent core names no language a pack owns", () => {
       "mtconnectread",
       "mqttread",
       "sparkplugread",
+      "kafkaread",
     ]);
   });
 
@@ -982,7 +981,7 @@ describe("every engine overlay is declared satisfies its overlay type", () => {
     const exported = sourcesUnder(LANGUAGES)
       .filter((file) => new RegExp(`^${LANGUAGES}/[^/]+/engines/`).test(file))
       .flatMap((file) => Array.from(read(file).matchAll(/^export const (\w+_(SERVER|CLIENT)_OVERLAY)\b/gm)));
-    expect(exported).toHaveLength(78);
+    expect(exported).toHaveLength(76);
   });
 
   test("an overlay that drops its satisfies fails R6", () => {

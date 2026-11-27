@@ -681,7 +681,7 @@
       "confirmExemptForms": [],
       "decidesAlone": true,
       "grammarSha256": "7d16c13b865d95eaf352ec9957fd47046d2ffb41fae75d54d2c999eb67b1e1ed",
-      "languageSha256": null
+      "languageSha256": "b4ff7074932bd3e7e6858f7ec4ac102dd1883c66603939ec842c9db2bc834270"
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the topic list, every end offset and every group's committed offsets unchanged after every provider surface.",
@@ -689,7 +689,8 @@
       "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place.",
       "agentReadings": "`storage` is withheld: the agent handle's storage read refuses it.",
       "readsSqlText": "A Kafka read request is one JSON object naming a topic, whose strings escape with a backslash (#1088).",
-      "decidesAlone": "A Kafka read request is parsed as one read of one topic or refused before anything is sent, and its topic may carry any SQL keyword (#1088, section 2)."
+      "decidesAlone": "A Kafka read request is parsed as one read of one topic or refused before anything is sent, and its topic may carry any SQL keyword (#1088, section 2).",
+      "languageSha256": "Kafka: the provider's structural closed table: one read of a closed table of four metadata reads (the topic listing, the broker listing, one topic's partitions, one topic's earliest and end offsets), sent through an agent client that holds the Metadata request, with topic auto-creation off, and the ListOffsets request at the earliest and latest sentinels alone, so no fetch, produce, topic, config, ACL or group call, offset commit or timestamp lookup can be sent, and no internal topic is ever named. A record's key, value, headers and timestamp, a broker's host and port, configs, log directories and consumer groups are withheld: every answer is projected to names, counts and offsets (agent-metadata-read.ts), a request whose limit passes the row budget is refused before it is sent, and a result past the byte budget is refused, never truncated."
     }
   },
   {

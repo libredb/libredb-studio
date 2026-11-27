@@ -1,7 +1,7 @@
 /**
- * The agent's reader of one Kafka read request (`agent-statement.ts`): the closed table of four metadata reads, each
- * pinned to the plan the provider sends, and every request outside it refused before anything is sent, in agent mode's
- * own words with the list of reads.
+ * The agent's reader of one Kafka read request (`readKafkaAgentStatement` in the provider's `agent-metadata-read.ts`):
+ * the closed table of four metadata reads, each pinned to the plan the provider sends, and every request outside it
+ * refused before anything is sent, in agent mode's own words with the list of reads.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -10,7 +10,7 @@ import {
   KAFKA_AGENT_MAX_LIMIT,
   KAFKA_AGENT_SENTENCES,
   readKafkaAgentStatement,
-} from "@/lib/languages/kafkaread/agent-statement";
+} from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
 import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
@@ -216,7 +216,7 @@ describe("refusals before anything is sent", () => {
 describe("the MCP statement read and the withheld platform topics", () => {
   test("MCP reads Kafka through run_kafka_read, and the platform topics are withheld", () => {
     expect(statementRead.kafka).toBe(true);
-    expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
+    expect<string | null>(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     for (const topic of ["_schemas", "_confluent-metrics", "connect-configs"]) {
       expect(isWithheldKafkaTopic(topic)).toBe(true);
     }

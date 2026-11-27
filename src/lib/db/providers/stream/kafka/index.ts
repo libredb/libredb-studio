@@ -13,9 +13,9 @@
  * is bounded by its limit, its budgets and its timeout, with no server-side evaluation to stop.
  * `prepareQuery` is the base pass-through: the read request carries its own limit (spec 5.1).
  *
- * `queryReadOnly` is the agent's: one read of a closed table of metadata reads
- * (`src/lib/languages/kafkaread/agent-statement.ts`), sent through the agent's client, which holds the Metadata and
- * ListOffsets reads alone, and answered through a metadata-only projection (`agent-metadata-read.ts`): topic names,
+ * `queryReadOnly` is the agent's: one read of a closed table of metadata reads, read by the agent's Kafka read request
+ * reader and sent through the agent's client, which holds the Metadata and ListOffsets reads alone, and answered
+ * through a metadata-only projection (both in `agent-metadata-read.ts`): topic names,
  * partitions, broker node ids and racks, the cluster id and each partition's earliest and end offsets, never a record's
  * key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group. On a
  * handle opened for any agent-mode profile every other surface goes through that client too (`agent-surface.ts`): the
@@ -54,17 +54,15 @@ import type {
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { noWritePath } from "@/lib/db/write-reach";
 import {
+  isWithheldKafkaTopic,
+  KAFKA_AGENT_SENTENCES,
   KAFKA_AGENT_TOPIC_COLUMNS,
   KAFKA_METADATA_ONLY,
   kafkaAgentFailure,
   kafkaAgentResult,
+  readKafkaAgentStatement,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import {
-  isWithheldKafkaTopic,
-  KAFKA_AGENT_SENTENCES,
-  readKafkaAgentStatement,
-} from "@/lib/languages/kafkaread/agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,

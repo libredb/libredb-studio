@@ -86,7 +86,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { platformTimeoutMs } from "../../../helpers/platform-timeout";
-import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 /** The provider's directory in the repository, as git lists its files. */
 const PROVIDER_PATH = "src/lib/db/providers/stream/kafka";
@@ -2561,12 +2560,6 @@ describe("Kafka seam guard", () => {
  */
 const AGENT_MODULES = ["agent-metadata-read.ts", "agent-surface.ts"];
 
-/**
- * The agent's reader of one Kafka read request, in the kafkaread family module since FND-8 (docs/PROVIDER_IMPORTS.md,
- * "Slices of PR 8"). The provider runs it, so it is held to the same rules as the provider's agent-mode modules.
- */
-const AGENT_STATEMENT = `${statementLanguageFamilyDirectory("kafkaread")}/agent-statement.ts`;
-
 /** The agent client's members: the Metadata reads (metadata, listTopics) and the ListOffsets read (offsets). */
 const AGENT_CLIENT_MEMBERS = ["listTopics", "metadata", "offsets"];
 
@@ -2578,7 +2571,6 @@ const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
   "@/lib/db/redaction/metadata-only": "any",
   "@/lib/db/types": "any",
   "@/lib/db/utils/json-repeated-key": ["repeatsAKey"],
-  "@/lib/languages/kafkaread/agent-statement": "any",
   "./client": [
     "KafkaAgentReadClient",
     "KafkaError",
@@ -2675,7 +2667,6 @@ describe("the agent read path reaches Metadata and ListOffsets alone", () => {
         .sort(),
     ).toEqual(AGENT_MODULES);
     expect(AGENT_MODULES.flatMap((file) => agentPathFindings(file, read(file)))).toEqual([]);
-    expect(agentPathFindings(AGENT_STATEMENT, readFileSync(join(ROOT, AGENT_STATEMENT), "utf8"))).toEqual([]);
   });
 
   test("the provider hands an agent-mode surface a new object holding the three reads alone", () => {

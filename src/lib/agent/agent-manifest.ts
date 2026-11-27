@@ -54,7 +54,6 @@ export type AgentModuleLanguageId =
   | "etcdctl"
   | "oxiacli"
   | "rabbitread"
-  | "kafkaread"
   | "s3api"
   | "fsquery"
   | "snmpget"

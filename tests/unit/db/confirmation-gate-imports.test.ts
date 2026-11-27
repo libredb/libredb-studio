@@ -6,8 +6,8 @@
  * The gate's modules are the entries below; each is walked with tests/helpers/value-import-closure.ts, so a type-only
  * import is left out and a re-export is counted. A language's modules are every file under `src/lib/languages/<name>/`
  * and `src/lib/db/graph/<name>/` (Cypher's family module), and the `destructive.ts` beside the engine's legacy
- * provider. Every legacy declaration states null today, so the check is proven against crafted declarations until
- * the first language is written as data.
+ * provider. Kafka's declaration states its language, kafkaread, as data, so the check runs on a real declaration; the
+ * controls below plant other engines' languages to show it names a gate module of each kind.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -105,20 +105,20 @@ describe("the confirmation gate's imports", () => {
     expect(providerPackages).toEqual([]);
 
     const declared = declaredLanguages();
-    console.log(`declared statement languages: ${JSON.stringify(declared)}`);
+    expect(declared).toEqual([{ engine: "kafka", name: "kafkaread" }]);
     const closure = gateClosure();
     expect(declaredLanguageModules(closure, declared)).toEqual([]);
 
     // Vacuity: the walk reaches the language modules the gate imports today, so an empty answer is not an empty walk.
-    expect(closure).toContain("src/lib/languages/kafkaread/destructive.ts");
+    expect(closure).toContain("src/lib/languages/rabbitread/destructive.ts");
     expect(closure).toContain("src/lib/db/providers/keyvalue/etcd/destructive.ts");
     for (const entry of GATE_MODULES) expect(closure).toContain(entry);
   });
 
   test("the check names a gate module of a crafted declared language", () => {
     const closure = gateClosure();
-    expect(declaredLanguageModules(closure, [{ engine: "kafka", name: "kafkaread" }])).toContain(
-      "src/lib/languages/kafkaread/destructive.ts",
+    expect(declaredLanguageModules(closure, [{ engine: "rabbitmq", name: "rabbitread" }])).toContain(
+      "src/lib/languages/rabbitread/destructive.ts",
     );
     expect(declaredLanguageModules(closure, [{ engine: "etcd", name: "etcdctl" }])).toEqual([
       "src/lib/db/providers/keyvalue/etcd/destructive.ts",
