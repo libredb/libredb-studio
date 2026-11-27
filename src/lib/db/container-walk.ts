@@ -10,25 +10,27 @@
  * alone, in files that have nothing to do with objects. One definition, reachable from both
  * sides, with no route in the path.
  *
- * It reads `listContainers` straight off the provider. It used to take the method as an argument,
+ * It reads `listContainers` straight off its source. It used to take the method as an argument,
  * because the object surface was optional through the phase that landed it one provider at a time
  * and the route had to turn an absent method into a 501 naming the engine. The method is required
  * now, so there is no absence to report and no reason for this to know what an HTTP status is.
  *
- * It reads a `ContainerSource`: a provider is one, and so is the object tree's caller facade
- * (`objectTree` in src/lib/api/object-tree.ts), through which the object routes read each listing
- * as a host core tree call under a deadline of its own.
+ * It reads a `ContainerSource`: the object model of the session it walks, for the depth and whether
+ * containers name their kinds, and that session's container listing. The object tree's caller
+ * facade (`objectTree` in src/lib/api/object-tree.ts) is one, its model the one its bridged session
+ * states, through which the object routes read each listing as a host core tree call under a
+ * deadline of its own; a caller holding a provider builds one from its capabilities and its listing.
  */
-import { containerDepth } from "@/lib/db/object-kinds";
+import { containerDepth, type ObjectModelView } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
-import type { Container, DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import type { Container, ProviderCapabilities } from "@/lib/db/types";
 
 /**
- * What a walk reads: the engine's capabilities, for the depth, and its container listing. A
- * `DatabaseProvider` is one; the object tree's caller facade is another.
+ * What a walk reads: the engine's object model, for the depth and whether its containers name their
+ * kinds, and its container listing. The object tree's caller facade is one.
  */
 export interface ContainerSource {
-  getCapabilities(): ProviderCapabilities;
+  readonly objectModel: ObjectModelView;
   listContainers(parent?: readonly string[]): Promise<readonly Container[]>;
 }
 
@@ -73,11 +75,11 @@ export interface ContainerEnumeration {
  * container at the deepest level is a provider defect, and it is answered as no default rather
  * than by picking one.
  */
-export async function enumerateContainers(provider: ContainerSource): Promise<ContainerEnumeration> {
-  const depth = containerDepth(provider.getCapabilities());
+export async function enumerateContainers(source: ContainerSource): Promise<ContainerEnumeration> {
+  const depth = containerDepth(source.objectModel);
   if (depth === 0) return { containers: [[]], defaultContainer: [] };
 
-  const listContainers = provider.listContainers.bind(provider);
+  const listContainers = source.listContainers.bind(source);
   let level = await listContainers();
   for (let below = 1; below < depth; below++) {
     const next: Container[] = [];
@@ -139,12 +141,9 @@ export interface NamedContainers {
  * The distinct parents `describeNamedContainers` lists for a set of named paths, in first-seen order,
  * or none on an engine it does not ask.
  */
-function namedParents(
-  provider: ContainerSource,
-  named: readonly (readonly string[])[],
-): readonly (readonly string[])[] {
-  const capabilities = provider.getCapabilities();
-  if (capabilities.containersNameKinds !== true || containerDepth(capabilities) === 0) return [];
+function namedParents(source: ContainerSource, named: readonly (readonly string[])[]): readonly (readonly string[])[] {
+  const model = source.objectModel;
+  if (model.containersNameKinds !== true || containerDepth(model) === 0) return [];
   const parents = new Map<string, readonly string[]>();
   for (const path of named) {
     const parent = path.slice(0, -1);
@@ -159,14 +158,14 @@ function namedParents(
  * without issuing any, so a caller can refuse a body before its first round trip. One on an engine with
  * one container level, one per distinct parent below that, and none on an engine that is not asked.
  */
-export function namedContainerListings(provider: DatabaseProvider, named: readonly (readonly string[])[]): number {
-  return namedParents(provider, named).length;
+export function namedContainerListings(source: ContainerSource, named: readonly (readonly string[])[]): number {
+  return namedParents(source, named).length;
 }
 
 /**
  * The containers a caller NAMED, with the kinds the provider answers for each.
  *
- * Only on an engine that declares `ProviderCapabilities.containersNameKinds`: one `listContainers`
+ * Only on an engine whose object model states `containersNameKinds`: one `listContainers`
  * call per distinct parent of the named paths, which is one call on an engine with one container
  * level, because the kinds of a container are the provider's answer and never the caller's. Every
  * other engine is not asked, and its named containers are read for every enumerable kind exactly as
@@ -175,17 +174,17 @@ export function namedContainerListings(provider: DatabaseProvider, named: readon
  * first with `namedContainerListings` and refuses a body that would issue too many.
  */
 export async function describeNamedContainers(
-  provider: ContainerSource,
+  source: ContainerSource,
   named: readonly (readonly string[])[],
 ): Promise<NamedContainers> {
-  const parents = namedParents(provider, named);
+  const parents = namedParents(source, named);
   if (parents.length === 0) return { enumeration: { containers: named }, unlisted: [] };
   const answered = new Map<string, Container>();
   // Sequential on purpose, and the `no-await-in-loop` warning is accepted here, as in
   // `enumerateContainers`: one parent at a time, so a body naming many parents never opens as many
   // concurrent listings.
   for (const parent of parents) {
-    const listed = await (parent.length === 0 ? provider.listContainers() : provider.listContainers(parent));
+    const listed = await (parent.length === 0 ? source.listContainers() : source.listContainers(parent));
     for (const container of listed) {
       const listedKey = JSON.stringify(container.path);
       if (!answered.has(listedKey)) answered.set(listedKey, container);

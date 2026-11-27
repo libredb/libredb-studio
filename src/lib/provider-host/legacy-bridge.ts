@@ -211,8 +211,7 @@ export interface AnsweredRun {
  */
 export interface BridgedConsole {
   readonly session: ConsoleSession &
-    ObjectsSession &
-    Omit<MaintenanceSession, "maintenance"> &
+    ObjectsSession & { readonly objectModel: ObjectModel } & Omit<MaintenanceSession, "maintenance"> &
     MonitoringSession &
     HealthSession;
   readonly run: LegacyRun;

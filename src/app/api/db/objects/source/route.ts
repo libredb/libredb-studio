@@ -8,6 +8,7 @@ import {
 } from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import { scrubSourceDocument } from "@/lib/db/operations/provider-text";
+import { bridgedObjectModel } from "@/lib/provider-host/legacy-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -38,16 +39,22 @@ export const dynamic = "force-dynamic";
  * the embedded seam's host, and MEASURED, a host cannot reach here at all, because the provider
  * comes from a closed `switch (connection.type)` in `src/lib/provider-host/legacy-adapter/open.ts`
  * and the embedded shell has no API routes.
+ *
+ * Whether the kind has source, and whether its parts may be edited, is read from the engine's object
+ * model (docs/providers/CONTRACT.md, clause M-89): the model the legacy bridge states for the
+ * provider's session (`bridgedObjectModel`), until the source read is a contract call made on the
+ * record's session and reads that session's model.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/source", async (provider, body, context) => {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
-    const read = requireSourceReader(provider, kind);
+    const model = bridgedObjectModel(provider);
+    const read = requireSourceReader(provider, model, kind);
     return boundSourceDocument(
       scrubSourceDocument(context.scrub, await read(path, kind, SOURCE_CHARACTER_LIMIT)),
       SOURCE_CHARACTER_LIMIT,
-      provider.getCapabilities(),
+      model,
     );
   });
 }

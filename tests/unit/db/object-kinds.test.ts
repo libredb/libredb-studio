@@ -36,9 +36,14 @@ import {
   kindGroup,
   kindsForContainer,
   activationRowActionForKind,
+  assertObjectPathShape,
+  declaredLevels,
+  type ObjectModelView,
   rowActionsForKind,
 } from "@/lib/db/object-kinds";
 import type { KindRowAction } from "@/exports/types";
+import type { ObjectModel } from "@libredb/provider-sdk/manifest";
+import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
 
@@ -1070,5 +1075,142 @@ describe("kindsForContainer, applicableKinds and rowActionsForKind", () => {
     for (const group of [null, 5, "workloads", { id: 5, label: "Workloads" }, { id: "workloads" }]) {
       expect(kindGroup({ ...pods, group } as unknown as ObjectKindSpec)).toBeUndefined();
     }
+  });
+});
+
+describe("the object model in either form", () => {
+  /** One planted model as a legacy provider's capabilities state it: absent members where it has none. */
+  const stated = {
+    ...base,
+    containerLevels: [
+      { id: "catalog", label: "Shelf", labelPlural: "Shelves" },
+      { id: "schema", label: "Folder", labelPlural: "Folders" },
+    ],
+    containerPathShapes: "prefixes",
+    containersNameKinds: true,
+    objectKinds: [
+      {
+        id: "item",
+        role: "relation",
+        label: "Item",
+        labelPlural: "Items",
+        hasColumns: true,
+        acceptsRowWrites: true,
+        countIsListing: true,
+        group: { id: "stock", label: "Stock" },
+      },
+      {
+        id: "key",
+        role: "config",
+        label: "Key",
+        labelPlural: "Keys",
+        enumeratedBy: "key-browser",
+        hasSource: true,
+        sourceLanguage: "json",
+      },
+      { id: "part", role: "attached", label: "Part", labelPlural: "Parts", attachedTo: "item" },
+      {
+        id: "entry",
+        role: "routine",
+        label: "Entry",
+        labelPlural: "Entries",
+        hasSource: true,
+        sourceLanguage: "sql",
+        acceptsSourceEdits: true,
+      },
+      {
+        id: "draft",
+        role: "routine",
+        label: "Draft",
+        labelPlural: "Drafts",
+        hasSource: true,
+        acceptsSourceEdits: true,
+      },
+      { id: "sealed", role: "config", label: "Sealed", labelPlural: "Sealed", machineNames: "withheld" },
+    ],
+    rowActions: [
+      { id: "run", label: "Run", kinds: ["entry"], activates: true },
+      { id: "peek", label: "Peek", kinds: ["item", "entry"] },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const ENGINE = { code: "postgres", label: "A planted", attachedSegment: "required" } as const;
+  const DISPLAY = { displayName: "Planted", type: "postgres" } as const;
+  const IDS = ["item", "key", "part", "entry", "draft", "sealed", "unstated"];
+
+  /** What `run` answers, or the message it throws. */
+  const outcome = (run: () => unknown): unknown => {
+    try {
+      return { answered: run() };
+    } catch (error) {
+      return { threw: (error as Error).message };
+    }
+  };
+  const idsOf = (kinds: readonly { readonly id: string }[]) => kinds.map((kind) => kind.id);
+
+  /** Every object kind reader's answer over `model`, kinds compared by id. */
+  function answers(model: ObjectModelView) {
+    return {
+      depth: containerDepth(model),
+      declared: idsOf(declaredKinds(model)),
+      enumerable: idsOf(enumerableKinds(model)),
+      forContainer: idsOf(kindsForContainer(model, ["item", "key", "entry"])),
+      applicable: idsOf(applicableKinds(enumerableKinds(model), undefined)),
+      keyBrowser: keyBrowserKind(model)?.id,
+      levels: declaredLevels(model).map((level) => level.id),
+      shapes: acceptedContainerShapes(model).map((shape) => shape.length),
+      containers: [0, 1, 2, 3].map((length) =>
+        outcome(() => assertContainerPathShape(model, Array(length).fill("x"), { ...ENGINE, shapeNames: "label" })),
+      ),
+      relations: outcome(() => relationKindIds(model)),
+      kinds: IDS.map((id) => {
+        const spec = findKind(model, id);
+        return {
+          found: spec?.id,
+          rowActions: rowActionsForKind(model, id).map((action) => action.id),
+          activation: outcome(() => activationRowActionForKind(model, id)?.id),
+          rowWrites: kindAcceptsRowWrites(model, id),
+          countIsListing: kindCountIsListing(model, id),
+          source: kindHasSource(model, id),
+          edits: kindAcceptsSourceEdits(model, id),
+          group: spec === undefined ? undefined : kindGroup(spec),
+          columns: kindHasColumns(spec),
+          withheld: kindNamesWithheld(spec),
+          requireSource: outcome(() => requireSourceKind(model, id, DISPLAY).sourceLanguage),
+          requireEditable: outcome(() => requireEditableKind(model, id, DISPLAY).sourceLanguage),
+          paths:
+            spec === undefined
+              ? []
+              : [2, 3, 4].map((length) =>
+                  outcome(() => assertObjectPathShape(model, spec, id, Array(length).fill("x"), ENGINE)),
+                ),
+        };
+      }),
+    };
+  }
+
+  test("every object kind reader takes the session's model, not a built provider's capabilities", () => {
+    const declared: ObjectModel = declaredObjectModel(stated);
+    const fromCapabilities = answers(stated);
+
+    expect(answers(declared)).toEqual(fromCapabilities);
+    // The planted model reaches every arm: a kind the key browser alone enumerates, an attached kind, a source kind
+    // with and without its language, a grouped kind, a withheld kind and an activating row action.
+    expect(fromCapabilities.enumerable).toEqual(["item", "part", "entry", "draft", "sealed"]);
+    expect(fromCapabilities.keyBrowser).toBe("key");
+    const byId = Object.fromEntries(fromCapabilities.kinds.map((kind, index) => [IDS[index], kind]));
+    expect(byId.entry?.activation).toEqual({ answered: "run" });
+    expect(byId.draft?.requireSource).toEqual({
+      threw: 'Planted declares readable source for the kind "draft" and no sourceLanguage to render it with',
+    });
+    expect(byId.part?.paths).toEqual([
+      { threw: 'A planted "part" path is [shelf, folder, item, name], received ["x","x"]' },
+      { threw: 'A planted "part" path is [shelf, folder, item, name], received ["x","x","x"]' },
+      { answered: undefined },
+    ]);
+    expect(byId.item?.group).toEqual({ id: "stock", label: "Stock" });
+    expect(byId.sealed?.withheld).toBe(true);
+    expect(byId.unstated?.requireSource).toEqual({ threw: 'Planted declares no object kind "unstated"' });
+    expect(fromCapabilities.shapes).toEqual([1, 2]);
   });
 });

@@ -257,7 +257,7 @@ type ContainerChoice =
  * a level that lists nothing leaves nothing to read.
  */
 async function chooseContainer(tree: ObjectTree, schema: string | undefined, step: Step): Promise<ContainerChoice> {
-  const depth = containerDepth(tree.getCapabilities());
+  const depth = containerDepth(tree.objectModel);
   const wanted = schema?.toLowerCase();
   if (depth === 0) return wanted === undefined ? { kind: "root" } : { kind: "not-found" };
   let parent: readonly string[] | undefined;
@@ -282,14 +282,19 @@ function commentOf(source: unknown): string | undefined {
   return typeof comment === "string" ? comment : undefined;
 }
 
+/**
+ * One table of the page. `declaresForeignKeys` is the provider's editor gate (`ProviderCapabilities.declaresForeignKeys`),
+ * read off the provider the call holds, since it is no member of the engine's object model.
+ */
 async function inspectTable(
   tree: ObjectTree,
+  declaresForeignKeys: boolean,
   object: DatabaseObject,
   args: InspectSchemaInput,
   step: Step,
   scrub: ProviderTextScrub,
 ): Promise<InspectedTable> {
-  const readsForeignKeys = args.include_foreign_keys && tree.getCapabilities().declaresForeignKeys !== false;
+  const readsForeignKeys = args.include_foreign_keys && declaresForeignKeys;
   const detail =
     args.include_columns || args.include_indexes || readsForeignKeys
       ? await step(() => tree.describeObject(object.path, object.kind))
@@ -396,12 +401,13 @@ function pageResult(
  * of them concurrent, and the first failure is the listing's.
  */
 async function listRelations(tree: ObjectTree, container: readonly string[]): Promise<DatabaseObject[]> {
-  const kinds = relationKindIds(tree.getCapabilities());
+  const kinds = relationKindIds(tree.objectModel);
   return (await Promise.all(kinds.map((kind) => tree.listObjects(container, kind)))).flat();
 }
 
 async function readPage(
   tree: ObjectTree,
+  declaresForeignKeys: boolean,
   args: InspectSchemaInput,
   signal: AbortSignal,
   step: Step,
@@ -424,7 +430,7 @@ async function readPage(
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
     // oxlint-disable-next-line no-await-in-loop -- one table at a time, so the page stops at the result cap.
-    const table = await inspectTable(tree, object, args, step, scrub);
+    const table = await inspectTable(tree, declaresForeignKeys, object, args, step, scrub);
     if (
       resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false, author)) >
       MCP_RESULT_CAP_BYTES
@@ -507,7 +513,16 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       return finish(databaseRequiredAnswer(choice, author), "mcp_execution_failed");
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
     const tree = mcpObjectTree(choice.provider, call.signal, deadline);
-    const { result, failure } = await readPage(tree, args, call.signal, treeStep(call.signal), scrub, author);
+    const declaresForeignKeys = choice.provider.getCapabilities().declaresForeignKeys !== false;
+    const { result, failure } = await readPage(
+      tree,
+      declaresForeignKeys,
+      args,
+      call.signal,
+      treeStep(call.signal),
+      scrub,
+      author,
+    );
     return finish(result, failure);
   } catch (error) {
     if (error instanceof InspectStopped) {

@@ -57,10 +57,10 @@ export async function POST(req: NextRequest) {
     "api/db/objects/search",
     async (provider, body, context) => {
       const term = requireString(body, "term").toLowerCase();
-      const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
+      const tree = objectTree(provider, req.signal, context.route);
+      const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
 
       assertNotWholeServer(provider);
-      const tree = objectTree(provider, req.signal, context.route);
       const enumerated = await enumerateContainers(tree);
       const kindsOf = kindsByContainer(enumerated);
       const pairs = enumerated.containers.flatMap((container) =>

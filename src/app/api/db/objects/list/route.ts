@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 /**
  * The objects of one kind in one container, names only (#789).
  *
- * A kind the engine does not declare is left to the provider rather than pre-checked here: the
- * provider owns the mapping from a kind id to a catalog and already refuses an unknown one with
- * the engine's own wording, and a second list of kind ids in this route would be a second place
- * for that mapping to drift.
+ * A kind the engine's object model does not state is not pre-checked here: the host core refuses it
+ * before any call, as Studio's own refusal with outcome not-sent (`StudioObjectModelRefusal`,
+ * docs/providers/CONTRACT.md, clause M-89), so no provider is asked for it, and a second check of
+ * kind ids in this route would be a second place for that rule to drift.
  *
  * The listing is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
  * request's signal.
@@ -26,8 +26,9 @@ export async function POST(req: NextRequest) {
     async (provider, body, context) => {
       const container = requireStringArray(body, "container");
       const kind = requireString(body, "kind");
-      assertContainerAddress(provider, "container", container);
-      return objectTree(provider, req.signal, context.route).listObjects(container, kind);
+      const tree = objectTree(provider, req.signal, context.route);
+      assertContainerAddress(tree.objectModel, provider.type, "container", container);
+      return tree.listObjects(container, kind);
     },
     { session: "metadata" },
   );

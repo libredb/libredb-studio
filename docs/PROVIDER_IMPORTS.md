@@ -89,7 +89,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/migration-ddl/shared.ts` | SDK /manifest | The statement building blocks Studio's migration DDL function table binds and an engine's own migration DDL function reads. |
 | `src/lib/db/migration-ddl/types.ts` | SDK /manifest | The types of the migration DDL row and of the migration DDL functions a declaration names. |
 | `src/lib/db/object-edit.ts` | SDK /objects | The pure edit text bound and position mapping. |
-| `src/lib/db/object-kinds.ts` | SDK /objects | Pure derivations over a provider's object declarations. |
+| `src/lib/db/object-kinds.ts` | SDK /objects | Pure derivations over an engine's object model. |
 | `src/lib/db/object-path.ts` | SDK /objects | The pure order and spelling of object paths. |
 | `src/lib/db/query-generators/shared.ts` | SDK /manifest | Pure pieces a query generator row shares. |
 | `src/lib/db/query-generators/types.ts` | SDK /manifest | The query generator row contract. |

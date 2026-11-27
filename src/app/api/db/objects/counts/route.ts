@@ -31,11 +31,9 @@ export async function POST(req: NextRequest) {
     "api/db/objects/counts",
     async (provider, body, context) => {
       const container = requireStringArray(body, "container");
-      assertContainerAddress(provider, "container", container);
-      return scrubKindCounts(
-        context.scrub,
-        await objectTree(provider, req.signal, context.route).countObjects(container),
-      );
+      const tree = objectTree(provider, req.signal, context.route);
+      assertContainerAddress(tree.objectModel, provider.type, "container", container);
+      return scrubKindCounts(context.scrub, await tree.countObjects(container));
     },
     { session: "metadata" },
   );

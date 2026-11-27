@@ -32,9 +32,35 @@ import {
   type ObjectModel,
   type SchemaRefusal,
 } from "@libredb/provider-sdk/manifest";
+import { checkTreeRequest } from "@libredb/provider-sdk/calls";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import {
+  acceptedContainerShapes,
+  activationRowActionForKind,
+  assertContainerPathShape,
+  assertObjectPathShape,
+  containerDepth,
+  declaredKinds,
+  declaredLevels,
+  enumerableKinds,
+  findKind,
+  kindAcceptsRowWrites,
+  kindAcceptsSourceEdits,
+  kindCountIsListing,
+  kindGroup,
+  kindHasColumns,
+  kindHasSource,
+  kindNamesWithheld,
+  kindsForContainer,
+  keyBrowserKind,
+  type ObjectModelView,
+  relationKindIds,
+  requireEditableKind,
+  requireSourceKind,
+  rowActionsForKind,
+} from "@/lib/db/object-kinds";
 import type {
   DatabaseConnection,
   DatabaseProvider,
@@ -196,6 +222,41 @@ describe("the object model of every shipped engine", () => {
     expect(projections.length).toBeGreaterThan(SHIPPED_DATABASE_TYPES.length * 2);
   });
 
+  test("every object kind reader answers the same over each projected model as over its provider's capabilities", () => {
+    const differing = projections.filter(
+      ({ capabilities, model }) => !Bun.deepEquals(readerAnswers(model), readerAnswers(capabilities)),
+    );
+
+    expect(differing.map(({ type, variant }) => `${type} ${variant}`)).toEqual([]);
+    // Vacuity: the readers met kinds, levels and row actions across the census.
+    expect(projections.some(({ model }) => model.objectKinds.length > 0)).toBe(true);
+    expect(projections.some(({ model }) => model.containerLevels.length === 2)).toBe(true);
+    expect(projections.some(({ model }) => model.rowActions.length > 0)).toBe(true);
+  });
+
+  test("the host's tree request check admits exactly the levels and kinds the object kind readers admit, over every projected model", () => {
+    const disagreeing = projections.flatMap(({ type, variant, model }) => {
+      const at = `${type} ${variant}`;
+      const lines: string[] = [];
+      const kinds = [...model.objectKinds.map((kind) => kind.id), UNSTATED_KIND];
+      for (const length of LENGTHS) {
+        const path = Array.from({ length }, (_, index) => `segment${index}`);
+        const shapes = acceptedContainerShapes(model).some((shape) => shape.length === length);
+        const counted = checkTreeRequest(model, { action: "count", container: path }).length === 0;
+        if (counted !== shapes) lines.push(`${at}: count of ${length} segments`);
+        const parent = checkTreeRequest(model, { action: "containers", parent: path }).length === 0;
+        if (parent !== length <= containerDepth(model)) lines.push(`${at}: parent of ${length} segments`);
+      }
+      for (const kind of kinds) {
+        const named = checkTreeRequest(model, { action: "describe", path: [], kind }).length === 0;
+        if (named !== (findKind(model, kind) !== undefined)) lines.push(`${at}: kind ${kind}`);
+      }
+      return lines;
+    });
+
+    expect(disagreeing).toEqual([]);
+  });
+
   test("a planted projection fails each object model rule by name at its pointer", () => {
     const planted = projections.find(
       ({ variant, model }) =>
@@ -271,6 +332,63 @@ describe("the object model of every shipped engine", () => {
     ).toEqual([]);
   });
 });
+
+/** The container and object path lengths the reader censuses read. */
+const LENGTHS = [0, 1, 2, 3, 4] as const;
+
+/** A kind id no shipped engine states. */
+const UNSTATED_KIND = "census-unstated-kind";
+
+/** What `run` answers, or the message it throws. */
+function outcome(run: () => unknown): unknown {
+  try {
+    return { answered: run() };
+  } catch (error) {
+    return { threw: (error as Error).message };
+  }
+}
+
+/** Every object kind reader's answer over `model`, for every stated kind, one unstated kind and each length. */
+function readerAnswers(model: ObjectModelView) {
+  const engine = { code: "postgres", label: "A census", attachedSegment: "required" } as const;
+  const display = { displayName: "Census", type: "postgres" } as const;
+  const ids = [...declaredKinds(model).map((kind) => kind.id), UNSTATED_KIND];
+  const pathOf = (length: number) => Array.from({ length }, (_, index) => `segment${index}`);
+  return {
+    depth: containerDepth(model),
+    declared: declaredKinds(model).map((kind) => kind.id),
+    enumerable: enumerableKinds(model).map((kind) => kind.id),
+    forContainer: kindsForContainer(model, ids.slice(0, 1)).map((kind) => kind.id),
+    keyBrowser: keyBrowserKind(model)?.id,
+    levels: declaredLevels(model).map((level) => [level.id, level.label]),
+    shapes: acceptedContainerShapes(model).map((shape) => shape.length),
+    containers: LENGTHS.map((length) =>
+      outcome(() => assertContainerPathShape(model, pathOf(length), { ...engine, shapeNames: "label" })),
+    ),
+    relations: outcome(() => relationKindIds(model)),
+    kinds: ids.map((id) => {
+      const spec = findKind(model, id);
+      return {
+        found: spec?.id,
+        rowActions: rowActionsForKind(model, id).map((action) => action.id),
+        activation: outcome(() => activationRowActionForKind(model, id)?.id),
+        rowWrites: kindAcceptsRowWrites(model, id),
+        countIsListing: kindCountIsListing(model, id),
+        source: kindHasSource(model, id),
+        edits: kindAcceptsSourceEdits(model, id),
+        group: spec === undefined ? undefined : kindGroup(spec),
+        columns: kindHasColumns(spec),
+        withheld: kindNamesWithheld(spec),
+        requireSource: outcome(() => requireSourceKind(model, id, display).sourceLanguage),
+        requireEditable: outcome(() => requireEditableKind(model, id, display).sourceLanguage),
+        paths:
+          spec === undefined
+            ? []
+            : LENGTHS.map((length) => outcome(() => assertObjectPathShape(model, spec, id, pathOf(length), engine))),
+      };
+    }),
+  };
+}
 
 /**
  * Every `ProviderCapabilities` member that is not part of the object model, with where it is stated instead. A

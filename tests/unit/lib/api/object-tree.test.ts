@@ -22,7 +22,7 @@ import {
   type WalkGrant,
 } from "@/lib/api/object-tree";
 import { errorOutcome } from "@/lib/db/error-record";
-import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
+import { QueryCancelledError, StudioObjectModelRefusal, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
@@ -30,6 +30,7 @@ import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { TreeRecord } from "@/lib/provider-host/core/objects";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 
@@ -228,7 +229,39 @@ describe("objectTree", () => {
     expect(await tree.listObjects(["app"], "table")).toBe(objects);
     expect(await tree.describeObject(["app", "orders"], "table")).toBe(detail);
     expect(await tree.describeObjects(["app"], "table", 3)).toBe(batch);
-    expect(tree.getCapabilities()).toEqual(provider.getCapabilities());
+    expect(tree.objectModel).toEqual(declaredObjectModel(provider.getCapabilities()));
+  });
+
+  test("the editor's tree reads every read on one bridged session, and its object model is that session's", async () => {
+    const provider = providerOf();
+    const sessions: unknown[] = [];
+    const unstated = marker();
+    const { tree, refused } = await withCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          sessions.push(session);
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      async () => {
+        const read = objectTree(provider, new AbortController().signal, ROUTE);
+        await read.listContainers();
+        await read.countObjects(["app"]);
+        await read.listObjects(["app"], "view");
+        return { tree: read, refused: await failure(() => read.listObjects(["app"], unstated)) };
+      },
+    );
+
+    expect(sessions).toHaveLength(4);
+    expect(new Set(sessions).size).toBe(1);
+    expect(tree.objectModel === (sessions[0] as { objectModel: unknown }).objectModel).toBe(true);
+    expect(tree.objectModel.objectKinds.map((kind) => kind.id)).toEqual(["table", "view"]);
+    // A kind the session's model does not state is refused before the provider is asked, in Studio's words.
+    expect(refused).toBeInstanceOf(StudioObjectModelRefusal);
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect((refused as Error).message).not.toContain(unstated);
+    expect(mockOf(provider.listObjects).mock.calls as unknown[]).toEqual([[["app"], "view"]]);
   });
 
   test("an error the provider raises reaches the caller as the same object", async () => {
@@ -704,7 +737,7 @@ describe("objectTreeWithinCall", () => {
     expect(seen[0]?.ctx.signal.reason).toBe(reason);
   });
 
-  test("it answers the provider's answer by reference, hands the capabilities through, and reads a listing that says the inventory needs configuration as no container", async () => {
+  test("it answers the provider's answer by reference, states its session's object model, and reads a listing that says the inventory needs configuration as no container", async () => {
     const provider = providerOf();
     const containers = [{ path: ["app"], name: "app", level: 0 }];
     const objects = [{ path: ["app", "orders"], name: "orders", kind: "table" }];
@@ -717,7 +750,7 @@ describe("objectTreeWithinCall", () => {
     expect(await tree.listContainers()).toBe(containers);
     expect(await tree.listObjects(["app"], "table")).toBe(objects);
     expect(await tree.describeObject(["app", "orders"], "table")).toBe(detail);
-    expect(tree.getCapabilities()).toEqual(provider.getCapabilities());
+    expect(tree.objectModel).toEqual(declaredObjectModel(provider.getCapabilities()));
 
     const unconfigured = Object.assign(providerOf(), {
       inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => marker()),
