@@ -451,11 +451,11 @@ An engine that speaks a statement language of its own, not SQL, states that lang
 The data names the language and states its confirmation part (M-86), the request form agent mode admits and the text agent mode shows, every member required as M-8 says, with the manifest schema as its vocabulary.
 Not every part of the data is in the schema yet, so nothing checks this.
 
-### M-86 (informative): The confirmation part of a statement language
+### M-86 (normative): The confirmation part of a statement language
 
 The confirmation part states the operations whose statements ask a confirmation, which of core's reader kinds names the operations a statement runs, and whether that reading is the confirmation's whole answer or the shared dangerous keywords are also read in the statement.
 It also states whether Studio may send the language's statements to the AI safety analysis, and the most UTF-8 bytes a statement may hold, past which Studio refuses the statement before it is sent, or null for no bound.
-It names no function of the package, and the schema has no such member yet, so nothing checks this.
+It names no function of the package, and no confirmation check reads it yet (C-38).
 
 ### M-87 (informative): A register row reviews an engine's statement language data
 
@@ -932,7 +932,7 @@ Only a watchdog outside the process detects a hung process, and the kit's import
 
 Core decides whether a statement needs a confirmation, never by a call into a provider, and decides it for a provider package's engine by one check over what its declaration states of its statements, its statement language data (M-85) or its SQL text (S-3), read as its register row grants them (M-87, S-8).
 The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
-No declaration states statement language data yet, so nothing checks the check over it.
+No confirmation check reads statement language data yet.
 
 ### C-39 (normative): A protected read path is a precondition of agent and MCP statements
 

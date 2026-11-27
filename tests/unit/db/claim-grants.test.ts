@@ -38,7 +38,7 @@ import {
   legacyEngineGrants,
   legacyGrantRows,
   type SqlTextRequest,
-  STATEMENT_LANGUAGE_NAMES,
+  STATEMENT_LANGUAGE_NAME_FORM,
   STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
@@ -709,17 +709,16 @@ describe("Studio's grant of each connection claim", () => {
   });
 });
 
-/** The schema's enums the agent mode claims are read in. */
-function schemaAgentModeEnums(): { readonly statementLanguages: readonly string[]; readonly agentReadings: string[] } {
+/** The schema's form and enum the agent mode claims are read in. */
+function schemaAgentModeVocabularies(): { readonly statementLanguageForm: string; readonly agentReadings: string[] } {
   const schema = JSON.parse(
     readFileSync(
       path.resolve(import.meta.dir, "../../../packages/provider-sdk/src/manifest/manifest.schema.json"),
       "utf8",
     ),
-  ) as { $defs: { statementLanguage: { enum: (string | null)[] }; agentReading: { enum: string[] } } };
+  ) as { $defs: { statementLanguage: { pattern: string }; agentReading: { enum: string[] } } };
   return {
-    // The statement languages a declaration may request, its null aside.
-    statementLanguages: schema.$defs.statementLanguage.enum.filter((language) => language !== null),
+    statementLanguageForm: schema.$defs.statementLanguage.pattern,
     agentReadings: schema.$defs.agentReading.enum,
   };
 }
@@ -778,6 +777,26 @@ describe("Studio's grant of each agent mode claim", () => {
     },
   );
 
+  test("a statement language request of the schema's form is granted only as its register row's name, and one outside the form is refused by name", () => {
+    const languageOf = (engine: string, requested: string, row: RegisterGrants["statementLanguage"] | undefined) =>
+      grantOf(
+        engine,
+        request({}, {}, {}, {}, { statementLanguage: requested as never }),
+        row === undefined ? null : rowWith(engine, { statementLanguage: row }),
+      ).statementLanguage;
+
+    // A language Studio has no module for is a request like any other: no row, or a row granting another, reads null.
+    expect(languageOf(UNRECORDED, "acmeql", undefined)).toBeNull();
+    expect(languageOf("kafka", "acmeql", "kafkaread")).toBeNull();
+    expect(languageOf("kafka", "acmeql", null)).toBeNull();
+    // A request equal to the row is granted the row's own name.
+    expect(languageOf("kafka", "kafkaread", "kafkaread")).toBe("kafkaread");
+    // One outside the form is refused by name, never read at a default.
+    expect(() => languageOf(UNRECORDED, "Acme QL", undefined)).toThrow(
+      `${UNRECORDED} requests agent.statementLanguage "Acme QL", which is not a value of the claim`,
+    );
+  });
+
   test("the agent readings granted are the intersection of the request and the engine's register row, in the row's order, and empty where no row exists", () => {
     const of = (engine: string, agentReadings: FacetClaims["agentReadings"], row = shippedRow(engine)) =>
       grantOf(engine, request({}, {}, {}, { agentReadings }), row).agentReadings;
@@ -804,11 +823,11 @@ describe("Studio's grant of each agent mode claim", () => {
     expect(of("postgres", ["health"], null)).toEqual([]);
   });
 
-  test("the statement language and agent reading vocabularies are the schema's statementLanguage and agentReading enums, and the readings are CURATED_OPERATION_KINDS", () => {
-    const schema = schemaAgentModeEnums();
+  test("the statement language form is the schema's statementLanguage pattern, the agent reading vocabulary is the schema's agentReading enum, and the readings are CURATED_OPERATION_KINDS", () => {
+    const schema = schemaAgentModeVocabularies();
 
-    expect<readonly string[]>([...STATEMENT_LANGUAGE_NAMES]).toEqual([...schema.statementLanguages]);
-    expect(Object.isFrozen(STATEMENT_LANGUAGE_NAMES)).toBe(true);
+    expect(STATEMENT_LANGUAGE_NAME_FORM.source).toBe(schema.statementLanguageForm);
+    expect(STATEMENT_LANGUAGE_NAME_FORM.flags).toBe("");
     expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual(schema.agentReadings);
     expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual([...CURATED_OPERATION_KINDS]);
     expect(Object.isFrozen(AGENT_READING_NAMES)).toBe(true);
@@ -837,8 +856,9 @@ describe("Studio's grant of each agent mode claim", () => {
         `${UNRECORDED} requests agent.statementLanguage ${written}, which is not a value of the claim`,
       );
 
-    refusedLanguage("postgresql", '"postgresql"');
+    refusedLanguage("postgre-sql", '"postgre-sql"');
     refusedLanguage("SQL", '"SQL"');
+    refusedLanguage(`a${"b".repeat(32)}`, `"a${"b".repeat(32)}"`);
     refusedLanguage(false, "false");
     refusedLanguage(undefined, "undefined");
     const refusedReadings = (value: unknown, written: string) =>
@@ -1371,7 +1391,7 @@ describe("the grant reader's engine-keyed exports", () => {
     // Vacuity: the shape finds a table and the list, and passes over a vocabulary that holds no engine id.
     expect(exported).toContain("GRANTED_WRITE_REACH");
     expect(exported).toContain("GRANTED_AGENT_EXECUTION_ENGINES");
-    expect(engineKeyed(claimGrants.STATEMENT_LANGUAGE_NAMES)).toBe(false);
+    expect(engineKeyed(claimGrants.AGENT_READING_NAMES)).toBe(false);
     // The shape is read whether or not the value is frozen, and a value keyed by some engines is keyed by engine too:
     // a table, a list, a set and a map are each found, and a value holding a name that is no engine id is not.
     expect(

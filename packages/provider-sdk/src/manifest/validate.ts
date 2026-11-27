@@ -106,6 +106,9 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "agent-overlay-unspoken",
   "agent-dialect-missing",
   "agent-dialect-unspoken",
+  "statement-language-name-differs",
+  "statement-language-data-sql",
+  "confirmation-operations-unread",
   "statistics-without-catalog-read",
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
@@ -808,8 +811,31 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
 }
 
 /**
+ * The rules of an engine's statement language data the schema cannot state, at pointers under `at`: the data's name is
+ * the engine's agent statement language where both are stated; it is never the SQL family's name, since an engine that
+ * speaks SQL states null; and a reader kind that names no operation lists none, since no reader could ever answer one
+ * it lists.
+ */
+function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const data = engine.statementLanguageData;
+  if (data === null) return [];
+  const refusals: SchemaRefusal[] = [];
+  const pointer = `${at}/statementLanguageData`;
+  const requested = engine.agent.statementLanguage;
+  if (requested !== null && requested !== data.name) {
+    refusals.push(schemaRefusal("statement-language-name-differs", `${pointer}/name`));
+  }
+  if (data.name === DIALECT_LANGUAGE) refusals.push(schemaRefusal("statement-language-data-sql", `${pointer}/name`));
+  const { reader, operations } = data.confirmation;
+  if (reader === "names-no-operation" && operations.length > 0) {
+    refusals.push(schemaRefusal("confirmation-operations-unread", `${pointer}/confirmation/operations`));
+  }
+  return refusals;
+}
+
+/**
  * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, agent readings, agent
- * overlay, claims and safeguards the schema cannot state, at pointers under `at`.
+ * overlay, statement language data, claims and safeguards the schema cannot state, at pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -845,6 +871,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...maintenanceRuleRefusals(engine, at));
   refusals.push(...agentReadingRuleRefusals(engine, at));
   refusals.push(...agentOverlayRuleRefusals(engine, at));
+  refusals.push(...statementLanguageDataRefusals(engine, at));
   refusals.push(...claimRuleRefusals(engine, at));
   refusals.push(...safeguardRuleRefusals(engine, at));
   return refusals;
@@ -1123,6 +1150,12 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The dialect at ${at} is null for an engine of the SQL family, whose dialect-bound members the provider contract requires.`;
     case "agent-dialect-unspoken":
       return `The dialect at ${at} is stated for an engine whose family has no member bound to its dialect.`;
+    case "statement-language-name-differs":
+      return `The statement language data's name at ${at} is not the statement language the engine's agent segment names.`;
+    case "statement-language-data-sql":
+      return `The statement language data's name at ${at} is the SQL family's, whose engines state no statement language data.`;
+    case "confirmation-operations-unread":
+      return `The operations at ${at} are listed for a reader kind that names no operation, so no statement could ever run one.`;
     case "statistics-without-catalog-read":
       return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
     case "catalog-capture-without-catalog-read":

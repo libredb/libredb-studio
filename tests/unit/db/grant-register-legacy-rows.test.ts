@@ -21,7 +21,7 @@ import {
   AGENT_READING_NAMES,
   HOST_PATH_FIELD_NAMES,
   SQL_NAME_QUOTES,
-  STATEMENT_LANGUAGE_NAMES,
+  STATEMENT_LANGUAGE_NAME_FORM,
 } from "@/lib/db/claim-grants";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
@@ -213,7 +213,12 @@ describe("the register's forms", () => {
   });
 
   test("the register's vocabularies are the grant reader's", () => {
-    expect(defs.grants.properties.statementLanguage.enum).toEqual([...STATEMENT_LANGUAGE_NAMES, null]);
+    // Every language the register grants is null or a name of the form the grant reader reads a request in.
+    const languages = defs.grants.properties.statementLanguage.enum;
+    expect(languages).toContain(null);
+    expect(languages.filter((language) => language !== null && !STATEMENT_LANGUAGE_NAME_FORM.test(language))).toEqual(
+      [],
+    );
     expect(defs.grants.properties.hostPathFields.items.enum).toEqual([...HOST_PATH_FIELD_NAMES]);
     expect(defs.grants.properties.agentReadings.items.enum).toEqual([...AGENT_READING_NAMES]);
     const redactions = defs.grants.properties.redaction.enum;
