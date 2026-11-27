@@ -1004,6 +1004,50 @@ describe("an unwritable providers directory", () => {
     expect(fs.readdirSync(providers)).toEqual([]);
   });
 
+  test("a temporary file an earlier lock run left is refused by name as an entry of the directory, and kept", () => {
+    // A run killed after its open leaves its temporary file; the next run in a new container often has the same pid.
+    // The directory's read comes before the open, so the file is named there and the open is never reached.
+    const providers = freshProviders();
+    const leftover = `.${LOCK_FILE_NAME}.${process.pid}.tmp`;
+    const content = `half a lock ${crypto.randomUUID()}`;
+    fs.writeFileSync(path.join(providers, leftover), content);
+    expect(mainInProcess(providers)).toEqual({
+      code: 1,
+      err: [`providers:lock: ${leftover}: neither a package nor the lock`, "providers:lock wrote nothing"],
+    });
+    expect(fs.readdirSync(providers)).toEqual([leftover]);
+    expect(fs.readFileSync(path.join(providers, leftover), "utf8")).toBe(content);
+  });
+
+  test("a temporary file that appears after the directory's read is named by one sentence, and kept", () => {
+    // Another lock run of the same pid writing the same directory creates the file between this run's read of the
+    // directory and its open, so the exclusive open fails with EEXIST: planted here by creating the file just before
+    // the real open runs, on every platform alike.
+    const providers = freshProviders();
+    const temporary = path.join(providers, `.${LOCK_FILE_NAME}.${process.pid}.tmp`);
+    const content = `half a lock ${crypto.randomUUID()}`;
+    const open = fs.openSync;
+    const write = fs.writeFileSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
+      if (isTemporary(file)) write(temporary, content);
+      return open(file, flags, mode);
+    }) as typeof fs.openSync);
+    let run: { code: number; err: string[] };
+    try {
+      run = mainInProcess(providers);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(run).toEqual({
+      code: 1,
+      err: [
+        `providers:lock: ${temporary}: the lock's temporary file already exists (EEXIST), so another lock run in this directory has not finished and no lock was written; once no lock run is writing the directory, remove the file and run the command again.`,
+        "providers:lock wrote nothing",
+      ],
+    });
+    expect(fs.readFileSync(temporary, "utf8")).toBe(content);
+  });
+
   test("any other error writing the lock is raised, and the temporary file is removed first", () => {
     // Not an operator's input: a full disk at the open, at the write and at the rename. Each is raised as it came,
     // with no sentence, and no failure after the open leaves the temporary file in the directory.

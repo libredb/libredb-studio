@@ -57,10 +57,15 @@
  * through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the same
  * directory always gives the same bytes, and prints the lock's path and one line per package; exit 0. A directory this
  * user may not write, an `EACCES`, `EPERM` or `EROFS` from the temporary file's open or from the rename, is refused by
- * one sentence and `providers:lock wrote nothing`, exit 1, with no stack; any other error from the open, the write, the
- * close or the rename is raised, since it is not the operator's input. Every failure after the open removes the
- * temporary file before it is named or raised, so a failed lock leaves no file in the directory, and a failed removal
- * is raised. On Windows a read-only or in-use `providers.lock.json` fails the rename with `EPERM`, named the same way.
+ * one sentence and `providers:lock wrote nothing`, exit 1, with no stack. The temporary file is
+ * `.providers.lock.json.<pid>.tmp`, opened exclusively: one an earlier run left (killed after its open) is an entry of
+ * the directory, refused by name before the open; one that appears after the directory's read, another run of the
+ * same pid writing the same directory, fails the open with `EEXIST`, named by one sentence that says to remove it once
+ * no lock run is writing the directory, then `providers:lock wrote nothing`, exit 1, with no stack. Either way the file
+ * is kept, since this run did not create it. Any other error from the open, the write, the close or the rename is
+ * raised, since it is not the operator's input. Every failure after the open removes the temporary file before it is
+ * named or raised, so a failed lock leaves no file of its own in the directory, and a failed removal is raised. On
+ * Windows a read-only or in-use `providers.lock.json` fails the rename with `EPERM`, named the same way.
  *
  * The directory must be absolute on every channel: `bun run` runs the script from the repository root and an image
  * runs it in a container whose working directory is not the operator's, so a relative path would not be the one
@@ -577,6 +582,18 @@ function refuseUnwritable(directory: string, error: unknown): number {
   return 1;
 }
 
+/**
+ * Names the temporary file `temporary` that another lock run created after this run read the directory, and answers
+ * 1. The file is not this run's, so it is neither removed nor overwritten.
+ */
+function refuseTemporaryExists(temporary: string): number {
+  console.error(
+    `${PREFIX}: ${temporary}: the lock's temporary file already exists (EEXIST), so another lock run in this directory has not finished and no lock was written; once no lock run is writing the directory, remove the file and run the command again.`,
+  );
+  console.error(`${PREFIX} wrote nothing`);
+  return 1;
+}
+
 /** Writes the lock of `directory`; the exit code. */
 function writeLock(directory: string): number {
   let root: string;
@@ -622,6 +639,7 @@ function writeLock(directory: string): number {
   try {
     descriptor = fs.openSync(temporary, "wx");
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return refuseTemporaryExists(temporary);
     return refuseUnwritable(directory, error);
   }
   try {
