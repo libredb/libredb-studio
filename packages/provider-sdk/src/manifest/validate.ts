@@ -135,6 +135,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "object-level-duplicate",
   "object-kind-duplicate",
   "object-kind-unstated",
+  "object-row-activation-duplicate",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -839,10 +840,12 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
  * The rules of an engine's object model the schema cannot state, at pointers under `at`: each container level id and
  * each object kind id once, the later repeat refused, and every kind the declaration names elsewhere one the model
  * states: a masked kind, a row action's kind, a child kind, an attached kind, a maintenance spec's kind and a catalog
- * capture's kind word. A repeated kind still counts as stated, so only the repeat itself is refused. A declaration that
- * states no model is read by none of them here: `manifestRuleRefusals` refuses its facet kinds, since no model states
- * any kind, and requires a model where the package offers objects.tree. A declaration read alone keeps those two
- * rules out, so a legacy declaration with no model stays admitted under `validateEngine`.
+ * capture's kind word. A repeated kind still counts as stated, so only the repeat itself is refused. At most one row
+ * action states `activates` for a kind: a later activating action naming a kind an earlier one names is refused at its
+ * `activates`. A declaration that states no model is read by none of them here: `manifestRuleRefusals` refuses its
+ * facet kinds, since no model states any kind, and requires a model where the package offers objects.tree. A
+ * declaration read alone keeps those two rules out, so a legacy declaration with no model stays admitted under
+ * `validateEngine`.
  */
 function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const model = engine.objects;
@@ -863,8 +866,14 @@ function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
     if (!stated.has(kind)) refusals.push(schemaRefusal("object-kind-unstated", pointer));
   };
   model.maskedNameKinds.forEach((kind, index) => named(kind, `${base}/maskedNameKinds/${index}`));
+  const activated = new Set<string>();
   model.rowActions.forEach((action, index) => {
     action.kinds.forEach((kind, position) => named(kind, `${base}/rowActions/${index}/kinds/${position}`));
+    if (!action.activates) return;
+    if (action.kinds.some((kind) => activated.has(kind))) {
+      refusals.push(schemaRefusal("object-row-activation-duplicate", `${base}/rowActions/${index}/activates`));
+    }
+    for (const kind of action.kinds) activated.add(kind);
   });
   model.objectKinds.forEach(({ childKinds, attachedTo }, index) => {
     childKinds.forEach((kind, position) => named(kind, `${base}/objectKinds/${index}/childKinds/${position}`));
@@ -1511,5 +1520,7 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The object kind id at ${at} repeats the id of an earlier kind of the engine's object model.`;
     case "object-kind-unstated":
       return `The object kind at ${at} is not one the engine's object model states, or the engine states no object model.`;
+    case "object-row-activation-duplicate":
+      return `The row action at ${at} activates a row of a kind an earlier activating row action of the engine's object model already names.`;
   }
 }

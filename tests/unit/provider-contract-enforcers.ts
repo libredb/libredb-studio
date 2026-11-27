@@ -1172,6 +1172,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine declaration states its object model: its container levels, path shapes and name spelling, its kinds with their columns, source, edit flags and row actions, and its agent walk and schema diff scopes, every member required",
         "an engine of a package that offers objects.tree is refused as object-model-missing unless its declaration states its object model",
         "a repeated container level id or object kind id is refused at the later one's pointer",
+        "a second row action stating activates for a kind an earlier activating action names is refused at its activates",
         "a maintenance spec naming a kind the object model does not state is refused at its pointer",
         "a masked kind the object model does not state is refused at its pointer",
         "a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer",

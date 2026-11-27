@@ -157,11 +157,17 @@ describe("the object model of every shipped engine", () => {
     repeated.objectKinds = [...model.objectKinds, model.objectKinds[0]] as ObjectModel["objectKinds"];
     const masked = copy(model);
     masked.maskedNameKinds = [unstated as string];
+    const activating = copy(model);
+    const activation = { id: "planted", label: "Planted", kinds: [model.objectKinds[0].id], activates: true };
+    activating.rowActions = [...model.rowActions, activation, { ...activation, id: "replanted" }];
 
     expect(refusalsOf(type, model)).toEqual([]);
     expect(refusalsOf(type, levels)).toEqual(["object-level-duplicate at /objects/containerLevels/1/id"]);
     expect(refusalsOf(type, repeated)).toEqual([`object-kind-duplicate at /objects/objectKinds/${kinds}/id`]);
     expect(refusalsOf(type, masked)).toEqual(["object-kind-unstated at /objects/maskedNameKinds/0"]);
+    expect(refusalsOf(type, activating)).toEqual([
+      `object-row-activation-duplicate at /objects/rowActions/${model.rowActions.length + 1}/activates`,
+    ]);
 
     // In a manifest whose package offers objects.tree, the declaration is admitted with its model and refused without.
     const manifest = (objects: ObjectModel | undefined) => {

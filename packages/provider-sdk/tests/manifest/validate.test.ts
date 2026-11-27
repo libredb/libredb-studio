@@ -5050,6 +5050,39 @@ describe("the object model", () => {
     ]);
   });
 
+  test("a second row action stating activates for a kind an earlier activating action names is refused at its activates", () => {
+    const twice = modelled((m) => {
+      objectsOf(m).rowActions = [
+        { id: "open", label: "Open", kinds: ["item"], activates: true },
+        { id: "peek", label: "Peek", kinds: ["part"], activates: true },
+        { id: "inspect", label: "Inspect", kinds: ["item"], activates: false },
+        { id: "run", label: "Run", kinds: ["part", "item"], activates: true },
+        { id: "again", label: "Again", kinds: ["item"], activates: true },
+      ];
+    });
+
+    expect(refusalsFor(twice)).toEqual([
+      refusal("object-row-activation-duplicate", `${OBJECTS}/rowActions/3/activates`),
+      refusal("object-row-activation-duplicate", `${OBJECTS}/rowActions/4/activates`),
+    ]);
+    // One activating action per kind, beside any number that do not activate, is admitted.
+    const once = modelled((m) => {
+      objectsOf(m).rowActions = [
+        { id: "open", label: "Open", kinds: ["item"], activates: true },
+        { id: "peek", label: "Peek", kinds: ["part"], activates: true },
+        { id: "inspect", label: "Inspect", kinds: ["item", "part"], activates: false },
+      ];
+    });
+    expect(refusalsFor(once)).toEqual([]);
+    expect(validator.validateEngine(twice.engines[0])).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("object-row-activation-duplicate", "/objects/rowActions/3/activates"),
+        refusal("object-row-activation-duplicate", "/objects/rowActions/4/activates"),
+      ],
+    });
+  });
+
   test("a maintenance spec naming a kind the object model does not state is refused at its pointer", () => {
     const unstated = modelled((m) => {
       withMaintenance(m);
