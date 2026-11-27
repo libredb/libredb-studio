@@ -1041,19 +1041,18 @@ describe("an unwritable providers directory", () => {
       const spy = plant();
       const error = spyOn(console, "error").mockImplementation(() => {});
       let raised: unknown = null;
+      let printed: unknown[][] = [];
       try {
         main(["--dir", providers]);
       } catch (caught) {
         raised = caught;
       } finally {
+        // Copied before the restore: Bun's mockRestore clears the recorded calls.
+        printed = [...error.mock.calls];
         spy.mockRestore();
         error.mockRestore();
       }
-      expect([syscall, (raised as NodeJS.ErrnoException | null)?.code, error.mock.calls]).toEqual([
-        syscall,
-        "ENOSPC",
-        [],
-      ]);
+      expect([syscall, (raised as NodeJS.ErrnoException | null)?.code, printed]).toEqual([syscall, "ENOSPC", []]);
       expect([syscall, fs.readdirSync(providers).sort()]).toEqual([syscall, before]);
     }
   });
