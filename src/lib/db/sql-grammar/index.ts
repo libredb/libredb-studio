@@ -182,13 +182,20 @@ export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Objec
   ) as Record<DatabaseType, SqlGrammarSpec>,
 );
 
+/** Ascending UTF-16 code-unit order, stated rather than left to the default sort. */
+export function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 /**
  * The sql-formatter languages Studio's own engines state, each engine's `grammar.formatterLanguage` in
  * `BUNDLED_SQL_TEXT`, distinct, in ascending code-unit order and frozen: the names admission holds a package engine's
  * formatter language to (src/lib/db/studio-held-names.ts).
  */
 export const FORMATTER_LANGUAGES: readonly string[] = Object.freeze(
-  [...new Set(Object.values(BUNDLED_SQL_TEXT).map((entry) => entry.grammar.formatterLanguage))].sort(),
+  [...new Set(Object.values(BUNDLED_SQL_TEXT).map((entry) => entry.grammar.formatterLanguage))].sort(byCodeUnit),
 );
 
 /**
