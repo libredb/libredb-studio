@@ -926,7 +926,7 @@ Inside those 15 s each provider is also cut by C-45's own deadlines.
 The loader's import deadline is a timer in Studio's own thread, so a synchronous loop at import or in a call blocks Studio as it blocks every request.
 Only a watchdog outside the process detects a hung process, and the kit's import-time measurement is the check at a package's build.
 
-### C-38 (informative): Classification is core's, and its verdict is a closed set
+### C-38 (normative): Classification is core's, and its verdict is a closed set
 
 Core decides whether a statement needs a confirmation, never by a call into a provider, and decides it for a provider package's engine by one check over what its declaration states of its statements, its statement language data (M-85) or its SQL text (S-3), read as its register row grants them (M-87, S-8).
 The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
