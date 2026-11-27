@@ -88,6 +88,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
+import { admittedManifest } from "../../helpers/package-catalog";
 import { providerTriad } from "../../helpers/provider-layout";
 import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
@@ -296,6 +297,34 @@ function declared(type: DatabaseType): BundledDeclaration {
 /** The authored members of one type-id's committed declaration, the generator's source for them. */
 function authored(type: DatabaseType): AuthoredMembers {
   return authoredMembersOf(declared(type), `${type}.json`);
+}
+
+/**
+ * A planted engine id, a name of no engine of Studio's, typed as one so the generator's pure members, which read no
+ * table by type, take it.
+ */
+const PLANTED = "acmedial" as DatabaseType;
+
+/**
+ * The editor of the SDK's minimal manifest's engine planted under `PLANTED`, stating the query dialect `acmedial` in
+ * the json query language when `dialect` is true, and no dialect in the sql query language otherwise.
+ */
+function plantedEditor(dialect: boolean): AuthoredMembers["editor"] {
+  return admittedManifest(PLANTED, (engine) => {
+    if (!dialect) return;
+    engine.editor = {
+      ...engine.editor,
+      dialect: {
+        name: "acmedial",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
+      language: { queryLanguage: "json", monacoId: "json", accent: "border-hue-cyan/40", console: false },
+    };
+  }).engines[0]?.editor as AuthoredMembers["editor"];
 }
 
 /** The shipped ids for which `matches` answers false: the census's failure list. */
@@ -1147,14 +1176,16 @@ describe("the committed declarations", () => {
     // The facets are authored whole: the monitoring panels, the maintenance operations and their specs, and the agent
     // readings, a request agent mode reads only as Studio's grant of it. The agent's statement language is a request
     // too, and the rest of that segment is generated.
-    expect(authored("kafka").facets).toEqual(declared("kafka").facets);
-    expect(Object.keys(authored("kafka").facets)).toEqual([
-      "monitoring",
-      "maintenance",
-      "maintenanceSpecs",
-      "agentReadings",
-    ]);
-    expect(authored("kafka").agent).toEqual({ statementLanguage: "kafkaread" });
+    const facetMembers = ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"];
+    expect(differing((type, declaration) => sameValue(authored(type).facets, declaration.facets))).toEqual([]);
+    expect(differing((type) => sameList(Object.keys(authored(type).facets), facetMembers))).toEqual([]);
+    expect(
+      differing((type, declaration) =>
+        sameValue(authored(type).agent, { statementLanguage: declaration.agent.statementLanguage }),
+      ),
+    ).toEqual([]);
+    // Vacuity: some engine requests a statement language, so the agent census reads a request.
+    expect(SHIPPED_DATABASE_TYPES.some((type) => authored(type).agent.statementLanguage !== null)).toBe(true);
     expect(authored("mqtt").facets.agentReadings).toEqual([]);
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
@@ -1307,12 +1338,19 @@ describe("the committed declarations", () => {
     });
     // The editor's authored members come from the declaration alone: the generator reads no execution UI, fence, dialect
     // or editor language table, so a dialect row or an accent edited by hand is kept.
-    const kafka = declared("kafka");
-    const kafkaDialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
-    const counting = { ...kafka, editor: { ...kafka.editor, dialect: { ...kafkaDialect, offersCountQuery: true } } };
-    expect(
-      buildEngineDeclaration("kafka", CAPABILITIES.kafka, authoredMembersOf(counting, "kafka.json")).editor.dialect,
-    ).toEqual({ ...kafkaDialect, offersCountQuery: true });
+    // Held for every shipped engine whose declaration states a dialect, as the builder reads Studio's tables by type.
+    const dialected = SHIPPED_DATABASE_TYPES.filter((type) => declared(type).editor.dialect !== null);
+    expect(dialected.length).toBeGreaterThan(0);
+    for (const type of dialected) {
+      const committedDialect = declared(type).editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
+      const flipped = { ...committedDialect, offersCountQuery: !committedDialect.offersCountQuery };
+      const counting = { ...declared(type), editor: { ...declared(type).editor, dialect: flipped } };
+      expect({
+        type,
+        dialect: buildEngineDeclaration(type, CAPABILITIES[type], authoredMembersOf(counting, `${type}.json`)).editor
+          .dialect,
+      }).toEqual({ type, dialect: flipped });
+    }
     expect(built.connection.sshTunnel).toEqual({ offered: false, refusal: "Edited by hand." });
     expect(built.editor.explainFormat).toEqual(committed.editor.explainFormat);
     expect(() =>
@@ -1325,17 +1363,22 @@ describe("the committed declarations", () => {
     // name outside core's unions reaches the check as it would from that child.
     const read = (capabilities: ProviderCapabilities, change: Record<string, unknown>): ProviderCapabilities =>
       JSON.parse(JSON.stringify({ ...capabilities, ...change }));
-    const kafka = authored("kafka");
-    const kafkaDialect = kafka.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
     const postgres = authored("postgres");
+    // A dialect Studio does not hold, stated by every shipped engine whose declaration states a dialect.
+    const dialected = SHIPPED_DATABASE_TYPES.filter((type) => declared(type).editor.dialect !== null);
+    expect(dialected.length).toBeGreaterThan(0);
     const cases: [DatabaseType, ProviderCapabilities, AuthoredMembers, string][] = [
       ["postgres", read(CAPABILITIES.postgres, { explainFormat: "example-plan" }), postgres, "/editor/explainFormat"],
-      [
-        "kafka",
-        read(CAPABILITIES.kafka, { queryDialect: "exampledialect" }),
-        { ...kafka, editor: { ...kafka.editor, dialect: { ...kafkaDialect, name: "exampledialect" } } },
-        "/editor/dialect/name",
-      ],
+      ...dialected.map((type): [DatabaseType, ProviderCapabilities, AuthoredMembers, string] => {
+        const members = authored(type);
+        const dialect = members.editor.dialect as NonNullable<BundledDeclaration["editor"]["dialect"]>;
+        return [
+          type,
+          read(CAPABILITIES[type], { queryDialect: "exampledialect" }),
+          { ...members, editor: { ...members.editor, dialect: { ...dialect, name: "exampledialect" } } },
+          "/editor/dialect/name",
+        ];
+      }),
       [
         "postgres",
         read(CAPABILITIES.postgres, { queryLanguage: "exampleql" }),
@@ -1485,11 +1528,12 @@ describe("the committed declarations", () => {
     );
   });
 
-  test("every declaration states its statement language data, Kafka's as data and every other as null, and only the statement language module projects it", () => {
+  test("every declaration states its statement language data, as data or as null, and only the statement language module projects it", () => {
     const stating = SHIPPED_DATABASE_TYPES.filter((type) => declared(type).statementLanguageData !== null);
     const lacking = SHIPPED_DATABASE_TYPES.filter((type) => !Object.hasOwn(declared(type), "statementLanguageData"));
 
     expect(lacking).toEqual([]);
+    // A census pin: the shipped engines whose declaration states statement language data, a set that leaves with them.
     expect(stating).toEqual(["kafka"]);
     // One generated module of the engine catalog projects the member, each engine's row the member as declared.
     const catalog = path.join(ROOT, "src/lib/db/engine-catalog");
@@ -1517,36 +1561,39 @@ describe("the committed declarations", () => {
 
   test("the generator refuses, by name, an explain format the provider's explain support contradicts", () => {
     const unformatted: ProviderCapabilities = { ...CAPABILITIES.postgres, explainFormat: undefined };
-    const unsupported: ProviderCapabilities = {
-      ...CAPABILITIES.kafka,
-      supportsExplain: false,
-      explainFormat: "postgres-json",
-    };
+    // Crafted capabilities, as the capability child writes them: an explain format with no explain support.
+    const unsupported: ProviderCapabilities = JSON.parse(
+      JSON.stringify({ ...CAPABILITIES.postgres, supportsExplain: false, explainFormat: "postgres-json" }),
+    );
 
     expect(() => buildEditor("postgres", unformatted, authored("postgres").editor)).toThrow(
       "postgres: the provider supports explain but declares no explain format",
     );
-    expect(() => buildEditor("kafka", unsupported, authored("kafka").editor)).toThrow(
-      "kafka: the provider declares an explain format but supports no explain",
+    expect(() => buildEditor(PLANTED, unsupported, plantedEditor(false))).toThrow(
+      "acmedial: the provider declares an explain format but supports no explain",
     );
   });
 
   test("the generator refuses, by name, a declaration whose query dialect or query language is not the one its provider declares", () => {
-    const kafka = authored("kafka").editor;
+    // A planted engine whose crafted capabilities declare the planted dialect, as the capability child writes them.
+    const planted = plantedEditor(true);
+    const capabilities: ProviderCapabilities = JSON.parse(
+      JSON.stringify({ ...CAPABILITIES.postgres, queryDialect: "acmedial", queryLanguage: "json" }),
+    );
     const postgres = authored("postgres").editor;
     const redis = authored("redis").editor.dialect;
 
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, kafka)).not.toThrow();
+    expect(() => buildEditor(PLANTED, capabilities, planted)).not.toThrow();
     expect(() => buildEditor("postgres", CAPABILITIES.postgres, postgres)).not.toThrow();
     // A dialect the provider does not declare, another one or none at all.
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...kafka, dialect: redis })).toThrow(
-      "kafka: the declaration states the query dialect redis, and its provider declares kafka",
+    expect(() => buildEditor(PLANTED, capabilities, { ...planted, dialect: redis })).toThrow(
+      "acmedial: the declaration states the query dialect redis, and its provider declares acmedial",
     );
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, { ...postgres, dialect: kafka.dialect })).toThrow(
-      "postgres: the declaration states the query dialect kafka, and its provider declares none",
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, { ...postgres, dialect: planted.dialect })).toThrow(
+      "postgres: the declaration states the query dialect acmedial, and its provider declares none",
     );
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...kafka, dialect: null })).toThrow(
-      "kafka: the declaration states the query dialect none, and its provider declares kafka",
+    expect(() => buildEditor(PLANTED, capabilities, { ...planted, dialect: null })).toThrow(
+      "acmedial: the declaration states the query dialect none, and its provider declares acmedial",
     );
     // A query language the provider does not declare.
     const json = { ...postgres, language: { ...postgres.language, queryLanguage: "json" as const } };
@@ -1581,7 +1628,8 @@ describe("the committed declarations", () => {
     expect(() => buildAgentOverlay("postgres", null)).toThrow(
       "postgres: the engine speaks no statement language, so its agent overlay has no place in the engine declaration",
     );
-    expect(buildAgentOverlay("kafka", "kafkaread")).toEqual({ dialect: null, grounding: null });
+    // A language engine with no overlay: the overlay is the parameter, so a planted engine reads no registry row.
+    expect(buildAgentOverlay(PLANTED, "acmeread", {})).toEqual({ dialect: null, grounding: null });
     expect(buildAgentOverlay("cassandra", "sql")?.grounding).toBe("groundingOverride");
     for (const member of ["workflowToolRules", "answerNotADataRead"]) {
       expect(() =>
@@ -2332,9 +2380,9 @@ describe("the census", () => {
     };
 
     expect(SHIPPED_DATABASE_TYPES.filter(differs)).toEqual([]);
-    // Every engine that speaks a language has a module overlay but Kafka, whose language its declaration states as data.
+    // Every engine that speaks a language has a module overlay but one whose language its declaration states as data.
     expect([...MODULE_AGENT_OVERLAYS.keys()]).toEqual(
-      LANGUAGE_ENGINES.map(([type]) => type).filter((t) => t !== "kafka"),
+      LANGUAGE_ENGINES.map(([type]) => type).filter((t) => declared(t).statementLanguageData === null),
     );
     expect(SHIPPED_DATABASE_TYPES.length).toBeGreaterThan(LANGUAGE_ENGINES.length);
   });
@@ -4135,7 +4183,8 @@ describe("the census", () => {
   test("the validator admits a write reach claim exactly where it is Studio's summary of the write paths", () => {
     const validator = compileManifestValidator(readFileSync(SCHEMA_FILE));
     const gate = { module: "src/lib/db/read-only-gate.ts", symbol: "refuseWrites" };
-    const kafka = declared("kafka");
+    // The base is the SDK's minimal manifest's engine, planted under a name of no engine of Studio's.
+    const base = admittedManifest(PLANTED).engines[0] as BundledDeclaration;
     const reaches: readonly WritePathReach[] = [
       { reach: "absent", proof: { module: "src/lib/db/read-policy.ts", symbol: "READS" } },
       { reach: "gated", gate },
@@ -4156,9 +4205,9 @@ describe("the census", () => {
           WRITE_PATHS.map((path) => [path, writePathEvidence(paths[path])]),
         ) as unknown as WritePaths;
         const changed: BundledDeclaration = {
-          ...kafka,
-          policy: { ...kafka.policy, writeReach: request },
-          safeguards: { ...kafka.safeguards, writePaths },
+          ...base,
+          policy: { ...base.policy, writeReach: request },
+          safeguards: { ...base.safeguards, writePaths },
         };
         if (validator.validateEngine(changed).admitted !== (request === summary)) {
           wrong.push(`${WRITE_PATHS.map((path) => paths[path].reach).join("/")} requesting ${request}`);
