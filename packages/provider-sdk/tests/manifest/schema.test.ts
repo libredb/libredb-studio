@@ -129,6 +129,20 @@ describe("the manifest schema", () => {
     expect(facets.agentReadings?.maxItems).toBe(schema.$defs.agentReading?.enum?.length);
   });
 
+  test("the object model is bounded: two container levels, 64 object kinds, 16 row actions, and 64 kinds in each kind list", () => {
+    type Bounded = { maxItems?: unknown; items?: unknown };
+    const defs = (SCHEMA as { $defs: Record<string, { properties?: Record<string, Bounded> }> }).$defs;
+    const model = defs.objectModel?.properties ?? {};
+
+    expect(model.containerLevels?.maxItems).toBe(2);
+    expect(model.objectKinds?.maxItems).toBe(64);
+    expect(model.rowActions?.maxItems).toBe(16);
+    expect(model.maskedNameKinds?.maxItems).toBe(64);
+    expect(defs.objectKind?.properties?.childKinds?.maxItems).toBe(64);
+    expect(defs.kindRowAction?.properties?.kinds?.maxItems).toBe(64);
+    expect(defs.agentWalkScope?.properties?.alsoWalk?.maxItems).toBe(16);
+  });
+
   test("the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id", () => {
     const defs = (SCHEMA as { $defs: Record<string, Record<string, unknown>> }).$defs;
     const names = ["explainFormat", "queryDialect", "queryLanguage", "monacoLanguageId", "formatterLanguage"];

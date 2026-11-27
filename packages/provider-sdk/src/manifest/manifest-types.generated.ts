@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "83598909835bf427e474ae16cae5c8f9f5173a0fea3cf120e8fbd9f474cd04bc";
+export const MANIFEST_SCHEMA_SHA256 = "fe227be43a901fc4fa3b11d14a874f619726a6f5677369742ea720f83888be88";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -121,7 +121,7 @@ export type ExecuteRequestField = "params" | "offset" | "readOnly";
 /** An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits. */
 export type EngineId = string;
 
-/** One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission. */
+/** One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission; only the object model, objects, is left out by an engine whose package does not offer objects.tree. */
 export interface EngineDeclaration {
   readonly id: EngineId;
   readonly displayName: string;
@@ -138,6 +138,7 @@ export interface EngineDeclaration {
   readonly policy: PolicyClaims;
   readonly mcp: McpClaims;
   readonly safeguards: Safeguards;
+  readonly objects?: ObjectModel;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -1455,6 +1456,99 @@ export type InlineEditRefusal = {
   readonly type: string;
   readonly reason: string;
 } | null;
+
+/** The engine's object model, which an engine whose package offers objects.tree states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none. */
+export interface ObjectModel {
+  /** The engine's container levels, outermost first: none where every object is addressed by its bare name, one, or a catalog and the schema inside it. */
+  readonly containerLevels: readonly ContainerLevel[];
+  readonly containerPathShapes: ContainerPathShapes;
+  /** engine: the schema level's segment of a container or object path is the engine's own spelling of a name of one or more parts joined by dots, each bare or quoted with the engine's identifier quote; null where every segment is a raw name. */
+  readonly containerNameSpelling: "engine" | null;
+  /** Every object kind the engine has, each once by id, in the order the tree draws their folders; an empty list draws no folder. */
+  readonly objectKinds: readonly ObjectKind[];
+  /** The actions a row of a kind the action names offers, in menu order; each reads and never writes. */
+  readonly rowActions: readonly KindRowAction[];
+  /** Whether each container the engine lists answers the object kinds it holds, so a named container is read only for those. */
+  readonly containersNameKinds: boolean;
+  /** Whether a bare table name resolves nowhere unless the connection names a default container, so a completion inserts the container too. */
+  readonly tablesNeedContainer: boolean;
+  /** Whether the engine's relation rows are groupings it derives from a bounded read of what it stores, such as key prefixes, rather than objects it holds by those names, so no reader addresses a row as an object. */
+  readonly tablesAreDerivedGroupings: boolean;
+  readonly agentWalkScope: AgentWalkScope | null;
+  /** Which containers a schema diff reads. agent-walk: the containers the agent walk scope names, read one level at a time from the top. session-container: the one container the server says the session is in, with the others offered by choice. null where a diff reads every container the connection reaches. */
+  readonly schemaDiffScope: "agent-walk" | "session-container" | null;
+  /** The object kinds whose names the engine masks in what its read-only statement path answers machine readers, each once; every one a kind the model states. */
+  readonly maskedNameKinds: readonly ObjectKindId[];
+}
+
+/** One container level, in the engine's own words. id: its structural role, catalog for the outer of two levels and schema for the only or the inner one. */
+export interface ContainerLevel {
+  readonly id: "catalog" | "schema";
+  /** The engine's own word for one container of the level, singular. */
+  readonly label: string;
+  readonly labelPlural: string;
+}
+
+/** Which container paths the engine accepts as an address. exact: only a path naming every level. prefixes: a path naming one level up to every level. A path longer than the levels is refused either way. */
+export type ContainerPathShapes = "exact" | "prefixes";
+
+/** One object kind and what its objects offer. role: relation, a thing rows are read from; routine, a thing that is called and has source; group, a thing that holds routines; attached, a thing that belongs to another object; config, a thing defined by text or a document. */
+export interface ObjectKind {
+  readonly id: ObjectKindId;
+  readonly role: "relation" | "routine" | "group" | "attached" | "config";
+  /** The engine's own word for one object of the kind, singular. */
+  readonly label: string;
+  readonly labelPlural: string;
+  /** Whether an object of the kind has a definition the engine reads back, shown as its source. */
+  readonly hasSource: boolean;
+  readonly sourceLanguage: MonacoLanguageId | null;
+  /** Whether an object of the kind has columns the engine describes, so its row opens onto them. */
+  readonly hasColumns: boolean;
+  /** Whether an object of the kind can have its definition edited and applied back. */
+  readonly acceptsSourceEdits: boolean;
+  /** The kinds nested under an object of the kind, each once. */
+  readonly childKinds: readonly ObjectKindId[];
+  /** The kind an object of the kind hangs off, rather than off its container; null where it hangs off its container. */
+  readonly attachedTo: ObjectKindId | null;
+  /** Whether a row write against an object of the kind is meaningful, so the kind is offered as an import or inline edit target. */
+  readonly acceptsRowWrites: boolean;
+  /** key-browser: only the key browser enumerates the kind, a page at a time, so it draws no folder and no walk over every kind lists it; null where the object tree does. */
+  readonly enumeratedBy: "key-browser" | null;
+  /** Whether counting and listing the kind's objects are one read, so a refused count is a refused listing. */
+  readonly countIsListing: boolean;
+  /** withheld: the kind's object names are listed to the user and never to a machine reader, which reads only their count; null where they may reach one. */
+  readonly machineNames: "withheld" | null;
+  readonly group: KindGroup | null;
+}
+
+/** The folder a kind is drawn in between its container and its own folder; kinds that share an id share the folder, which takes the label of the first of them. */
+export interface KindGroup {
+  readonly id: string;
+  readonly label: string;
+}
+
+/** One action a row of a named kind offers, which opens a tab running the statement the engine's query dialect writes for the object. id: what that statement is asked for. activates: whether activating such a row runs the action instead of opening the kind's source, which at most one action may state for a kind. */
+export interface KindRowAction {
+  readonly id: string;
+  readonly label: string;
+  readonly kinds: readonly ObjectKindId[];
+  readonly activates: boolean;
+}
+
+/** Which containers the agent's grounding walk reads, where it reads fewer than all. session-default: the one container the deepest level marks as the session's default, and each container alsoWalk names by its full path. whenNoDefault, where the deepest level marks no default: parent-default-children reads the children of the one container the level above marks as its default, but each child skip names; null where no container is read beyond alsoWalk. */
+export interface AgentWalkScope {
+  readonly mode: "session-default";
+  readonly alsoWalk: readonly ContainerPath[];
+  readonly whenNoDefault: AgentWalkWhenNoDefault | null;
+}
+
+/** One container by its full path, the outermost level's name first. */
+export type ContainerPath = readonly string[];
+
+export interface AgentWalkWhenNoDefault {
+  readonly walk: "parent-default-children";
+  readonly skip: readonly string[];
+}
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {
