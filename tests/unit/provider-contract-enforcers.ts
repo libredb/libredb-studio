@@ -3132,6 +3132,22 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an output that imports a bare name, holds a native addon or a TypeScript file is refused by name, writing nothing",
         "an output that calls createRequire is refused by name",
         "an output that reads require other than to call it with a string, or calls import() or require() with anything but a string, is refused by name",
+        "the pack step and the lock command read one runtime-load rule",
+      ],
+      "tests/unit/scripts/providers-lock.test.ts": [
+        "a package whose module names createRequire is refused by module, line and form, writing nothing",
+        "a module calling a member named require or a computed import() is refused the same way",
+        "one refused package leaves the whole lock unwritten",
+        "the lock's rule judges a module of 200,000 runtime loads within its time",
+      ],
+      "tests/unit/scripts/build-lock-module.test.ts": [
+        "the built module refuses a package by the C-114 rule under Node.js",
+      ],
+      "tests/unit/scripts/providers-key.test.ts": [
+        "the key command refuses a directory the lock refuses and a manifest the validator refuses, writing nothing to standard output",
+      ],
+      "tests/unit/check-lib-lock.test.ts": [
+        "the packed package's providers lock writes a lock Studio's reader admits, with no checkout and no download",
       ],
     },
   },

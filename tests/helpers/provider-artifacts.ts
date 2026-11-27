@@ -68,14 +68,16 @@ export function writeArtifact(providers: string, pkg: FixturePackage): string {
 
 /**
  * The lock entry of a package as its artifact stands now: its import record scanned by the lock command's scanner, its
- * digest computed by Studio's own walk.
+ * digest computed by Studio's own walk. It does not judge the runtime loads the scanner finds (C-114): the lock command
+ * refuses them (`artifactEntry` in scripts/providers-lock.ts), and a test plants a lock directly.
  */
 export function lockEntryOf(providers: string, pkg: FixturePackage): LockEntry {
   const directory = artifactDirectoryOf(providers, pkg);
   const walked = walkArtifact(directory);
   if (!walked.ok) throw new Error(`the fixture ${pkg.name} ${pkg.version} does not walk: ${walked.fault.rule}`);
-  const imports = moduleImports(directory, walked.files);
-  if (typeof imports === "string") throw new Error(`the fixture ${pkg.name} ${pkg.version} does not scan: ${imports}`);
+  const scan = moduleImports(directory, walked.files);
+  if (typeof scan === "string") throw new Error(`the fixture ${pkg.name} ${pkg.version} does not scan: ${scan}`);
+  const { imports } = scan;
   return {
     name: pkg.name,
     version: pkg.version,

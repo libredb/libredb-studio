@@ -24,9 +24,15 @@
  * first argument is a string or a template without substitution, whatever follows it. Not recorded: a computed
  * `import()` or `require()`, `require.resolve` or `import.meta.resolve`, which load nothing, and a `require` reached
  * through a member or another name. Each import is recorded with its kind: `require` for a `require()` call, `import`
- * for the rest. The command records; Studio's admission judges the record (src/lib/provider-host/admission.ts and
- * src/lib/provider-host/provider-closure.ts). The command runs the same under Node.js and Bun: it imports acorn and
- * Node.js built-ins, and `main` is exported for a caller that runs it under Node.js.
+ * for the rest. Of the forms not recorded, a module that loads at run time what the record cannot hold is refused by
+ * C-114's rule (`runtimeLoads`): one that names `createRequire`, reads `require` other than to call it with a string
+ * (`require.resolve` and `require` through another name included), calls `import()` or `require()` with anything but a
+ * string, or calls a member named `require`. Neither recorded nor refused: `import.meta.resolve`, a member named
+ * `require` read without a call, `process.getBuiltinModule` and code built at run time by `new Function` or `eval`. The
+ * command records and judges C-114; Studio's admission judges the record (src/lib/provider-host/admission.ts and
+ * src/lib/provider-host/provider-closure.ts) and does not repeat C-114, since the lock's digest pins every file the
+ * command judged. The command runs the same under Node.js and Bun: it imports acorn and Node.js built-ins, and `main`
+ * is exported for a caller that runs it under Node.js.
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
@@ -37,19 +43,19 @@
  *
  * A `--dir` that names anything but a directory is refused alone. Otherwise it refuses, writing nothing and exiting 1
  * with every refusal on stderr, each naming its entry: an entry of the directory that is neither a package nor the
- * lock, a scope directory holding no package, an entry of a package directory that is not a version directory (at
- * each of the three levels, a link whose target does not exist is such an entry), a package directory holding no
- * entry or two version directories or more, more package directories than the lock reader admits entries
- * (`LOCK_ENTRY_CAP`), each counted whatever its layout refusal, and every refusal an artifact draws (a link, a special
- * file, a name outside the portable set, the limits, a package.json or manifest it cannot read, more engine ids than
- * an entry holds among them, a package.json naming another package, an entry that is not a file of the package), a
- * module file the parser cannot read or that is not UTF-8, a specifier or module path outside the lock's forms, more
- * than 4,096 imports in a package, and a lock over the reader's byte cap. None is passed over, so an operator removes
- * a stray entry once, and the command never writes a lock the reader refuses for a cap. The directory's refusals come
- * first, in walk order, then the entry cap, then each package's, by name: every package is read even past the entry
- * cap, so one run prints every refusal. Otherwise it writes the lock through a temporary file in the same directory
- * and a rename, entries by name and engine ids in order, so the same directory always gives the same bytes, and
- * prints the lock's path and one line per package; exit 0.
+ * lock, a scope directory holding no package, an entry of a package directory that is not a version directory (at each
+ * of the three levels, a link whose target does not exist is such an entry), a package directory holding no entry or
+ * two version directories or more, more package directories than the lock reader admits entries (`LOCK_ENTRY_CAP`),
+ * each counted whatever its layout refusal, and every refusal an artifact draws (a link, a special file, a name outside
+ * the portable set, the limits, a package.json or manifest it cannot read, more engine ids than an entry holds among
+ * them, a package.json naming another package, an entry that is not a file of the package), a module file the parser
+ * cannot read or that is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a
+ * package, every runtime load C-114 refuses, each named by its module, line and form, and a lock over the reader's byte
+ * cap. None is passed over, so an operator removes a stray entry once, and the command never writes a lock the reader
+ * refuses for a cap. The directory's refusals come first, in walk order, then the entry cap, then each package's, by
+ * name: every package is read even past the entry cap, so one run prints every refusal. Otherwise it writes the lock
+ * through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the same
+ * directory always gives the same bytes, and prints the lock's path and one line per package; exit 0.
  *
  * The directory must be absolute on every channel: `bun run` runs the script from the repository root and an image
  * runs it in a container whose working directory is not the operator's, so a relative path would not be the one
@@ -148,7 +154,7 @@ export function isModuleFile(file: string): boolean {
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 /** The string a node holds when it is a string literal or a template literal without substitution; else null. */
-function staticString(node: AnyNode | undefined): string | null {
+function staticString(node: AnyNode | null | undefined): string | null {
   if (node?.type === "Literal" && typeof node.value === "string") return node.value;
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
   return null;
@@ -208,7 +214,7 @@ function reading(text: string, awaitOperator: boolean): { program: AnyNode; comm
  * The text of the module file `bytes` and the tree of every reading of it that parses, or null when they are not
  * UTF-8 or the parser reads them neither way: a syntax error, an HTML-like comment, `new.target` outside a function, or
  * nesting past the runtime's stack, which acorn reports as a syntax error. The lock's one parse of a module file: the
- * import record reads it here, and so does the pack step's runtime-load rule (scripts/providers-pack.ts).
+ * import record reads it here, and so does the runtime-load rule (`runtimeLoads`).
  */
 export function parsedModule(bytes: Buffer): { text: string; programs: AnyNode[] } | null {
   let text: string;
@@ -233,8 +239,160 @@ export function parsedModule(bytes: Buffer): { text: string; programs: AnyNode[]
   return { text, programs: readings.map((read) => read.program) };
 }
 
-/** The imports `bytes` makes statically in every reading that parses, or null when `parsedModule` answers null. */
-function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
+/** A runtime load C-114 refuses, by the words its sentence says of the module. */
+const RUNTIME_LOAD_FORMS = [
+  "names createRequire",
+  "reads require other than to call it with a string",
+  "calls require() with something other than a string",
+  "calls import() with something other than a string",
+  "calls a member named require",
+] as const;
+
+export type RuntimeLoadForm = (typeof RUNTIME_LOAD_FORMS)[number];
+
+/** A node to visit, and how its parent holds it. */
+interface Visit {
+  readonly node: AnyNode;
+  /** It is a name the parent gives, not a reference: a member, a key, a label, an imported or exported name. */
+  readonly name: boolean;
+  /** It is the callee of a call of `require`, judged at the call. */
+  readonly requireCallee: boolean;
+  /** It is a specifier of a re-export with a source, whose local name is the other module's. */
+  readonly reExport: boolean;
+}
+
+/** Whether the child `key` of `parent` is a name rather than a reference. */
+function isNamePosition(parent: AnyNode, key: string, reExport: boolean): boolean {
+  switch (parent.type) {
+    case "MemberExpression":
+      return key === "property" && !parent.computed;
+    case "Property":
+    case "MethodDefinition":
+    case "PropertyDefinition":
+      return key === "key" && !parent.computed;
+    case "LabeledStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+      return key === "label";
+    case "ImportSpecifier":
+      return key === "imported";
+    case "ExportSpecifier":
+      return key === "exported" || reExport;
+    case "ExportAllDeclaration":
+      return key === "exported";
+    case "ImportAttribute":
+      return key === "key";
+    case "MetaProperty":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Whether `node` is the identifier `name`. */
+function isIdentifier(node: AnyNode, name: string): boolean {
+  return node.type === "Identifier" && node.name === name;
+}
+
+/** The runtime-load form `visit` makes, if any. */
+export function runtimeLoadForm({ node, name, requireCallee }: Visit): RuntimeLoadForm | null {
+  switch (node.type) {
+    case "Identifier":
+      if (node.name === "createRequire") return "names createRequire";
+      return node.name === "require" && !name && !requireCallee
+        ? "reads require other than to call it with a string"
+        : null;
+    case "Literal":
+    case "TemplateLiteral":
+      return staticString(node) === "createRequire" ? "names createRequire" : null;
+    case "CallExpression": {
+      const { callee } = node;
+      if (isIdentifier(callee, "require")) {
+        return staticString(node.arguments[0]) === null ? "calls require() with something other than a string" : null;
+      }
+      if (callee.type !== "MemberExpression") return null;
+      const named = callee.computed
+        ? staticString(callee.property) === "require"
+        : isIdentifier(callee.property, "require");
+      return named ? "calls a member named require" : null;
+    }
+    case "ImportExpression":
+      return staticString(node.source) === null ? "calls import() with something other than a string" : null;
+    default:
+      return null;
+  }
+}
+
+/** The offset of every line feed of `text`, in order. */
+function lineFeeds(text: string): number[] {
+  const offsets: number[] = [];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) offsets.push(at);
+  return offsets;
+}
+
+/** 1 plus the count of `feeds`, line feed offsets in order, that lie before `offset`: a binary search. */
+function lineAt(feeds: readonly number[], offset: number): number {
+  let low = 0;
+  let high = feeds.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((feeds[middle] as number) < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low + 1;
+}
+
+/**
+ * Every runtime load of the module file whose text is `text` and whose readings are `programs`, each by its line and
+ * form, once, in order of line then form: one walk with an explicit stack over every reading, so only the parser's own
+ * depth bounds a file. The line is 1 plus the count of line feeds before the node, read from the offsets of the text's
+ * line feeds, listed once per call, so the work grows with the text and its loads, never with their product.
+ */
+export function runtimeLoads(text: string, programs: readonly AnyNode[]): { line: number; form: RuntimeLoadForm }[] {
+  const feeds = lineFeeds(text);
+  const found = new Map<string, { line: number; form: RuntimeLoadForm }>();
+  const pending: Visit[] = programs.map((node) => ({ node, name: false, requireCallee: false, reExport: false }));
+  for (let visit = pending.pop(); visit !== undefined; visit = pending.pop()) {
+    const { node } = visit;
+    const form = runtimeLoadForm(visit);
+    if (form !== null) {
+      const line = lineAt(feeds, node.start);
+      found.set(`${line} ${form}`, { line, form });
+    }
+    const reExport = node.type === "ExportNamedDeclaration" && node.source !== null && node.source !== undefined;
+    const callsRequire = node.type === "CallExpression" && isIdentifier(node.callee, "require");
+    for (const [key, value] of Object.entries(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (!isNode(child)) continue;
+        pending.push({
+          node: child,
+          name: isNamePosition(node, key, visit.reExport),
+          requireCallee: callsRequire && key === "callee",
+          reExport: reExport && key === "specifiers",
+        });
+      }
+    }
+  }
+  return [...found.values()].sort(
+    (a, b) => a.line - b.line || RUNTIME_LOAD_FORMS.indexOf(a.form) - RUNTIME_LOAD_FORMS.indexOf(b.form),
+  );
+}
+
+/** A runtime load C-114 refuses, found in the module file `from`, a path of the artifact. */
+export interface RuntimeLoad {
+  readonly from: string;
+  readonly line: number;
+  readonly form: RuntimeLoadForm;
+}
+
+/**
+ * The imports `bytes` makes statically in every reading that parses, and its runtime loads (`runtimeLoads`), both from
+ * one parse; or null when `parsedModule` answers null.
+ */
+function scanned(bytes: Buffer): {
+  imports: { specifier: string; kind: ImportKind }[];
+  loads: { line: number; form: RuntimeLoadForm }[];
+} | null {
   const parsed = parsedModule(bytes);
   if (parsed === null) return null;
   const found: { specifier: string; kind: ImportKind }[] = [];
@@ -250,21 +408,27 @@ function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | nul
       }
     }
   }
-  return found;
+  return { imports: found, loads: runtimeLoads(parsed.text, parsed.programs) };
 }
 
 /**
  * The import record of the module files among `files`, the listing of the artifact at `directory`, sorted and each
- * import once; or why the package cannot be locked, one sentence.
+ * import once, and their runtime loads, in the listing's order of files, then by line and form; or why the package
+ * cannot be locked, one sentence. Each module file is read and parsed once for both.
  */
-export function moduleImports(directory: string, files: readonly ArtifactFile[]): ModuleImport[] | string {
+export function moduleImports(
+  directory: string,
+  files: readonly ArtifactFile[],
+): { imports: ModuleImport[]; runtimeLoads: RuntimeLoad[] } | string {
   const pairs = new Map<string, ModuleImport>();
+  const loads: RuntimeLoad[] = [];
   for (const file of files) {
     if (!isModuleFile(file.path)) continue;
     if (!inForm(file.path, IMPORT_FROM_FORM)) return "a module path is longer than 1024 characters";
     const found = scanned(fs.readFileSync(path.join(directory, ...file.path.split("/"))));
     if (found === null) return `${file.path}: its parser cannot read it, or it is not UTF-8`;
-    for (const { specifier, kind } of found) {
+    for (const { line, form } of found.loads) loads.push({ from: file.path, line, form });
+    for (const { specifier, kind } of found.imports) {
       if (!inForm(specifier, IMPORT_SPECIFIER_FORM)) {
         return `${file.path}: it imports a specifier outside printable ASCII without spaces, or longer than 1024 characters`;
       }
@@ -272,7 +436,7 @@ export function moduleImports(directory: string, files: readonly ArtifactFile[])
     }
     if (pairs.size > LOCK_IMPORT_CAP) return `its module files hold more than ${LOCK_IMPORT_CAP} imports`;
   }
-  return sortImports([...pairs.values()]);
+  return { imports: sortImports([...pairs.values()]), runtimeLoads: loads };
 }
 
 /** A package the directory holds: its name and version, from its path. */
@@ -329,11 +493,17 @@ function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]
 }
 
 /**
- * The lock entry of the artifact at `directory`, a real path, as package `pkg`: its walk, its identity checked against
- * `pkg` and its entry file, its import record and its digest; or the sentence of its refusal, an artifact refusal in
- * `packageRefusal`'s words, or an import record's refusal after `command`, the name of the command that prints it.
+ * The lock entry of the artifact at `directory`, a real path, as package `pkg`, and the runtime loads its module files
+ * make: its walk, its identity checked against `pkg` and its entry file, its import record and its digest; or the
+ * sentence of its refusal, an artifact refusal in `packageRefusal`'s words, or an import record's refusal after
+ * `command`, the name of the command that prints it. It does not judge the loads: `artifactEntry` refuses them, and the
+ * pack step (scripts/providers-pack.ts) lists them after admission's findings.
  */
-export function artifactEntry(directory: string, pkg: PackageName, command: string): LockEntry | string {
+export function artifactRecord(
+  directory: string,
+  pkg: PackageName,
+  command: string,
+): { entry: LockEntry; runtimeLoads: readonly RuntimeLoad[] } | string {
   const refuse = (fault: ArtifactFault): string => packageRefusal(pkg, fault).sentence;
   const walked = walkArtifact(directory);
   if (!walked.ok) return refuse(walked.fault);
@@ -344,23 +514,44 @@ export function artifactEntry(directory: string, pkg: PackageName, command: stri
     compareIdentity(identity, { ...pkg, engines: identity.engines, entry: identity.entry }) ??
     checkEntryFile(walked.files, identity.entry);
   if (mismatch !== null) return refuse(mismatch);
-  const imports = moduleImports(directory, walked.files);
-  if (typeof imports === "string") return `${command}: ${pkg.name} ${pkg.version}: ${imports}`;
+  const scan = moduleImports(directory, walked.files);
+  if (typeof scan === "string") return `${command}: ${pkg.name} ${pkg.version}: ${scan}`;
+  const { imports } = scan;
   return {
-    name: pkg.name,
-    version: pkg.version,
-    engines: identity.engines,
-    entry: identity.entry,
-    digest: artifactDigest(walked.files, imports),
-    source: LOCAL_SOURCE,
-    imports,
+    entry: {
+      name: pkg.name,
+      version: pkg.version,
+      engines: identity.engines,
+      entry: identity.entry,
+      digest: artifactDigest(walked.files, imports),
+      source: LOCAL_SOURCE,
+      imports,
+    },
+    runtimeLoads: scan.runtimeLoads,
   };
 }
 
-/** The lock entry of one package, or the sentence of its refusal. */
-function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string {
+/** One sentence for each of `loads`, made by package `pkg`, after `command`: its module, line and form (C-114). */
+export function runtimeLoadRefusals(command: string, pkg: PackageName, loads: readonly RuntimeLoad[]): string[] {
+  return loads.map(({ from, line, form }) => `${command}: ${pkg.name} ${pkg.version}: ${from} line ${line} ${form}`);
+}
+
+/**
+ * The lock entry of the artifact at `directory`, as `artifactRecord` reads it, when its module files make no runtime
+ * load; or the sentences of its refusal: `artifactRecord`'s one sentence, or one for each runtime load
+ * (`runtimeLoadRefusals`). The lock command's own sequence over one artifact directory.
+ */
+export function artifactEntry(directory: string, pkg: PackageName, command: string): LockEntry | string[] {
+  const record = artifactRecord(directory, pkg, command);
+  if (typeof record === "string") return [record];
+  if (record.runtimeLoads.length > 0) return runtimeLoadRefusals(command, pkg, record.runtimeLoads);
+  return record.entry;
+}
+
+/** The lock entry of one package, or the sentences of its refusal. */
+function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string[] {
   const resolved = resolveArtifactDirectory(root, pkg.name, pkg.version);
-  if (!resolved.ok) return packageRefusal(pkg, resolved.fault).sentence;
+  if (!resolved.ok) return [packageRefusal(pkg, resolved.fault).sentence];
   return artifactEntry(resolved.directory, pkg, PREFIX);
 }
 
@@ -389,7 +580,7 @@ function writeLock(directory: string): number {
   const entries: LockEntry[] = [];
   for (const pkg of packages) {
     const entry = lockEntryOf(root, pkg);
-    if (typeof entry === "string") refusals.push(entry);
+    if (Array.isArray(entry)) refusals.push(...entry);
     else entries.push(entry);
   }
   if (refusals.length > 0) {

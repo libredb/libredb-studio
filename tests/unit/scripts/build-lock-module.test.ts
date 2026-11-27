@@ -186,6 +186,41 @@ describe("the lock command's module", () => {
     expect(fs.readFileSync(lockFile).equals(nodeBytes)).toBe(true);
   });
 
+  test("the built module refuses a package by the C-114 rule under Node.js", () => {
+    const providers = path.join(scratch, "refused-providers");
+    writeArtifact(providers, { name: "acme-probe", version: "1.0.0", engines: ["acmeprobe"] });
+    writeArtifact(providers, {
+      name: "acme-create",
+      version: "1.0.0",
+      engines: ["acmecreate"],
+      files: {
+        "dist/index.mjs":
+          'import { createRequire } from "node:module";\nexport default createRequire(import.meta.url);\n',
+      },
+    });
+    const refusals = [
+      "providers:lock: acme-create 1.0.0: dist/index.mjs line 1 names createRequire",
+      "providers:lock: acme-create 1.0.0: dist/index.mjs line 2 names createRequire",
+      "providers:lock wrote nothing",
+    ];
+    const lockFile = path.join(providers, LOCK_FILE_NAME);
+
+    const url = pathToFileURL(built.outfile).href;
+    const node = runNode(
+      `const { main } = await import(${JSON.stringify(url)}); process.exitCode = main(["--dir", ${JSON.stringify(providers)}]);`,
+    );
+    expect([node.status, node.out, node.err.split(/\r?\n/).filter(Boolean)]).toEqual([1, [], refusals]);
+    expect(fs.existsSync(lockFile)).toBe(false);
+
+    const bun = spawnSync(process.execPath, ["scripts/providers-lock.ts", "--dir", providers], {
+      cwd: REPOSITORY_ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect([bun.status, bun.stdout, bun.stderr.split(/\r?\n/).filter(Boolean)]).toEqual([1, "", refusals]);
+    expect(fs.existsSync(lockFile)).toBe(false);
+  });
+
   test("build:lib writes the lock module after tsup and the theme copy", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"));
     expect(manifest.scripts["build:lib"]).toBe(

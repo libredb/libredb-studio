@@ -24,6 +24,9 @@
  *    bytes.
  * 8. The packed command refuses a `--dir` naming a regular file with exit 1 and its sentence, and answers `providers`
  *    alone with the usage and exit 2.
+ * 9. It writes a second probe providers directory holding one package whose entry calls `import()` with something
+ *    other than a string, a runtime load C-114 refuses, and expects the packed command to exit 1, print nothing on
+ *    stdout, print the load's sentence and `providers:lock wrote nothing` on stderr, and write no lock.
  *
  * It prints one failure per line and a summary line, exits 1 on any failure, and always removes its temporary root.
  */
@@ -53,20 +56,40 @@ const PROBE_PACKAGES = [
   { name: "@acme/scoped", version: "2.0.0", engine: "acmescoped" },
 ] as const;
 
+/** The package of the refusal probe, naming no engine: its entry makes one runtime load (C-114). */
+const LOAD_PROBE = { name: "acme-loads", version: "1.0.0", engine: "acmeloads" } as const;
+
+/** What the packed command prints on stderr for the refusal probe. */
+const LOAD_REFUSAL = [
+  `providers:lock: ${LOAD_PROBE.name} ${LOAD_PROBE.version}: dist/index.mjs line 1 calls import() with something other than a string`,
+  "providers:lock wrote nothing",
+];
+
+/** Writes `pkg` under the providers directory `directory`, with a manifest whose entry is `dist/index.mjs`, and `files`. */
+function writeProbePackage(
+  directory: string,
+  pkg: { readonly name: string; readonly version: string; readonly engine: string },
+  files: Readonly<Record<string, string>>,
+): void {
+  const all: Record<string, string> = {
+    "package.json": `${JSON.stringify({ name: pkg.name, version: pkg.version, type: "module" })}\n`,
+    [MANIFEST_FILE_NAME]: `${JSON.stringify({ engines: [{ id: pkg.engine }], runtime: { entry: "dist/index.mjs" } })}\n`,
+    ...files,
+  };
+  for (const [relative, text] of Object.entries(all)) {
+    const file = path.join(directory, ...pkg.name.split("/"), pkg.version, ...relative.split("/"));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  }
+}
+
 /** The probe providers directory: each package with a manifest, an entry importing `node:fs` and a relative module. */
 function writeProbeProviders(directory: string): void {
   for (const pkg of PROBE_PACKAGES) {
-    const files: Record<string, string> = {
-      "package.json": `${JSON.stringify({ name: pkg.name, version: pkg.version, type: "module" })}\n`,
-      [MANIFEST_FILE_NAME]: `${JSON.stringify({ engines: [{ id: pkg.engine }], runtime: { entry: "dist/index.mjs" } })}\n`,
+    writeProbePackage(directory, pkg, {
       "dist/index.mjs": 'import "node:fs";\nimport { helper } from "./helper.mjs";\nexport default { helper };\n',
       "dist/helper.mjs": "export const helper = 1;\n",
-    };
-    for (const [relative, text] of Object.entries(files)) {
-      const file = path.join(directory, ...pkg.name.split("/"), pkg.version, ...relative.split("/"));
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, text);
-    }
+    });
   }
 }
 
@@ -91,7 +114,7 @@ export interface LibLockResult {
 }
 
 /**
- * Runs steps 2 to 8 over the package root `root`, packed into `temp`, with `repository` the checkout whose
+ * Runs steps 2 to 9 over the package root `root`, packed into `temp`, with `repository` the checkout whose
  * `scripts/providers-lock.ts` writes the bytes to compare with. Stops at the first step whose failure leaves nothing
  * for the next to read.
  */
@@ -194,6 +217,16 @@ export function checkLibLock({
   if (usage.status !== 2 || usage.err.join("\n") !== USAGE) {
     failures.push(
       `the packed command's providers alone exited ${usage.status} and printed ${usage.err.join(" ")}, not the usage and exit 2.`,
+    );
+  }
+
+  const loadProbe = path.join(fs.realpathSync.native(temp), "loads");
+  writeProbePackage(loadProbe, LOAD_PROBE, { "dist/index.mjs": "export default import(globalThis.probe);\n" });
+  const loads = packed("lock", "--dir", loadProbe);
+  const loadLock = fs.existsSync(path.join(loadProbe, LOCK_FILE_NAME));
+  if (loads.status !== 1 || loads.out.length > 0 || loads.err.join("\n") !== LOAD_REFUSAL.join("\n") || loadLock) {
+    failures.push(
+      `the packed command over a package making a runtime load exited ${loads.status}, printed ${loads.out.join(" ") || "nothing"} on stdout and ${loads.err.join(" ") || "nothing"} on stderr, and ${loadLock ? "wrote" : "wrote no"} lock, not its refusal, exit 1 and no lock.`,
     );
   }
   return { failures, packages };

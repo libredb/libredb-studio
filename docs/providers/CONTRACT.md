@@ -1236,6 +1236,7 @@ The package's own words then go only to the server's log, each error and each wa
 
 A package carries the JavaScript drivers it uses bundled into its own modules, so every static import of its artifact is a relative path inside the package's directory or a built-in (C-102), and a native addon stays refused (C-103).
 An optional dependency a driver loads at run time is bundled or removed by the package's build, so no module of the package names `createRequire`, reads `require` other than to call it with a string, calls a member named `require`, or calls `import()` or `require()` with anything but a string.
+The lock command refuses a package one of whose modules does any of these, naming the module, its line and the form, and writes no lock.
 
 ## Not yet in this contract
 

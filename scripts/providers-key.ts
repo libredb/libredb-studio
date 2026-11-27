@@ -15,8 +15,9 @@
  *   the code;
  * - package.json's `name` and `version` must be strings in the lock's forms, the register schema's too;
  * - the artifact is walked, checked and its imports recorded by the lock command's own sequence over one directory
- *   (`artifactEntry` in scripts/providers-lock.ts), and refused with its sentence, so the command refuses exactly what
- *   the lock refuses and the digest it prints is the one the lock writes;
+ *   (`artifactEntry` in scripts/providers-lock.ts), and refused with its sentences, one per line, so the command
+ *   refuses exactly what the lock refuses, a runtime load C-114 refuses included, and the digest it prints is the one
+ *   the lock writes;
  * - the manifest is read again and validated by the SDK's validator compiled from the SDK's schema text, as boot
  *   compiles it for admission, and refused with admission's sentence for the validator's first refusal.
  * Admission's check of the names an engine binds through Studio's function tables is not run: those tables import the
@@ -87,7 +88,7 @@ function manifestValidator() {
   return compileManifestValidator(new TextEncoder().encode(MANIFEST_SCHEMA_TEXT));
 }
 
-/** The keys of the artifact at `directory`, as typed, or the sentence of its refusal. */
+/** The keys of the artifact at `directory`, as typed, or its refusal: one sentence, or several, one per line. */
 export function packageKeys(directory: string): PackageKeys | string {
   let root: string;
   try {
@@ -105,7 +106,7 @@ export function packageKeys(directory: string): PackageKeys | string {
   }
   const pkg: PackageName = { name, version };
   const entry = artifactEntry(root, pkg, PREFIX);
-  if (typeof entry === "string") return entry;
+  if (Array.isArray(entry)) return entry.join("\n");
 
   // The identity read above read the manifest as a JSON object within its cap, so a failure here is a changed file.
   const manifestRead = readBoundedFile(path.join(root, MANIFEST_FILE_NAME), MANIFEST_BYTE_CAP);

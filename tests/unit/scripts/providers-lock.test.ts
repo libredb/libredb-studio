@@ -68,12 +68,39 @@ const nodeCommand = boundedChild({
   timeoutMs: 60_000,
 });
 
+/**
+ * The lock's runtime-load rule run in a bounded child over a module of `count` lines `require;`, each one load: the
+ * count of loads it finds and the line of the last. A rule whose line count grows with the square of the module's
+ * length runs far past the spawn's timeout here, so it fails within that timeout and never in the test process.
+ */
+const ruleChild = boundedChild({
+  label: "providers-lock-rule",
+  imports: [
+    { from: path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts"), names: ["parsedModule", "runtimeLoads"] },
+  ],
+  runCase: (
+    deps: {
+      parsedModule: (bytes: Buffer) => { text: string; programs: unknown[] } | null;
+      runtimeLoads: (text: string, programs: readonly unknown[]) => { line: number }[];
+    },
+    count: string,
+  ): { count: number; last: number | null } => {
+    const parsed = deps.parsedModule(Buffer.from("require;\n".repeat(Number(count))));
+    if (parsed === null) throw new Error("the module of loads does not parse");
+    const loads = deps.runtimeLoads(parsed.text, parsed.programs);
+    return { count: loads.length, last: loads.at(-1)?.line ?? null };
+  },
+  heapLimitMiB: 512,
+  timeoutMs: 30_000,
+});
+
 beforeAll(async () => {
-  await nodeCommand.build();
+  await Promise.all([nodeCommand.build(), ruleChild.build()]);
 });
 
 afterAll(() => {
   nodeCommand.remove();
+  ruleChild.remove();
   removeScratch(scratch);
 });
 
@@ -131,7 +158,7 @@ const FORMS: FixturePackage = {
       "",
     ].join("\n"),
     "dist/c.cjs":
-      'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\nrequire("./two.cjs", 0);\nrequire?.("./optional.cjs");\nrequire(`./template.cjs`);\n',
+      'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire("./two.cjs", 0);\nrequire?.("./optional.cjs");\nrequire(`./template.cjs`);\n',
     // A script's sloppy forms: `await` as a name and a `with` statement.
     "dist/sloppy.cjs": 'var await = 1;\nwith (Math) { require("./sloppy-dep.cjs"); }\n',
     // `await` read both ways: as an operator, as in an ES module, and as an identifier, as in a CommonJS file. Here the
@@ -153,6 +180,39 @@ const FORMS: FixturePackage = {
     "dist/data.json": '{"import": "./never.mjs"}\n',
   },
 };
+
+/**
+ * A package whose modules name `createRequire` (C-114): as an imported and a called identifier, and as a computed
+ * member whose key is a string or a template without substitution. A line that only calls the loader it made is not
+ * a load of its own.
+ */
+const CREATE: FixturePackage = {
+  name: "acme-create",
+  version: "1.0.0",
+  engines: ["acmecreate"],
+  files: {
+    "dist/index.mjs": [
+      'import { createRequire } from "node:module";',
+      "const load = createRequire(import.meta.url);",
+      'export default load("./x.cjs");',
+      "",
+    ].join("\n"),
+    "dist/named.mjs": [
+      'import * as m from "node:module";',
+      'export const a = m["createRequire"];',
+      "export const b = m[`createRequire`];",
+      "",
+    ].join("\n"),
+  },
+};
+
+/** The sentences the lock command refuses `CREATE` with. */
+const CREATE_REFUSALS = [
+  "providers:lock: acme-create 1.0.0: dist/index.mjs line 1 names createRequire",
+  "providers:lock: acme-create 1.0.0: dist/index.mjs line 2 names createRequire",
+  "providers:lock: acme-create 1.0.0: dist/named.mjs line 2 names createRequire",
+  "providers:lock: acme-create 1.0.0: dist/named.mjs line 3 names createRequire",
+];
 
 /** The import record of `FORMS`. */
 const FORMS_RECORD = [
@@ -741,6 +801,94 @@ describe("the lock command", () => {
     expect([...nodeRefused.err, ""]).toEqual(lines(bunRefused.stderr));
     expect(fs.existsSync(path.join(refused, LOCK_FILE_NAME))).toBe(false);
   }, 120_000);
+
+  test("a package whose module names createRequire is refused by module, line and form, writing nothing", () => {
+    const providers = freshProviders();
+    writeArtifact(providers, CREATE);
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+      1,
+      "",
+      [...CREATE_REFUSALS, "providers:lock wrote nothing", ""].join("\n"),
+    ]);
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("a module calling a member named require or a computed import() is refused the same way", async () => {
+    // Node's child prints lines through console; a Windows child would end them with CRLF on a pipe, so the Bun
+    // command's output is split on CRLF or LF. Each sentence names the module by its artifact path, the same on every
+    // platform.
+    const lines = (text: string) => text.split(/\r?\n/);
+    const providers = freshProviders();
+    const planted: [string, string, string][] = [
+      ["acme-member", "dist/member.cjs", 'module.require("x");\nmodule["require"]("y");\n'],
+      ["acme-dynamic", "dist/index.mjs", 'const name = "./x.mjs";\nexport default await import(name);\n'],
+      ["acme-computed", "dist/computed.cjs", 'const name = "x";\nrequire(name);\n'],
+      ["acme-resolve", "dist/resolve.cjs", 'require.resolve("./r.cjs");\n'],
+    ];
+    for (const [name, file, text] of planted) {
+      writeArtifact(providers, {
+        name,
+        version: "1.0.0",
+        engines: [name.replace("-", "")],
+        files: { [file]: text },
+      });
+    }
+    const bun = runCommand("--dir", providers);
+    expect([bun.exitCode, bun.stdout]).toEqual([1, ""]);
+    expect(bun.stderr).toBe(
+      [
+        "providers:lock: acme-computed 1.0.0: dist/computed.cjs line 2 calls require() with something other than a string",
+        "providers:lock: acme-dynamic 1.0.0: dist/index.mjs line 2 calls import() with something other than a string",
+        "providers:lock: acme-member 1.0.0: dist/member.cjs line 1 calls a member named require",
+        "providers:lock: acme-member 1.0.0: dist/member.cjs line 2 calls a member named require",
+        "providers:lock: acme-resolve 1.0.0: dist/resolve.cjs line 1 reads require other than to call it with a string",
+        "providers:lock wrote nothing",
+        "",
+      ].join("\n"),
+    );
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+
+    const node = await nodeCommand.run<NodeRun>(providers);
+    expect([node.code, node.out]).toEqual([1, []]);
+    expect([...node.err, ""]).toEqual(lines(bun.stderr));
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  }, 120_000);
+
+  test("one refused package leaves the whole lock unwritten", () => {
+    const providers = freshProviders();
+    const clean: FixturePackage = { name: "acme-clean", version: "1.0.0", engines: ["acmeclean"] };
+    writeArtifact(providers, clean);
+    writeArtifact(providers, CREATE);
+    const refused = runCommand("--dir", providers);
+    expect([refused.exitCode, refused.stdout, refused.stderr]).toEqual([
+      1,
+      "",
+      [...CREATE_REFUSALS, "providers:lock wrote nothing", ""].join("\n"),
+    ]);
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+
+    fs.rmSync(path.join(providers, CREATE.name), { recursive: true });
+    const locked = runCommand("--dir", providers);
+    const lock = path.join(providers, LOCK_FILE_NAME);
+    expect([locked.exitCode, locked.stdout, locked.stderr]).toEqual([
+      0,
+      `Wrote ${lock}\nacme-clean 1.0.0 ${lockEntryOf(providers, clean).digest}\n`,
+      "",
+    ]);
+    const read = readProvidersLock(providers);
+    expect(read.read && read.packages.map((pkg) => [pkg.name, pkg.verified])).toEqual([["acme-clean", true]]);
+  });
+
+  test("the lock's rule judges a module of 200,000 runtime loads within its time", async () => {
+    // Each line is found once, so the work grows with the module's length; the child's 30 s timeout is about a hundred
+    // times what the rule needs over this 1.8 MB module, and a line count that walks the text from its start for every
+    // load needs minutes.
+    expect(await ruleChild.run<{ count: number; last: number | null }>("200000")).toEqual({
+      count: 200_000,
+      last: 200_000,
+    });
+  }, 60_000);
 
   test("package.json runs the command as providers:lock", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"));

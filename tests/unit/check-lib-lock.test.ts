@@ -89,6 +89,38 @@ describeIf(missingUnixTool("tar"), "the packed lock command check", () => {
       expect.stringContaining("dist/providers-lock.mjs of the packed package does not begin with acorn's license"),
     );
   });
+
+  test("the check names a packed lock command that does not refuse a package making a runtime load", async () => {
+    // The real command, built by the build's own function, except that it answers the refusal probe as a lock.
+    const lockSource = path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts");
+    const lenient = await buildLockModule({
+      root: REPOSITORY_ROOT,
+      outfile: path.join(scratch("lib-lock-lenient-module-"), "providers-lock.mjs"),
+      entry: [
+        `import { main as lock, USAGE } from ${JSON.stringify(lockSource)};`,
+        "export { USAGE };",
+        "export function main(argv) {",
+        '  if (argv[1]?.endsWith("loads")) {',
+        '    console.log("Wrote a lock over a runtime load");',
+        "    return 0;",
+        "  }",
+        "  return lock(argv);",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    const root = plantedRoot("lib-lock-lenient-");
+    fs.mkdirSync(path.join(root, "dist"));
+    fs.copyFileSync(lenient.outfile, path.join(root, "dist", "providers-lock.mjs"));
+    const temp = scratch("lib-lock-lenient-temp-");
+
+    const result = checkLibLock({ root, temp, repository: REPOSITORY_ROOT, tar: resolveUnixTool("tar") as string });
+
+    expect(result.failures).toEqual([
+      "the packed command over a package making a runtime load exited 0, printed Wrote a lock over a runtime load on stdout and nothing on stderr, and wrote no lock, not its refusal, exit 1 and no lock.",
+    ]);
+    expect(result.packages).toEqual(["@acme/scoped 2.0.0", "acme-probe 1.0.0"]);
+  });
 });
 
 describe("the lock command check's wiring", () => {

@@ -272,6 +272,16 @@ describe("the key command", () => {
         },
         () => undefined,
       ],
+      [
+        // One runtime load C-114 refuses, so the lock prints one sentence for the package.
+        {
+          name: "acme-loads",
+          version: "1.0.0",
+          manifest: minimal("acmeloads"),
+          files: { "dist/index.mjs": "export default import(globalThis.name);\n" },
+        },
+        () => undefined,
+      ],
     ];
     for (const [pkg, edit] of lockRefused) {
       const own = freshProviders();
