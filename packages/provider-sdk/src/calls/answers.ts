@@ -16,11 +16,12 @@
  * Each record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
  * typecheck here until its form names it, as the frame reader's shapes do.
  *
- * Both checks read every member once, with one set of readers. Each list's length is read once and a list longer than
- * its bound, `ANSWER_LIST_MAX` for its member or a `describeMany` request's `limit`, is refused at the list before any
- * item is read; a list's first hole is refused at its index and ends the list's reading, so a sparse list of any
- * length is read in as many steps as it holds items before its first hole. A reading that throws, a revoked Proxy or
- * a trap that throws, is refused at the pointer being read, so neither check ever throws.
+ * Both checks read every member once, with one set of readers. Each list's length is read once, from its own data
+ * descriptor, and a length that is no count, or a list longer than its bound, `ANSWER_LIST_MAX` for its member or a
+ * `describeMany` request's `limit`, is refused at the list before any item is read; a list's first hole is refused at
+ * its index and ends the list's reading, so a sparse list of any length is read in as many steps as it holds items
+ * before its first hole. A reading that throws, a revoked Proxy or a trap that throws, is refused at the pointer being
+ * read, so neither check ever throws.
  *
  * Each check answers an `AnswerCheck`: the answer itself, by reference, typed as the form it was read as, where it
  * refuses nothing, and its refusals alone otherwise, so a caller past the check reads the answer typed with no cast of
@@ -136,8 +137,21 @@ function readAt(target: unknown, key: string, at: string, out: Refusals): OwnRea
 }
 
 /** Whether `value` is a count: a non-negative safe integer. */
-function isCount(value: unknown): boolean {
+function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * The length of the list at `pointer`, read once from its own data descriptor, so no `get` is run and no conversion
+ * of it is made: a length that is not a count (`isCount`), or whose reading throws (`readAt`), is refused at the list,
+ * and undefined is answered for either. Every later use of the length reads the number this answers.
+ */
+function lengthOf(list: readonly unknown[], pointer: string, out: Refusals): number | undefined {
+  const read = readAt(list, "length", pointer, out);
+  if (read === undefined) return undefined;
+  if (read.kind === "data" && isCount(read.value)) return read.value;
+  refuse(out, pointer);
+  return undefined;
 }
 
 /** Whether `key` is an index of a list of `length` items: a canonical array index below the length. */
@@ -147,10 +161,11 @@ function isIndexOf(key: string, length: number): boolean {
 
 /**
  * A list of `item` at most `bound` long: an own data array, refused at the list otherwise, whose length is read once
- * and refused at the list past `bound` before any item is read. Each index is then read in order as an own data
- * element of `item`, an accessor refused at its index, and the first hole is refused at its index and ends the
- * reading of the list. Where `closed`, an own key that is neither an index nor `length` is refused by name, as a
- * record's key outside its form is. `counted`, where given, is told the length of a list within its bound.
+ * (`lengthOf`) and refused at the list where it is no count or past `bound`, before any item is read. Each index is
+ * then read in order as an own data element of `item`, an accessor refused at its index, and the first hole is
+ * refused at its index and ends the reading of the list. Where `closed`, an own key that is neither an index nor
+ * `length` is refused by name, as a record's key outside its form is. `counted`, where given, is told the length of a
+ * list within its bound.
  */
 function listForm(item: Form, bound: number, closed: boolean, counted?: (length: number) => void): Form {
   return guarded((value, pointer, out) => {
@@ -159,7 +174,8 @@ function listForm(item: Form, bound: number, closed: boolean, counted?: (length:
       return;
     }
     const items: readonly unknown[] = value;
-    const length = items.length;
+    const length = lengthOf(items, pointer, out);
+    if (length === undefined) return;
     if (length > bound) {
       refuse(out, pointer);
       return;
@@ -246,11 +262,11 @@ function columnListForm(): Form {
 }
 
 /**
- * The result list at `pointer`: an own data array, refused at the list otherwise, whose length is read once and
- * refused at the list past `ANSWER_LIST_MAX.results`. Only its first result is read, as an own data element: its
- * columns (`columnListForm`), and an own row count that is an accessor or not a count. A row count it does not have is
- * not refused: a provider gives one only where its engine answered it. A first result that is no object, a hole or an
- * accessor, has no columns. No later result is read.
+ * The result list at `pointer`: an own data array, refused at the list otherwise, whose length is read once
+ * (`lengthOf`) and refused at the list where it is no count or past `ANSWER_LIST_MAX.results`. Only its first result
+ * is read, as an own data element: its columns (`columnListForm`), and an own row count that is an accessor or not a
+ * count. A row count it does not have is not refused: a provider gives one only where its engine answered it. A first
+ * result that is no object, a hole or an accessor, has no columns. No later result is read.
  */
 const resultsForm: Form = guarded((value, pointer, out) => {
   if (!Array.isArray(value)) {
@@ -258,7 +274,8 @@ const resultsForm: Form = guarded((value, pointer, out) => {
     return;
   }
   const results: readonly unknown[] = value;
-  const length = results.length;
+  const length = lengthOf(results, pointer, out);
+  if (length === undefined) return;
   if (length > ANSWER_LIST_MAX.results) {
     refuse(out, pointer);
     return;

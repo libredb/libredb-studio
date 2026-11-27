@@ -27,8 +27,9 @@ interface ChildReport {
 
 /**
  * Runs in the child, from its text: an answer one of whose lists is a sparse array of the longest length an array can
- * have, or, for the two `holes` cases, a list within its bound whose every item is a hole. Only the answer's refusals
- * are reported.
+ * have, or, for the two `holes` cases, a list within its bound whose every item is a hole, or, for the `shifting`
+ * cases, a list whose length converts to 0 on its first conversion and to the longest length on every later one, and
+ * whose every index answers an item its form refuses. Only the answer's refusals are reported.
  */
 function runCase(deps: ChildDeps, name: string): ChildReport {
   const longest: unknown[] = [];
@@ -36,6 +37,16 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
   const holes: unknown[] = [];
   holes.length = 2 ** 20;
   const container = ["c"];
+  const shifting = (): unknown[] => {
+    let conversions = 0;
+    const length = { valueOf: () => (conversions++ === 0 ? 0 : 2 ** 32 - 1) };
+    const item = { value: 1, writable: true, enumerable: true, configurable: true };
+    return new Proxy([] as unknown[], {
+      get: (target, key) => (key === "length" ? length : Reflect.get(target, key)),
+      getOwnPropertyDescriptor: (target, key) =>
+        key === "length" ? { ...Reflect.getOwnPropertyDescriptor(target, key), value: length } : item,
+    });
+  };
   const execute = (answer: Record<string, unknown>) =>
     deps.checkExecuteAnswer({ results: [], warnings: [], executionTimeMs: 1, ...answer });
   const checks: Record<string, () => ReturnType<typeof checkExecuteAnswer> | ReturnType<typeof checkTreeAnswer>> = {
@@ -49,6 +60,10 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
     objects: () => deps.checkTreeAnswer({ action: "list", container, kind: "table" }, { objects: longest }),
     details: () => deps.checkTreeAnswer({ action: "describeMany", container, kind: "table" }, { details: longest }),
     treeHoles: () => deps.checkTreeAnswer({ action: "list", container, kind: "table" }, { objects: holes }),
+    shiftingWarnings: () => execute({ warnings: shifting() }),
+    shiftingObjects: () => deps.checkTreeAnswer({ action: "list", container, kind: "table" }, { objects: shifting() }),
+    shiftingDetails: () =>
+      deps.checkTreeAnswer({ action: "describeMany", container, kind: "table", limit: 2 }, { details: shifting() }),
   };
   const check = checks[name]();
   return { name, refusals: check.kind === "read" ? [] : check.refusals };
@@ -100,4 +115,16 @@ describe(`the answer checks' lists in a Node child under --max-old-space-size=${
     });
     expect(await child.run<ChildReport>("treeHoles")).toEqual({ name: "treeHoles", refusals: [tree("/objects/0")] });
   }, 60_000);
+
+  test.each([
+    ["shiftingWarnings", [execute("/warnings")]],
+    ["shiftingObjects", [tree("/objects")]],
+    ["shiftingDetails", [tree("/details")]],
+  ])(
+    "a list whose length converts to 0 first and to the longest length after, %s, is refused at the list, in a bounded child",
+    async (name, refusals) => {
+      expect(await child.run<ChildReport>(name)).toEqual({ name, refusals });
+    },
+    30_000,
+  );
 });

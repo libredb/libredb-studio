@@ -37,16 +37,52 @@ function thrower(): never {
 
 /**
  * A list that says it is `length` long and holds no item, counting in `reads` each reading of an item's descriptor; its
- * length is a Proxy's answer, so it holds no memory for it.
+ * length is a Proxy's answer (`listOfLength`), so it holds no memory for it.
  */
 function longList(length: number, reads: { count: number }): unknown[] {
+  return listOfLength(length, reads);
+}
+
+/** `target` behind a trap whose reading of its length's descriptor runs `onLength`, which answers that descriptor. */
+function onLengthRead<T extends object>(
+  target: T,
+  onLength: (descriptor: PropertyDescriptor | undefined) => PropertyDescriptor | undefined,
+): T {
+  return new Proxy(target, {
+    getOwnPropertyDescriptor: (inner, key) =>
+      key === "length"
+        ? onLength(Reflect.getOwnPropertyDescriptor(inner, key))
+        : Reflect.getOwnPropertyDescriptor(inner, key),
+  });
+}
+
+/**
+ * A list that holds no item and whose length is `length`, answered alike by its length's descriptor and by its `get`
+ * trap, so a reader of either form meets it; each reading of an item's descriptor is counted in `reads`.
+ */
+function listOfLength(length: unknown, reads: { count: number }): unknown[] {
   return new Proxy([] as unknown[], {
     get: (target, key) => (key === "length" ? length : Reflect.get(target, key)),
     getOwnPropertyDescriptor: (target, key) => {
-      if (key !== "length") reads.count += 1;
+      if (key === "length") return { ...Reflect.getOwnPropertyDescriptor(target, key), value: length };
+      reads.count += 1;
       return Reflect.getOwnPropertyDescriptor(target, key);
     },
   });
+}
+
+/** A length that converts to 0 on its first conversion and to `after` on every later one. */
+function shiftingLength(after: number): object {
+  let conversions = 0;
+  return { valueOf: () => (conversions++ === 0 ? 0 : after) };
+}
+
+/**
+ * Each length that is no count, made fresh by its function so a shifting one starts unconverted: a length whose
+ * conversion shifts, text, a fraction, a negative number and NaN.
+ */
+function nonCountLengths(): readonly (() => unknown)[] {
+  return [() => shiftingLength(3), () => "1", () => 1.5, () => -1, () => Number.NaN];
 }
 
 function unreadable(pointer: string, name?: string): CallRefusal {
@@ -301,7 +337,7 @@ describe("checkExecuteAnswer", () => {
         key === "0" ? thrower() : Reflect.getOwnPropertyDescriptor(target, key),
     });
     expect(executeRefusals(answerOf({ results }))).toEqual([unreadable("/results/0")]);
-    const warnings = new Proxy([], { get: (target, key) => (key === "length" ? thrower() : Reflect.get(target, key)) });
+    const warnings = onLengthRead([], thrower);
     expect(executeRefusals(answerOf({ warnings }))).toEqual([unreadable("/warnings")]);
   });
 
@@ -332,6 +368,18 @@ describe("checkExecuteAnswer", () => {
     expect(executeRefusals(answerOf({ results: [sourceOf(columnsHoled)] }))).toEqual([
       unreadable("/results/0/columns/1"),
     ]);
+  });
+
+  test("an execute answer list whose length is no count is refused at the list before any item is read", () => {
+    const reads = { count: 0 };
+    for (const length of nonCountLengths()) {
+      expect(executeRefusals(answerOf({ results: listOfLength(length(), reads) }))).toEqual([unreadable("/results")]);
+      expect(executeRefusals(answerOf({ warnings: listOfLength(length(), reads) }))).toEqual([unreadable("/warnings")]);
+      expect(executeRefusals(answerOf({ results: [sourceOf(listOfLength(length(), reads))] }))).toEqual([
+        unreadable("/results/0/columns"),
+      ]);
+    }
+    expect(reads.count).toBe(0);
   });
 });
 
@@ -793,15 +841,13 @@ describe("checkTreeAnswer", () => {
       },
     );
     expect(treeRefusals(requests.list, { objects: [object] })).toEqual([treeUnreadable("/objects/0/name")]);
-    const list = new Proxy([name], { get: (target, key) => (key === "length" ? thrower() : Reflect.get(target, key)) });
+    const list = onLengthRead([name], thrower);
     expect(treeRefusals(requests.list, { objects: [{ path: list, name, kind: "table" }] })).toEqual([
       treeUnreadable("/objects/0/path"),
     ]);
 
     // A list whose every reading of its length throws is refused at the list once, its form's refusal.
-    const containers = new Proxy([], {
-      get: (target, key) => (key === "length" ? thrower() : Reflect.get(target, key)),
-    });
+    const containers = onLengthRead([], thrower);
     expect(treeRefusals(requests.containers, { containers, needsConfiguration: name })).toEqual([
       treeUnreadable("/containers"),
     ]);
@@ -875,9 +921,7 @@ describe("checkTreeAnswer", () => {
 
     // A list's length is read once: a length whose second reading throws is never read twice.
     let lengths = 0;
-    const details = new Proxy([detailOf()], {
-      get: (target, key) => (key === "length" && ++lengths > 1 ? thrower() : Reflect.get(target, key)),
-    });
+    const details = onLengthRead([detailOf()], (descriptor) => (++lengths > 1 ? thrower() : descriptor));
     expect(treeRefusals(requests.describeMany, { details })).toEqual([]);
     expect(lengths).toBe(1);
   });
@@ -940,5 +984,24 @@ describe("checkTreeAnswer", () => {
     expect(treeRefusals(requests.list, { objects: [{ ...object, path: pathHoled }] })).toEqual([
       treeUnreadable("/objects/0/path/1"),
     ]);
+  });
+
+  test("a tree answer list whose length is no count is refused at the list before any item is read", () => {
+    const requests = requestsOf();
+    const name = marker();
+    const reads = { count: 0 };
+    for (const length of nonCountLengths()) {
+      expect(treeRefusals(requests.list, { objects: listOfLength(length(), reads) })).toEqual([
+        treeUnreadable("/objects"),
+      ]);
+      // A describeMany request's limit bounds its details, and a length that is no count is refused before it.
+      expect(treeRefusals(requests.describeMany, { details: listOfLength(length(), reads) })).toEqual([
+        treeUnreadable("/details"),
+      ]);
+      expect(
+        treeRefusals(requests.containers, { containers: [{ path: listOfLength(length(), reads), name, level: 0 }] }),
+      ).toEqual([treeUnreadable("/containers/0/path")]);
+    }
+    expect(reads.count).toBe(0);
   });
 });

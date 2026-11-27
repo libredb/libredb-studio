@@ -74,16 +74,16 @@ export const CALL_REFUSAL_RULES = Object.freeze([
    * A member of an execute answer the host reads that is missing where the SDK requires it, an accessor, or not of the
    * SDK's type there: the result list, the first result's columns, a column's name (empty or repeated in its result
    * too), the first result's row count, the execution time, the warning list or one of its warnings, or a key a warning
-   * cannot have (`name` the key); a list longer than its `ANSWER_LIST_MAX` bound, a list's first hole, or a value whose
-   * reading throws; the pointer is into the answer.
+   * cannot have (`name` the key); a list whose length is no count or that is longer than its `ANSWER_LIST_MAX` bound, a
+   * list's first hole, or a value whose reading throws; the pointer is into the answer.
    */
   "execute-answer-unreadable",
   /**
    * A tree answer the host reads that is not its action's form: not a plain record, a member missing where the SDK
    * requires it or behind an accessor, a key the form cannot have, a list's key that is no index included (`name` the
-   * key), a value not of the SDK's object tree types there, a list longer than its bound (its `ANSWER_LIST_MAX`, or a
-   * `describeMany` request's limit for its details), a list's first hole, `needsConfiguration` where C-61 does not allow
-   * it, or a value whose reading throws; the pointer is into the answer.
+   * key), a value not of the SDK's object tree types there, a list whose length is no count or that is longer than its
+   * bound (its `ANSWER_LIST_MAX`, or a `describeMany` request's limit for its details), a list's first hole,
+   * `needsConfiguration` where C-61 does not allow it, or a value whose reading throws; the pointer is into the answer.
    */
   "tree-answer-unreadable",
 ] as const);
