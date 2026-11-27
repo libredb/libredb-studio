@@ -28,6 +28,7 @@ import { readingOfRecord, type StatementReading } from "@/lib/sql/dangerous-quer
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import type { GrammarFacts, StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { ACME_LANGUAGE_DATA, admittedManifest } from "../../helpers/package-catalog";
+import { READER_ENROLLMENTS } from "../../helpers/declared-language-census";
 
 /** The engine whose reading the gate is handed, by its id: no engine Studio ships, so no type is ever read for it. */
 const ENGINE = "acmerow";
@@ -265,6 +266,18 @@ describe("a statement language row's readers", () => {
       if (record === undefined) throw new Error(`the legacy adapter serves no ${type}`);
       expect(record.statementLanguageRow).toBe(compiled);
       expect(Object.isFrozen(compiled)).toBe(true);
+      // The row holds its operations, its reader and its claim, and a bound or a safety analysis opt-out only where the
+      // data states one: never a typed confirmation or a refusal, which the data cannot state.
+      expect([type, Object.keys(compiled).sort()]).toEqual([
+        type,
+        [
+          "decidesAlone",
+          ...(declared.confirmation.maxTextBytes === null ? [] : ["maxTextBytes"]),
+          "operations",
+          "read",
+          ...(declared.confirmation.safetyAnalysis ? [] : ["safetyAnalysis"]),
+        ],
+      ]);
       expect([...compiled.operations]).toEqual([...declared.confirmation.operations]);
       expect(compiled.decidesAlone).toBe(declared.confirmation.decidesAlone);
       expect(rowTextByteLimit(compiled)).toBe(declared.confirmation.maxTextBytes ?? undefined);
@@ -275,9 +288,16 @@ describe("a statement language row's readers", () => {
       const grants = legacyEngineGrants(type);
       expect([grants.readsSqlText, grants.statementLanguage]).toEqual([false, declared.name]);
       expect(rowDecidesAlone(compiled, grants)).toBe(declared.confirmation.decidesAlone);
-      // A text the row names no operation for runs where the row decides alone.
-      const unnamed = ["", "DELETE FROM t", "SELECT 'a"].filter((text) => compiled.read(text)?.length === 0);
-      for (const text of declared.confirmation.decidesAlone ? unnamed : []) {
+      // A read names no operation, and runs where the row decides alone. The reads are chosen by the language's own
+      // census corpus, each a request its provider's reader admits, never by what the row's reader answers.
+      const enrollment = READER_ENROLLMENTS.get(declared.name);
+      if (declared.agent !== null && enrollment === undefined) {
+        throw new Error(`the language ${declared.name} states an agent part and no census enrollment`);
+      }
+      const reads = enrollment === undefined ? [] : enrollment.corpus.filter((text) => enrollment.reader(text).ok);
+      for (const text of reads) {
+        expect([type, text, compiled.read(text)]).toEqual([type, text, []]);
+        if (!declared.confirmation.decidesAlone) continue;
         expect([type, text, confirmationVerdict(text, readingOfRecord(record), "Keys")]).toStrictEqual([
           type,
           text,
@@ -319,7 +339,7 @@ describe("a statement language row's readers", () => {
         expect([type, text, verdict.decision]).toEqual([type, text, "confirm"]);
       }
     }
-    // Vacuity: some row decided alone on a text it names no operation for, so the run half reads a verdict.
+    // Vacuity: some row decided alone on a read of its language, so the run half reads a verdict.
     expect(ran).toBeGreaterThan(0);
   });
 });
