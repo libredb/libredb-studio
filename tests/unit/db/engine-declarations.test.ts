@@ -93,7 +93,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
-import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
+import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
@@ -102,7 +102,7 @@ import {
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
 import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
-import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
+import { engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import type { AgentEngineServerDialect, SqlServerDialect } from "@/lib/agent/languages/pack";
 import { languageServerPack } from "@/lib/agent/languages/server";
@@ -111,6 +111,7 @@ import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
+import * as claimGrants from "@/lib/db/claim-grants";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   CONNECTION_FORM_URI_MODE,
@@ -261,6 +262,7 @@ const readsSqlTextRow = legacyRegisterTable("readsSqlText");
 const confirmExemptFormsRow = legacyRegisterTable("confirmExemptForms");
 const redactionRow = legacyRegisterTable("redaction");
 const grammarSha256Row = legacyRegisterTable("grammarSha256");
+const catalogReadCommandShapedRow = legacyRegisterTable("catalogReadCommandShaped");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -540,21 +542,24 @@ const TYPE_FAMILY_KINDS = Object.keys(SCHEMA.$defs.typeFamilies?.properties ?? {
  */
 function schemaFunctionPaths(name: string, at = ""): string[] {
   const definition = SCHEMA.$defs[name] as SchemaMember | undefined;
-  const refsOf = (schemas: readonly SchemaMember[]) =>
-    schemas.flatMap((branch) => (branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")]));
   const members = Object.entries(definition?.properties ?? {}).flatMap(([member, schema]) => {
     const path = at === "" ? member : `${at}.${member}`;
-    const refs = refsOf([schema, ...(schema.oneOf ?? [])]);
+    const refs = schemaRefs([schema, ...(schema.oneOf ?? [])]);
     if (refs.includes("functionName")) return [path];
     return refs.flatMap((ref) => schemaFunctionPaths(ref, path));
   });
   // A definition that is itself a union, such as migrationDdl or createTable, states its members in its branches, at
   // the definition's own path.
-  const variants = refsOf(definition?.oneOf ?? []).flatMap((ref) => schemaFunctionPaths(ref, at));
+  const variants = schemaRefs(definition?.oneOf ?? []).flatMap((ref) => schemaFunctionPaths(ref, at));
   return [...members, ...variants];
 }
 
-/** A schema definition or a member of one, as far as `schemaFunctionPaths` reads it. */
+/** The name of the definition each of these schemas refers to by its `$ref`, in order, a schema with none skipped. */
+function schemaRefs(schemas: readonly SchemaMember[]): string[] {
+  return schemas.flatMap((branch) => (branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")]));
+}
+
+/** A schema definition or a member of one, as far as `schemaFunctionPaths` and the census's claim walk read it. */
 interface SchemaMember {
   readonly $ref?: string;
   readonly oneOf?: readonly SchemaMember[];
@@ -1751,9 +1756,8 @@ interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
   readonly request: (declaration: EngineDeclaration) => unknown;
   /**
-   * Studio's review row for `type`, written in the declaration's form: for a connection claim, the statement language
-   * and the agent readings, that member of the engine's legacy row in the grant register; for every other claim, the
-   * row of Studio's review record.
+   * Studio's review row for `type`, written in the declaration's form: the member of the engine's legacy row in the
+   * grant register that reviews the claim.
    */
   readonly record: (type: DatabaseType) => unknown;
 }
@@ -1761,9 +1765,10 @@ interface SegmentClaimRecord {
 /**
  * Studio's review of each claim of the connection, facets, agent and SQL text segments, by the dotted member that
  * requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the review the grant reader grants each request
- * against and each declaration's request is generated from. The review of a connection claim, the statement language
- * and the agent readings is that member of every engine's legacy row in the grant register, and every other claim's a
- * record Studio still keeps in core. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ * against and each declaration's request is generated from. The review of each claim is its member of every engine's
+ * legacy row in the grant register, the agent overlay's command-shaped catalog read included, though that claim's
+ * request is generated from the engine's server overlay. Written here apart from the generator, as
+ * `POLICY_CLAIM_RECORDS` is.
  */
 const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   "connection.opensLocalFile": {
@@ -1803,12 +1808,69 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "agent.overlay.dialect.catalogRead.commandShaped": {
     request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,
-    record: (type) => {
-      const catalogRead = engineServerDialect(type).catalogRead;
-      return catalogRead !== "unsupported" && catalogRead.commandShaped === true;
-    },
+    record: (type) => catalogReadCommandShapedRow[type],
   },
 };
+
+/**
+ * Where Studio's grant of each claim a declaration makes is read, by the dotted member that requests it: the members of
+ * an engine's grants that hold the grant, or, for a claim whose request the grants do not hold, the export of the grant
+ * reader that grants it (docs/providers/CONTRACT.md, clause M-54).
+ */
+const CLAIM_GRANTS: Readonly<Record<string, readonly string[]>> = {
+  "policy.writeReach": ["writeReach", "readOnlyEnforced"],
+  "policy.readsFileAccessPosture": ["readsFileAccessPosture"],
+  "policy.deniedFileAccessRefusal": ["deniedFileAccessRefusal"],
+  "policy.singleWriterFile": ["singleWriterFile", "ungrantedRefusals"],
+  "policy.readRootsRequired": ["readRootsRequired"],
+  "policy.agentCredentialForm": ["agentCredentialForm"],
+  "policy.maskingExemptColumns": ["maskingExemptColumns"],
+  "mcp.exposable": ["exposable"],
+  "mcp.statementRead": ["statementRead"],
+  "mcp.metadataReadChangesState": ["metadataReadChangesState"],
+  "mcp.agentCredentialRequired": ["agentCredentialRequired"],
+  "connection.opensLocalFile": ["opensLocalFile"],
+  "connection.hostPathFields": ["hostPathFields"],
+  "connection.serverLevelWithoutDatabase": ["serverLevelAtAdmission", "serverLevelAtCatalogChoice"],
+  "connection.sshTunnel": ["sshTunnel"],
+  "connection.agentCredential": ["agentCredential"],
+  "agent.statementLanguage": ["statementLanguage"],
+  "facets.agentReadings": ["agentReadings"],
+  "sqlText.redaction": ["redaction"],
+  "agent.overlay.dialect.catalogRead.commandShaped": ["grantedCatalogReadCommand"],
+  "sqlText.readsSqlText": ["readsSqlText"],
+  "sqlText.grammar.confirmExemptForms": ["confirmExemptForms"],
+};
+
+/** The members of an engine's grants that hold no grant of a declaration's claim, each with why. */
+const UNCLAIMED_GRANT_MEMBERS: Readonly<Record<string, string>> = {
+  ownWords: "a host fact no declaration requests, read from the engine's register row alone",
+  servesOneSession: "a host fact no declaration requests, read from the engine's register row alone",
+  agentExecution: "a host fact no declaration requests, read from the engine's register row alone",
+  decidesAlone: "a host fact no declaration requests, a statement vocabulary row's own flag being its request",
+  reviewedGrammar: "no grant: whether the row reviewed the grammar the request carries the digest of",
+  catalogReadCommandShaped:
+    "the register row's review of the agent overlay's claim, which only grantedCatalogReadCommand reads with the request",
+};
+
+/**
+ * What is wrong with `grants`, a map from each claim of `claims` to where its grant is read: a claim with no entry, or
+ * an entry naming something that is neither a member of an engine's grants, `members`, nor a function the grant reader
+ * exports, `exports`.
+ */
+function ungrantedClaims(
+  claims: readonly string[],
+  grants: Readonly<Record<string, readonly string[]>>,
+  members: readonly string[],
+  exports: Readonly<Record<string, unknown>>,
+): string[] {
+  return claims.flatMap((claim) => {
+    if (!Object.hasOwn(grants, claim)) return [`${claim}: no grant named`];
+    return grants[claim]
+      .filter((name) => !members.includes(name) && typeof exports[name] !== "function")
+      .map((name) => `${claim}: ${name} is neither a member of an engine's grants nor a function of the grant reader`);
+  });
+}
 
 /** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
 function declaredRecord<Value>(read: (declaration: EngineDeclaration) => Value): Readonly<Record<DatabaseType, Value>> {
@@ -3989,26 +4051,75 @@ describe("the census", () => {
     expect(readBack.map(([member]) => member)).toEqual([...SEGMENT_CLAIMS]);
   });
 
-  test("each claim the census reads back is a member of the schema's engine declaration", () => {
-    // A dotted claim is walked member by member from the engine declaration, each member's `$ref` followed into the
-    // definition it names, a nullable definition included, and its last member must be a property of where it ends.
+  test("each claim the census reads back is a member of the schema's engine declaration, following each oneOf branch", () => {
+    // A dotted claim is walked member by member from the engine declaration. A member's schema reaches itself when it
+    // refers to nothing, the definition its `$ref` names, and whatever each of its `oneOf` branches reaches, so a
+    // nullable member and a union of definitions are both followed; each next member must be a property of one of the
+    // schemas the previous one reached.
+    const reached = (schema: SchemaMember): SchemaMember[] => [
+      ...(schema.$ref === undefined ? [schema] : []),
+      ...schemaRefs([schema]).flatMap((name) => reached((SCHEMA.$defs[name] ?? {}) as SchemaMember)),
+      ...(schema.oneOf ?? []).flatMap(reached),
+    ];
     const isMember = (claim: string): boolean => {
-      const members = claim.split(".");
-      let definition = SCHEMA.$defs.engineDeclaration;
-      for (const [index, member] of members.entries()) {
-        const properties = definition?.properties ?? {};
-        if (!Object.hasOwn(properties, member)) return false;
-        if (index === members.length - 1) return true;
-        const reference = (properties[member] as { $ref?: string }).$ref ?? "";
-        definition = SCHEMA.$defs[reference.replace("#/$defs/", "")];
+      let schemas = [SCHEMA.$defs.engineDeclaration as SchemaMember];
+      for (const member of claim.split(".")) {
+        const found = schemas.flatMap(({ properties }) =>
+          properties !== undefined && Object.hasOwn(properties, member) ? [properties[member] as SchemaMember] : [],
+        );
+        if (found.length === 0) return false;
+        schemas = found.flatMap(reached);
       }
-      return false;
+      return true;
     };
 
     expect(Object.keys(SEGMENT_CLAIM_RECORDS).filter((claim) => !isMember(claim))).toEqual([]);
     expect(Object.keys(SEGMENT_CLAIM_RECORDS)).toEqual([...SEGMENT_CLAIMS]);
     expect(isMember("agent.overlay.dialect.catalogRead.unknown")).toBe(false);
     expect(isMember("agent.overlay.dialect.catalogRead")).toBe(true);
+    // A member reached only through a `oneOf` branch, at a property or at the definition it names, is a member too,
+    // and an unknown member under one is not.
+    expect(isMember("agent.overlay.dialect.planEstimate.prefix")).toBe(true);
+    expect(isMember("agent.overlay.dialect.planEstimate.kind")).toBe(true);
+    expect(isMember("agent.overlay.dialect.planEstimate.unknown")).toBe(false);
+    expect(isMember("agent.overlay.grounding")).toBe(true);
+    expect(isMember("agent.overlay.dialect.catalogRead.declaredSchema")).toBe(true);
+  });
+
+  test("every claim of a declaration is read through a named grant", () => {
+    const claims = [
+      ...Object.keys(SCHEMA.$defs.policyClaims?.properties ?? {}).map((member) => `policy.${member}`),
+      ...Object.keys(SCHEMA.$defs.mcpClaims?.properties ?? {}).map((member) => `mcp.${member}`),
+      ...SEGMENT_CLAIMS,
+      ...CONFIRMATION_GATE_CLAIMS,
+    ];
+    const members = Object.keys(legacyEngineGrants("postgres"));
+    const named = Object.values(CLAIM_GRANTS).flat();
+
+    expect(ungrantedClaims(claims, CLAIM_GRANTS, members, claimGrants)).toEqual([]);
+    expect(claims).toHaveLength(22);
+    expect(Object.keys(CLAIM_GRANTS).sort()).toEqual([...claims].sort());
+    // Every member of an engine's grants holds the grant of a claim or is listed as holding none, never both.
+    expect(
+      members.filter((member) => !named.includes(member) && !Object.hasOwn(UNCLAIMED_GRANT_MEMBERS, member)),
+    ).toEqual([]);
+    expect(Object.keys(UNCLAIMED_GRANT_MEMBERS).filter((member) => named.includes(member))).toEqual([]);
+    expect(Object.keys(UNCLAIMED_GRANT_MEMBERS).filter((member) => !members.includes(member))).toEqual([]);
+    // Vacuity: a claim with no entry, and an entry naming a function the grant reader does not export, are named.
+    expect(ungrantedClaims([...claims, "agent.unclaimed"], CLAIM_GRANTS, members, claimGrants)).toEqual([
+      "agent.unclaimed: no grant named",
+    ]);
+    const misnamed = { ...CLAIM_GRANTS, "mcp.exposable": ["grantedExposure"] };
+    expect(ungrantedClaims(claims, misnamed, members, claimGrants)).toEqual([
+      "mcp.exposable: grantedExposure is neither a member of an engine's grants nor a function of the grant reader",
+    ]);
+    // A member removed from both lists is one neither names.
+    const withoutOwnWords = Object.fromEntries(
+      Object.entries(UNCLAIMED_GRANT_MEMBERS).filter(([member]) => member !== "ownWords"),
+    );
+    expect(members.filter((member) => !named.includes(member) && !Object.hasOwn(withoutOwnWords, member))).toEqual([
+      "ownWords",
+    ]);
   });
 
   test("each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open", () => {

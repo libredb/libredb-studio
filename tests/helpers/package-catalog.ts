@@ -128,6 +128,7 @@ const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
   agentCredential: null,
   statementLanguage: null,
   agentReadings: Object.freeze([]),
+  catalogReadCommandShaped: false,
   servesOneSession: null,
   agentExecution: false,
   ownWords: "code-only",

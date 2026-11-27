@@ -20,13 +20,17 @@ afterAll(forgetHostCore);
  * A statement workflow on an engine whose catalog answers only to a command, not to a SELECT, driven through the real
  * run loop and the real catalog read: the statement the server composed for a catalog kind is admitted by identity,
  * and nothing else is. The same text written by the model is refused as it always was, a statement other than the one
- * composed is refused on the catalog path too, and an overlay that does not declare its catalog read a command gets
- * the ordinary refusal.
+ * composed is refused on the catalog path too, and the command is admitted only as Studio's grant of the overlay's
+ * claim: an overlay that does not declare its catalog read a command, or one that does on an engine whose register row
+ * does not grant it, gets the ordinary refusal.
  *
  * No shipped engine is that engine yet, so this file substitutes DuckDB's engine modules with a double that declares
- * exactly that dialect. `mock.module` is process-wide, so the substitution is made before anything that reaches the
- * engine registry is loaded: every such module is imported dynamically below it, and the runner gives this file its
- * own process.
+ * exactly that dialect, and plants DuckDB's grants: the grant reader's `legacyEngineGrants`, which DuckDB's legacy
+ * record holds, answers DuckDB's real grants with `catalogReadCommandShaped`, its register row's review of the claim,
+ * read from `rowGrantsCommand` on every use, and every other engine's real grants. The real grant reader is captured as
+ * a plain object before the substitution, and the substitute reads only that object. `mock.module` is process-wide, so
+ * the substitution is made before anything that reaches the engine registry or the legacy records is loaded: every
+ * such module is imported dynamically below it, and the runner gives this file its own process.
  */
 
 /** The command the double composes for every kind, and the engine's own column names it answers under. */
@@ -41,6 +45,8 @@ const RETRY_MESSAGE = "the catalog answer is not-a-real-refusal";
 let rewriteTo: (sql: string) => string = (sql) => sql;
 /** Whether the double declares its catalog read a command, read on every use. */
 let declaresCommand = true;
+/** Whether DuckDB's planted grants hold its register row's review of the claim, read on every use. */
+let rowGrantsCommand = true;
 
 const CATALOG_READ: AgentCatalogRead = Object.freeze({
   compose: Object.freeze({
@@ -65,6 +71,17 @@ const CATALOG_READ: AgentCatalogRead = Object.freeze({
 // Captured as plain objects before the substitution: a namespace follows its replacement.
 const REAL_DUCKDB = { ...DUCKDB };
 const REAL_SQL_CLIENT_OVERLAYS = { ...SQL_CLIENT_OVERLAYS };
+const REAL_CLAIM_GRANTS = { ...(await import("@/lib/db/claim-grants")) };
+const DUCKDB_GRANTS = Object.freeze(
+  Object.defineProperty({ ...REAL_CLAIM_GRANTS.legacyEngineGrants("duckdb") }, "catalogReadCommandShaped", {
+    enumerable: true,
+    get: () => rowGrantsCommand,
+  }),
+);
+mock.module("@/lib/db/claim-grants", () => ({
+  ...REAL_CLAIM_GRANTS,
+  legacyEngineGrants: (id: string) => (id === "duckdb" ? DUCKDB_GRANTS : REAL_CLAIM_GRANTS.legacyEngineGrants(id)),
+}));
 mock.module("@/lib/agent/languages/sql/engines/duckdb", () => ({
   ...REAL_DUCKDB,
   DUCKDB_SERVER_OVERLAY: {
@@ -296,6 +313,20 @@ describe("an engine whose catalog read is a composed command", () => {
     expect(sent).toEqual([]);
     if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
     expect(outcome.refusal).toMatchObject(FENCE_REFUSAL);
+  });
+
+  test("an overlay that claims a command-shaped catalog read on an engine whose register row does not grant it gets the ordinary refusal", async () => {
+    declaresCommand = true;
+    rowGrantsCommand = false;
+    let read: Awaited<ReturnType<typeof readCatalogOnce>>;
+    try {
+      read = await readCatalogOnce(engineAnswer);
+    } finally {
+      rowGrantsCommand = true;
+    }
+    expect(read.sent).toEqual([]);
+    if (read.outcome.kind !== "refused") throw new Error(`expected a refusal, got ${read.outcome.kind}`);
+    expect(read.outcome.refusal).toMatchObject(FENCE_REFUSAL);
   });
 
   test("the declared overlay's grounding read is admitted and mapped", async () => {

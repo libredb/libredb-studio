@@ -804,6 +804,7 @@ describe("a package engine's register row", () => {
     ownWords: "code-only",
     servesOneSession: null,
     agentExecution: false,
+    catalogReadCommandShaped: false,
     redaction: { kind: "none" },
     readsSqlText: true,
     confirmExemptForms: [],
@@ -812,8 +813,8 @@ describe("a package engine's register row", () => {
   };
 
   /**
-   * A row granting each claim its loosest value, and the three host members granted; it reviews no grammar, so its SQL
-   * text members grant nothing.
+   * A row granting each claim its loosest value, the three host members and the agent overlay's command-shaped catalog
+   * read granted; it reviews no grammar, so its SQL text members grant nothing.
    */
   const LOOSEST_ROW = {
     writeReach: "none",
@@ -834,6 +835,7 @@ describe("a package engine's register row", () => {
     agentCredential: { form: "pair", supersededBy: [] },
     statementLanguage: "sql",
     agentReadings: ["health", "storage", "sessions"],
+    catalogReadCommandShaped: true,
     servesOneSession: "The engine serves its object tree from the editor's session in this test.",
     agentExecution: true,
     ownWords: "scrubbed",
@@ -876,6 +878,8 @@ describe("a package engine's register row", () => {
       ownWords: "scrubbed",
       servesOneSession: LOOSEST_ROW.servesOneSession,
       agentExecution: true,
+      // The row's review of the agent overlay's claim, whose request only the fence reads.
+      catalogReadCommandShaped: true,
       // The row reviews no grammar: every SQL text claim at its restrictive value.
       redaction: { kind: "none" },
       readsSqlText: true,
@@ -904,7 +908,8 @@ describe("a package engine's register row", () => {
       ownWords: "scrubbed",
     });
 
-    // No row in the register: every claim at its restrictive value, and the three host members at no row's value.
+    // No row in the register: every claim at its restrictive value, and the three host members and the row's review of
+    // the overlay's claim at no row's value.
     expect(grantsOf([loose], registerOf(packageRow(tight, "acmetight", LOOSEST_ROW)), "acmerow")).toEqual(
       NO_ROW_GRANTS,
     );

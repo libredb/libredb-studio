@@ -95,6 +95,7 @@ const GRANT_SHAPES = {
     type: "array",
     items: { enum: ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"] },
   },
+  catalogReadCommandShaped: { type: "boolean" },
   servesOneSession: { type: ["string", "null"] },
   agentExecution: { type: "boolean" },
   ownWords: { enum: ["scrubbed", "code-only"] },

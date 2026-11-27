@@ -19,7 +19,7 @@
  * description of the member defines), and grant nothing under any other.
  *
  * The reader validates the register against its schema when it reads it (src/schema-subset.ts, which compiles no code,
- * so it runs in the browser and the VS Code webview as on the server), then refuses two code rules:
+ * so it runs in the browser and the VS Code webview as on the server), then refuses three code rules:
  * - `duplicate-key`: two rows with one key, two legacy rows of one engine, or two package rows of one name, version,
  *   digest and engine;
  * - `legacy-engine-not-served`: a legacy row of an engine the legacy adapter does not serve. The served set is the
@@ -115,6 +115,7 @@ export interface RegisterGrants {
   } | null;
   readonly statementLanguage: RegisterStatementLanguage | null;
   readonly agentReadings: readonly RegisterAgentReading[];
+  readonly catalogReadCommandShaped: boolean;
   readonly servesOneSession: string | null;
   readonly agentExecution: boolean;
   readonly ownWords: "scrubbed" | "code-only";

@@ -30,10 +30,11 @@
  *   tables, its field rules and the grammar its statements are confirmed under, composed for a package from its
  *   declaration with the projections Studio's generator projects its own declarations with, and for a legacy engine
  *   from Studio's committed tables, never from a declaration read at run time;
- * - `grants`: Studio's grant of each claim and of the four host facts no declaration requests, `grantEngineClaims`
- *   (./claim-grants) against the engine's row of the grant register: a legacy engine's legacy row, a package engine's
- *   row keyed by its package's name, version and digest, or, where the register holds none, each claim at its
- *   restrictive value; its SQL text claims only for the grammar the row reviewed, and whether it did;
+ * - `grants`: Studio's grant of each claim and of the four host facts no declaration requests, and the row's review of
+ *   the agent overlay's claim that its catalog read is a command, `grantEngineClaims` (./claim-grants) against the
+ *   engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its package's
+ *   name, version and digest, or, where the register holds none, each claim at its restrictive value; its SQL text
+ *   claims only for the grammar the row reviewed, and whether it did;
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *

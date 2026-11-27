@@ -219,6 +219,10 @@
           },
           "uniqueItems": true
         },
+        "catalogReadCommandShaped": {
+          "description": "Whether the statement fence may admit the engine's composed catalog statement by identity, past its read-keyword allowlist, where the engine's agent overlay requests it as a command: granted only where the request is true as well.",
+          "type": "boolean"
+        },
         "servesOneSession": {
           "description": "Why the engine's connections serve their object tree from one session, the editor's, or null where a tree read may run on a session of its own.",
           "type": ["string", "null"],
@@ -287,6 +291,7 @@
         "agentCredential",
         "statementLanguage",
         "agentReadings",
+        "catalogReadCommandShaped",
         "servesOneSession",
         "agentExecution",
         "ownWords",
@@ -320,6 +325,7 @@
         "agentCredential": { "$ref": "#/$defs/text" },
         "statementLanguage": { "$ref": "#/$defs/text" },
         "agentReadings": { "$ref": "#/$defs/text" },
+        "catalogReadCommandShaped": { "$ref": "#/$defs/text" },
         "servesOneSession": { "$ref": "#/$defs/text" },
         "agentExecution": { "$ref": "#/$defs/text" },
         "ownWords": { "$ref": "#/$defs/text" },

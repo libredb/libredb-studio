@@ -560,6 +560,7 @@ describe("each projection of the admitted declarations, built with and without a
       ownWords: "code-only",
       servesOneSession: null,
       agentExecution: false,
+      catalogReadCommandShaped: false,
       redaction: { kind: "none" },
       readsSqlText: true,
       confirmExemptForms: [],
