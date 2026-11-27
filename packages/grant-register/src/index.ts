@@ -40,6 +40,8 @@
  *
  * A read answers each row deep-frozen for its key, or null where the register holds none; the value read is copied,
  * never frozen in the caller's hands.
+ * It also answers every package row, deep-frozen, in the register's order (`packageRows`), for a census that holds each
+ * package row to its package; no grant path reads it, since a grant is found by its key.
  */
 import committed from "./register.json";
 import schema from "./register.schema.json";
@@ -127,6 +129,8 @@ export type RegisterRow = RegisterKey & {
 export interface GrantRegister {
   /** The row of `key`, deep-frozen, or null where the register holds none. */
   rowFor(key: RegisterKey): RegisterRow | null;
+  /** Every package row, deep-frozen, in the register's order, in one frozen list; no legacy row. */
+  packageRows(): readonly (RegisterRow & { readonly package: RegisterPackage })[];
 }
 
 /** The text a key is indexed by: one form per key kind, so a legacy row and a package row never share one. */
@@ -181,10 +185,16 @@ export function parseGrantRegister(value: unknown, legacyEngines: readonly strin
     }
   });
   if (lines.length > 0) throw new Error(["The grant register is refused:", ...lines].join("\n"));
+  const packageRows = Object.freeze(
+    rows.filter((row): row is RegisterRow & { readonly package: RegisterPackage } => "package" in row),
+  );
   return {
     rowFor(key) {
       const index = byKey.get(keyText(key));
       return index === undefined ? null : (rows[index] as RegisterRow);
+    },
+    packageRows() {
+      return packageRows;
     },
   };
 }

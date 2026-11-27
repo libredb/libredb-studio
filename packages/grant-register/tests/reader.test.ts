@@ -1,7 +1,8 @@
 /**
  * The grant register's reader: it validates a register against the register's schema, then refuses a repeated key and a
  * legacy row for an engine the legacy adapter does not serve, reports every refusal of one read together, and answers
- * a frozen row for a key or none. Every engine id here is synthetic and every digest generated at run time.
+ * a frozen row for a key or none, and every package row in its order. Every engine id here is synthetic and every
+ * digest generated at run time.
  */
 import { describe, expect, test } from "bun:test";
 import committed from "../src/register.json";
@@ -290,6 +291,22 @@ describe("answers", () => {
     ]) {
       expect(register.rowFor(other)).toBeNull();
     }
+  });
+
+  test("every package row is answered frozen, in the register's order, and no legacy row is among them", () => {
+    const value = [legacyRow(), packageRow(ENGINE_B), legacyRow(ENGINE_B), packageRow(ENGINE_A)];
+    const register = parseGrantRegister(value, SERVED);
+    const rows = register.packageRows();
+
+    expect(rows).toEqual([value[1], value[3]] as never);
+    expect(Object.isFrozen(rows)).toBe(true);
+    for (const row of rows) {
+      expect(Object.isFrozen(row)).toBe(true);
+      expect(Object.isFrozen(row.package)).toBe(true);
+      expect(Object.isFrozen(row.grants)).toBe(true);
+    }
+    expect(register.packageRows()).toBe(rows);
+    expect(parseGrantRegister([legacyRow(), legacyRow(ENGINE_B)], SERVED).packageRows()).toEqual([]);
   });
 
   test("the committed register is read through the same validation, with the engines of its legacy rows served", () => {
