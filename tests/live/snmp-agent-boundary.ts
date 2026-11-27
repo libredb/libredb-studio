@@ -206,7 +206,7 @@ const capture = {
   reads,
   steppedOver,
   overBudget,
-  health: { description: health.description, uptimeRead: health.uptime !== "" },
+  health: { members: Object.keys(health).sort() },
   agentPathSentNoSet: { snmpInSetRequestsAtStart: setsAtStart, snmpInSetRequestsAtEnd: setsAtEnd },
 };
 

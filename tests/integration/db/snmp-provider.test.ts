@@ -293,16 +293,19 @@ describe("the provider reads what a real agent answered", () => {
   });
 
   test(
-    "health is one recorded Get, and carries what the fixture says about itself",
+    "health is one recorded Get answered in the shared health shape, and the overview carries what the fixture says about itself",
     async () => {
       const missed: string[] = [];
       const provider = await open(missed);
       const health = await provider.getHealth();
       expect(missed).toEqual([]);
-      // The description the fixture's snmpd.conf sets, read back through the provider.
-      expect(health.description).toBe("LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161");
-      expect(Number(health.uptime)).toBeGreaterThan(0);
-      expect(health).not.toHaveProperty("activeConnections");
+      // The shared shape's own members and no other: activeConnections is left out, never a zero.
+      expect(Object.keys(health).sort()).toEqual(["activeSessions", "cacheHitRatio", "databaseSize", "slowQueries"]);
+      // The description the fixture's snmpd.conf sets, read back through the provider's overview.
+      const overview = await provider.getOverview();
+      expect(missed).toEqual([]);
+      expect(overview.version).toBe("LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161");
+      expect(Number(overview.uptime)).toBeGreaterThan(0);
     },
     CASE_BUDGET_MS,
   );

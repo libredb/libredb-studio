@@ -91,8 +91,10 @@ for (const statement of STATEMENTS) {
   }
 }
 // The health read is its own Get of two objects, which no statement above sends.
-const health = await provider.getHealth();
-notes.push(`getHealth -> uptime ${health.uptime}, ${health.roundTripMs} ms`);
+const healthSent = Date.now();
+await provider.getHealth();
+const roundTripMs = Date.now() - healthSent;
+notes.push(`getHealth -> uptime ${(await provider.getOverview()).uptime}, ${roundTripMs} ms`);
 await provider.disconnect();
 
 const out = {
