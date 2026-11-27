@@ -734,7 +734,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/agent/agent-manifest.test.ts": [
         "%s opens operations and planning, and refuses a statement workflow in agent mode",
-        "the operations arm refuses an engine whose grants hold no agent reading, whatever the tables hold",
+        "the operations arm refuses an engine whose grants hold no agent reading",
       ],
       "tests/unit/lib/query-events/redact.test.ts": [
         "every redaction vector produces its redacted text and fingerprint",
