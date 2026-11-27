@@ -22,6 +22,9 @@ A type-id lives in exactly one layout, so the change that moves a provider here 
 A package serves only the type-id its directory names, until the provider manifest can declare several, so a doc or an integration test for another type-id in any package is refused.
 The agent leg has no place in a package yet, so a type-id whose granted statement language is non-null stays in the legacy layout until the change that moves it gives its package one.
 `tests/unit/db/provider-triad.test.ts` holds these rules for every shipped type-id, and `tests/helpers/provider-layout.ts` is how a test finds a provider's files in either layout.
+A provider package's manifest is `packages/provider-<type-id>/libredb-provider.json`, the artifact's own name and place.
+Its `package.json` has a `build` script that takes `--outdir <absolute directory>` and writes the manifest's `runtime.entry` and every other file the artifact needs there.
+`bun run providers:pack` runs that script and places the artifact in a providers directory (`docs/TOOLCHAIN.md`, "The provider pack step (`providers:pack`)").
 
 ## Install
 
