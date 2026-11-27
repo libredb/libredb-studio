@@ -37,6 +37,10 @@ import {
 } from "../../../helpers/provider-artifacts";
 import { rawManifest } from "../../../helpers/package-catalog";
 
+/** The banner's advice line: the channels that serve the lock command, and nothing else. */
+const ADVICE =
+  " Write the lock with npx @libredb/studio providers lock --dir <absolute directory>, or with libredb-studio providers lock --dir <absolute directory> in an image (bun run providers:lock -- --dir <absolute directory> in a checkout of Studio), or unset LIBREDB_PROVIDERS_DIR.";
+
 const scratch = scratchDirectory("libredb-boot-");
 let counter = 0;
 const originalDirectory = process.env.LIBREDB_PROVIDERS_DIR;
@@ -257,11 +261,30 @@ describe("boot admission", () => {
       expect([label, answer, exits]).toEqual([label, false, [1]]);
       expect(printed).toContain("LibreDB Studio cannot start: its providers lock is invalid");
       expect(printed).toContain(`PROVIDER_LOCK_INVALID: ${path.join(providers, "providers.lock.json")}: ${why}`);
-      expect(printed).toContain(
-        " Write the lock with npx @libredb/studio providers lock --dir <absolute directory> (libredb-studio providers lock --dir <absolute directory> where the package is installed or in an image), or unset LIBREDB_PROVIDERS_DIR.",
-      );
+      expect(printed).toContain(ADVICE);
       expect([label, serverCatalogInstalled()]).toEqual([label, false]);
     }
+  });
+
+  test("the refused lock's banner names only npx and the images", async () => {
+    const providers = freshProviders();
+    fs.writeFileSync(path.join(providers, "providers.lock.json"), "{");
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    const exit = spyOn(process, "exit").mockImplementation((() => {}) as typeof process.exit);
+    const banner = spyOn(console, "error").mockImplementation(() => {});
+    const logs = spyLogs();
+    let printed = "";
+    try {
+      await admitProvidersAtBoot();
+      printed = banner.mock.calls.flat().join("\n");
+    } finally {
+      exit.mockRestore();
+      banner.mockRestore();
+      logs.restore();
+    }
+    const lines = printed.split("\n");
+    expect(lines.filter((line) => line.includes("providers lock --dir"))).toEqual([ADVICE]);
+    expect(printed).not.toContain("where the package is installed");
   });
 
   test("an unset directory admits nothing and boots", async () => {

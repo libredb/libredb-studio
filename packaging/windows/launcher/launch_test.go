@@ -4,10 +4,27 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
+
+// runMainVariable makes the test binary run the launcher's main instead of
+// its tests, the helper-process pattern of the os/exec tests, so a test can
+// run main in a child and read its stderr and exit code.
+const runMainVariable = "LIBREDB_LAUNCHER_TEST_RUN_MAIN"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(runMainVariable) == "1" {
+		main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestResolveLaunchPaths(t *testing.T) {
 	paths := resolveLaunchPaths(filepath.Join("C:", "pkg"))
@@ -205,5 +222,47 @@ func TestLauncherEnvKeepsAPresetManualSignalHandling(t *testing.T) {
 		if value, ok := envValue(env, "NEXT_MANUAL_SIG_HANDLE"); !ok || value != want {
 			t.Errorf("preset %q: NEXT_MANUAL_SIG_HANDLE = %q (found %v), want %q", preset, value, ok, want)
 		}
+	}
+}
+
+func TestLauncherRefusesProvidersSubcommand(t *testing.T) {
+	for _, args := range [][]string{{"providers", "lock", "--dir", "x"}, {"providers"}, {"providers", "--help"}} {
+		if !refusesProviders(args) {
+			t.Errorf("refusesProviders(%q) = false, want true", args)
+		}
+	}
+	for _, args := range [][]string{{}, {"lock"}, {"--providers"}, {"Providers"}, {"--x", "providers"}} {
+		if refusesProviders(args) {
+			t.Errorf("refusesProviders(%q) = true, want false: only an exact first argument is refused", args)
+		}
+	}
+	want := "libredb-studio: this install does not run providers lock; run npx @libredb/studio providers lock --dir <absolute directory>, or libredb-studio providers lock --dir <absolute directory> in a LibreDB Studio container image."
+	if providersRefusal != want {
+		t.Errorf("providersRefusal = %q, want %q", providersRefusal, want)
+	}
+}
+
+// The test binary has no payload beside it, so a main that reached the
+// payload check would print the "not found" line and exit 1; the refusal
+// must come first, exit 2, and start nothing.
+func TestLauncherMainRefusesProvidersBeforeThePayload(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "providers", "lock", "--dir", "x")
+	cmd.Env = append(os.Environ(), runMainVariable+"=1")
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("main answered %v, want an exit error; stderr %q", err, stderr.String())
+	}
+	if code := exitErr.ExitCode(); code != 2 {
+		t.Errorf("exit code = %d, want 2; stderr %q", code, stderr.String())
+	}
+	// Fprintln writes "\n" on every platform, Windows included.
+	if got := stderr.String(); got != providersRefusal+"\n" {
+		t.Errorf("stderr = %q, want the refusal sentence alone", got)
+	}
+	if got := stdout.String(); got != "" {
+		t.Errorf("stdout = %q, want nothing", got)
 	}
 }

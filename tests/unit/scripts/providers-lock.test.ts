@@ -4,9 +4,10 @@
  * writes is read unchanged and a later edit is refused; it refuses a directory it cannot lock and writes nothing then.
  *
  * Each case spawns the command from the repository root, as an operator runs it, under a timeout, with `--silent` so
- * that `bun run` adds no line of its own to what the command prints.
+ * that `bun run` adds no line of its own to what the command prints, except the cases that plant a file system failure
+ * by a spy on node:fs, which run `main` in this process (see the describe "an unwritable providers directory").
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import path from "node:path";
 import * as lockFormat from "@/lib/provider-host/providers-lock-format";
@@ -27,7 +28,8 @@ import {
   scratchDirectory,
   writeArtifact,
 } from "../../helpers/provider-artifacts";
-import { moduleImports } from "../../../scripts/providers-lock";
+import { describeIf } from "../../helpers/posix-tools";
+import { main, moduleImports } from "../../../scripts/providers-lock";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const USAGE = [
@@ -894,5 +896,208 @@ describe("the lock command", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"));
     expect(manifest.scripts["providers:lock"]).toBe("bun scripts/providers-lock.ts");
     expect(fs.existsSync(path.join(REPOSITORY_ROOT, "scripts", "providers-lock.ts"))).toBe(true);
+  });
+});
+
+/**
+ * Why the real unwritable directory is not planted here: a directory's write permission on Windows is an ACL, which
+ * chmod does not set (it toggles the read-only attribute, which Windows ignores for creating a file in a directory),
+ * and root writes a directory whatever its mode bits. Null on Linux and macOS as another user than root.
+ */
+const NO_UNWRITABLE_DIRECTORY: string | null =
+  process.platform === "win32"
+    ? "a directory's write permission on Windows is an ACL, which chmod does not set"
+    : process.getuid?.() === 0
+      ? "root writes a directory whatever its mode bits"
+      : null;
+
+/** The two lines of an unwritable providers directory, as the command prints them on stderr. */
+function unwritable(directory: string, code: string): string[] {
+  return [
+    `providers:lock: ${directory}: the providers directory is not writable by this user (${code}), so no lock was written; run the command as a user who may write it.`,
+    "providers:lock wrote nothing",
+  ];
+}
+
+/** An error as Node.js raises one for a failed system call. */
+function systemError(code: string, syscall: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code}: planted by the test, ${syscall}`), { code, syscall });
+}
+
+/** True when `file` is the temporary file the command opens in a providers directory. */
+function isTemporary(file: fs.PathLike | number): boolean {
+  return typeof file === "string" && path.basename(file) === `.${LOCK_FILE_NAME}.${process.pid}.tmp`;
+}
+
+/** Runs `main` in this process over `directory`, answering its exit code and the lines it printed on stderr. */
+function mainInProcess(directory: string): { code: number; err: string[] } {
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const code = main(["--dir", directory]);
+    return { code, err: error.mock.calls.map((call) => String(call[0])) };
+  } finally {
+    error.mockRestore();
+  }
+}
+
+/*
+  The cases below that plant a failure do it with a spy on the node:fs function the command calls: Bun's spyOn
+  replaces the namespace's function for every importer, the command's `import * as fs` included, on all three
+  platforms. Each spy hands every call it does not plant to the function captured before the spy, never to the
+  namespace, which would reach the spy itself.
+*/
+describe("an unwritable providers directory", () => {
+  describeIf(NO_UNWRITABLE_DIRECTORY, "a directory of mode 0o555", () => {
+    test("an unwritable providers directory is named by one sentence, writing nothing, exit 1", async () => {
+      // POSIX: creating an entry needs write permission on the directory, on Linux and macOS alike. Mode 0o555 keeps
+      // read and search, so the directory resolves and lists, and the failure is the temporary file's open.
+      const providers = freshProviders();
+      fs.chmodSync(providers, 0o555);
+      try {
+        const run = runCommand("--dir", providers);
+        expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+          1,
+          "",
+          [...unwritable(providers, "EACCES"), ""].join("\n"),
+        ]);
+        expect(await nodeCommand.run<NodeRun>(providers)).toEqual({
+          code: 1,
+          out: [],
+          err: unwritable(providers, "EACCES"),
+        });
+        expect(fs.readdirSync(providers)).toEqual([]);
+      } finally {
+        fs.chmodSync(providers, 0o755);
+      }
+    }, 120_000);
+  });
+
+  test("a rename the platform refuses is named the same way, and the temporary file is removed", () => {
+    const providers = freshProviders();
+    const rename = spyOn(fs, "renameSync").mockImplementation(() => {
+      throw systemError("EPERM", "rename");
+    });
+    let run: { code: number; err: string[] };
+    try {
+      run = mainInProcess(providers);
+    } finally {
+      rename.mockRestore();
+    }
+    expect(run).toEqual({ code: 1, err: unwritable(providers, "EPERM") });
+    expect(fs.readdirSync(providers)).toEqual([]);
+  });
+
+  test("a read-only file system on the temporary file's open is named the same way", () => {
+    const providers = freshProviders();
+    const open = fs.openSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
+      if (isTemporary(file)) throw systemError("EROFS", "open");
+      return open(file, flags, mode);
+    }) as typeof fs.openSync);
+    let run: { code: number; err: string[] };
+    try {
+      run = mainInProcess(providers);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(run).toEqual({ code: 1, err: unwritable(providers, "EROFS") });
+    expect(fs.readdirSync(providers)).toEqual([]);
+  });
+
+  test("a temporary file an earlier lock run left is refused by name as an entry of the directory, and kept", () => {
+    // A run killed after its open leaves its temporary file; the next run in a new container often has the same pid.
+    // The directory's read comes before the open, so the file is named there and the open is never reached.
+    const providers = freshProviders();
+    const leftover = `.${LOCK_FILE_NAME}.${process.pid}.tmp`;
+    const content = `half a lock ${crypto.randomUUID()}`;
+    fs.writeFileSync(path.join(providers, leftover), content);
+    expect(mainInProcess(providers)).toEqual({
+      code: 1,
+      err: [`providers:lock: ${leftover}: neither a package nor the lock`, "providers:lock wrote nothing"],
+    });
+    expect(fs.readdirSync(providers)).toEqual([leftover]);
+    expect(fs.readFileSync(path.join(providers, leftover), "utf8")).toBe(content);
+  });
+
+  test("a temporary file that appears after the directory's read is named by one sentence, and kept", () => {
+    // Another lock run of the same pid writing the same directory creates the file between this run's read of the
+    // directory and its open, so the exclusive open fails with EEXIST: planted here by creating the file just before
+    // the real open runs, on every platform alike.
+    const providers = freshProviders();
+    const temporary = path.join(providers, `.${LOCK_FILE_NAME}.${process.pid}.tmp`);
+    const content = `half a lock ${crypto.randomUUID()}`;
+    const open = fs.openSync;
+    const write = fs.writeFileSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
+      if (isTemporary(file)) write(temporary, content);
+      return open(file, flags, mode);
+    }) as typeof fs.openSync);
+    let run: { code: number; err: string[] };
+    try {
+      run = mainInProcess(providers);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(run).toEqual({
+      code: 1,
+      err: [
+        `providers:lock: ${temporary}: the lock's temporary file already exists (EEXIST), so another lock run in this directory has not finished and no lock was written; once no lock run is writing the directory, remove the file and run the command again.`,
+        "providers:lock wrote nothing",
+      ],
+    });
+    expect(fs.readFileSync(temporary, "utf8")).toBe(content);
+  });
+
+  test("any other error writing the lock is raised, and the temporary file is removed first", () => {
+    // Not an operator's input: a full disk at the open, at the write and at the rename. Each is raised as it came,
+    // with no sentence, and no failure after the open leaves the temporary file in the directory.
+    const providers = freshProviders();
+    writeArtifact(providers, FOO);
+    const before = fs.readdirSync(providers).sort();
+    const open = fs.openSync;
+    const write = fs.writeFileSync;
+    const planted: [string, () => { mockRestore(): void }][] = [
+      [
+        "open",
+        () =>
+          spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
+            if (isTemporary(file)) throw systemError("ENOSPC", "open");
+            return open(file, flags, mode);
+          }) as typeof fs.openSync),
+      ],
+      [
+        "write",
+        () =>
+          spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
+            if (typeof file === "number") throw systemError("ENOSPC", "write");
+            return write(file, data, options);
+          }) as typeof fs.writeFileSync),
+      ],
+      [
+        "rename",
+        () =>
+          spyOn(fs, "renameSync").mockImplementation(() => {
+            throw systemError("ENOSPC", "rename");
+          }),
+      ],
+    ];
+    for (const [syscall, plant] of planted) {
+      const spy = plant();
+      const error = spyOn(console, "error").mockImplementation(() => {});
+      let raised: unknown = null;
+      let printed: unknown[][] = [];
+      try {
+        main(["--dir", providers]);
+      } catch (caught) {
+        raised = caught;
+      } finally {
+        // Copied before the restore: Bun's mockRestore clears the recorded calls.
+        printed = [...error.mock.calls];
+        spy.mockRestore();
+        error.mockRestore();
+      }
+      expect([syscall, (raised as NodeJS.ErrnoException | null)?.code, printed]).toEqual([syscall, "ENOSPC", []]);
+      expect([syscall, fs.readdirSync(providers).sort()]).toEqual([syscall, before]);
+    }
   });
 });

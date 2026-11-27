@@ -63,6 +63,15 @@ class LibredbStudio < Formula
     # secrets and prints the admin password once.
     (bin/"libredb-studio").write <<~SCRIPT
       #!/bin/bash
+      # The server below ignores its arguments, so `libredb-studio providers
+      # lock` here would start a second server: refuse `providers` by one
+      # sentence naming where the lock command runs, until this channel gets a
+      # providers directory of its own. No backslash in this heredoc: Ruby
+      # would rewrite it, and the repository's test runs the raw text.
+      if [ "${1:-}" = "providers" ]; then
+        echo 'libredb-studio: this install does not run providers lock; run npx @libredb/studio providers lock --dir <absolute directory>, or libredb-studio providers lock --dir <absolute directory> in a LibreDB Studio container image.' >&2
+        exit 2
+      fi
       # Local-first bind (issue #134): default to loopback on a direct run,
       # regardless of any inherited HOSTNAME (empty, or - e.g. under Docker -
       # a container ID that Next.js would otherwise bind to); LIBREDB_BIND

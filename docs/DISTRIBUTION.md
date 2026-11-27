@@ -949,6 +949,7 @@ npx @libredb/studio providers lock --dir /absolute/path/of/the/directory
 
 The launcher runs the command before and without any download: it reads no cache, starts no server and writes nothing outside the directory.
 The command ships in the npm package and in the three images (see [Docker](#docker)); Homebrew, the Linux packages, Snap, Windows and the desktop app do not serve it yet.
+The `libredb-studio` command of Homebrew, the Linux packages and Windows refuses a first argument `providers` by one sentence naming npx and the images, and exits 2 without starting a server.
 The directory must be absolute, and holds each package as `<name>/<version>/` or `@<scope>/<name>/<version>/`.
 The command writes the lock through a temporary file in the directory and a rename, prints `Wrote <directory>/providers.lock.json` and one line per package with its name, version and digest, and exits 0.
 The same directory always gives the same bytes.
@@ -961,7 +962,9 @@ It writes nothing and exits 1 when it refuses the directory, printing every refu
 - more than 256 packages, the most a lock holds;
 - every refusal of a package's files (a link, a special file, a name outside the portable set, the size limits, a package.json or manifest it cannot read, more engine ids than an entry holds, a package.json naming another package, an entry that is not a file of the package);
 - a module file its parser cannot read or that is not UTF-8, an import outside the lock's forms, more than 4,096 imports in a package, and a lock over 1 MiB;
-- a module that loads at run time what the lock cannot record (C-114): one that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`, each named by its module, line and form.
+- a module that loads at run time what the lock cannot record (C-114): one that names `createRequire`, reads `require` other than to call it with a string, calls `require()` or `import()` with anything but a string, or calls a member named `require`, each named by its module, line and form;
+- a directory this user cannot write (`EACCES`, `EPERM` or `EROFS` when the command creates its temporary file or renames it), named by one sentence that says to run the command as a user who may write it;
+- a temporary file `.providers.lock.json.<pid>.tmp` of another lock run, named as an entry of the directory when an earlier run that did not finish left it, or by one sentence when it appears while the command runs (`EEXIST`); the command never removes it, so remove it once no lock run is writing the directory.
 
 Any other argument, a relative `--dir` included, prints the usage and exits 2.
 Remove or fix what a refusal names, and run the command again.

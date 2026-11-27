@@ -7,7 +7,8 @@
 # environment: under systemd that is the unit's Environment= lines plus
 # /etc/libredb-studio/env; when run directly, whatever the shell provides
 # (zero-config first run generates missing auth secrets and prints the
-# admin password once).
+# admin password once). A first argument `providers` is refused by one
+# sentence, exit 2, since server.js would ignore it and start a server.
 #
 # server.js chdirs to the payload directory itself, so relative defaults
 # (e.g. STORAGE_SQLITE_PATH=./data/...) would resolve inside the read-only,
@@ -17,6 +18,15 @@
 # fallback below keeps state in a user-writable XDG state directory.
 # ==============================================================================
 set -eu
+
+# server.js ignores its arguments, so `libredb-studio providers lock` here would
+# start a second server: refuse `providers` by one sentence naming where the
+# lock command runs, before anything else, until this channel gets a providers
+# directory of its own.
+if [ "${1:-}" = "providers" ]; then
+  echo 'libredb-studio: this install does not run providers lock; run npx @libredb/studio providers lock --dir <absolute directory>, or libredb-studio providers lock --dir <absolute directory> in a LibreDB Studio container image.' >&2
+  exit 2
+fi
 
 LIBREDB_STUDIO_HOME="${LIBREDB_STUDIO_HOME:-/usr/lib/libredb-studio}"
 # server.js changes into its own directory before it reads SEED_ASSETS_DIR, so a
