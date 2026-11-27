@@ -1950,6 +1950,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a container no path shape of the object model's levels admits is refused at its pointer, under exact and prefixes alike",
         "a kind the object model does not state is refused as request-kind-not-stated at its pointer, an inherited name included, without throwing",
         "a describe's path is not read, and every refusal names a pointer and never a value of the request",
+        "the objects source facet is refused by name to a session that does not offer it",
+        "a source request naming a kind the object model does not state or states without source, a path of no segment, or a path deeper than the model admits for its kind is refused at its pointer, and an empty segment is a name",
+        "no source request refusal carries a value of the request",
         "every call refusal rule is worded in one sentence",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
@@ -2045,6 +2048,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame",
         "a tree call on a session without objects.tree is refused before any frame",
         "a served tree call naming a level or a kind its engine's object model does not state is refused before any frame",
+        "a served source call is refused before any frame where the session does not offer it or the model does not admit the request, crosses its request and answer as frames, and a malformed answer is refused on the host side with the core's refusals",
         "a maintenance call on a session without the facet is refused before any frame",
         "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame",
         "a refinement open answers narrows the served session's calls",
@@ -3303,6 +3307,47 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the packed package's providers lock writes a lock Studio's reader admits, with no checkout and no download",
       ],
     },
+  },
+  "C-115": {
+    tests: {
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "objects that leave out source are refused as missing-key, and a source offer outside the vocabulary as value-not-allowed",
+        "a package that offers objects.source states an object model, and each kind's source language and source edits agree with its source",
+        "a kind with source in a package that does not offer objects.source is refused at its hasSource",
+      ],
+      "packages/provider-sdk/tests/calls/vocabulary.test.ts": ["the objects facets are the schema's"],
+      "packages/provider-sdk/tests/calls/define-provider.test.ts": [
+        "the objects source facet is declared and implemented both ways, like the tree",
+      ],
+      "packages/provider-sdk/tests/calls/refinement.test.ts": [
+        "a refinement may withdraw objects.source, and never offer it where the manifest does not",
+      ],
+      "packages/provider-sdk/tests/calls/request.test.ts": [
+        "a source request naming a kind the object model does not state or states without source, a path of no segment, or a path deeper than the model admits for its kind is refused at its pointer, and an empty segment is a name",
+      ],
+      "packages/provider-sdk/tests/calls/answers.test.ts": [
+        "a source answer outside the SDK's closed form is refused as source-answer-unreadable at its pointer, a key it cannot have named and no value carried",
+        "a source answer naming another path or kind than its request, no part, more parts than the SDK's bound, an empty text or a sentence past the character bound is refused, and a text past the bound is not",
+        "a getter in a source answer is refused and never called, an optional member present with no value reads as absent, and a well-formed answer of each part form passes",
+      ],
+      "packages/provider-sdk/tests/calls/source.test.ts": [
+        "a source document holds at most eight parts, and a part's text or a sentence at most a million UTF-16 code units",
+        "applySourceBound cuts a text at the bound, drops a surrogate pair whole and marks only a text it cut",
+        "boundSourceAnswer cuts each readable part past the character bound and joins a provider's own reason, and leaves every other part as answered",
+      ],
+      "packages/provider-sdk/tests/testing/frames.test.ts": [
+        "a source request and a source answer cross as their closed shapes, each part one of its three forms",
+      ],
+      "packages/provider-sdk/tests/testing/serve.test.ts": [
+        "a served source call is refused before any frame where the session does not offer it or the model does not admit the request, crosses its request and answer as frames, and a malformed answer is refused on the host side with the core's refusals",
+      ],
+      "tests/unit/lib/provider-host/core/contract-session.test.ts": [
+        "a package session that offers objects.source binds it with its handle first and states its declaration's object model",
+      ],
+      "tests/unit/provider-sdk/call-surface-parity.test.ts": ["the object source document is Studio's own shape"],
+      "tests/unit/db/object-kinds.test.ts": ["the source bounds, reason and bound helper are the SDK's"],
+    },
+    schema: ["/$defs/objectsCalls/properties/source"],
   },
 };
 
