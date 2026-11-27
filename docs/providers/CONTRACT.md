@@ -460,7 +460,6 @@ It names no function of the package, and the schema has no such member yet, so n
 ### M-87 (informative): A register row reviews an engine's statement language data
 
 For an engine that states statement language data, a register row grants its statement language, the claim that its confirmation reading is the whole answer, and `readsSqlText: false` only for the data whose digest the row states, so a changed byte of that data grants none of them until LibreDB reviews it again.
-A provider package's engine that states no statement language data is never granted `readsSqlText: false`, so its statements are read as S-8 says.
 No register row states such a digest yet, so nothing checks this.
 
 ## Values
