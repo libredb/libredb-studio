@@ -2791,10 +2791,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   "C-93": {
     tests: {
       "tests/unit/lib/provider-host/provider-artifact.test.ts": [
-        "the digest is SHA-256 over each file's mode, SHA-256 and path, one line each in path order",
+        "the digest is SHA-256 over each file's SHA-256 and path, one line each in path order",
         "a fixed artifact has the same digest on every platform",
-        "a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise",
-        "only the owner execute bit moves the digest: group and other bits and the umask do not",
+        "an artifact holding an executable file has the same digest on every platform",
+        "no mode bit moves the digest",
         "an empty directory moves no digest",
         "the digest lists each import after the files, one line each in order, and an empty record leaves the files' digest",
       ],

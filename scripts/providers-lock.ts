@@ -18,9 +18,10 @@
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
- * package is refused at the next read. The command never imports the lock reader, and never imports or runs a
- * package's code. It does not judge engine id collisions: Studio's read does, and the command records what the
- * directory holds.
+ * package is refused at the next read. The sequence over one artifact directory, `artifactEntry`, is also the key
+ * command's (scripts/providers-key.ts), so the digest it prints for a register row is the one this command writes. The
+ * command never imports the lock reader, and never imports or runs a package's code. It does not judge engine id
+ * collisions: Studio's read does, and the command records what the directory holds.
  *
  * It refuses, writing nothing and exiting 1 with every refusal on stderr: an entry of the directory that is neither a
  * package nor the lock, a package directory holding anything but one version directory, and every refusal an artifact
@@ -47,7 +48,7 @@ import {
   resolveArtifactDirectory,
   walkArtifact,
 } from "../src/lib/provider-host/provider-artifact";
-import { type ArtifactFault, packageRefusal } from "../src/lib/provider-host/provider-refusals";
+import { type ArtifactFault, type PackageName, packageRefusal } from "../src/lib/provider-host/provider-refusals";
 import { LOCK_FILE_NAME } from "../src/lib/provider-host/providers-dir";
 import {
   IMPORT_FROM_FORM,
@@ -69,7 +70,7 @@ const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
 const PREFIX = "providers:lock";
 
 /** The directory the arguments name, or null when they are not exactly one absolute `--dir`. */
-function directoryArgument(argv: readonly string[]): string | null {
+export function directoryArgument(argv: readonly string[]): string | null {
   const value =
     argv.length === 2 && argv[0] === "--dir"
       ? argv[1]
@@ -200,22 +201,24 @@ function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]
   return { packages, refusals };
 }
 
-/** The lock entry of one package, or the sentence of its refusal. */
-function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string {
+/**
+ * The lock entry of the artifact at `directory`, a real path, as package `pkg`: its walk, its identity checked against
+ * `pkg` and its entry file, its import record and its digest; or the sentence of its refusal, an artifact refusal in
+ * `packageRefusal`'s words, or an import record's refusal after `command`, the name of the command that prints it.
+ */
+export function artifactEntry(directory: string, pkg: PackageName, command: string): LockEntry | string {
   const refuse = (fault: ArtifactFault): string => packageRefusal(pkg, fault).sentence;
-  const resolved = resolveArtifactDirectory(root, pkg.name, pkg.version);
-  if (!resolved.ok) return refuse(resolved.fault);
-  const walked = walkArtifact(resolved.directory);
+  const walked = walkArtifact(directory);
   if (!walked.ok) return refuse(walked.fault);
-  const read = readArtifactIdentity(resolved.directory);
+  const read = readArtifactIdentity(directory);
   if (!read.ok) return refuse(read.fault);
   const { identity } = read;
   const mismatch =
     compareIdentity(identity, { ...pkg, engines: identity.engines, entry: identity.entry }) ??
     checkEntryFile(walked.files, identity.entry);
   if (mismatch !== null) return refuse(mismatch);
-  const imports = moduleImports(resolved.directory, walked.files);
-  if (typeof imports === "string") return `${PREFIX}: ${pkg.name} ${pkg.version}: ${imports}`;
+  const imports = moduleImports(directory, walked.files);
+  if (typeof imports === "string") return `${command}: ${pkg.name} ${pkg.version}: ${imports}`;
   return {
     name: pkg.name,
     version: pkg.version,
@@ -225,6 +228,13 @@ function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string {
     source: LOCAL_SOURCE,
     imports,
   };
+}
+
+/** The lock entry of one package, or the sentence of its refusal. */
+function lockEntryOf(root: string, pkg: FoundPackage): LockEntry | string {
+  const resolved = resolveArtifactDirectory(root, pkg.name, pkg.version);
+  if (!resolved.ok) return packageRefusal(pkg, resolved.fault).sentence;
+  return artifactEntry(resolved.directory, pkg, PREFIX);
 }
 
 /** Writes the lock of `directory`; the exit code. */

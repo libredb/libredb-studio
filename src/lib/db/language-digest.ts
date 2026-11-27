@@ -3,9 +3,10 @@
  * lower-case hex, of the data's canonical text (./canonical-json), the form the SQL grammar digest (./grammar-digest)
  * hashes too. A grant register row states the digest of the language data LibreDB reviewed, so that the grant
  * reader grants the language, and the claims that loosen the confirmation gate, only for the data that digests to it.
- * The server catalog's composer is the one module of Studio's source that imports it, to hand a package engine's
- * digest to the grant reader; a legacy row states the digest of the data its declaration states, null for none, which
- * the legacy request carries as its row's own (tests/unit/db/grant-register-legacy-rows.test.ts holds the two equal).
+ * The server catalog's composer is the one module under src that imports it, to hand a package engine's digest to the
+ * grant reader, and the repository's key command (scripts/providers-key.ts) prints it for a register row's author; a
+ * legacy row states the digest of the data its declaration states, null for none, which the legacy request carries as
+ * its row's own (tests/unit/db/grant-register-legacy-rows.test.ts holds the two equal).
  *
  * Server-only: it hashes with node:crypto. No module the browser loads imports it:
  * tests/unit/db/grammar-digest-boundary.test.ts holds the composer its one importer and the grant reader's value

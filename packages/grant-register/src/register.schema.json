@@ -62,7 +62,7 @@
           "maxLength": 64
         },
         "digest": {
-          "description": "The digest the providers lock admits for the package (docs/providers/CONTRACT.md, clause C-93), over its files as the host walks them, not over its tarball: sha256: and 64 lower-case hex characters.",
+          "description": "The digest the providers lock admits for the package (docs/providers/CONTRACT.md, clause C-93), over its files as the host walks them, not over its tarball, one digest per package version on every platform: sha256: and 64 lower-case hex characters.",
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "maxLength": 71

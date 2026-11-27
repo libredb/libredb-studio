@@ -74,11 +74,13 @@ const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
  * `listBody`'s `confirmation: "unconfirmed"` mark is the one a green local run of the script asserted on 2026-11-27,
  * once the gate asked about every statement of an engine no register row reviews. The package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
  * session cookie's value is drawn at run time. `refusedBody` is the answer to acceptance.json's refused statement, as
- * step 5's evidence printed it in a green local run of the script on 2026-11-27.
+ * step 5's evidence printed it in a green local run of the script on 2026-11-27. `lockStdout`'s lock line is the one
+ * step 4's evidence printed in a green local run of the script on 2026-11-27, once a package's digest listed no file
+ * mode.
  */
 const SAMPLES = {
   lockStdout: (lockFile: string): string =>
-    `Wrote ${lockFile}\n${fixture.name} ${fixture.version} sha256:1c128d8147d1717382b8b42371ef2daeadb5eb2c44b6b571724e337acfaff542\n`,
+    `Wrote ${lockFile}\n${fixture.name} ${fixture.version} sha256:9482a1fabb6d24f0d95b7bdc606837c3e09838c0bf8ef35c4c058479f3db3b17\n`,
   signInSetCookie: (value: string): string =>
     `${STUDIO.sessionCookie}=${value}; Path=/; Expires=Thu, 26 Nov 2026 18:02:03 GMT; Max-Age=86400; HttpOnly; SameSite=lax`,
   saveBody: { success: true, message: "Connection successful", latency: 0 },

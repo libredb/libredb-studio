@@ -322,7 +322,7 @@ describe("the lock command", () => {
     // A module path over 1,024 characters is refused before the file is read. macOS refuses an absolute path that long,
     // so the listing is handed to the scanner as it stands, never written to disk.
     const longPath = `${"a/".repeat(511)}abc.mjs`;
-    expect(moduleImports(large, [{ path: longPath, mode: "644", sha256: "0".repeat(64) }])).toBe(
+    expect(moduleImports(large, [{ path: longPath, sha256: "0".repeat(64) }])).toBe(
       "a module path is longer than 1024 characters",
     );
   });

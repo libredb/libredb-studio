@@ -1117,10 +1117,10 @@ A name outside that set, or more files or levels, is refused as `PROVIDER_DIGEST
 
 The lock pins each package by its digest, `sha256:` and the hex SHA-256 of a listing of:
 
-- one line per regular file, sorted by path, `<mode> <hex SHA-256 of the file> <path>` and a newline, the path relative to the package's directory with `/` between names, the mode `755` where the file's owner execute bit is set and `644` otherwise, empty directories not listed;
+- one line per regular file, sorted by path, `<hex SHA-256 of the file> <path>` and a newline, the path relative to the package's directory with `/` between names, empty directories not listed;
 - then one line per recorded import (C-102), sorted by the module file's path, then specifier, then kind, `import <path of the module file> <specifier> <kind>` and a newline.
 
-Windows reports no execute bit, so a package holding an executable file has another digest there: write the lock on the platform that reads it.
+No file mode is listed, so a package has one digest on every platform.
 The digest is computed at every read and nothing is kept between reads, so a changed, added, removed or renamed file, an edited import record, and a missing or unreadable directory are each refused as `PROVIDER_DIGEST_MISMATCH` at the next read.
 
 ### C-94 (normative): A package's identity is its package.json and its manifest, as its lock entry names them

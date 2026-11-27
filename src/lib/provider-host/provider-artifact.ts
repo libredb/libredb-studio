@@ -21,14 +21,13 @@
  * refusal (`artifact-unreadable`, naming the code); any other error is raised.
  *
  * The digest. `sha256:` and the hex SHA-256 of the listing: one line per regular file, sorted by path,
- * `<mode> <hex SHA-256 of the file> <path>\n`, the path relative with `/` between names. The mode is `755` when the
- * owner execute bit (0o100) of the descriptor's mode is set and `644` otherwise (git's rule), because the group and
- * other bits follow the umask of whoever copied the files. Node.js and Bun read modes through libuv, whose Windows stat
- * never sets an execute bit, so every file reads `644` there, and an artifact holding an executable file has another
- * digest on Windows than on Linux and macOS; write the lock on the platform that reads it. After the file lines come
- * the lock entry's import record's lines, one per import sorted by module path, then specifier, then kind,
- * `import <module path> <specifier> <kind>\n`; a file line starts with its mode, so the two never meet, and an empty
- * record adds nothing. The digest is computed at every read; nothing is kept between reads.
+ * `<hex SHA-256 of the file> <path>\n`, the path relative with `/` between names. No file mode is listed: Node.js and
+ * Bun read modes through libuv, whose Windows stat never sets an execute bit, so a listed mode would give a package
+ * holding an executable file another digest on Windows than on Linux and macOS; without it a package has one digest on
+ * every platform. After the file lines come the lock entry's import record's lines, one per import sorted by module
+ * path, then specifier, then kind, `import <module path> <specifier> <kind>\n`; a file line starts with its hex SHA-256,
+ * which an import line, starting `import `, never does, so the two never meet, and an empty record adds nothing. The
+ * digest is computed at every read; nothing is kept between reads.
  *
  * The identity. `package.json` and `libredb-provider.json` at the artifact's root, each read like the lock (opened
  * without waiting, a regular file, at most its byte cap, UTF-8 JSON without a byte order mark, an object): from
@@ -83,7 +82,6 @@ export interface WalkLimits {
 export interface ArtifactFile {
   /** The path relative to the artifact's directory, `/` between names. */
   readonly path: string;
-  readonly mode: "644" | "755";
   /** The hex SHA-256 of its bytes. */
   readonly sha256: string;
 }
@@ -168,8 +166,8 @@ export function resolveArtifactDirectory(
   return { ok: true, directory };
 }
 
-/** The hex SHA-256 and mode of the regular file at `file`, opened without waiting; null when it is not a regular file. */
-function hashRegularFile(file: string): { readonly sha256: string; readonly mode: "644" | "755" } | null {
+/** The hex SHA-256 of the regular file at `file`, opened without waiting; null when it is not a regular file. */
+function hashRegularFile(file: string): { readonly sha256: string } | null {
   const fd = fs.openSync(file, READ_WITHOUT_WAITING);
   try {
     const stat = fs.fstatSync(fd);
@@ -183,7 +181,7 @@ function hashRegularFile(file: string): { readonly sha256: string; readonly mode
     ) {
       hash.update(chunk.subarray(0, read));
     }
-    return { sha256: hash.digest("hex"), mode: (stat.mode & 0o100) !== 0 ? "755" : "644" };
+    return { sha256: hash.digest("hex") };
   } finally {
     fs.closeSync(fd);
   }
@@ -241,7 +239,7 @@ export function walkArtifact(
 export function artifactDigest(files: readonly ArtifactFile[], imports: readonly ModuleImport[]): string {
   const listing = [...files]
     .sort((a, b) => byCodeUnits(a.path, b.path))
-    .map((file) => `${file.mode} ${file.sha256} ${file.path}\n`)
+    .map((file) => `${file.sha256} ${file.path}\n`)
     .join("");
   const record = sortImports(imports)
     .map((pair) => `import ${pair.from} ${pair.specifier} ${pair.kind}\n`)
