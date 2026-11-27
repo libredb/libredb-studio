@@ -41,7 +41,7 @@ import {
   PACKAGE_VERSION_FORM,
   serializeProvidersLock,
 } from "@/lib/provider-host/providers-lock-format";
-import { describeIf, MISSING_POSIX_FILE_MODES } from "../../../helpers/posix-tools";
+import { describeIf } from "../../../helpers/posix-tools";
 import {
   artifactDirectoryOf,
   type FixturePackage,
@@ -324,9 +324,6 @@ describe("the digest the lock pins", () => {
       ["a file removed", (d) => fs.rmSync(path.join(d, "dist", "extra.mjs"))],
       ["a file renamed", (d) => fs.renameSync(path.join(d, "dist", "extra.mjs"), path.join(d, "dist", "renamed.mjs"))],
     ];
-    if (MISSING_POSIX_FILE_MODES === null) {
-      edits.push(["an execute bit turned on", (d) => fs.chmodSync(path.join(d, "dist", "extra.mjs"), 0o755)]);
-    }
     for (const [label, edit] of edits) {
       const pkg = { ...fixture("acme-digest"), files: { "dist/extra.mjs": "export const extra = 1;\n" } };
       const providers = lockedProviders(pkg);

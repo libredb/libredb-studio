@@ -1,7 +1,7 @@
 /**
  * What a provider package's artifact is (src/lib/provider-host/provider-artifact.ts): a tree of regular files with
- * portable names, walked without following a link; its digest, SHA-256 over one line per file of its mode, its
- * SHA-256 and its path; and its identity, read from package.json and libredb-provider.json at its root.
+ * portable names, walked without following a link; its digest, SHA-256 over one line per file of its SHA-256 and its
+ * path; and its identity, read from package.json and libredb-provider.json at its root.
  */
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -65,20 +65,21 @@ const GOLDEN_TREE: Record<string, string> = {
   "dist/a.b": "dot\n",
   "dist/a/b": "slash\n",
 };
-// Pinned from Linux and computed independently there with sha256sum over the stated listing.
-const GOLDEN_DIGEST = "sha256:21908458d7b7d0e2ff57c9d911b6648d2e61b37156dee850a9d6415e13024aaa";
+// Pinned from Linux and computed independently there with sha256sum over the stated listing: one
+// `<hex SHA-256> <path>` line per file in path order, no file mode.
+const GOLDEN_DIGEST = "sha256:8a396d8854cb7899aecac2bd870b58769ee33788ec70542cca31feefe4f42441";
 
 describe("the artifact digest", () => {
-  test("the digest is SHA-256 over each file's mode, SHA-256 and path, one line each in path order", () => {
+  test("the digest is SHA-256 over each file's SHA-256 and path, one line each in path order", () => {
     const directory = freshDirectory();
     writeTree(directory, { "z.txt": "last\n", "a.b": "dot\n", "a/b": "slash\n", "a/c/d.txt": "deep\n" });
     const files = walked(directory);
     expect(files.map((file) => file.path)).toEqual(["a.b", "a/b", "a/c/d.txt", "z.txt"]);
     const listing = [
-      `644 ${sha256("dot\n")} a.b\n`,
-      `644 ${sha256("slash\n")} a/b\n`,
-      `644 ${sha256("deep\n")} a/c/d.txt\n`,
-      `644 ${sha256("last\n")} z.txt\n`,
+      `${sha256("dot\n")} a.b\n`,
+      `${sha256("slash\n")} a/b\n`,
+      `${sha256("deep\n")} a/c/d.txt\n`,
+      `${sha256("last\n")} z.txt\n`,
     ].join("");
     expect(artifactDigest(files, [])).toBe(`sha256:${sha256(listing)}`);
     // The order of the files handed in decides nothing.
@@ -93,13 +94,23 @@ describe("the artifact digest", () => {
     expect(artifactDigest(walked(directory), [])).toBe(GOLDEN_DIGEST);
   });
 
+  test("an artifact holding an executable file has the same digest on every platform", () => {
+    const directory = freshDirectory();
+    writeTree(directory, GOLDEN_TREE);
+    const file = path.join(directory, "dist", "index.mjs");
+    fs.chmodSync(file, 0o755);
+    // On Linux and macOS chmod sets the execute bit for the owner (0o100), which the stat shows; on Windows (NTFS)
+    // chmod sets no execute bit and libuv reports none, so there the test proves only that the digest is the committed
+    // one.
+    expect((fs.statSync(file).mode & 0o100) !== 0).toBe(MISSING_POSIX_FILE_MODES === null);
+    expect(artifactDigest(walked(directory), [])).toBe(GOLDEN_DIGEST);
+  });
+
   test("the digest lists each import after the files, one line each in order, and an empty record leaves the files' digest", () => {
     const directory = freshDirectory();
     writeTree(directory, { "a.mjs": 'import "./b.mjs";\n', "b.mjs": "export {};\n" });
     const files = walked(directory);
-    const fileLines = [`644 ${sha256('import "./b.mjs";\n')} a.mjs\n`, `644 ${sha256("export {};\n")} b.mjs\n`].join(
-      "",
-    );
+    const fileLines = [`${sha256('import "./b.mjs";\n')} a.mjs\n`, `${sha256("export {};\n")} b.mjs\n`].join("");
     expect(artifactDigest(files, [])).toBe(`sha256:${sha256(fileLines)}`);
 
     const imports = [
@@ -117,16 +128,8 @@ describe("the artifact digest", () => {
     expect(artifactDigest(files, [{ ...imports[0], kind: "require" }])).not.toBe(artifactDigest(files, [imports[0]]));
   });
 
-  test("a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise", () => {
-    const directory = freshDirectory();
-    writeTree(directory, { "run.sh": "#!/bin/sh\n", "plain.txt": "plain\n" });
-    fs.chmodSync(path.join(directory, "run.sh"), 0o755);
-    const modes = Object.fromEntries(walked(directory).map((file) => [file.path, file.mode]));
-    expect(modes).toEqual({ "plain.txt": "644", "run.sh": process.platform === "win32" ? "644" : "755" });
-  });
-
   describeIf(MISSING_POSIX_FILE_MODES, "file modes", () => {
-    test("only the owner execute bit moves the digest: group and other bits and the umask do not", () => {
+    test("no mode bit moves the digest", () => {
       const directory = freshDirectory();
       writeTree(directory, { "file.txt": "text\n" });
       const file = path.join(directory, "file.txt");
@@ -135,13 +138,8 @@ describe("the artifact digest", () => {
         return artifactDigest(walked(directory), []);
       };
       const base = digestAt(0o644);
-      for (const mode of [0o600, 0o640, 0o664, 0o666, 0o604, 0o674, 0o677]) {
+      for (const mode of [0o600, 0o640, 0o664, 0o666, 0o604, 0o674, 0o677, 0o744, 0o700, 0o755, 0o775, 0o777, 0o711]) {
         expect([mode.toString(8), digestAt(mode)]).toEqual([mode.toString(8), base]);
-      }
-      const executable = digestAt(0o744);
-      expect(executable).not.toBe(base);
-      for (const mode of [0o700, 0o755, 0o775, 0o777, 0o711]) {
-        expect([mode.toString(8), digestAt(mode)]).toEqual([mode.toString(8), executable]);
       }
       expect(digestAt(0o655)).toBe(base);
     });
