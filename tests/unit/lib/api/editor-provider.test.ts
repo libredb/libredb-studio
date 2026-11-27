@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { callRefusalSentence } from "@libredb/provider-sdk/calls";
-import { isStudioFailure, packageCallError } from "@/lib/api/package-errors";
+import { isStudioFailure, packageFailureAnswer } from "@/lib/api/package-errors";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import type { CachedSession } from "@/lib/db/factory";
@@ -172,7 +172,7 @@ describe("editorTarget", () => {
 
     expect(isStudioFailure(raised)).toBe(true);
     // Studio's own failure returns before the scrub or the route is read, so neither is a working stand-in here.
-    expect(packageCallError("open", raised, {} as ProviderTextScrub, "/api/db/query")).toBe(raised);
+    expect(packageFailureAnswer(packageEngine, "open", raised, {} as ProviderTextScrub, "/api/db/query")).toBe(raised);
   });
 });
 

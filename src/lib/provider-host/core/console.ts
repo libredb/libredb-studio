@@ -15,7 +15,17 @@
  * turn of the event loop before every pull (`withTurns`, clause C-49) and under the page budget the calls are bound to
  * (`withLargePageSlot`, clause C-53), then every other result closed once. A `CallRefusalError` the pump throws is
  * answered as a record, `called` true. When the run sees the signal aborted after execute answered, it closes every
- * source and pumps nothing.
+ * source and pumps nothing. Every path that closes results, a refused answer's, an aborted run's and a page's other
+ * results, closes them through `closeResults`: only an element of the list held as an object by its own data
+ * descriptor is closed, walked by index up to the first hole, so an element that is an accessor is never read and one
+ * that is no object is never closed.
+ *
+ * Every execute answer, a provider package's and the bridge's alike, is read by `checkExecuteAnswer` right after it
+ * answered, before the abort check and the pump (clause C-112): a result list, a first result's columns or row count,
+ * an execution time, a warning list or a warning outside the SDK's types is refused as a record, `called` true, after
+ * every source is closed once and none pulled, and a close that fails rides on the record as `closeFailures`, never
+ * thrown past the refusal (`refusedAnswer`). The page record carries the members the check read, its warnings a
+ * fresh frozen list, so no caller re-checks them and none reads the session's answer again.
  *
  * An endScope call answers the outcome its session answered, `openTransaction`, read by reference as a cancel's
  * `cancelled` is. Core's execute never ends a scope: the caller that minted a scope sends it with its executes and ends
@@ -23,7 +33,8 @@
  *
  * A transaction call answers the session state its session answered, read by `checkTransactionAnswer`, and a statement
  * sent with `transaction` has its answer's session state read by `checkTransactionStatement` right after its execute
- * answered, before the abort check and the pump, its page record carrying that state. An answer the host cannot read
+ * answered, before the abort check and the pump, its page record carrying that state; a state refusal is answered alone,
+ * before any refusal of `checkExecuteAnswer`. An answer the host cannot read
  * is refused as a record, `called` true, never read as any state, and a refused statement's sources are closed once.
  * The core keeps no copy of a session state between calls: every record carries the state its own call answered, and
  * a stopped call carries none (clause C-58).
@@ -59,6 +70,7 @@ import {
   type CancelRequest,
   checkCallStart,
   checkConsoleFacet,
+  checkExecuteAnswer,
   checkExecuteRequest,
   checkReadOnlyRequest,
   checkTransactionAnswer,
@@ -111,6 +123,8 @@ export interface RefusedRecord {
   readonly called: boolean;
   readonly refusals: readonly CallRefusal[];
   readonly cause?: unknown;
+  /** On a refused execute answer only: the error of each source whose close failed, when one did. */
+  readonly closeFailures?: readonly unknown[];
 }
 
 /**
@@ -273,9 +287,16 @@ export function startCall<T>(call: () => Promise<T>): Promise<T> {
   });
 }
 
-/** Closes every one of `sources` once, all at once, and answers the errors of those whose close failed. */
-async function closeEach(sources: readonly ResultSource[]): Promise<readonly unknown[]> {
-  const settled = await Promise.allSettled(sources.map((source) => startCall(() => source.close())));
+/**
+ * Closes once, all at once, every element of `results`, a provider's result list, from index `from` that it can close
+ * (`closableSources`), and answers the errors of those whose close failed. It never throws: a close that throws is read
+ * as its rejection. Every path of the run that closes results closes them through it: a refused answer's, an aborted
+ * run's, and a page's other results.
+ */
+async function closeResults(results: readonly unknown[], from = 0): Promise<readonly unknown[]> {
+  const settled = await Promise.allSettled(
+    closableSources(results, from).map((source) => startCall(() => source.close())),
+  );
   return settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 }
 
@@ -321,6 +342,52 @@ function sessionTransaction(
 }
 
 /**
+ * The elements of `results`, a provider's result list, from index `from` that the host can close: each element read
+ * through its own data descriptor whose value is an object, walked by index up to the first hole. An element that is
+ * an accessor is never called, and one that is no object is never closed.
+ */
+function closableSources(results: readonly unknown[], from: number): readonly ResultSource[] {
+  const sources: ResultSource[] = [];
+  for (let index = from; index < results.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(results, index);
+    if (descriptor === undefined) break;
+    if ("value" in descriptor && typeof descriptor.value === "object" && descriptor.value !== null) {
+      sources.push(descriptor.value as ResultSource);
+    }
+  }
+  return sources;
+}
+
+/**
+ * The record of an execute answer the host refused, `refusals` its refusals, after every source of `results` it can
+ * close (`closeResults`) is closed once. It never throws past the refusal: the error of each close that failed
+ * rides on the record as `closeFailures`, for the caller's one log line of the refusal.
+ */
+async function refusedAnswer(results: readonly unknown[], refusals: readonly CallRefusal[]): Promise<RefusedRecord> {
+  const closeFailures = await closeResults(results);
+  return { kind: "refused", called: true, refusals, ...(closeFailures.length > 0 ? { closeFailures } : {}) };
+}
+
+/**
+ * A fresh frozen list of fresh frozen warnings, rebuilt from `warnings`, a list `checkExecuteAnswer` read as warnings
+ * of the SDK, so a page record holds nothing the session answered by reference. Walked by index, as the check walked it.
+ */
+function checkedWarnings(warnings: readonly Warning[]): readonly Warning[] {
+  const rebuilt: Warning[] = [];
+  for (let index = 0; index < warnings.length; index++) {
+    const { message, code, severity } = warnings[index] as Warning;
+    rebuilt.push(
+      Object.freeze({
+        message,
+        ...(code === undefined ? {} : { code }),
+        ...(severity === undefined ? {} : { severity }),
+      }),
+    );
+  }
+  return Object.freeze(rebuilt);
+}
+
+/**
  * The run of an execute call: the provider's execute, its first result pumped under `budget`, every other result
  * closed. The slot the page takes is recorded in `hold`, and given back on every path that answers no page; the phase
  * the run is in is recorded in `progress`.
@@ -335,22 +402,16 @@ async function runExecute(
   pumpLimits: (answer: ExecuteAnswer) => PumpLimits,
 ): Promise<ExecuteRecord> {
   const answer = await session.execute(request, ctx);
-  const sources = answer.results;
+  const answerRefusals = checkExecuteAnswer(answer);
+  // A result list the check refused holds no source the run can close.
+  const sources = answerRefusals.some((refusal) => refusal.pointer === "/results") ? [] : answer.results;
   // A statement sent inside a transaction answers the session state after it, read before anything else of the run.
   const inTransaction = Object.hasOwn(request, "transaction");
   const stateRefusals = inTransaction ? checkTransactionStatement(answer) : [];
-  if (stateRefusals.length > 0) {
-    const closeErrors = await closeEach(sources);
-    if (closeErrors.length > 0) {
-      throw new AggregateError(
-        closeErrors,
-        "Closing the result sources of a statement whose state was refused failed.",
-      );
-    }
-    return { kind: "refused", called: true, refusals: stateRefusals };
-  }
+  if (stateRefusals.length > 0) return refusedAnswer(sources, stateRefusals);
+  if (answerRefusals.length > 0) return refusedAnswer(sources, answerRefusals);
   if (ctx.signal.aborted) {
-    const closeErrors = await closeEach(sources);
+    const closeErrors = await closeResults(sources);
     if (closeErrors.length > 0) throw new AggregateError(closeErrors, "Closing a stopped run's result sources failed.");
     // The run answers this record as it settles, so the call it names has settled.
     return { kind: "stopped", reason: ctx.signal.reason, settled: Promise.resolve() };
@@ -359,9 +420,10 @@ async function runExecute(
   try {
     limits = pumpLimits(answer);
   } catch (error) {
-    throw withCloseErrors(error, await closeEach(sources));
+    throw withCloseErrors(error, await closeResults(sources));
   }
-  const [first, ...rest] = sources;
+  // The check read the first result as an own data object; the others are closed by `closeResults` from index 1.
+  const first = sources.length === 0 ? undefined : (sources[0] as ResultSource);
   let page: Page;
   enterPhase(progress, "page", ctx);
   try {
@@ -372,7 +434,7 @@ async function runExecute(
   } catch (error) {
     releaseHold(hold);
     enterPhase(progress, "other-results", ctx);
-    const closeErrors = await closeEach(rest);
+    const closeErrors = await closeResults(sources, 1);
     if (closeErrors.length > 0) throw withCloseErrors(error, closeErrors);
     if (!(error instanceof CallRefusalError)) throw error;
     return {
@@ -383,7 +445,7 @@ async function runExecute(
     };
   }
   enterPhase(progress, "other-results", ctx);
-  const closeErrors = await closeEach(rest);
+  const closeErrors = await closeResults(sources, 1);
   if (closeErrors.length > 0) releaseHold(hold);
   if (closeErrors.length === 1) throw closeErrors[0];
   if (closeErrors.length > 1) throw new AggregateError(closeErrors, "Closing a run's other result sources failed.");
@@ -395,7 +457,7 @@ async function runExecute(
     pageApplied: answer.pageApplied,
     ...(answer.boundApplied === true ? { boundApplied: true as const } : {}),
     executionTimeMs: answer.executionTimeMs,
-    warnings: answer.warnings,
+    warnings: checkedWarnings(answer.warnings),
     ...(answer.explainPlan === undefined ? {} : { explainPlan: answer.explainPlan }),
     ...(inTransaction ? { sessionState: answer.sessionState as SessionState } : {}),
     release: recordRelease(hold),

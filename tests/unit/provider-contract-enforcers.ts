@@ -1069,7 +1069,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package engine whose register row grants its own words answers its warnings through core's scrub",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
-        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a granted package's open failure answers a not-sent connection error with its scrubbed words, as a code-only one answers Studio's sentence",
         "a package engine whose register row grants its write reach opens a read-only connection, and one without a row is refused before the open",
       ],
       "tests/unit/lib/provider-host/boot.test.ts": [
@@ -2052,6 +2052,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a served open is held to the maintenance of the engine its context names, which the module declares",
         "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources",
         "a close that fails beside a refused answer is thrown with the refusal first",
+        "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
       ],
     },
   },
@@ -2403,7 +2404,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles",
       ],
       "vscode-extension/test/unit/backend-handlers.test.ts": [
-        "hands the core the connection, its record, the posture and the route only, so the core's deadline bounds the test",
+        "hands the core the connection, its record, the posture, the route and an unread failure record only, so the core's deadline bounds the test",
         "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code",
       ],
     },
@@ -3180,28 +3181,43 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "packages/provider-sdk/tests/calls/answers.test.ts": [
+        "an execute answer's result list, first row count, execution time, warning list or warning outside the SDK's types is refused as execute-answer-unreadable at its pointer, a getter never called",
+        "an execute answer's refusal sentence names the pointer and the key, never a value",
+      ],
+      "packages/provider-sdk/tests/testing/serve.test.ts": [
+        "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
+      ],
+      "tests/unit/lib/provider-host/core/console.test.ts": [
+        "a malformed execution time, row count or warning list is refused at the core as the package's defect",
+        "a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list",
+        "closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed",
+      ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
         "a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub",
-        "a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read",
+        "a package's warnings of another shape than the contract's are refused at the core as the package's defect, each at its pointer, their members never read or logged",
         "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a granted package's open failure answers a not-sent ConnectionError with its scrubbed words",
+        "a package's open answering a refinement it cannot have is answered as a not-sent connection error on both grants, the refusal logged as the package's",
+        "a HostDefectError of what a granted package answered is logged as the package's defect",
         "a package engine whose register row grants its own words answers its warnings through core's scrub",
-        "warnings that are not a list are refused as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
-        "an execution time or a row count outside the contract's types is refused as the package's defect, on both paths",
+        "a warning outside the contract's shape is refused at the core as the package's defect on both grants, its members never answered",
+        "warnings that are not a list are refused at the core as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
+        "an execution time or a row count outside the contract's types is refused at the core as the package's defect, on both paths",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
-        "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
+        "a granted package's open failure answers a not-sent connection error with its scrubbed words, as a code-only one answers Studio's sentence",
         "a health failure answers the degraded success with Studio's sentence naming its code, and the session is still closed",
         "an open that fails answers Studio's sentence naming its code, not-sent, and a close that fails does not change the answer",
         "a host defect during a package engine's test is logged as Studio's, and the package's own error as the package's",
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
-        "a refusal of what the package answered is the package's failure, answered with Studio's sentence",
+        "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
+        "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
-        "refuses warnings that are not a list as the package's defect, none of them walked",
-        "names the count of the warnings it walked, never the length the package answers",
       ],
     },
   },

@@ -851,7 +851,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 
 ### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
 
-The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68), each panel call to the open engine's panels and each tree call to its object model, and refuses an open context that names an engine the manifest does not declare.
+The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls as the refinement `open` answered narrows them (C-10, C-68), each panel call to the open engine's panels and each tree call to its object model, and refuses an open context that names an engine the manifest does not declare; once an execute's answer frame is decoded, it refuses, as the host core does, an answer with a member `checkExecuteAnswer` refuses (C-112).
 An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close` under a cleanup context of its own (C-47), and a refused execute answer closes each result source it handed over, an item that is not an object refused at its index and a source whose `columns` or `rowCount` read throws closed with those before it.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
@@ -1237,7 +1237,8 @@ The host core's execute, cancel on a stop, end of a scope, tree, maintenance, mo
 ### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 
 Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
-The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is logged as the package's defect: a malformed batch or row, warnings that are not a list or a warning that is not the SDK's `Warning`, or an execution time or row count outside its type.
+The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is the package's defect on every grant, logged naming the rule and the pointer and answered naming the rule, with the pointer only where a row grants the package's words: a malformed batch or row, a refinement its open answered that the host refuses, or an execute answer member that `checkExecuteAnswer` refuses as `execute-answer-unreadable` (its result list, its first result's columns or row count, its execution time, its warning list or a warning).
+A package's open that fails is answered as a not-sent connection error, in Studio's sentence naming its code where no row grants its words and in its own words through core's scrub where one does.
 
 ### C-114 (normative): A package carries its drivers bundled into its own modules
 

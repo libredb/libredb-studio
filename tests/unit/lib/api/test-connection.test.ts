@@ -69,7 +69,7 @@ const core = await import("@/lib/api/test-connection");
 
 /** The core's test of `tested`, handed the server catalog's record of its type as both callers hand it. */
 function testConnection(tested: DatabaseConnection, context: EditorExecutionContext, label: string, now?: number) {
-  return core.testConnection(tested, servedEngineRecord(tested.type), context, label, now);
+  return core.testConnection(tested, servedEngineRecord(tested.type), context, label, { logged: false }, now);
 }
 
 // The health read goes through the process's host core (src/lib/provider-host/instance.ts), so this file composes its

@@ -17,7 +17,7 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { firstResultSet } from "@/lib/api/first-result-set";
-import { PACKAGE_WARNING_DEFECT, packageWarning, packageWarningList, packageWarnings } from "@/lib/api/package-errors";
+import { packageWarnings } from "@/lib/api/package-errors";
 import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import { consoleTextOverLimit, rowTextByteLimit } from "@/lib/db/statement-language-row";
@@ -49,7 +49,7 @@ import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
 import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
-import type { DatabaseType, QueryPagination, QueryResult, QueryWarning } from "@/lib/types";
+import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
 
 /*
  * THE EDITOR QUERY'S PROVIDER-FACING STEPS, WITH NO NEXT IN THEM.
@@ -605,70 +605,13 @@ interface PackagePage {
   readonly honoursOffset: boolean;
 }
 
-/** Why a package's columns cannot key a row: a name that is not text, an empty one, or one repeated. */
-function columnDefect(columns: readonly Column[]): string | null {
-  const seen = new Set<string>();
-  for (const column of columns) {
-    const name: unknown = column.name;
-    if (typeof name !== "string" || name === "") return "a column with no name";
-    if (seen.has(name)) return "two columns of one name";
-    seen.add(name);
-  }
-  return null;
-}
-
-/**
- * The warnings a provider package answered, each rebuilt by `packageWarning` and then passed through core's `scrub`.
- *
- * @throws {Error} Naming the package's defect, for warnings that are not a list (`packageWarningList`), or for a
- *   warning that is not the contract's `Warning`.
- */
-function packageOwnWarnings(scrub: ProviderTextScrub, warnings: unknown): QueryWarning[] {
-  const read: QueryWarning[] = [];
-  for (const warning of packageWarningList(warnings)) {
-    const rebuilt = packageWarning(warning);
-    if (rebuilt === null) {
-      throw new Error(PACKAGE_WARNING_DEFECT);
-    }
-    read.push(rebuilt);
-  }
-  return scrubProviderWarnings(scrub, read);
-}
-
-/**
- * `record`'s execution time and its first result's own row count, where it gave one, checked against the contract's
- * types: the execution time a finite non-negative number and the row count a non-negative safe integer, so each reaches
- * the client as a number Studio checked.
- *
- * @throws {Error} Naming the package's defect, for either outside its type.
- */
-function packageCounts(record: PageRecord): { readonly executionTimeMs: number; readonly rowCount?: number } {
-  const executionTimeMs: unknown = record.executionTimeMs;
-  if (typeof executionTimeMs !== "number" || !Number.isFinite(executionTimeMs) || executionTimeMs < 0) {
-    throw new Error(
-      "The provider package answered an execution time that is not a finite non-negative number; this is its defect.",
-    );
-  }
-  const rowCount: unknown = record.rowCount;
-  if (rowCount === undefined) return { executionTimeMs };
-  if (typeof rowCount !== "number" || !Number.isSafeInteger(rowCount) || rowCount < 0) {
-    throw new Error(
-      "The provider package answered a row count that is not a non-negative whole number; this is its defect.",
-    );
-  }
-  return { executionTimeMs, rowCount };
-}
-
 /**
  * The answer body of the page `record` holds, under `columns`, the first result's columns the package answered, and
- * `page`; its warnings by how the engine's record grants its own words, `ownWords`: each rebuilt from the contract's
- * members and through core's `scrub` where they are `"scrubbed"` (`packageOwnWarnings`), and as `packageWarnings`
- * answers them under `route` where they are `"code-only"`. Its execution time and row count are the numbers
- * `packageCounts` checked. The record is released once, in a `finally`, whether or not the body was built.
- *
- * @throws {Error} Naming the package's defect, for columns whose names cannot key a row, for an execution time or row
- *   count outside the contract's types, for warnings that are not a list, or for a warning outside the contract's
- *   `Warning` where its own words are granted.
+ * `page`; its warnings by how the engine's record grants its own words, `ownWords`: through core's `scrub` where they
+ * are `"scrubbed"`, and as `packageWarnings` answers them under `route` where they are `"code-only"`. The columns'
+ * names, the execution time, the row count and the warnings are the members the host core checked before it pumped
+ * the page (`checkExecuteAnswer`, clause C-112), so none is checked again here. The record is released once, in a
+ * `finally`, whether or not the body was built.
  */
 function packagePageBody(
   record: PageRecord,
@@ -679,11 +622,6 @@ function packagePageBody(
   route: string,
 ): EditorQueryAnswer {
   try {
-    const defect = columnDefect(columns);
-    if (defect !== null) {
-      throw new Error(`The provider package answered ${defect}, so Studio cannot key its rows; this is its defect.`);
-    }
-    const counts = packageCounts(record);
     const fields = columns.map((column) => column.name);
     const pumped = record.page.rows;
     // The probe row is the proof that a next page exists (#1440), and a page the host cut by bytes ends before the
@@ -697,7 +635,7 @@ function packagePageBody(
     const typed = columns.filter((column) => typeof column.type === "string");
     const warnings =
       ownWords === "scrubbed"
-        ? packageOwnWarnings(scrub, record.warnings)
+        ? scrubProviderWarnings(scrub, record.warnings)
         : packageWarnings("execute", record.warnings, scrub, route);
     return {
       body: {
@@ -707,8 +645,8 @@ function packagePageBody(
           columnTypes: Object.fromEntries(typed.map((column) => [column.name, column.type as string])),
         }),
         // The provider's own count where the page holds every row it answered; the rows answered otherwise.
-        rowCount: probed || byteCut || counts.rowCount === undefined ? rows.length : counts.rowCount,
-        executionTime: counts.executionTimeMs,
+        rowCount: probed || byteCut || record.rowCount === undefined ? rows.length : record.rowCount,
+        executionTime: record.executionTimeMs,
         ...(warnings.length > 0 && { warnings }),
         pagination: {
           limit: page.limit,
@@ -776,8 +714,8 @@ function sessionRun(target: Extract<EditorRunTarget, { form: "session" }>, run: 
 /**
  * Runs one statement on `target`, what the caller opened, and answers its first result set's page. The run's steps are
  * one for every form; what differs by form is what `bridgedRun` and `sessionRun` read. A provider package's own errors
- * reach the caller by reference (clause C-31); the query route answers them with Studio's sentence (`packageCallError`
- * in ./package-errors).
+ * reach the caller by reference (clause C-31); the query route answers them by its record (`packageFailureAnswer` in
+ * ./package-errors).
  *
  * @throws {QueryCancelledError} When the caller left.
  * @throws {StudioTimeoutRefusal} When the deadline ended the run.

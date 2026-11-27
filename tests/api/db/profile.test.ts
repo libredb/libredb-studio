@@ -262,6 +262,11 @@ const sqlOf = (request: RecordedInfluxRequestT): { db: string; q: string } => JS
 /** What a held read answers once its test has asserted: no row, after the profile stopped waiting for it. */
 const NO_ROWS: QueryResult = { rows: [], fields: [], rowCount: 0, executionTime: 0 };
 
+/** A whole `QueryResult` of `rows` under `fields`, as a provider answers one: its row count and an execution time. */
+function answered(rows: Record<string, unknown>[], fields: string[]): QueryResult {
+  return { rows, fields, rowCount: rows.length, executionTime: 0 };
+}
+
 /** A request on `signal`, as a browser's request is aborted when its client leaves. */
 function abortableRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
   return new Request("http://localhost:3000/api/db/profile", {
@@ -483,7 +488,7 @@ describe("POST /api/db/profile", () => {
     // Oracle folds an unquoted alias to upper case: `total` comes back as `TOTAL`.
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ TOTAL: 3 }], fields: ["TOTAL"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ TOTAL: 3 }], ["TOTAL"]);
       if (sql.includes("non_null_count")) {
         const row = {
           TOTAL_COUNT: 3,
@@ -492,9 +497,9 @@ describe("POST /api/db/profile", () => {
           MIN_VALUE: new Date("2026-01-02T00:00:00.000Z"),
           MAX_VALUE: BigInt("12345678901234567890"),
         };
-        return { rows: [row], fields: Object.keys(row) };
+        return answered([row], Object.keys(row));
       }
-      return { rows: [{ ID: 1 }, { ID: null }], fields: ["ID"] };
+      return answered([{ ID: 1 }, { ID: null }], ["ID"]);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection: validConnection, tablePath: ["APP", "EMP"], columns: ["id"] };
@@ -523,11 +528,11 @@ describe("POST /api/db/profile", () => {
     const sent: string[] = [];
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
       sent.push(sql);
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 4 }], ["total"]);
       if (sql.includes("COUNT(DISTINCT")) throw new QueryError("The text data type cannot be selected as DISTINCT");
-      if (sql.includes("MIN(")) return { rows: [{ min_value: null, max_value: null }], fields: [] };
-      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
-      return { rows: [], fields: [] };
+      if (sql.includes("MIN(")) return answered([{ min_value: null, max_value: null }], []);
+      if (sql.includes("non_null_count")) return answered([{ total_count: 4, non_null_count: 3 }], []);
+      return answered([], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection: validConnection, tablePath: ["dbo", "notes"], columns: ["body"] };
@@ -588,12 +593,12 @@ describe("POST /api/db/profile", () => {
     const connection = { ...validConnection, password };
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 4 }], ["total"]);
       if (sql.includes("geom")) throw new QueryError(`type refused for ${password}`);
       if (sql.includes("COUNT(DISTINCT")) throw new QueryError(`DISTINCT refused for ${password}`);
       if (sql.includes("MIN(")) throw new QueryError("MIN refused");
-      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
-      return { rows: [], fields: [] };
+      if (sql.includes("non_null_count")) return answered([{ total_count: 4, non_null_count: 3 }], []);
+      return answered([], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection, tablePath: ["dbo", "notes"], columns: ["body", "geom"] };
@@ -613,11 +618,11 @@ describe("POST /api/db/profile", () => {
   test("a range the engine refuses is reported with its reason", async () => {
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 2 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 2 }], ["total"]);
       if (sql.includes("MIN(")) throw new QueryError("function min(boolean) does not exist");
-      if (sql.includes("COUNT(DISTINCT")) return { rows: [{ distinct_count: 2 }], fields: [] };
-      if (sql.includes("non_null_count")) return { rows: [{ total_count: 2, non_null_count: 2 }], fields: [] };
-      return { rows: [], fields: [] };
+      if (sql.includes("COUNT(DISTINCT")) return answered([{ distinct_count: 2 }], []);
+      if (sql.includes("non_null_count")) return answered([{ total_count: 2, non_null_count: 2 }], []);
+      return answered([], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection: validConnection, tablePath: ["public", "flags"], columns: ["on"] };
@@ -639,9 +644,9 @@ describe("POST /api/db/profile", () => {
     const sent: string[] = [];
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
       sent.push(sql);
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ TOTAL: 200 }], fields: [] };
-      if (sql.includes("IS NULL")) return { rows: [{ NULL_COUNT: 50 }], fields: [] };
-      if (sql.startsWith('SELECT "bio" FROM')) return { rows: [], fields: [] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ TOTAL: 200 }], []);
+      if (sql.includes("IS NULL")) return answered([{ NULL_COUNT: 50 }], []);
+      if (sql.startsWith('SELECT "bio" FROM')) return answered([], []);
       throw new QueryError("ORA-22849: Type CLOB is not supported for this function or operator.");
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
@@ -670,8 +675,8 @@ describe("POST /api/db/profile", () => {
   test("an IS NULL count that answers no row is not read as zero nulls", async () => {
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 7 }], fields: [] };
-      if (sql.includes("IS NULL")) return { rows: [], fields: [] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 7 }], []);
+      if (sql.includes("IS NULL")) return answered([], []);
       throw new QueryError("Operand data type text is invalid for count operator.");
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
@@ -694,7 +699,7 @@ describe("POST /api/db/profile", () => {
     const sent: string[] = [];
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
       sent.push(sql);
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 1e9 }], fields: [] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 1e9 }], []);
       throw new TimeoutError("canceling statement due to statement timeout", "postgres", 30000);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
@@ -709,10 +714,10 @@ describe("POST /api/db/profile", () => {
   test("a connection lost between measures ends the profile with a 503, not a column warning", async () => {
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 3 }], fields: [] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 3 }], []);
       if (sql.includes("MIN(") && !sql.includes("DISTINCT")) throw new ConnectionError("Connection terminated");
       if (sql.includes("COUNT(DISTINCT")) throw new QueryError("could not identify an equality operator for type json");
-      return { rows: [{ total_count: 3, non_null_count: 3 }], fields: [] };
+      return answered([{ total_count: 3, non_null_count: 3 }], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection: validConnection, tablePath: ["public", "docs"], columns: ["meta"] };
@@ -732,7 +737,7 @@ describe("POST /api/db/profile", () => {
     const sent: string[] = [];
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
       sent.push(sql);
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 3 }], fields: [] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 3 }], []);
       throw new PermissionDeniedError("Permission denied: permission denied for table salaries", "postgres", sql);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
@@ -764,11 +769,11 @@ describe("POST /api/db/profile", () => {
   test("a column the engine cannot count says why, and reports no null figures", async () => {
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 9 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 9 }], ["total"]);
       if (sql.includes("geom")) throw new QueryError("ORA-22849: type SDO_GEOMETRY is not supported");
       // Not an engine error: whatever it says stays on the server.
       if (sql.includes("secret")) throw new TypeError("internal detail /srv/app/x.js");
-      return { rows: [], fields: [] };
+      return answered([], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
     const body = { connection: validConnection, tablePath: ["APP", "SHAPES"], columns: ["geom", "secret"] };
@@ -811,12 +816,12 @@ describe("POST /api/db/profile", () => {
   test("returns column profiles for SQL provider with columns", async () => {
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 100 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 100 }], ["total"]);
       if (sql.includes("non_null_count")) {
         const row = { total_count: 100, non_null_count: 100, distinct_count: 100, min_value: 1, max_value: 100 };
-        return { rows: [row], fields: Object.keys(row) };
+        return answered([row], Object.keys(row));
       }
-      return { rows: [{ id: 1 }], fields: ["id"] };
+      return answered([{ id: 1 }], ["id"]);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
 
@@ -1391,13 +1396,13 @@ describe("POST /api/db/profile on the host core", () => {
   function profiledSql(sample: () => Record<string, unknown>[] = () => [{ id: 1 }, { id: 2 }]) {
     const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 2 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 2 }], ["total"]);
       if (sql.includes("non_null_count")) {
         const row = { total_count: 2, non_null_count: 2, distinct_count: 2, min_value: 1, max_value: 2 };
-        return { rows: [row], fields: Object.keys(row) };
+        return answered([row], Object.keys(row));
       }
       const rows = sample();
-      return { rows, fields: ["id"], rowCount: rows.length };
+      return { rows, fields: ["id"], rowCount: rows.length, executionTime: 0 };
     });
     return provider;
   }
@@ -1452,8 +1457,8 @@ describe("POST /api/db/profile on the host core", () => {
     });
     (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (query: string) =>
       JSON.parse(query).operation === "count"
-        ? { rows: [{ count: 1 }], fields: ["count"] }
-        : { rows: [{ name: "a" }], fields: ["name"] },
+        ? answered([{ count: 1 }], ["count"])
+        : answered([{ name: "a" }], ["name"]),
     );
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
     const mongoBody = { connection: mongoConnection, tablePath: ["shop", "items"], columns: ["name"] };
@@ -1593,11 +1598,11 @@ describe("POST /api/db/profile on the host core", () => {
   test("a measure whose row is larger than one page is that measure's refusal in Studio's page sentence", async () => {
     const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 4 }], ["total"]);
       if (sql.includes("COUNT(DISTINCT") && sql.includes("MIN(")) throw new QueryError("one statement refused");
-      if (sql.includes("COUNT(DISTINCT")) return { rows: [{ distinct_count: 3 }], fields: ["distinct_count"] };
-      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
-      return { rows: [], fields: [] };
+      if (sql.includes("COUNT(DISTINCT")) return answered([{ distinct_count: 3 }], ["distinct_count"]);
+      if (sql.includes("non_null_count")) return answered([{ total_count: 4, non_null_count: 3 }], []);
+      return answered([], []);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(provider);
 
@@ -1684,12 +1689,12 @@ describe("POST /api/db/profile under governance", () => {
   function sqlAnswers() {
     const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
     (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
-      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 2 }], fields: ["total"] };
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return answered([{ total: 2 }], ["total"]);
       if (sql.includes("non_null_count")) {
         const row = { total_count: 2, non_null_count: 2, distinct_count: 2, min_value: 1, max_value: 2 };
-        return { rows: [row], fields: Object.keys(row) };
+        return answered([row], Object.keys(row));
       }
-      return { rows: [{ id: 1 }, { id: 2 }], fields: ["id"] };
+      return answered([{ id: 1 }, { id: 2 }], ["id"]);
     });
     return provider;
   }
@@ -1756,8 +1761,8 @@ describe("POST /api/db/profile under governance", () => {
     });
     (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (query: string) =>
       JSON.parse(query).operation === "count"
-        ? { rows: [{ count: 1 }], fields: ["count"] }
-        : { rows: [{ name: "a" }], fields: ["name"] },
+        ? answered([{ count: 1 }], ["count"])
+        : answered([{ name: "a" }], ["name"]),
     );
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
     const body = { connection: governedMongo, tablePath: ["shop", "items"], columns: ["name"] };

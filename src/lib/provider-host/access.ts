@@ -27,11 +27,14 @@
  * answered `not-sent`. A record holding such a refusal beside a rule no row reads is the host defect below, naming
  * every refusal it holds.
  *
- * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
- * legacy caller asks for and is sent a scope only where it offers `console.endScope`, so no provider can cause one: a
- * `HostDefectError` naming each refusal's sentence and carrying the refusals, answered 500. On a provider package's
- * session a refusal of what the package answered (a batch, a row, a refinement) is the package's defect instead, which
- * the query route reads from those refusals (`packageCallError` in src/lib/api/package-errors.ts).
+ * Every other refusal is a defect of Studio's own code: its bridge honours every request field, offers every facet a
+ * legacy caller asks for and is sent a scope only where it offers `console.endScope`, and a legacy provider whose
+ * execute answer the host core refuses (`checkExecuteAnswer`) is Studio's own provider. It is a `HostDefectError`
+ * naming each refusal's sentence and carrying the refusals, and the errors of the closes that failed after a refused
+ * execute answer, answered 500. On a provider package's session a refusal of what the package answered (an execute
+ * answer's member, a batch, a row) is the package's defect instead, as is a refinement its open answered, which the one
+ * open function raises as a `HostDefectError` carrying those refusals (`openEngine` in ./open-engine.ts); every route
+ * reads the package's defect from the refusals (`packageFailureAnswer` in src/lib/api/package-errors.ts).
  */
 import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import {
@@ -60,10 +63,13 @@ export const HOST_DEFECT_PREFIX =
 export class HostDefectError extends Error {
   /** The refusals the host core answered, each naming its rule. */
   readonly refusals: readonly CallRefusal[];
+  /** The error of each result source whose close failed after a refused execute answer, by reference; none otherwise. */
+  readonly closeFailures: readonly unknown[];
 
-  constructor(refusals: readonly CallRefusal[]) {
+  constructor(refusals: readonly CallRefusal[], closeFailures: readonly unknown[] = []) {
     super(`${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`);
     this.refusals = refusals;
+    this.closeFailures = closeFailures;
   }
 }
 
@@ -192,7 +198,7 @@ function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () =
   if (notOffered !== undefined) return notOffered;
   const unstated = objectModelError(refusals);
   if (unstated !== undefined) return unstated;
-  return new HostDefectError(refusals);
+  return new HostDefectError(refusals, record.closeFailures);
 }
 
 /** The error a refused record answers, this bundle's class. */

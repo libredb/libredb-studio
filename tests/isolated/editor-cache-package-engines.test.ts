@@ -63,7 +63,7 @@ const {
 const { errorKind, errorOutcome } = await import("@/lib/db/error-record");
 const { openDeadlineSentence } = await import("@/lib/db/connect-budget");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
-const { refusalError } = await import("@/lib/provider-host/access");
+const { HostDefectError, refusalError } = await import("@/lib/provider-host/access");
 const { logger } = await import("@/lib/logger");
 const { installHostCore } = await import("@/lib/provider-host/instance");
 const { runEditorQuery } = await import("@/lib/api/editor-query");
@@ -385,7 +385,7 @@ describe("the sessions of a provider package's engine", () => {
     }
   });
 
-  test("a session that offers endScope is sent the run's scope and its rollback is answered, and columns that cannot key a row are the package's defect", async () => {
+  test("a session that offers endScope is sent the run's scope and its rollback is answered, and columns that cannot key a row are refused at the core", async () => {
     const hooks = record(SCOPE);
     const cached = await factory.getOrCreateEditorSession(connectionOf(SCOPE), engineOf(SCOPE), ADMIN);
     let columns: unknown[] = [{ name: "key" }];
@@ -419,16 +419,19 @@ describe("the sessions of a provider package's engine", () => {
     expect(typeof scope).toBe("string");
     expect(hooks.calls.find(({ name }) => name === "endScope")?.args[1]).toEqual({ scope });
 
-    for (const [answered, defect] of [
-      [[{ name: "key" }, { name: "key" }], "two columns of one name"],
-      [[{ name: "" }], "a column with no name"],
-      [[{ name: 7 }], "a column with no name"],
+    // The host core refuses columns that cannot key a row before it pumps the page; a route answers the refusal as
+    // the package's defect by its rule (`packageFailureAnswer` in src/lib/api/package-errors.ts).
+    for (const [answered, pointer] of [
+      [[{ name: "key" }, { name: "key" }], "/results/0/columns/1/name"],
+      [[{ name: "" }], "/results/0/columns/0/name"],
+      [[{ name: 7 }], "/results/0/columns/0/name"],
     ] as const) {
       columns = [...answered];
       const failure = await rejection(runEditorQuery(target, run));
-      expect((failure as Error).message).toBe(
-        `The provider package answered ${defect}, so Studio cannot key its rows; this is its defect.`,
-      );
+      expect(failure).toBeInstanceOf(HostDefectError);
+      expect((failure as InstanceType<typeof HostDefectError>).refusals).toEqual([
+        { rule: "execute-answer-unreadable", pointer },
+      ]);
     }
     expect(cached.running).toBe(0);
   });
@@ -793,7 +796,11 @@ describe("the sessions of a provider package's engine", () => {
       open: () => Promise.resolve({ handle: 1, refine: { calls: { console: { endScope: "offered" } } } }),
     });
     const error = await rejection(factory.getOrCreateEditorSession(connectionOf(MAIN), engineOf(MAIN), ADMIN));
-    expect((error as Error).message).toStartWith("The provider package's open was refused:");
+    // The host defect carrying the refusals, which every route answers as the package's defect by their rules.
+    expect(error).toBeInstanceOf(HostDefectError);
+    expect((error as InstanceType<typeof HostDefectError>).refusals.map((refusal) => refusal.rule)).toEqual([
+      "refinement-widens",
+    ]);
     expect(errorKind(error)).toBe("internal");
 
     record(MAIN);

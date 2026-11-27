@@ -5,7 +5,13 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
-import { isStudioFailure, logPackageFailure, packageCallError, packageErrorSentence } from "@/lib/api/package-errors";
+import {
+  isPackageFailure,
+  isStudioFailure,
+  logPackageFailure,
+  packageErrorSentence,
+  packageFailureAnswer,
+} from "@/lib/api/package-errors";
 import { type HealthWithin, readHealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { errorCode, errorKind } from "@/lib/db/error-record";
@@ -133,7 +139,9 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *
  * `execution` is the DuckDB editor file-access posture the caller derived (non-admin DuckDB file
  * access): it opens any handle opened here with the right posture and keeps this from borrowing a
- * handle of the other posture below. `route` is the label every log line carries.
+ * handle of the other posture below. `route` is the label every log line carries. `failure.logged` is set true when
+ * a failure of the open this rejects with was logged here already, as a provider package's (`isPackageFailure`), so a
+ * caller that logs the failures it answers writes no second line (the route passes it to `createErrorResponse`).
  *
  * The whole test, the tunnel, the open, the connect, the test-only checks, the health read and the close of a
  * package's session, answers within its engine's connect budget from `now` (`packageConnectBudget`,
@@ -147,10 +155,14 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *   tunnel opens: a legacy provider built and not connected, which this connects, or a provider package's connected
  *   session;
  * - the connect warnings and test-only cautions, where the record offers them (`offers.testCautions`);
- * - the words of a failure (`grants.ownWords`): `"scrubbed"`, a provider's own error and its health failure's
- *   sentence pass core's scrub of `connection`; `"code-only"`, a package's open or health failure is logged once as
- *   the package's and answered with Studio's sentence naming its code (`packageCallError` and `logPackageFailure` in
- *   ./package-errors), while Studio's own failure, a `DatabaseError` or a host defect of Studio's, is raised as itself.
+ * - a failure of the open: answered by `packageFailureAnswer` (./package-errors), a package's as a not-sent connection
+ *   error in its own words through core's scrub where its record grants them (`grants.ownWords` `"scrubbed"`) and in
+ *   Studio's sentence naming its code where it does not, a refusal of what its open answered as the package's defect
+ *   naming its rules, logged once as the package's on both grants, while a legacy provider's failure and Studio's own,
+ *   a `DatabaseError` or a host defect of Studio's, are raised as themselves;
+ * - the words of a health failure (`grants.ownWords`): `"scrubbed"`, its sentence passes core's scrub of
+ *   `connection`; `"code-only"`, a package's is logged once as the package's and answered with Studio's sentence naming
+ *   its code (`logPackageFailure` in ./package-errors), while Studio's own failure is raised as itself.
  * The health read is one host core health call on the session the test holds, a legacy provider's bridged one
  * (`readHealthWithin`, src/lib/api/provider-monitoring.ts; clause C-75) or a package's own (`readSessionHealthWithin`),
  * on the test's own deadline and its deadline signal; a health failure after that deadline is logged by kind and
@@ -173,6 +185,7 @@ export async function testConnection(
   engine: EngineRecord,
   execution: EditorExecutionContext,
   route: string,
+  failure: { logged: boolean },
   now: number = Date.now(),
 ): Promise<TestConnectionAnswer> {
   const type = legacyProviderType(engine);
@@ -252,7 +265,8 @@ export async function testConnection(
         } catch (error) {
           // The deadline is the test's answer; a stop it caused is no failure of the engine's.
           if (deadline.aborted) throw expired();
-          throw engine.grants.ownWords === "code-only" ? packageCallError("open", error, scrub, route) : error;
+          failure.logged = isPackageFailure(engine, error);
+          throw packageFailureAnswer(engine, "open", error, scrub, route);
         }
         own = held;
         // A deadline that passed meanwhile gets no connect started, and what was opened is closed below.

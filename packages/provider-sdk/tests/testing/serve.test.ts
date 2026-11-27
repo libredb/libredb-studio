@@ -1690,6 +1690,56 @@ describe("serve", () => {
     ]);
   });
 
+  test("a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed", async () => {
+    const fx = fixture({ endScope: false });
+    const { impl } = served(fx);
+    fx.answers.open = () => ({ handle: fx.handle });
+    const opened = await impl.open(openContext());
+    const closed: string[] = [];
+    const counted = (name: string, columns = [{ name: "id" }], rowCount?: number): ResultSource => ({
+      columns,
+      ...(rowCount === undefined ? {} : { rowCount }),
+      next: async () => ({ rows: [], done: true }),
+      close: async () => {
+        closed.push(name);
+      },
+    });
+    const answering = (over: Json) => {
+      fx.answers.execute = () => ({
+        results: [counted("first"), counted("second")],
+        warnings: [],
+        executionTimeMs: 0,
+        pageApplied: false,
+        ...over,
+      });
+    };
+
+    answering({ executionTimeMs: -1 });
+    const slow = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    answering({ results: [counted("counted", undefined, 1.5)] });
+    const counts = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    answering({ results: [counted("twice", [{ name: "id" }, { name: "id" }])] });
+    const twice = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+
+    expect(slow).toBeInstanceOf(CallRefusalError);
+    expect((slow as CallRefusalError).refusals).toEqual([
+      { rule: "execute-answer-unreadable", pointer: "/executionTimeMs" },
+    ]);
+    expect((counts as CallRefusalError).refusals).toEqual([
+      { rule: "execute-answer-unreadable", pointer: "/results/0/rowCount" },
+    ]);
+    expect((twice as CallRefusalError).refusals).toEqual([
+      { rule: "execute-answer-unreadable", pointer: "/results/0/columns/1/name" },
+    ]);
+    expect(closed).toEqual(["first", "second", "counted", "twice"]);
+
+    // Vacuity: a well-formed answer crosses, its sources open.
+    answering({ executionTimeMs: 2 });
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    expect([answer.executionTimeMs, answer.results.length]).toEqual([2, 2]);
+    expect(closed).toHaveLength(4);
+  });
+
   test("a refused open answer's session is closed with a context of its own, not the open's aborted one", async () => {
     const fx = fixture({ endScope: false });
     const { impl } = served(fx);

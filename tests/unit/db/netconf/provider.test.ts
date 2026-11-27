@@ -11,6 +11,7 @@ import { test } from "bun:test";
 import { expectBe, expectEqual, expectMatch, expectRejects, expectTruthy } from "./helpers";
 import { NetconfProvider, parseReadRequest, type DeviceReader } from "@/lib/db/providers/network/netconf/index";
 import type { DatabaseConnection, KeyScanPage } from "@/lib/db/types";
+import type { QueryResult } from "@/lib/types";
 import { QueryError, TimeoutError } from "@/lib/db/errors";
 import { NETCONF_KEY_SCAN, NETCONF_OBJECT_KINDS } from "@/lib/db/providers/network/netconf/objectkinds";
 import { NETCONF_LABELS } from "@/lib/db/providers/network/netconf/labels";
@@ -49,7 +50,12 @@ function reader(over: Partial<DeviceReader> = {}): DeviceReader {
       { name: "ge-0/0/1", kind: "key" as const },
       { name: "ge-0/0/1", kind: "key" as const },
     ],
-    rows: async () => ({ columns: ["name"], rows: [{ name: "ge-0/0/0" }], rowCount: 1 }) as never,
+    rows: async (): Promise<QueryResult> => ({
+      fields: ["name"],
+      rows: [{ name: "ge-0/0/0" }],
+      rowCount: 1,
+      executionTime: 0,
+    }),
     moduleText: async () => "module ietf-interfaces { }",
     sourceXml: async () => "<interface><name>ge-0/0/1</name><description>port 1</description></interface>",
     close: async () => {},

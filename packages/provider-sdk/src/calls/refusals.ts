@@ -1,6 +1,6 @@
 /**
  * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27,
- * C-57, C-67, C-71, C-78 and M-89).
+ * C-57, C-67, C-71, C-78, C-112 and M-89).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -70,6 +70,13 @@ export const CALL_REFUSAL_RULES = Object.freeze([
    * answer.
    */
   "transaction-answer-unreadable",
+  /**
+   * A member of an execute answer the host reads that is missing where the SDK requires it, an accessor, or not of the
+   * SDK's type there: the result list, the first result's columns, a column's name (empty or repeated in its result
+   * too), the first result's row count, the execution time, the warning list or one of its warnings, or a key a warning
+   * cannot have (`name` the key); the pointer is into the answer.
+   */
+  "execute-answer-unreadable",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -81,7 +88,7 @@ export interface CallRefusal {
   readonly pointer: string;
   /**
    * The request field, for a field not honoured or sent empty, the facet's call name, for a facet not offered, or the key, for a key
-   * a refinement or a transaction answer cannot have.
+   * a refinement, a transaction answer or an execute answer's warning cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -171,5 +178,9 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return refusal.name === undefined
         ? `The transaction answer value at ${at} is missing, an accessor, or not what the provider contract defines there for the call's action, so no session state was read from it.`
         : `The transaction answer has the key ${name} at ${at}, which a transaction answer cannot have, so no session state was read from it.`;
+    case "execute-answer-unreadable":
+      return refusal.name === undefined
+        ? `The execute answer value at ${at} is missing, an accessor, or not of the type the provider contract defines there, so Studio did not read it.`
+        : `The execute answer has the key ${name} at ${at}, which a warning cannot have, so Studio did not read it.`;
   }
 }

@@ -35,6 +35,9 @@
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
+ * The host's side reads a decoded execute answer as the host core does (`checkExecuteAnswer`, clause C-112) and throws
+ * a member outside the SDK's types as a `CallRefusalError`, after closing the answer's sources, so a provider's own
+ * test refuses what Studio refuses.
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
@@ -48,6 +51,7 @@ import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
+import { checkExecuteAnswer } from "../calls/answers";
 import { type CallRefusal, CallRefusalError } from "../calls/refusals";
 import {
   checkConsoleFacet,
@@ -608,10 +612,13 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
           ),
         ),
       ]);
-      return {
+      const crossed: ExecuteAnswer = {
         ...(decoded as unknown as ExecuteAnswer),
         results: ids.map((id, index) => servedSource(id, descriptors[index] as Record<string, unknown>)),
       };
+      const answerRefusals = checkExecuteAnswer(crossed);
+      if (answerRefusals.length > 0) throw new CallRefusalError(answerRefusals);
+      return crossed;
     } catch (error) {
       return throwAfterClosing(
         error,

@@ -173,6 +173,35 @@ function held<T>() {
   return Promise.withResolvers<T>();
 }
 
+/**
+ * Result lists of three elements whose middle one the host must neither read nor close: a number, and an accessor
+ * that records each read and throws. `reads` lists the accessor's reads.
+ */
+function laterElementShapes() {
+  const number = {
+    name: "a number",
+    reads: [] as string[],
+    results: (first: ResultSource, later: ResultSource) => [first, 42, later] as unknown as ResultSource[],
+  };
+  const accessor = {
+    name: "an accessor",
+    reads: [] as string[],
+    results: (first: ResultSource, later: ResultSource) => {
+      const results: unknown[] = [first];
+      Object.defineProperty(results, "1", {
+        enumerable: true,
+        get: () => {
+          accessor.reads.push("element");
+          throw new Error(marker());
+        },
+      });
+      results[2] = later;
+      return results as ResultSource[];
+    },
+  };
+  return [number, accessor];
+}
+
 describe("executeCall", () => {
   test("a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called", async () => {
     const execute = mock(async () => answerOf([]));
@@ -341,7 +370,7 @@ describe("executeCall", () => {
       explainPlan: answer.explainPlan,
       release: expect.any(Function),
     });
-    expect((record as { readonly warnings: unknown }).warnings).toBe(answer.warnings);
+    expect((record as { readonly warnings: unknown }).warnings).not.toBe(answer.warnings);
     expect(first.seen).toEqual({ pulls: 1, closes: 1 });
     expect(second.seen).toEqual({ pulls: 0, closes: 1 });
 
@@ -361,6 +390,211 @@ describe("executeCall", () => {
       warnings: [],
       release: expect.any(Function),
     });
+  });
+
+  test("a malformed execution time, row count or warning list is refused at the core as the package's defect", async () => {
+    const { ports } = portsOf();
+    const refusedFor = async (over: Partial<Record<keyof ExecuteAnswer, unknown>>, rowCount?: unknown) => {
+      const first = counted([[1]]);
+      const second = counted([[2]]);
+      const source = (rowCount === undefined ? first.source : { ...first.source, rowCount }) as ResultSource;
+      const pumpLimits = mock<(answer: ExecuteAnswer) => PumpLimits>(() => LIMITS);
+      const record = await executeCall(
+        sessionOf(async () => ({ ...answerOf([source, second.source]), ...over }) as ExecuteAnswer).session,
+        requestOf(),
+        contextOf(),
+        pumpLimits,
+        ports,
+      );
+      expect([first.seen, second.seen]).toEqual([
+        { pulls: 0, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+      expect(pumpLimits.mock.calls).toHaveLength(0);
+      return record;
+    };
+    const refused = (...pointers: string[]): ExecuteRecord => ({
+      kind: "refused",
+      called: true,
+      refusals: pointers.map((pointer) => ({ rule: "execute-answer-unreadable", pointer })),
+    });
+
+    expect(await refusedFor({ executionTimeMs: -1 })).toEqual(refused("/executionTimeMs"));
+    expect(await refusedFor({ executionTimeMs: Number.NaN })).toEqual(refused("/executionTimeMs"));
+    expect(await refusedFor({}, 1.5)).toEqual(refused("/results/0/rowCount"));
+    expect(await refusedFor({ warnings: marker() })).toEqual(refused("/warnings"));
+    expect(await refusedFor({ warnings: [{ message: 1 }] })).toEqual(refused("/warnings/0/message"));
+    expect(await refusedFor({ executionTimeMs: "1", warnings: null }, -1)).toEqual(
+      refused("/results/0/rowCount", "/executionTimeMs", "/warnings"),
+    );
+
+    // A result list that is not a list holds no source to close.
+    const notAList = await executeCall(
+      sessionOf(async () => ({ ...answerOf([]), results: marker() }) as unknown as ExecuteAnswer).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(notAList).toEqual(refused("/results"));
+  });
+
+  test("a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list", async () => {
+    const { ports } = portsOf();
+    const closeError = new Error(marker());
+    const failingClose: ResultSource = {
+      columns: [{ name: "v" }],
+      next: async () => ({ rows: [], done: true }),
+      close: () => {
+        throw closeError;
+      },
+    };
+    const other = counted([[1]]);
+    // A close that fails rides on the refused record, never thrown past it.
+    const failed = await executeCall(
+      sessionOf(async () => answerOf([failingClose, other.source], { executionTimeMs: -1 })).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(failed).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "execute-answer-unreadable", pointer: "/executionTimeMs" }],
+      closeFailures: [closeError],
+    });
+    expect(other.seen).toEqual({ pulls: 0, closes: 1 });
+
+    const warning = { message: marker(), code: 7, severity: marker() };
+    const answer = answerOf([counted([[1]], 1).source], { warnings: [warning], executionTimeMs: 2.5 });
+    const record = await executeCall(
+      sessionOf(async () => answer).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    if (record.kind !== "page") throw new Error(`The execute answered ${record.kind}, not a page.`);
+    record.release();
+    expect([record.executionTimeMs, record.rowCount, record.warnings]).toEqual([2.5, 1, [warning]]);
+    expect(record.warnings).not.toBe(answer.warnings);
+    expect(record.warnings[0]).not.toBe(warning);
+    expect(Object.isFrozen(record.warnings) && Object.isFrozen(record.warnings[0])).toBe(true);
+  });
+
+  test("closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed", async () => {
+    const { ports } = portsOf();
+    const later = counted([[1]]);
+    const notAnObject = await executeCall(
+      sessionOf(async () => answerOf([42, later.source] as unknown as ResultSource[])).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(notAnObject).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "execute-answer-unreadable", pointer: "/results/0/columns" }],
+    });
+    expect(later.seen).toEqual({ pulls: 0, closes: 1 });
+
+    const reads: string[] = [];
+    const results: unknown[] = [];
+    Object.defineProperty(results, "0", {
+      enumerable: true,
+      get: () => {
+        reads.push("element");
+        throw new Error(marker());
+      },
+    });
+    results[1] = later.source;
+    const accessor = await executeCall(
+      sessionOf(async () => answerOf(results as ResultSource[])).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(accessor).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "execute-answer-unreadable", pointer: "/results/0/columns" }],
+    });
+    expect(reads).toEqual([]);
+    expect(later.seen).toEqual({ pulls: 0, closes: 2 });
+
+    // The walk ends at the first hole, as every loop over a provider's array does, so its length bounds no work.
+    const holed: unknown[] = [];
+    holed.length = 2 ** 32 - 1;
+    holed[1] = later.source;
+    const sparse = await executeCall(
+      sessionOf(async () => answerOf(holed as ResultSource[])).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(sparse).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "execute-answer-unreadable", pointer: "/results/0/columns" }],
+    });
+    expect(later.seen).toEqual({ pulls: 0, closes: 2 });
+  });
+
+  test("closing the other results of a page never throws past the page: a later element that is no object or an accessor is never read or closed", async () => {
+    const { ports } = portsOf();
+    for (const shape of laterElementShapes()) {
+      const first = counted([[1]], 1);
+      const later = counted([[2]]);
+      const record = await executeCall(
+        sessionOf(async () => answerOf(shape.results(first.source, later.source))).session,
+        requestOf(),
+        contextOf(),
+        () => LIMITS,
+        ports,
+      );
+      if (record.kind !== "page") throw new Error(`${shape.name}: the execute answered ${record.kind}, not a page.`);
+      record.release();
+      expect([shape.name, record.page.rows, record.resultCount]).toEqual([shape.name, [[1]], 3]);
+      expect([shape.name, shape.reads]).toEqual([shape.name, []]);
+      expect([shape.name, first.seen, later.seen]).toEqual([
+        shape.name,
+        { pulls: 1, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+    }
+  });
+
+  test("closing an aborted run's results never throws past the stop: an element that is no object or an accessor is never read or closed", async () => {
+    for (const shape of laterElementShapes()) {
+      const first = counted([[1]]);
+      const later = counted([[2]]);
+      const answer = held<ExecuteAnswer>();
+      const fx = sessionOf(() => answer.promise);
+      const { ports, late } = portsOf();
+      const controller = new AbortController();
+
+      const running = executeCall(fx.session, requestOf(), contextOf(controller), () => LIMITS, ports);
+      await fx.executeCalled;
+      controller.abort();
+      const stopped = await running;
+      if (stopped.kind !== "stopped")
+        throw new Error(`${shape.name}: the execute answered ${stopped.kind}, not a stop.`);
+      answer.resolve(answerOf(shape.results(first.source, later.source)));
+      await stopped.settled;
+      await turn();
+
+      expect([shape.name, late]).toEqual([shape.name, []]);
+      expect([shape.name, shape.reads]).toEqual([shape.name, []]);
+      expect([shape.name, first.seen, later.seen]).toEqual([
+        shape.name,
+        { pulls: 0, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+    }
   });
 
   test("a row no page can hold is refused as a record, and the source is closed once", async () => {

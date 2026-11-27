@@ -17,6 +17,9 @@ export async function POST(req: NextRequest) {
   // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
   // provider ran.
   let scrub: ProviderTextScrub | undefined;
+  // Whether the failure the `catch` below answers was logged already, as a provider package's open failure
+  // (`testConnection`), so the answer writes no second line.
+  const failure = { logged: false };
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -43,9 +46,10 @@ export async function POST(req: NextRequest) {
         engine,
         editorExecutionContext(guard.session, connection),
         "api/db/test-connection",
+        failure,
       ),
     );
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/test-connection", scrub });
+    return createErrorResponse(error, { route: "api/db/test-connection", scrub, logged: failure.logged });
   }
 }

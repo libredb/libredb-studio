@@ -88,6 +88,7 @@ const child = boundedChild({
         deps.servedEngineRecord(connection.type),
         { allowExternalFileAccess: false },
         "bounds",
+        { logged: false },
         // The test's deadline, the engine's connect budget, ends 50 ms from now.
         Date.now() - deps.connectBudgetFor("postgres") + 50,
       );

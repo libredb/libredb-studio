@@ -42,20 +42,24 @@ export type { ApiErrorResponse } from "./error-body";
  * answers a fixed sentence of Studio's keeps it. Given a scrub, a database error's body also carries the `sqlState`
  * of its error record (`errorRecord`), which the record holds only when the error's text was not withheld, so the body
  * is the record's fields beside its texts; without a scrub no body carries one, because the record's string fields
- * are only built through the scrub.
+ * are only built through the scrub. `logged` is true for a failure its caller logged already, a provider package's
+ * failure `packageFailureAnswer` answered (src/lib/api/package-errors.ts): no branch then writes its line, so the
+ * failure is logged once, and every branch answers the same body.
  */
 export function createErrorResponse(
   error: unknown,
-  context?: { route?: string; scrub?: ProviderTextScrub },
+  context?: { route?: string; scrub?: ProviderTextScrub; logged?: boolean },
 ): NextResponse<ApiErrorResponse> {
   const route = context?.route;
+  /** Whether this failure gets its branch's log line: not when its caller logged it already. */
+  const logs = context?.logged !== true;
   const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
   /** The error's own text for an answer, or the withheld error's message when the detection found a credential. */
   const answered = (text: string): string => withheld?.message ?? text;
 
   // --- Seed Connection Error ---
   if (error instanceof SeedConnectionError) {
-    logger.warn("Seed connection error", { route, statusCode: error.statusCode });
+    if (logs) logger.warn("Seed connection error", { route, statusCode: error.statusCode });
     // A refusal that names its own code keeps it (the custom-connections switch); every other one
     // takes the code its status implies, as before.
     const code =
@@ -79,7 +83,7 @@ export function createErrorResponse(
   // the generic 500, and the message - which names the variable or the path - is what
   // an operator reads to fix it.
   if (error instanceof VaultError) {
-    logger.warn("Vault reference error", { route });
+    if (logs) logger.warn("Vault reference error", { route });
     return NextResponse.json(
       { error: answered(error.message), code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
       { status: 400 },
@@ -90,7 +94,7 @@ export function createErrorResponse(
   // The client sent a connection that cannot be sealed for its place (a secret that is not text, or a record with no
   // binding). The message names the list index and the field path, never a value, and nothing was written.
   if (error instanceof ConnectionWriteRefused) {
-    logger.warn("Connection write refused", { route });
+    if (logs) logger.warn("Connection write refused", { route });
     return NextResponse.json({ error: answered(error.message), statusCode: 400 }, { status: 400 });
   }
 
@@ -98,8 +102,8 @@ export function createErrorResponse(
   const answer = databaseErrorBody(error);
   if (answer !== null) {
     const { level, message, context: logContext } = answer.log;
-    if (level === "error") logger.error(message, withheld ?? error, { route, ...logContext });
-    else logger[level](message, { route, ...logContext });
+    if (logs && level === "error") logger.error(message, withheld ?? error, { route, ...logContext });
+    else if (logs) logger[level](message, { route, ...logContext });
     const texts = withheld === null ? answer.body : withWithheldText(answer.body, withheld.message);
     const sqlState = context?.scrub === undefined ? undefined : errorRecord(context.scrub, error).sqlState;
     const body = sqlState === undefined ? texts : { ...texts, sqlState };
@@ -108,7 +112,7 @@ export function createErrorResponse(
 
   // --- LLM: Safety ---
   if (error instanceof LLMSafetyError) {
-    logger.warn("LLM safety filter triggered", { route, provider: error.provider });
+    if (logs) logger.warn("LLM safety filter triggered", { route, provider: error.provider });
     return NextResponse.json(
       { error: "The prompt was blocked by safety filters.", code: ApiErrorCode.LLM_SAFETY, statusCode: 400 },
       { status: 400 },
@@ -117,7 +121,7 @@ export function createErrorResponse(
 
   // --- LLM: Auth ---
   if (error instanceof LLMAuthError) {
-    logger.warn("LLM auth error", { route, provider: error.provider });
+    if (logs) logger.warn("LLM auth error", { route, provider: error.provider });
     return NextResponse.json(
       { error: "Invalid API key. Please check your configuration.", code: ApiErrorCode.LLM_AUTH, statusCode: 401 },
       { status: 401 },
@@ -126,7 +130,7 @@ export function createErrorResponse(
 
   // --- LLM: Rate Limit ---
   if (error instanceof LLMRateLimitError) {
-    logger.warn("LLM rate limit", { route, provider: error.provider });
+    if (logs) logger.warn("LLM rate limit", { route, provider: error.provider });
     return NextResponse.json(
       {
         error: "AI usage limit reached. Please try again later or check your billing status.",
@@ -140,7 +144,7 @@ export function createErrorResponse(
 
   // --- LLM: Config ---
   if (error instanceof LLMConfigError) {
-    logger.warn("LLM config error", { route, provider: error.provider });
+    if (logs) logger.warn("LLM config error", { route, provider: error.provider });
     // Missing credentials may be intentional; a malformed model, URL or provider is still a setup error.
     const code = error.reason === "missing_credentials" ? ApiErrorCode.LLM_UNCONFIGURED : ApiErrorCode.LLM_CONFIG;
     return NextResponse.json({ error: answered(error.message), code, statusCode: 503 }, { status: 503 });
@@ -148,7 +152,7 @@ export function createErrorResponse(
 
   // --- LLM: Stream ---
   if (error instanceof LLMStreamError) {
-    logger.error("LLM stream error", withheld ?? error, { route, provider: error.provider });
+    if (logs) logger.error("LLM stream error", withheld ?? error, { route, provider: error.provider });
     if (isContextLengthError(error)) {
       return NextResponse.json(
         {
@@ -169,7 +173,7 @@ export function createErrorResponse(
   // --- LLM: generic LLMError (base class catch-all) ---
   if (error instanceof LLMError) {
     const status = error.statusCode ?? 500;
-    logger.error("LLM error", withheld ?? error, { route, provider: error.provider });
+    if (logs) logger.error("LLM error", withheld ?? error, { route, provider: error.provider });
     return NextResponse.json(
       { error: answered(error.message), code: ApiErrorCode.LLM_ERROR, statusCode: status },
       { status },
@@ -200,7 +204,7 @@ export function createErrorResponse(
   }
 
   // --- Generic Error ---
-  logger.error("Unhandled error", withheld ?? error, { route });
+  if (logs) logger.error("Unhandled error", withheld ?? error, { route });
   const body = internalErrorBody(error);
   return NextResponse.json(withheld === null ? body : withWithheldText(body, withheld.message), { status: 500 });
 }

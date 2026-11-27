@@ -380,3 +380,31 @@ describe("createErrorResponse with the connection's scrub", () => {
     });
   });
 });
+
+describe("createErrorResponse for a failure its caller logged already", () => {
+  test("writes no log line on any branch, and answers the same body as it does without", async () => {
+    const lines = (["debug", "info", "warn", "error"] as const).map((level) =>
+      spyOn(logger, level).mockImplementation(() => undefined),
+    );
+    try {
+      const failures = [
+        new ConnectionError("The provider package's open failed (INTERNAL_ERROR); the server's log holds its words."),
+        new Error("The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words."),
+        new QueryCancelledError("The query was cancelled."),
+        new LLMAuthError("refused", "openai"),
+        new LLMStreamError("broken", "openai"),
+        new LLMError("failed", "openai"),
+      ];
+      for (const failure of failures) {
+        const logged = createErrorResponse(failure, { route: "api/db/query", logged: true });
+        expect(lines.flatMap((spy) => spy.mock.calls)).toEqual([]);
+        const unlogged = createErrorResponse(failure, { route: "api/db/query" });
+        expect(lines.flatMap((spy) => spy.mock.calls).length).toBeGreaterThan(0);
+        for (const spy of lines) spy.mockClear();
+        expect([logged.status, await logged.json()]).toEqual([unlogged.status, await unlogged.json()]);
+      }
+    } finally {
+      for (const spy of lines) spy.mockRestore();
+    }
+  });
+});
