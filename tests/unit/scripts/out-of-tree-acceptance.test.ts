@@ -326,9 +326,8 @@ describe("the out-of-tree fixture", () => {
       "/engines/0/facets/agentReadings": [],
       "/engines/0/agent/statementLanguage": null,
       "/engines/0/agent/overlay": null,
-      "/engines/0/sqlText/readsSqlText": true,
-      "/engines/0/sqlText/grammar/confirmExemptForms": [],
-      "/engines/0/sqlText/redaction/kind": "none",
+      // No SQL text: Studio reads every SQL text claim at its restrictive value (S-3).
+      "/engines/0/sqlText": null,
       "/engines/0/safeguards/writePaths/editor/reach": "open",
       "/engines/0/safeguards/writePaths/objectEdit/reach": "open",
       "/engines/0/safeguards/writePaths/maintenance/reach": "open",
@@ -356,6 +355,20 @@ describe("the out-of-tree fixture", () => {
     };
     forced("policy", "readRootsRequired", "read-roots-field-undeclared", "/engines/0/policy/readRootsRequired");
     forced("mcp", "agentCredentialRequired", "agent-credential-form-missing", "/engines/0/mcp/agentCredentialRequired");
+  });
+
+  test("its manifest states no SQL-family member: sqlText, sqlWriting, migrationDdl and sqlGenerators are null", () => {
+    const engine = (JSON.parse(manifestText) as { engines: Record<string, unknown>[] }).engines[0] as Record<
+      string,
+      unknown
+    >;
+    for (const member of ["sqlText", "sqlWriting", "migrationDdl", "sqlGenerators"]) {
+      expect([member, engine[member]]).toEqual([member, null]);
+    }
+    // So it names no type name of another engine, as an SQL writing segment would.
+    for (const name of ["datetime64", "varchar2", "nvarchar", "LowCardinality"]) {
+      expect([name, manifestText.includes(name)]).toEqual([name, false]);
+    }
   });
 
   test("its engine id is named in no file under src, bin, scripts, vscode-extension/src or packages", () => {
@@ -605,7 +618,7 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(saveProblems({ status: 200, body: SAMPLES.saveBody })).toEqual([]);
   });
 
-  test("an answer to a fixture statement must be marked unconfirmed: no register row reviews the fixture's grammar, so the gate asks about every statement, and the default advisory mode runs a request that sends no confirmation field", () => {
+  test("an answer to a fixture statement must be marked unconfirmed: the fixture states no SQL text, so no register row reviews a grammar of its engine, the gate asks about every statement, and the default advisory mode runs a request that sends no confirmation field", () => {
     const list = fixture.acceptance.statements[0] as (typeof fixture.acceptance.statements)[number];
     expect(unconfirmedProblems({ status: 200, body: SAMPLES.listBody }, list)).toEqual([]);
     const unmarked: Record<string, unknown> = { ...SAMPLES.listBody };

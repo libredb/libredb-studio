@@ -26,11 +26,11 @@
  * 5. Start the standalone server with LIBREDB_PROVIDERS_DIR set, sign in through the API, save a connection of the
  *    fixture engine (`POST /api/db/test-connection`, what the connection dialog's Save posts), run each statement of
  *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, each answer marked unconfirmed, and that an
- *    explain request is refused by name, 501. No register row reviews the fixture's grammar, so the confirmation gate
- *    asks about every statement of its engine, and the default advisory mode runs a request that sends no
- *    confirmation field and marks its answer unconfirmed. The statement acceptance.json lists as refused, which the
- *    fixture refuses in its own words, is answered with Studio's sentence naming its code and holds none of the
- *    package's words (clause C-112).
+ *    explain request is refused by name, 501. The fixture states no SQL text, so no register row reviews a grammar of
+ *    its engine, the confirmation gate asks about every statement of its engine, and the default advisory mode runs a
+ *    request that sends no confirmation field and marks its answer unconfirmed. The statement acceptance.json lists as
+ *    refused, which the fixture refuses in its own words, is answered with Studio's sentence naming its code and holds
+ *    none of the package's words (clause C-112).
  * 6. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement.
