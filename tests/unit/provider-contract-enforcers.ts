@@ -1093,7 +1093,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a data-declared language's statement is admitted or refused by its declared request form, with its declared sentence and code, and never quoted",
       ],
       "tests/unit/lib/agent/declared-language-pack.test.ts": [
-        "a data-declared language's client and server facets are composed from its data, with no module of its own",
+        "a data-declared language's client, server and MCP facets are composed from its data, with no module of its own",
         "a declared text naming a placeholder Studio does not fill is refused by name",
       ],
       "tests/unit/db/language-digest.test.ts": [

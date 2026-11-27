@@ -1,8 +1,8 @@
 /**
  * The client facet of a statement language an engine declares as data (`statementLanguageData.agent` of its
  * declaration), composed from the language's declared text, so the language needs no module of its own under
- * `languages/<id>/`. Its server facet is `declared-server.ts`'s; the registries in `client.ts`, `server.ts`, `index.ts`
- * and `mcp.ts` hold both beside the module languages.
+ * `languages/<id>/`. Its server facet is `declared-server.ts`'s and its MCP facet `declared-mcp.ts`'s; the registries
+ * in `client.ts`, `server.ts` and `index.ts` hold the first two, and `mcp.ts` the third, beside the module languages.
  *
  * Client-safe: it imports the SDK's types only, never its validator, the leaf `workflow-tool-sets.ts` and types.
  *

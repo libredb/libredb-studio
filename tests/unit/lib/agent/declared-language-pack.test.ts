@@ -1,27 +1,40 @@
 /**
  * A statement language an engine declares as data is composed from its data alone: one engine-neutral composer builds
- * its client facet (src/lib/agent/languages/declared-client.ts) and its server facet
- * (src/lib/agent/languages/declared-server.ts) from the language's declared text and request form, byte for byte as
- * declared, with the members Studio fixes for every declared JSON request language. Read here on the crafted `acmeread`
+ * its client facet (src/lib/agent/languages/declared-client.ts), its server facet
+ * (src/lib/agent/languages/declared-server.ts) and its MCP facet (src/lib/agent/languages/declared-mcp.ts) from the
+ * language's declared text, request form and MCP statement tool, byte for byte as declared, with the members Studio
+ * fixes for every declared JSON request language. Read here on the crafted `acmeread`
  * (tests/helpers/declared-agent-language.ts), whose every text carries a marker generated at run time.
  */
 import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  AGENT_MCP_TEXT_FILLS,
   AGENT_TEXT_FILLS,
   type AgentLanguageText,
+  type AgentMcpText,
   type AgentText,
   compileManifestValidator,
 } from "@libredb/provider-sdk/manifest";
+import type { z } from "zod";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { composeDeclaredClientPack, fillAgentText } from "@/lib/agent/languages/declared-client";
+import { AGENT_LANGUAGE_COPY, type AgentDeclaredLanguageId } from "@/lib/agent/agent-manifest";
+import {
+  composeDeclaredClientPack,
+  type DeclaredAgentLanguage,
+  fillAgentText,
+} from "@/lib/agent/languages/declared-client";
+import { composeDeclaredMcpFacet, declaredMcpFacets } from "@/lib/agent/languages/declared-mcp";
 import { composeDeclaredServerPack } from "@/lib/agent/languages/declared-server";
+import { KAFKAREAD_MCP_FACET } from "@/lib/agent/languages/kafkaread/mcp";
+import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
+import { RABBITREAD_MCP_FACET } from "@/lib/agent/languages/rabbitread/mcp";
 import { canonicalText, OPERATIONS_TOOL_RULE } from "@/lib/agent/languages/shared";
 import { OPERATIONS_VARIANT } from "@/lib/agent/workflow-tool-sets";
 import { DECLARED_STATEMENT_LANGUAGES } from "@/lib/db/declared-statement-languages";
 import { admitDeclaredRequest, declaredRequestIdentity } from "@/lib/db/operations/declared-request-form";
-import { acmereadData, acmereadForm, acmereadText } from "../../../helpers/declared-agent-language";
+import { acmereadData, acmereadForm, acmereadMcp, acmereadText } from "../../../helpers/declared-agent-language";
 import { shippedLanguageData } from "../../../helpers/declared-language-census";
 
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
@@ -60,7 +73,7 @@ const CORPUS = [
 ];
 
 describe("the composer of a data-declared language", () => {
-  test("a data-declared language's client and server facets are composed from its data, with no module of its own", () => {
+  test("a data-declared language's client, server and MCP facets are composed from its data, with no module of its own", () => {
     const data = acmereadData();
     const agent = data.agent as NonNullable<typeof data.agent>;
     const { text } = agent;
@@ -156,6 +169,51 @@ describe("the composer of a data-declared language", () => {
     ]) {
       expect(Object.isFrozen(composed)).toBe(true);
     }
+
+    // The MCP facet: the declared tool, flag and words, and the members Studio fixes.
+    const mcp = agent.mcp as NonNullable<typeof agent.mcp>;
+    const facet = composeDeclaredMcpFacet(agent);
+    if (facet?.fence !== "language-admission") throw new Error("acmeread states a tool fenced by its request form");
+    expect<string>(facet.tool).toBe("run_acme_read");
+    expect(facet.title).toBe(mcp.text.title as string);
+    expect(facet.holdsNoTables).toBe(true);
+    expect(facet.describe({ engines: "E", limits: "L" })).toBe(
+      written(mcp.text.description, { engines: "E", limits: "L" }),
+    );
+    expect(facet.describe({ engines: "E", limits: "L" })).toEndWith(" Runs on E. L.");
+    expect(facet.words.fewerFields).toBe(mcp.text.fewerFields as string);
+    expect(facet.words.rowOverCap).toBe(mcp.text.rowOverCap as string);
+    expect(facet.words.readPast(12, "max_rows", "x")).toBe(written(mcp.text.readPast, { shown: "12" }));
+    expect(facet.words.readPast(12, "result_bytes", "y")).toBe(written(mcp.text.readPast, { shown: "12" }));
+    // What a refused request never reached is said once, in the text's copy.
+    expect(facet.words.reached).toBe(client.copy.reached);
+    expect(issuesOf(facet.statementInput, "")).toEqual([["too_small", "statement cannot be empty"]]);
+    expect(issuesOf(facet.statementInput, '{"read":"topics"}')).toEqual([]);
+    // Each member Studio fixes is what kafkaread's and rabbitread's modules state, member for member.
+    for (const module of [KAFKAREAD_MCP_FACET, RABBITREAD_MCP_FACET] as readonly AgentLanguageMcpFacet[]) {
+      for (const member of ["takesDatabase", "strictInput", "paging", "fence"] as const) {
+        expect<{ member: string; value: unknown }>({ member, value: facet[member] }).toEqual({
+          member,
+          value: module[member],
+        });
+      }
+      for (const member of ["leastTimeout", "answersWarnings", "withholdsDatabase"]) {
+        expect({ member, stated: member in facet }).toEqual({ member, stated: member in module });
+      }
+      for (const value of ["", "x", 5, null]) {
+        expect(issuesOf(facet.statementInput, value)).toEqual(issuesOf(module.statementInput, value));
+      }
+    }
+    for (const composed of [facet, facet.words]) expect(Object.isFrozen(composed)).toBe(true);
+    expect(composeDeclaredMcpFacet({ ...agent, mcp: null })).toBeNull();
+
+    // Every module tool fenced by its language's admission says what a refused statement never reached as its
+    // language's copy does, so the composed facet's single source is the one every module language keeps.
+    for (const [language, module] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+      if (module?.fence !== "language-admission") continue;
+      const copy = AGENT_LANGUAGE_COPY[language as keyof typeof AGENT_LANGUAGE_COPY];
+      expect({ language, reached: module.words.reached }).toEqual({ language, reached: copy.reached });
+    }
   });
 
   test("a declared text naming a placeholder Studio does not fill is refused by name", () => {
@@ -234,6 +292,80 @@ describe("the composer of a data-declared language", () => {
         },
       ],
     });
+
+    // The MCP statement tool's texts, by the same rule: each filled with exactly its own values, and the data naming
+    // any other refused at the fill's pointer.
+    const mcpAccessors: Readonly<Record<string, (text: AgentMcpText) => string>> = {
+      title: (t) => mcpFacetOf(t).title,
+      description: (t) => mcpFacetOf(t).describe({ engines: "E", limits: "L" }),
+      fewerFields: (t) => mcpWordsOf(t).fewerFields,
+      readPast: (t) => mcpWordsOf(t).readPast(12, "max_rows", "x"),
+      rowOverCap: (t) => mcpWordsOf(t).rowOverCap,
+    };
+    const mcpValues: Readonly<Record<string, string>> = { engines: "E", limits: "L", shown: "12" };
+    const everyValue = [...every, ...Object.keys(mcpValues)];
+    expect(Object.keys(mcpAccessors)).toEqual(Object.keys(AGENT_MCP_TEXT_FILLS));
+    for (const [name, names] of Object.entries(AGENT_MCP_TEXT_FILLS)) {
+      const read = mcpAccessors[name] as (text: AgentMcpText) => string;
+      const marker = randomUUID();
+      const filled = withMcpText(name, [marker, ...names.flatMap((fill) => ["|", { fill }])]);
+      expect(read(filled)).toBe([marker, ...names.map((fill) => `|${mcpValues[fill]}`)].join(""));
+      for (const other of everyValue.filter((fill) => !(names as readonly string[]).includes(fill))) {
+        expect(() => read(withMcpText(name, [marker, { fill: other }]))).toThrow(
+          `The agent text names the fill "${other}", which Studio was not handed for it.`,
+        );
+      }
+    }
+    engine.statementLanguageData = acmereadData();
+    engine.statementLanguageData.agent.mcp.text.readPast = ["read past ", { fill: "rows" }];
+    expect(validator.validateEngine(engine)).toEqual({
+      admitted: false,
+      refusals: [
+        {
+          code: "PROVIDER_SCHEMA_INVALID",
+          rule: "agent-text-fill-unknown",
+          pointer: "/statementLanguageData/agent/mcp/text/readPast/1/fill",
+        },
+      ],
+    });
+  });
+
+  test("a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused at load by name", () => {
+    const moduleTools = Object.values(AGENT_LANGUAGE_MCP_FACETS).flatMap((facet) =>
+      facet === null ? [] : [facet.tool],
+    );
+    expect(moduleTools).toContain("run_kafka_read");
+    expect(moduleTools).toContain("run_read_query");
+    const declaring = (id: string, tool: string | null): DeclaredAgentLanguage => {
+      const agent = acmereadData().agent as NonNullable<ReturnType<typeof acmereadData>["agent"]>;
+      return {
+        id: id as AgentDeclaredLanguageId,
+        agent: { ...agent, mcp: tool === null ? null : { ...acmereadMcp(), tool } },
+      };
+    };
+
+    const facets = declaredMcpFacets(
+      [declaring("acmeread", "run_acme_read"), declaring("acmeplain", null)],
+      moduleTools,
+    );
+    expect(Object.keys(facets)).toEqual(["acmeread", "acmeplain"]);
+    expect<string | undefined>(facets.acmeread?.tool).toBe("run_acme_read");
+    expect(facets.acmeplain).toBeNull();
+    expect(Object.isFrozen(facets)).toBe(true);
+    // Two languages with no tool clash on nothing.
+    expect(declaredMcpFacets([declaring("acmeone", null), declaring("acmetwo", null)], moduleTools)).toEqual({
+      acmeone: null,
+      acmetwo: null,
+    });
+
+    for (const tool of ["run_kafka_read", "run_read_query"]) {
+      expect(() => declaredMcpFacets([declaring("acmeread", tool)], moduleTools)).toThrow(
+        `The MCP statement tool "${tool}" is declared as data and is also a module language's tool of this build.`,
+      );
+    }
+    expect(() =>
+      declaredMcpFacets([declaring("acmeread", "run_acme_read"), declaring("acmeother", "run_acme_read")], moduleTools),
+    ).toThrow('The MCP statement tool "run_acme_read" is declared as data twice.');
   });
 
   test("fillAgentText writes a text's parts as declared, each fill replaced by its value", () => {
@@ -306,6 +438,33 @@ describe("the composer of a data-declared language", () => {
 /** The server facet composed from `text` and the crafted form. */
 function serverOf(text: AgentLanguageText) {
   return composeDeclaredServerPack("acmeread", { request: acmereadForm(), text, mcp: null }, "x");
+}
+
+/** The `[code, message]` of each issue `schema` finds in `value`, none where it admits the value. */
+function issuesOf(schema: z.ZodType, value: unknown): readonly (readonly [string, string])[] {
+  return (schema.safeParse(value).error?.issues ?? []).map((issue) => [issue.code, issue.message] as const);
+}
+
+/** The MCP facet composed from the crafted agent part with its MCP texts `text`. */
+function mcpFacetOf(text: AgentMcpText) {
+  const agent = acmereadData().agent as NonNullable<ReturnType<typeof acmereadData>["agent"]>;
+  const facet = composeDeclaredMcpFacet({ ...agent, mcp: { ...acmereadMcp(), text } });
+  if (facet === null) throw new Error("the crafted agent part states an MCP statement tool");
+  return facet;
+}
+
+/** The words of the MCP facet composed from the crafted agent part with its MCP texts `text`. */
+function mcpWordsOf(text: AgentMcpText) {
+  const facet = mcpFacetOf(text);
+  if (facet.fence !== "language-admission") throw new Error("a declared tool is fenced by its request form");
+  return facet.words;
+}
+
+/** The crafted MCP texts with the text `name` replaced by `parts`. */
+function withMcpText(name: string, parts: AgentText): AgentMcpText {
+  const text = { ...acmereadMcp().text } as unknown as Record<string, AgentText>;
+  text[name] = parts;
+  return text as unknown as AgentMcpText;
 }
 
 /** The crafted text with its text `group`.`name` replaced by `parts`. */
