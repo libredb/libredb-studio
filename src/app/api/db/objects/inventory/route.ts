@@ -15,6 +15,7 @@ import {
   type ObjectInventory,
 } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import {
   type ContainerEnumeration,
   type ContainerSource,
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
     req,
     "api/db/objects/inventory",
     async (provider, body, ctx): Promise<ObjectInventory> => {
-      const tree = objectTree(provider, req.signal, ctx.route);
+      const tree = objectTree(providerTreeTarget(provider), req.signal, ctx.route);
       const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
       const named = optionalContainerList(body, "containers");
       named?.forEach((container) => assertContainerAddress(tree.objectModel, provider.type, "containers", container));

@@ -8,6 +8,7 @@ import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseErr
 import { cancelEditorRun, checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-token";
@@ -423,7 +424,9 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await treeProviderOf(record), signal, METHODS.listContainers).listContainers(path),
+          objectTree(providerTreeTarget(await treeProviderOf(record)), signal, METHODS.listContainers).listContainers(
+            path,
+          ),
         ),
       );
     },
@@ -438,7 +441,11 @@ export function createHandlers(
         answeringFor(record.connection, async () =>
           scrubKindCounts(
             providerTextScrub(record.connection, "any"),
-            await objectTree(await treeProviderOf(record), signal, METHODS.countObjects).countObjects(container),
+            await objectTree(
+              providerTreeTarget(await treeProviderOf(record)),
+              signal,
+              METHODS.countObjects,
+            ).countObjects(container),
           ),
         ),
       );
@@ -451,7 +458,10 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await treeProviderOf(record), signal, METHODS.listObjects).listObjects(container, kind),
+          objectTree(providerTreeTarget(await treeProviderOf(record)), signal, METHODS.listObjects).listObjects(
+            container,
+            kind,
+          ),
         ),
       );
     },
@@ -467,7 +477,11 @@ export function createHandlers(
         answeringFor(record.connection, async () =>
           scrubObjectDetail(
             providerTextScrub(record.connection, "any"),
-            await objectTree(await treeProviderOf(record), signal, METHODS.describeObject).describeObject(path, kind),
+            await objectTree(
+              providerTreeTarget(await treeProviderOf(record)),
+              signal,
+              METHODS.describeObject,
+            ).describeObject(path, kind),
           ),
         ),
       );
@@ -597,7 +611,7 @@ export function createHandlers(
           const capabilities = provider.getCapabilities();
           let columns: readonly ColumnSchema[] | undefined;
           if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
-            const tree = objectTree(provider, signal, METHODS.selectStatement);
+            const tree = objectTree(providerTreeTarget(provider), signal, METHODS.selectStatement);
             columns = (await tree.describeObject(object.path, object.kind)).columns;
           }
           try {

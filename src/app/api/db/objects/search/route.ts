@@ -9,6 +9,7 @@ import {
   resolveKinds,
 } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { enumerateContainers, kindsByContainer } from "@/lib/db/container-walk";
 import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import { applicableKinds } from "@/lib/db/object-kinds";
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     "api/db/objects/search",
     async (provider, body, context) => {
       const term = requireString(body, "term").toLowerCase();
-      const tree = objectTree(provider, req.signal, context.route);
+      const tree = objectTree(providerTreeTarget(provider), req.signal, context.route);
       const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
 
       assertNotWholeServer(provider);

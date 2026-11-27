@@ -74,6 +74,7 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runComposedStatement } from "@/lib/api/composed-statement";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
@@ -2825,12 +2826,15 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // was granted, bounds is THE RUN and not the database. Every read is a host core tree call
         // under it (`grantedObjectTree`); the read in flight at the deadline is not cancelled and
         // counts against the run's concurrency until it settles, and the walk sends no further read.
-        const tree = grantedObjectTree(provider, {
+        const target = providerTreeTarget(
+          provider,
+          context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance },
+        );
+        const tree = grantedObjectTree(target, {
           deadline: Date.now() + budget.statementTimeoutMs,
           timeRefusal: () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
           route: OBJECT_INVENTORY_ROUTE,
           holdUntilSettled,
-          ...(context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance }),
         });
         phase.statementSent = true;
 

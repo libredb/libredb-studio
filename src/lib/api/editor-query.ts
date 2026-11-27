@@ -200,9 +200,9 @@ export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now:
 /**
  * When the execute call of a run that starts at `now` under the statement timeout `timeout` must have answered: the
  * body of `executeDeadline`, which `runEditorQuery` reads for a provider package's session with its connection's own
- * timeout.
+ * timeout, and the object tree's reads for their target's timeout (src/lib/api/object-tree.ts).
  */
-function executeDeadlineFor(timeout: number, now: number): number {
+export function executeDeadlineFor(timeout: number, now: number): number {
   return now + Math.min(timeout + EXECUTE_SLACK_MS, TIMER_MAX_MS);
 }
 

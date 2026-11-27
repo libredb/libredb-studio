@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { assertContainerDepth, handleObjectRequest, optionalStringArray } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
     "api/db/objects/containers",
     async (provider, body, context) => {
       const parent = optionalStringArray(body, "parent");
-      const tree = objectTree(provider, req.signal, context.route);
+      const tree = objectTree(providerTreeTarget(provider), req.signal, context.route);
       if (parent !== undefined) assertContainerDepth(tree.objectModel, provider.type, "parent", parent);
       return tree.listContainers(parent);
     },

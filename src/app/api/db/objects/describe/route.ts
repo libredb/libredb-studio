@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, requireObjectPath, requireString } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { scrubObjectDetail } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
       const kind = requireString(body, "kind");
       return scrubObjectDetail(
         context.scrub,
-        await objectTree(provider, req.signal, context.route).describeObject(path, kind),
+        await objectTree(providerTreeTarget(provider), req.signal, context.route).describeObject(path, kind),
       );
     },
     { session: "metadata" },

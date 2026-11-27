@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { assertContainerAddress, handleObjectRequest, requireStringArray } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { scrubKindCounts } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
     "api/db/objects/counts",
     async (provider, body, context) => {
       const container = requireStringArray(body, "container");
-      const tree = objectTree(provider, req.signal, context.route);
+      const tree = objectTree(providerTreeTarget(provider), req.signal, context.route);
       assertContainerAddress(tree.objectModel, provider.type, "container", container);
       return scrubKindCounts(context.scrub, await tree.countObjects(container));
     },
