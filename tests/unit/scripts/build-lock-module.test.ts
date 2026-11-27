@@ -101,6 +101,43 @@ describe("the lock command's module", () => {
     expect(fs.existsSync(outfile)).toBe(false);
   });
 
+  test("the build refuses by name an acorn license text holding the end of a comment", async () => {
+    const root = path.join(scratch, "comment-end");
+    const acorn = path.join(root, "node_modules", "acorn");
+    fs.mkdirSync(acorn, { recursive: true });
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "node_modules", "acorn", "package.json"),
+      path.join(acorn, "package.json"),
+    );
+    fs.writeFileSync(path.join(acorn, "LICENSE"), "MIT License\n\nA line that ends a comment */ early.\n");
+    const outfile = path.join(root, "out.mjs");
+    await expect(buildLockModule({ root, outfile })).rejects.toThrow(
+      `${path.join(acorn, "LICENSE")} holds "*/", so it cannot be written inside a comment.`,
+    );
+    expect(fs.existsSync(outfile)).toBe(false);
+  });
+
+  test("the build names a scoped package it refuses whole, scope and name", async () => {
+    const root = path.join(scratch, "scoped");
+    const acorn = path.join(root, "node_modules", "acorn");
+    fs.mkdirSync(acorn, { recursive: true });
+    for (const file of ["package.json", "LICENSE"]) {
+      fs.copyFileSync(path.join(REPOSITORY_ROOT, "node_modules", "acorn", file), path.join(acorn, file));
+    }
+    const scoped = path.join(root, "node_modules", "@acme", "probe");
+    fs.mkdirSync(scoped, { recursive: true });
+    fs.writeFileSync(
+      path.join(scoped, "package.json"),
+      JSON.stringify({ name: "@acme/probe", version: "1.0.0", type: "module", main: "index.js" }),
+    );
+    fs.writeFileSync(path.join(scoped, "index.js"), "export const probe = 1;\n");
+    const outfile = path.join(root, "out.mjs");
+    await expect(buildLockModule({ root, outfile, entry: 'export { probe } from "@acme/probe";\n' })).rejects.toThrow(
+      "it bundles the package @acme/probe, and the lock module may bundle acorn alone",
+    );
+    expect(fs.existsSync(outfile)).toBe(false);
+  });
+
   test("the build refuses a package other than acorn by name", async () => {
     const outfile = path.join(scratch, "refused", "yaml.mjs");
     await expect(

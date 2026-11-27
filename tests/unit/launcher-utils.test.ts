@@ -1454,8 +1454,8 @@ describe("launcher providers lock", () => {
     delete env.LIBREDB_STUDIO_ARCHIVE;
     const node = Bun.which("node");
     expect(node).not.toBeNull();
-    const run = (...args: string[]) => {
-      const result = Bun.spawnSync([node!, path.join(planted, "bin", "studio.js"), ...args], {
+    const runWith = (nodeArgs: string[], ...args: string[]) => {
+      const result = Bun.spawnSync([node!, ...nodeArgs, path.join(planted, "bin", "studio.js"), ...args], {
         env,
         stdout: "pipe",
         stderr: "pipe",
@@ -1467,7 +1467,8 @@ describe("launcher providers lock", () => {
         err: result.stderr.toString().split(/\r?\n/).filter(Boolean),
       };
     };
-    return { planted, home, run };
+    const run = (...args: string[]) => runWith([], ...args);
+    return { planted, home, run, runWith };
   }
 
   test("the launcher dispatches providers lock before any download", () => {
@@ -1490,6 +1491,28 @@ describe("launcher providers lock", () => {
     for (const args of [["providers"], ["providers", "key"], ["providers", "LOCK"], ["providers", "--help"]]) {
       expect([args, run(...args)]).toEqual([args, { code: 2, out: [], err: [STUB_USAGE] }]);
     }
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  /*
+    The preload sets process.versions.node to a version below the floor before bin/studio.js runs: on Node.js the
+    property is configurable (not writable), so Object.defineProperty replaces it on every platform. The planted module
+    prints a line when it is imported, so an empty stdout shows it never loaded.
+  */
+  test("the launcher refuses providers lock on a Node.js below its floor by name, before the module loads", () => {
+    const { planted, home, runWith } = plantedLauncher();
+    const lockModule = path.join(planted, "dist", "providers-lock.mjs");
+    fs.writeFileSync(lockModule, `console.log("module imported");\n${fs.readFileSync(lockModule, "utf8")}`);
+    const preload = path.join(planted, "old-node.mjs");
+    fs.writeFileSync(preload, 'Object.defineProperty(process.versions, "node", { value: "22.12.0" });\n');
+
+    const refused = runWith(["--import", pathToFileURL(preload).href], "providers", "lock", "--dir", planted);
+    expect(refused).toEqual({
+      code: 1,
+      out: [],
+      err: (assessNodeRuntime("22.12.0").message ?? "").split("\n"),
+    });
+    expect(refused.err[0]).toBe("LibreDB Studio requires Node.js 24.0 or newer; this is Node 22.12.0.");
     expect(fs.readdirSync(home)).toEqual([]);
   });
 
