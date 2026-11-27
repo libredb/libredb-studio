@@ -51,7 +51,7 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
-import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
+import { CURATED_OPERATION_KINDS, type CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
@@ -833,14 +833,32 @@ describe("Studio's grant of each agent mode claim", () => {
     expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
     expect(of("postgres", ["sessions"], two)).toEqual([]);
     expect(of("postgres", [], two)).toEqual([]);
-    // A request holding every reading reads each shipped engine's legacy row, partial or empty.
+    // A planted engine requesting two readings whose row reviews one of them is granted exactly that one.
+    expect(of(UNRECORDED, ["storage", "health"], rowWith(UNRECORDED, { agentReadings: ["health"] }))).toEqual([
+      "health",
+    ]);
+    // Each shipped engine, under each request of every reading, every reading but one, and each reading alone, is
+    // granted its legacy row's reviewed readings that the request holds, in the row's order.
+    const requests: readonly (readonly CuratedOperationKind[])[] = [
+      CURATED_OPERATION_KINDS,
+      ...CURATED_OPERATION_KINDS.map((dropped) => CURATED_OPERATION_KINDS.filter((kind) => kind !== dropped)),
+      ...CURATED_OPERATION_KINDS.map((kind) => [kind]),
+    ];
+    const cases = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      requests.map((requested) => {
+        const reviewed = legacyRow(type).grants.agentReadings;
+        return { type, requested, expected: reviewed.filter((reading) => requested.includes(reading)) };
+      }),
+    );
     expect(
-      SHIPPED_DATABASE_TYPES.filter(
-        (type) =>
-          JSON.stringify(of(type, [...CURATED_OPERATION_KINDS])) !==
-          JSON.stringify(legacyRow(type).grants.agentReadings),
+      cases.filter(
+        ({ type, requested, expected }) => JSON.stringify(of(type, [...requested])) !== JSON.stringify(expected),
       ),
     ).toEqual([]);
+    // Vacuity: some case grants part of its request, neither none of it nor all of it.
+    expect(cases.some(({ requested, expected }) => expected.length > 0 && expected.length < requested.length)).toBe(
+      true,
+    );
     expect(of("mqtt", [...CURATED_OPERATION_KINDS])).toEqual([]);
     // No row: the empty list, whatever the request.
     expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
