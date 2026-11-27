@@ -58,6 +58,7 @@ describe("a statement language row's readers", () => {
     const listed: NonNullable<StatementLanguageData> = {
       name: "acmeql",
       confirmation: { ...ACME_LANGUAGE_DATA.confirmation, operations: ["drop", "put"] },
+      agent: null,
     };
     const named = statementLanguageRow(ENGINE, listed, null);
     expect([...(named?.operations ?? [])]).toEqual(["drop", "put"]);
@@ -73,6 +74,7 @@ describe("a statement language row's readers", () => {
         safetyAnalysis: true,
         maxTextBytes: null,
       },
+      agent: null,
     };
     const sends = statementLanguageRow(ENGINE, open, null);
     expect(Object.keys(sends ?? {}).sort()).toEqual(["decidesAlone", "operations", "read"]);
