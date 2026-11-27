@@ -1,6 +1,6 @@
 import {
   deadlineSignal,
-  type TreeAnswer,
+  type TreeAnswerOf,
   type TreeContainersAnswer,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
@@ -53,9 +53,12 @@ import { type BridgedConsole, bridgedConsole } from "@/lib/provider-host/legacy-
  * allows), so a deadline per request would cut walks that answer, while a deadline per read bounds each round trip and
  * the caller's signal ends the walk at its next read.
  *
- * Answers. A read answers the provider's own answer by reference, the member its action answers; an answer without it
- * is a defect of Studio's bridge, named, except a `describeMany` batch, which the bridge passes through by reference,
- * so a batch without `details` is the provider's answer without it, named. A read the caller left is answered at once as `QueryCancelledError`, outcome
+ * Answers. A read answers the provider's own answer by reference, the member its action answers. The host core reads
+ * every answer against its action's form before the facade sees it (`checkTreeAnswer`, clause C-62), so the facade
+ * checks nothing of its own: an answer outside that form, a `needsConfiguration` beside a container or below the top
+ * level included, is refused by the core and answered by the accessor as a `HostDefectError` naming the rule
+ * `tree-answer-unreadable` and its pointer, which a route answers by whose defect the rule is (`REFUSAL_AUTHOR` in
+ * src/lib/api/package-errors.ts): Studio's own for a legacy provider. A read the caller left is answered at once as `QueryCancelledError`, outcome
  * unknown, or not-sent when refused before the call; a read past its deadline as `StudioTimeoutRefusal` naming the
  * read, the statement timeout and the slack. A provider's error passes as the same object, and a read's failure after
  * its wait ended is logged by route, action, kind and code, never its text. A read naming a level or a kind the
@@ -64,8 +67,7 @@ import { type BridgedConsole, bridgedConsole } from "@/lib/provider-host/legacy-
  * rules). The facade takes no catalog, so no catalog choice is honoured on this path, and each caller's own checks and
  * scrubs run where they ran. A containers
  * answer that says the inventory needs configuration (`needsConfiguration`, clause C-61) is answered by
- * `listContainers` as its containers alone; one that says so beside a container, or below the top level, is a defect
- * of the provider, named, in both facades.
+ * `listContainers` as its containers alone.
  *
  * THE GROUNDING WALK (clause C-80). `grantedObjectTree` is the facade of the agent's grounding inventory walk
  * (`walkObjectInventory` in src/lib/agent/tools.ts). The walk holds ONE deadline, the time its call was granted, and
@@ -119,18 +121,6 @@ const READ_NOUN: Readonly<Record<TreeAction, string>> = {
   describeMany: "The description of the objects",
 };
 
-/** The error an answer the bridge builds without `member`, the member its action answers, is answered with. */
-function bridgeDefect(action: TreeAction, member: string): Error {
-  return new Error(
-    `Studio's provider bridge answered a ${action} tree read without ${member}, which is a defect of Studio.`,
-  );
-}
-
-/** The error the provider's own answer, which the bridge passes through, is answered with when it lacks `member`. */
-function providerAnswerDefect(action: TreeAction, member: string): Error {
-  return new Error(`The provider answered a ${action} tree read without ${member}, which is a defect of the provider.`);
-}
-
 /**
  * The late port of a tree read: a failure after the caller stopped waiting, logged under `route` and `action` by its
  * kind and code, never its text, which can carry a server's words.
@@ -146,73 +136,39 @@ function treeLate(route: string, action: TreeAction): (failure: unknown) => void
   };
 }
 
-/** The error the provider's containers answer is answered with when it says `needsConfiguration` where it may not. */
-function needsConfigurationDefect(where: "beside a container" | "below the top level"): Error {
-  return where === "beside a container"
-    ? new Error(
-        "The provider answered a containers tree read with needsConfiguration beside a container, which is a defect of the provider.",
-      )
-    : new Error(
-        "The provider answered a containers tree read below the top level with needsConfiguration, which is a defect of the provider.",
-      );
-}
-
 /**
- * `answer`, the answer of a containers read under `parent`, held to where `needsConfiguration` may be said: only on a
- * top-level listing that lists no container (clause C-61).
+ * One host core tree call for `request`, answering the form its action answers, which the core checked
+ * (`TreeAnswerOf`).
  */
-function checkedContainers(answer: TreeContainersAnswer, parent: readonly string[] | undefined): TreeContainersAnswer {
-  if (answer.needsConfiguration === undefined) return answer;
-  if (parent !== undefined) throw needsConfigurationDefect("below the top level");
-  if (answer.containers.length > 0) throw needsConfigurationDefect("beside a container");
-  return answer;
-}
+type TreeRead = <R extends TreeRequest>(request: R) => Promise<TreeAnswerOf<R["action"]>>;
 
 /**
  * The tree reads both facades answer through `read`, one host core tree call: each a fresh request with copies of the
- * caller's arrays, and each answer held to its action's member, a containers answer also to where it may say the
- * inventory needs configuration.
+ * caller's arrays, and each answering its action's member, which the core checked.
  */
-function treeReads(read: (request: TreeRequest) => Promise<TreeAnswer>) {
+function treeReads(read: TreeRead) {
   return {
-    containers: async (parent?: readonly string[]): Promise<TreeContainersAnswer> => {
-      const answer = await read(
-        parent === undefined ? { action: "containers" } : { action: "containers", parent: [...parent] },
-      );
-      if (!("containers" in answer)) throw bridgeDefect("containers", "containers");
-      return checkedContainers(answer, parent);
-    },
-    countObjects: async (container: readonly string[]): Promise<Readonly<Record<string, KindCount>>> => {
-      const answer = await read({ action: "count", container: [...container] });
-      if (!("counts" in answer)) throw bridgeDefect("count", "counts");
-      return answer.counts;
-    },
-    listObjects: async (container: readonly string[], kind: string): Promise<readonly DatabaseObject[]> => {
-      const answer = await read({ action: "list", container: [...container], kind });
-      if (!("objects" in answer)) throw bridgeDefect("list", "objects");
-      return answer.objects;
-    },
-    describeObject: async (path: readonly string[], kind: string): Promise<ObjectDetail> => {
-      const answer = await read({ action: "describe", path: [...path], kind });
-      if (!("detail" in answer)) throw bridgeDefect("describe", "detail");
-      return answer.detail;
-    },
-    describeObjects: async (
+    containers: (parent?: readonly string[]): Promise<TreeContainersAnswer> =>
+      read(parent === undefined ? { action: "containers" } : { action: "containers", parent: [...parent] }),
+    countObjects: async (container: readonly string[]): Promise<Readonly<Record<string, KindCount>>> =>
+      (await read({ action: "count", container: [...container] })).counts,
+    listObjects: async (container: readonly string[], kind: string): Promise<readonly DatabaseObject[]> =>
+      (await read({ action: "list", container: [...container], kind })).objects,
+    describeObject: async (path: readonly string[], kind: string): Promise<ObjectDetail> =>
+      (await read({ action: "describe", path: [...path], kind })).detail,
+    describeObjects: (
       container: readonly string[],
       kind: string,
       limit: number,
       options?: { readonly defaultSql: true },
-    ): Promise<ObjectDetailBatch> => {
-      const answer = await read({
+    ): Promise<ObjectDetailBatch> =>
+      read({
         action: "describeMany",
         container: [...container],
         kind,
         limit,
         ...(options?.defaultSql === true ? { defaultSql: true as const } : {}),
-      });
-      if (!("details" in answer)) throw providerAnswerDefect("describeMany", "details");
-      return answer;
-    },
+      }),
   };
 }
 
@@ -228,7 +184,7 @@ export function objectTree(
   clock: () => number = Date.now,
 ): ObjectTree {
   const { session } = bridgedConsole(provider, {});
-  async function read(request: TreeRequest): Promise<TreeAnswer> {
+  async function read<R extends TreeRequest>(request: R): Promise<TreeAnswerOf<R["action"]>> {
     const core = hostCore();
     const view: CallerView = {
       caller,
@@ -249,7 +205,7 @@ export function objectTree(
  * The `ObjectTree` whose reads are `read`'s host core tree calls on a session stating `objectModel`: the model handed
  * through, and the containers read answering the containers alone.
  */
-function treeOf(objectModel: ObjectModel, read: (request: TreeRequest) => Promise<TreeAnswer>): ObjectTree {
+function treeOf(objectModel: ObjectModel, read: TreeRead): ObjectTree {
   const { containers, ...reads } = treeReads(read);
   return {
     objectModel,
@@ -270,7 +226,7 @@ function sessionReads(
   session: BridgedConsole["session"],
   { deadline, signal, route }: { readonly deadline: number; readonly signal: AbortSignal; readonly route: string },
   end: TreeEnd,
-): (request: TreeRequest) => Promise<TreeAnswer> {
+): TreeRead {
   return async (request) => {
     const record = await core.treeCall(session, request, contextOn(deadline, signal), {
       late: treeLate(route, request.action),

@@ -9,12 +9,13 @@
  * sentence naming its code where no register row grants the engine its own words (docs/providers/CONTRACT.md, clause
  * M-84), in the error's own words through core's scrub where one does, its record's `grants.ownWords` `"scrubbed"`,
  * and in the package-defect words below for a refusal of what the package's open answered. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
- * words, and as raised, through core's scrub, where one does.
+ * words, and as raised, through core's scrub, where one does; a tree read that fails is answered as an execute is.
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
  * words under `PACKAGE_DEFECT_PREFIX`, where the accessor's message names Studio, as a not-sent `ConnectionError` for
- * an open and a plain `Error` for an execute. Its one log line names each rule and pointer, and the words of each close
+ * an open and a plain `Error` for an execute or a tree read, a tree answer the core refused (`checkTreeAnswer`)
+ * included. Its one log line names each rule and pointer, and the words of each close
  * that failed after the refused answer, through core's scrub (`loggedDefect`). The client is answered each rule and
  * pointer where a register row grants the package's words, and each rule alone where none does
  * (`packageDefectAnswer`), since a pointer may hold a key the package chose. A `HostDefectError` whose refusals are
@@ -188,11 +189,11 @@ export function packageWarnings(
  * Studio's sentence naming its code where they are `"code-only"` or the value is no `Error` and has no words. An
  * execute's is the error as raised where the words are `"scrubbed"`, answered through core's scrub by the route, and a
  * plain `Error` with Studio's sentence, kind internal and outcome unknown, where they are `"code-only"`, since the
- * statement may have run.
+ * statement may have run. A tree read's is answered as an execute's.
  */
 export function packageFailureAnswer(
   engine: EngineRecord,
-  call: "open" | "execute",
+  call: "open" | "execute" | "tree read",
   error: unknown,
   scrub: ProviderTextScrub,
   route: string,
@@ -205,7 +206,7 @@ export function packageFailureAnswer(
   }
   logPackageError(call, error, scrub, route);
   const granted = engine.grants.ownWords === "scrubbed";
-  if (call === "execute") return granted ? error : new Error(packageErrorSentence(call, error));
+  if (call !== "open") return granted ? error : new Error(packageErrorSentence(call, error));
   return notSentConnectionError(
     granted && error instanceof Error ? scrubProviderText(scrub, error.message) : packageErrorSentence(call, error),
   );

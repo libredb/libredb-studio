@@ -1564,7 +1564,7 @@ describe("POST /api/db/objects/inventory", () => {
   });
 
   test("includeColumns reads the whole folder once, bounded by the objects it is handing over", async () => {
-    const describeObjects = mock(async (container: readonly string[], kind: string, limit?: number) => ({
+    const describeObjects = mock(async (container: readonly string[], _kind: string, _limit?: number) => ({
       details: [
         {
           path: [...container, "orders"],
@@ -1573,7 +1573,6 @@ describe("POST /api/db/objects/inventory", () => {
           foreignKeys: [],
         },
       ],
-      calledWith: { container, kind, limit },
     }));
     activeProvider = objectProvider({
       objectKinds: [TABLE_KIND],

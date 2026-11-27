@@ -699,8 +699,6 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the grounding's counts, read through the host core's tree call, whose sentences walkObjectInventory scrubs with scrubProviderText",
   [`${agent("tools.ts")}: walkObjectInventory: tree.describeObjects`]:
     "a batch read through the host core's tree call, whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
-  [`${join("src", "lib", "api", "object-tree.ts")}: checkedContainers: answer.needsConfiguration`]:
-    "a containers answer's configuration sentence, which the facade reads only for its presence and never renders; the grounding walk scrubs it with scrubProviderText",
   [`${mcp("tools", "inspect-schema.ts")}: inspectTable: tree.describeObject`]:
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:

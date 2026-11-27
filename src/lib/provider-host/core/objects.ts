@@ -10,8 +10,12 @@
  * its legacy provider's; one that states none is the host's defect, named. Then the context and the request are frozen in place, `freezeContext` and `freezeData`, so the caller
  * builds both fresh for each call.
  *
- * The call is waited for with `awaitWithin` until the context's signal. An answer is the session's own, by reference
- * (clause C-62): the caller reads the member its action answers. A wait the signal ends answers a stop, the signal's
+ * The call is waited for with `awaitWithin` until the context's signal. An answer is read once with `checkTreeAnswer`
+ * against the form its request's action answers (clause C-62), whatever session answered it, a package's or the
+ * bridge's: one that is not that form is refused as a record, `called` true, each refusal naming the rule
+ * `tree-answer-unreadable` and its pointer, never a value. Past the check the answer is the session's own, by
+ * reference, typed as its action's form (`TreeAnswerOf`): the caller reads the member its action answers and checks
+ * nothing of its own. A wait the signal ends answers a stop, the signal's
  * reason by reference, and `settled`, which resolves once the call the host stopped waiting for has settled either way;
  * a failure after the stop reaches `ports.late` once and a later answer is dropped, so no promise the host stopped
  * waiting for is left without a handler. A provider's error passes by reference.
@@ -25,10 +29,12 @@ import {
   type CallContext,
   checkCallStart,
   checkObjectsFacet,
+  checkTreeAnswer,
   checkTreeRequest,
   freezeContext,
   freezeData,
   type TreeAnswer,
+  type TreeAnswerOf,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import type { Calls, ObjectModel } from "@libredb/provider-sdk/manifest";
@@ -54,14 +60,17 @@ export interface ObjectsSession {
   tree?(request: TreeRequest, ctx: CallContext): Promise<TreeAnswer>;
 }
 
-/** A tree call that answered: the session's own answer, by reference. */
-export interface AnsweredTree {
+/** A tree call that answered: the session's own answer, by reference, in the form its request's action answers. */
+export interface AnsweredTree<Answer extends TreeAnswer = TreeAnswer> {
   readonly kind: "answered";
-  readonly answer: TreeAnswer;
+  readonly answer: Answer;
 }
 
-/** How a tree call ended: answered, refused before the call, or stopped. */
-export type TreeRecord = RefusedRecord | StoppedRecord | AnsweredTree;
+/**
+ * How a tree call ended: answered, refused before the call or for what it answered, or stopped. `Answer` is the form
+ * its request's action answers.
+ */
+export type TreeRecord<Answer extends TreeAnswer = TreeAnswer> = RefusedRecord | StoppedRecord | AnsweredTree<Answer>;
 
 /** The tree function of `session`, a host defect when the session offers it and holds no function for it. */
 function sessionTree(session: ObjectsSession, request: TreeRequest, ctx: CallContext): Promise<TreeAnswer> {
@@ -80,19 +89,20 @@ function sessionObjectModel(session: ObjectsSession): ObjectModel {
 }
 
 /**
- * One `objects.tree` call on `session`: checked, the facet and the session's object model included, frozen, waited for until `ctx.signal`, answered as
- * a record with the session's answer by reference. A failure after the wait ended reaches `ports.late` once, and a
- * later answer is dropped.
+ * One `objects.tree` call on `session`: checked, the facet and the session's object model included, frozen, waited for
+ * until `ctx.signal`, its answer read with `checkTreeAnswer`, answered as a record with the session's answer by
+ * reference, or refused, `called` true, when it is not the form `request`'s action answers. A failure after the wait
+ * ended reaches `ports.late` once, and a later answer is dropped.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and states no object
  * model or holds no function.
  */
-export async function treeCall(
+export async function treeCall<R extends TreeRequest>(
   session: ObjectsSession,
-  request: TreeRequest,
+  request: R,
   ctx: CallContext,
   ports: Pick<HostCallPorts, "late">,
-): Promise<TreeRecord> {
+): Promise<TreeRecord<TreeAnswerOf<R["action"]>>> {
   const start = checkCallStart(ctx);
   if (start.length > 0) return refusedBefore(start, ctx);
   const facet = checkObjectsFacet(session.calls, "tree");
@@ -104,7 +114,10 @@ export async function treeCall(
   const call = startCall(() => sessionTree(session, request, ctx));
   try {
     const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
-    return { kind: "answered", answer };
+    const refusals = checkTreeAnswer(request, answer);
+    if (refusals.length > 0) return { kind: "refused", called: true, refusals };
+    // checkTreeAnswer holds the answer to the form the request's action answers, which TreeAnswerOf names.
+    return { kind: "answered", answer: answer as TreeAnswerOf<R["action"]> };
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(call) };

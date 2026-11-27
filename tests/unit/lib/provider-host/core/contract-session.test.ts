@@ -24,6 +24,7 @@ import {
   BATCH_MAX_BYTES,
   type ProviderImpl,
   rowsSource,
+  type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import type { Calls, MonitoringPanels, ObjectModel } from "@libredb/provider-sdk/manifest";
 import { type ContractSession, openContractSession } from "@/lib/provider-host/core/contract-session";
@@ -123,7 +124,14 @@ function implOf(
         return Promise.resolve({ openTransaction: "none" });
       } as never,
     },
-    objects: { tree: record("tree", () => impl.objects as object) as never },
+    objects: {
+      // An empty answer of the form each request's action answers, which the host core holds it to (clause C-62).
+      tree: function (this: unknown, ...args: unknown[]) {
+        log.push({ name: "tree", self: this === impl.objects, args });
+        const { action } = args[1] as TreeRequest;
+        return Promise.resolve(action === "containers" ? { containers: [] } : { objects: [] });
+      } as never,
+    },
     maintenance: {
       run: record("run", () => impl.maintenance as object) as never,
       preview: record("preview", () => impl.maintenance as object) as never,

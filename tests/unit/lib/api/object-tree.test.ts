@@ -26,9 +26,9 @@ import { QueryCancelledError, StudioObjectModelRefusal, StudioTimeoutRefusal, wa
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import { HOST_DEFECT_PREFIX, HostDefectError } from "@/lib/provider-host/access";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
-import type { TreeRecord } from "@/lib/provider-host/core/objects";
+import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { declaredObjectModel } from "@/lib/provider-host/legacy-object-model";
 import type { DatabaseConnection } from "@/lib/types";
@@ -349,7 +349,7 @@ describe("objectTree", () => {
     const stopped = await withCore(
       (real) => ({
         ...real,
-        treeCall: async (): Promise<TreeRecord> => ({
+        treeCall: async (): Promise<StoppedRecord> => ({
           kind: "stopped",
           reason: TIMEOUT_REASON(),
           settled: Promise.resolve(),
@@ -379,7 +379,7 @@ describe("objectTree", () => {
     const caught = await withCore(
       (real) => ({
         ...real,
-        treeCall: async (): Promise<TreeRecord> => ({
+        treeCall: async (): Promise<RefusedRecord> => ({
           kind: "refused",
           called: false,
           // A rule none of the accessor's rows for a refusing package session reads (clause C-111).
@@ -396,37 +396,53 @@ describe("objectTree", () => {
     expect((caught as Error).message).toContain("objects.tree");
   });
 
-  test("an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member", async () => {
-    const provider = providerOf();
-    const forms: Record<TreeRequest["action"], { readonly answer: TreeAnswer; readonly member: string }> = {
-      containers: { answer: { objects: [] }, member: "containers" },
-      count: { answer: { containers: [] }, member: "counts" },
-      list: { answer: { counts: {} }, member: "objects" },
-      describe: { answer: { details: [] }, member: "detail" },
-      describeMany: { answer: { containers: [] }, member: "details" },
+  test("a tree answer the core refuses as tree-answer-unreadable is answered as a host defect naming the rule, with no check of the facade's own", async () => {
+    // The legacy provider's own answers, each outside its action's form, which the bridge passes by reference.
+    const malformed: Partial<DatabaseProvider> = {
+      listContainers: mock(async () => [{ path: ["app"], name: 1, level: 0 }]) as never,
+      countObjects: mock(async () => ({ table: { count: -1 } })) as never,
+      listObjects: mock(async () => [{ path: ["app", "orders"], name: "orders", kind: 1 }]) as never,
+      describeObject: mock(async () => ({
+        path: ["app", "orders"],
+        columns: marker(),
+        indexes: [],
+        foreignKeys: [],
+      })) as never,
+      describeObjects: mock(async () => ({})) as never,
     };
-    const caught = await withCore(
-      (real) => ({
-        ...real,
-        treeCall: async (_session, request): Promise<TreeRecord> => ({
-          kind: "answered",
-          answer: forms[request.action].answer,
-        }),
-      }),
-      () =>
-        Promise.all(
-          READS.map(({ run }) => failure(() => run(objectTree(provider, new AbortController().signal, ROUTE)))),
-        ),
+    const pointers: Record<TreeRequest["action"], string> = {
+      containers: "/containers/0/name",
+      count: "/counts/table/count",
+      list: "/objects/0/kind",
+      describe: "/detail/columns",
+      describeMany: "/details",
+    };
+
+    const editor = await Promise.all(
+      READS.map(({ run }) =>
+        failure(() => run(objectTree(Object.assign(providerOf(), malformed), new AbortController().signal, ROUTE))),
+      ),
+    );
+    const granted = await Promise.all(
+      GRANTED_READS.map(({ run }) =>
+        failure(() => run(grantedObjectTree(Object.assign(providerOf(), malformed), grantOf()))),
+      ),
     );
 
-    READS.forEach(({ action }, index) => {
-      expect(caught[index]).toBeInstanceOf(Error);
-      expect((caught[index] as Error).message).toBe(
-        action === "describeMany"
-          ? `The provider answered a describeMany tree read without details, which is a defect of the provider.`
-          : `Studio's provider bridge answered a ${action} tree read without ${forms[action].member}, which is a defect of Studio.`,
-      );
-    });
+    for (const [index, { action }] of READS.entries()) {
+      const caught = editor[index];
+      expect(caught).toBeInstanceOf(HostDefectError);
+      expect((caught as HostDefectError).refusals).toEqual([
+        { rule: "tree-answer-unreadable", pointer: pointers[action] },
+      ]);
+      expect((caught as Error).message.startsWith(HOST_DEFECT_PREFIX)).toBe(true);
+      expect(errorOutcome(caught)).toBe("unknown");
+    }
+    for (const [index, { action }] of GRANTED_READS.entries()) {
+      expect((granted[index] as HostDefectError).refusals).toEqual([
+        { rule: "tree-answer-unreadable", pointer: pointers[action] },
+      ]);
+    }
   });
 
   test("a containers answer that says the inventory needs configuration reaches the granted tree whole and the editor's listing as its containers alone", async () => {
@@ -441,39 +457,6 @@ describe("objectTree", () => {
     expect(listed).toEqual([]);
     expect(whole).toEqual({ containers: [], needsConfiguration: reason });
     expect(mockOf(provider.listContainers)).not.toHaveBeenCalled();
-  });
-
-  test("a needsConfiguration beside a container, or below the top level, is answered as the provider's defect, named", async () => {
-    const provider = providerOf();
-    const container = { path: ["app"], name: "app", level: 0 };
-    const caught = await withCore(
-      (real) => ({
-        ...real,
-        treeCall: async (_session, request): Promise<TreeRecord> => ({
-          kind: "answered",
-          answer:
-            request.action === "containers" && request.parent === undefined
-              ? { containers: [container], needsConfiguration: marker() }
-              : { containers: [], needsConfiguration: marker() },
-        }),
-      }),
-      () => {
-        const editor = objectTree(provider, new AbortController().signal, ROUTE);
-        const granted = grantedObjectTree(provider, grantOf());
-        return Promise.all([
-          failure(() => editor.listContainers()),
-          failure(() => granted.containers()),
-          failure(() => editor.listContainers(["app"])),
-          failure(() => granted.containers(["app"])),
-        ]);
-      },
-    );
-
-    const beside =
-      "The provider answered a containers tree read with needsConfiguration beside a container, which is a defect of the provider.";
-    const below =
-      "The provider answered a containers tree read below the top level with needsConfiguration, which is a defect of the provider.";
-    expect(caught.map((error) => (error as Error).message)).toEqual([beside, beside, below, below]);
   });
 
   test("a tree read before the host core is installed fails by name and sends the provider no tree call, its capabilities read once when the facade is built", async () => {
