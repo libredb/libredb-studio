@@ -23,8 +23,10 @@
  * no resolver of its own for packages. The kind of each import stays in the record, as what the scanner saw, and no
  * rule here reads it.
  *
- * A built-in of the list that the importing runtime lacks, such as a name a later Node.js drops or one Bun does not
- * serve, passes this check and fails at the package's import as `PROVIDER_LOAD_FAILED` with the loader's reason.
+ * A `node:` name of the list that the importing runtime lacks, such as one a later Node.js drops or one Bun does not
+ * serve, passes this check and fails at the package's import as `PROVIDER_LOAD_FAILED` with the loader's reason, since
+ * a `node:` specifier never resolves through node_modules. A bare name a runtime does not serve would resolve as a
+ * package instead, so the list admits a name the images' Node.js release dropped only in its `node:` form.
  *
  * The limits: a computed `import()` or `require()` is not recorded, so not checked; the `main` of a package.json,
  * which a `require` of a directory reads, is not read. The check keeps a package from depending on modules outside its

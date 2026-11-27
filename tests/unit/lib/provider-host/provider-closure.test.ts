@@ -46,7 +46,19 @@ const NODE_INSIDE = [
   "node:test/reporters",
   "node:sea",
   "node:sqlite",
+  "node:_stream_readable",
+];
+/**
+ * The names of Node.js 24.0.0's list that Node.js 26.13.1, the images' release, no longer serves: Node.js 24 serves
+ * each bare, so the bare form is a built-in there, and Node.js 26 resolves it as a package through node_modules.
+ */
+const IMAGES_DROPPED = [
+  "_stream_duplex",
+  "_stream_passthrough",
   "_stream_readable",
+  "_stream_transform",
+  "_stream_wrap",
+  "_stream_writable",
 ];
 /** Names no runtime's list admits here: a `node:`-only name bare, a name a later Node.js adds, an unknown one. */
 const OUTSIDE_BOTH = ["test", "sea", "test/reporters", "node:ffi", "node:nope"];
@@ -78,7 +90,7 @@ beforeAll(async () => {
     throw new Error("No Node binary: put Node 24 on PATH, the release package.json engines.node names");
   dir = mkdtempSync(join(tmpdir(), "provider-closure-"));
   const at = (file: string) => join(dir, file);
-  const names = [...BUN_ONLY, ...NODE_INSIDE, ...OUTSIDE_BOTH];
+  const names = [...BUN_ONLY, ...NODE_INSIDE, ...OUTSIDE_BOTH, ...IMAGES_DROPPED];
   writeFileSync(
     at("child.ts"),
     [
@@ -223,15 +235,31 @@ describe("the import closure", () => {
     }
   });
 
+  test("a bare name of the list that the images' Node.js no longer serves is outside, its node: form inside", () => {
+    // Node.js 26 resolves such a bare name as a package by walking node_modules directories up from the importing file,
+    // out of the package, while a node: specifier never resolves through node_modules and fails at the import.
+    for (const kind of ["import", "require"] as const) {
+      for (const name of IMAGES_DROPPED) {
+        expect([kind, name, outside("dist/index.mjs", name, kind)]).toEqual([kind, name, true]);
+        expect([kind, name, outside("dist/index.mjs", `node:${name}`, kind)]).toEqual([kind, name, false]);
+      }
+    }
+    expect(IMAGES_DROPPED.filter((name) => !nodeReport.answers[name])).toEqual([]);
+    // The premise on the floor: Node.js 24 still serves each bare, so only the list, not that runtime, refuses it.
+    expect(IMAGES_DROPPED.filter((name) => !nodeReport.nodeBuiltin[name])).toEqual([]);
+  });
+
   test("the built-in list is Node.js's, the same under Node.js and Bun", () => {
     expect(nodeReport.version.slice(1).split(".")[0]).toBe("24");
     const names = [...BUN_ONLY, ...NODE_INSIDE, ...OUTSIDE_BOTH];
     const expected = Object.fromEntries(names.map((name) => [name, !NODE_INSIDE.includes(name)]));
     const inBun = Object.fromEntries(names.map((name) => [name, outside("dist/index.mjs", name)]));
-    expect({ bun: inBun, node: nodeReport.answers }).toEqual({ bun: expected, node: expected });
-    // Node.js's own built-in check agrees: a name is inside exactly when Node.js serves it.
+    const inNode = Object.fromEntries(names.map((name) => [name, nodeReport.answers[name]]));
+    expect({ bun: inBun, node: inNode }).toEqual({ bun: expected, node: expected });
+    // Node.js's own built-in check agrees on these names: a name is inside exactly when Node.js 24 serves it. The bare
+    // names the images' release dropped are the exception, held by the test above.
     const insideByNode = Object.fromEntries(names.map((name) => [name, !nodeReport.nodeBuiltin[name]]));
-    expect(nodeReport.answers).toEqual(insideByNode);
+    expect(inNode).toEqual(insideByNode);
     expect([closureOutside(record(BASE_RECORD)), nodeReport.base]).toEqual([false, false]);
   });
 });

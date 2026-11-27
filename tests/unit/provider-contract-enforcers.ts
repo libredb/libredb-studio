@@ -2911,10 +2911,14 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an absolute path, a URL, another scheme and a subpath import are outside",
         "the answer reads only the record, so it is the same on every platform",
         "a name only Bun treats as a built-in is outside the closure under every runtime",
+        "a bare name of the list that the images' Node.js no longer serves is outside, its node: form inside",
         "the built-in list is Node.js's, the same under Node.js and Bun",
       ],
       "tests/unit/lib/provider-host/node-builtins.test.ts": [
         "the committed built-in list equals Node.js's builtinModules at the engines floor",
+      ],
+      "tests/unit/lib/provider-host/node-builtins-runtimes.test.ts": [
+        "every bare name admission admits is a built-in of each Node.js release Studio runs",
       ],
       "tests/unit/lib/provider-host/providers-lock.test.ts": [
         "a lock entry's import record is closed and capped, each import in its forms and listed once",

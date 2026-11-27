@@ -6,12 +6,15 @@
  * committed list exactly; Node.js 24.0.0 through 24.22.3 return the same names. The child's own built-in check must
  * also agree with the module's predicate on every admitted name and on names only Bun or a later Node.js serves. A
  * failure names each name added or missing, a disagreement, or a floor that moved, and the list is then read again.
+ * The names a later release dropped (`NODE_PREFIX_ONLY`) are built-ins of Node.js 24 bare and are admitted only in
+ * their `node:` form, so the child does not judge them bare; node-builtins-runtimes.test.ts holds the admitted bare
+ * names to the images' Node.js.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isNodeBuiltin, NODE_BUILTIN_MODULES } from "@/lib/provider-host/node-builtins";
+import { isNodeBuiltin, NODE_BUILTIN_MODULES, NODE_PREFIX_ONLY } from "@/lib/provider-host/node-builtins";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 
@@ -32,9 +35,9 @@ const PROBES = [
   "nope",
 ];
 
-/** Every name the module admits: the list, and `node:` before each name of it that has no such prefix. */
+/** Every name the module admits: the list less the `node:`-only names, and `node:` before each bare name of it. */
 const ADMITTED = [
-  ...NODE_BUILTIN_MODULES,
+  ...NODE_BUILTIN_MODULES.filter((name) => !NODE_PREFIX_ONLY.includes(name)),
   ...NODE_BUILTIN_MODULES.filter((name) => !name.startsWith("node:")).map((name) => `node:${name}`),
 ];
 
@@ -100,5 +103,10 @@ describe("Node.js's built-in list", () => {
     expect(Object.isFrozen(NODE_BUILTIN_MODULES)).toBe(true);
     expect(ADMITTED.filter((name) => !isNodeBuiltin(name))).toEqual([]);
     expect(PROBES.filter((name) => isNodeBuiltin(name))).toEqual([]);
+    // The `node:`-only names are names of the list, closed and sorted, refused bare and admitted as `node:`.
+    expect([...NODE_PREFIX_ONLY]).toEqual([...new Set(NODE_PREFIX_ONLY)].sort());
+    expect(Object.isFrozen(NODE_PREFIX_ONLY)).toBe(true);
+    expect(NODE_PREFIX_ONLY.filter((name) => !committed.has(name) || isNodeBuiltin(name))).toEqual([]);
+    expect(NODE_PREFIX_ONLY.filter((name) => !isNodeBuiltin(`node:${name}`))).toEqual([]);
   });
 });

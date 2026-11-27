@@ -1175,7 +1175,7 @@ The lock command records, with Bun's transpiler and each with its kind, every st
 Before the import, admission refuses:
 
 - as `PROVIDER_MODULE_FORMAT` with the rule `typescript-module`, a package whose listing holds a TypeScript file, `.ts`, `.mts`, `.cts` or `.tsx` in any letter case, declaration files included, since Bun and Node.js can each run one unseen;
-- as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`, an import that is neither a name of Node.js's built-in modules, as Studio lists them for the oldest Node.js release it supports and alike under Node.js and Bun, nor a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, so every bare specifier, absolute path, URL and subpath import is refused, whatever `node_modules` folder the package holds.
+- as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`, an import that is neither a name of Node.js's built-in modules, as Studio lists them for the oldest Node.js release it supports, a name the images' Node.js release no longer serves only in its `node:` form, and alike under Node.js and Bun, nor a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, so every bare specifier, absolute path, URL and subpath import is refused, whatever `node_modules` folder the package holds.
 
 So a package of this contract is a JavaScript bundle whose static imports are relative paths inside it or Node.js built-ins; a computed `import()` or `require()`, a directory's `main` and a file loaded by another extension are not checked, and the check is no sandbox, since an admitted package runs in Studio's process.
 
