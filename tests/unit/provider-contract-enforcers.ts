@@ -1146,6 +1146,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/claim-grants.test.ts": [
         "the language and decidesAlone are granted for declared language data only under the digest the row reviewed",
+        "an engine with no SQL text is granted readsSqlText false and decidesAlone under its reviewed language digest alone, and nothing under a changed byte, a null digest, a row reviewing a grammar or a row granting neither",
+      ],
+      "tests/unit/lib/query-events/build.test.ts": [
+        "an engine whose record holds no grammar keeps no statement and no error text and reads its kind as OTHER, and grants that say a row reviewed its grammar are a host defect",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's statement language, decides-alone and text-not-SQL grants are its register row's only for the statement language data the row reviewed, and one changed byte of that data grants none of them",
@@ -1443,10 +1447,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package's loosening claims are counted only as its register row grants them for the grammar it reviewed: a granted text-not-SQL claim and exempt form spare, ungranted ones still ask",
         "a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares",
         "gateRun reads the record's confirmation reader: a legacy engine's verdict is confirmationVerdict's and a package engine's reads its declared grammar with the claims its record grants",
+        "a package engine with no SQL text whose register row grants its language's claims under the language digest runs a read with no confirmation, and asks with the row's digest one byte off",
       ],
       "tests/unit/editor/statement-analysis.test.ts": [
         "the verdict of a package engine's reading asks about every statement under a grammar no register row reviewed, and reads none of it",
         "the verdict of a package engine's reading counts a granted text-not-SQL claim and a granted exempt form",
+        "a statement of an engine with no SQL text is answered by its language row alone where its grants grant that, and asks otherwise",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package engine no register row reviews asks about every statement, a read included",

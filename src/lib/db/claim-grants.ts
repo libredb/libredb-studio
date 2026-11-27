@@ -53,7 +53,10 @@
  * - The SQL text claims hold only for the grammar the row reviewed them with: the grammar is granted as reviewed,
  *   `reviewedGrammar`, only where the digest the request carries, `grammarSha256` (the SHA-256 of the grammar's
  *   canonical text, ./grammar-digest), is the row's `grammarSha256`, and under any other grammar, or where the row
- *   states none or no row exists, every SQL text claim is read at its restrictive value.
+ *   states none or no row exists, every SQL text claim is read at its restrictive value, but for an engine that states
+ *   no SQL text: where its request carries no grammar digest and its row states none, it states statement language
+ *   data and the row reviewed it, `sqlText.readsSqlText` and `decidesAlone` are the row's under the language digest
+ *   alone, and `reviewedGrammar` stays false (`grantSqlText`).
  * - The statement language data an engine states is reviewed by digest too: the row reviewed it only where the digest
  *   the language data request carries, `languageSha256` (the SHA-256 of the data's canonical text, ./language-digest),
  *   is the row's `languageSha256`, null equal to null, a row's null reviewing the engine as stating none. Under any
@@ -64,13 +67,15 @@
  *   capture keeps nothing of a statement's text, otherwise. The register refuses a package row granting a `command`
  *   redaction, so a package's `command` request is read as `none`.
  * - `sqlText.readsSqlText`, restrictive when true: false only where the grammar and the language data are reviewed
- *   and the request and the row both are false.
+ *   and the request and the row both are false, or, for an engine that states no SQL text, where its language data is
+ *   reviewed and the row is false.
  * - `sqlText.grammar.confirmExemptForms`, a set the confirmation gate exempts: the requested forms the row lists, each
  *   compared word by word upper-cased as the gate compares a form, in the request's order, a form the request lists
  *   twice granted once at its first place, always a fresh frozen list with each form frozen, and the empty list under a
  *   grammar the row did not review.
  * - `decidesAlone`, which the grant reader reads from no declaration yet, a statement vocabulary row's own flag being
- *   its request: the row's where the grammar and the language data are reviewed, and false otherwise.
+ *   its request: the row's where the grammar and the language data are reviewed, or, for an engine that states no SQL
+ *   text, where its language data is reviewed, and false otherwise.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
  * or host path fields value of a register row outside it is refused naming Studio's record, the claim and the engine; an
@@ -705,9 +710,9 @@ type BrowserGrantTables<K extends string> = Pick<ClaimGrants<K>, (typeof GRANT_M
  * `readsSqlText`, `confirmExemptForms` (`sqlText.grammar.confirmExemptForms`) and `redaction` as the declaration
  * states them, and `grammarSha256`, the digest of the grammar the declaration states (src/lib/db/grammar-digest.ts),
  * or null for none. The server catalog's composer hands a package engine's from its admitted declaration, the digest
- * computed on the server, or the restrictive request with a null digest where its `sqlText` is null; a legacy
- * engine's is its bundled readsSqlText and exempt forms with its legacy row's redaction and digest
- * (`legacySqlTextRequest`).
+ * computed on the server, or the restrictive request with a null digest where its `sqlText` is null, which
+ * `grantSqlText` reads as an engine that states no SQL text; a legacy engine's is its bundled readsSqlText and exempt
+ * forms with its legacy row's redaction and digest (`legacySqlTextRequest`).
  */
 export interface SqlTextRequest {
   readonly readsSqlText: boolean;
@@ -736,20 +741,31 @@ const NO_REDACTION: RegisterRedaction = Object.freeze({ kind: "none" });
  * The grant of the SQL text claims `sqlText` that `engine` requests, against `row`, the engine's register row or null:
  * each claim at its restrictive value unless the row reviewed the grammar the request carries the digest of, and
  * `readsSqlText: false` and `decidesAlone` also only where `reviewedLanguage`, the row reviewed the engine's statement
- * language data.
+ * language data. One exception for an engine that states no SQL text: where the request carries no grammar digest,
+ * the row reviews no grammar, `statesLanguage`, the engine states statement language data, and the row reviewed it,
+ * `readsSqlText` and `decidesAlone` are the row's under the language digest alone, since no grammar is read; the
+ * redaction and the exempt forms, which only a reviewed grammar grants, stay restrictive, and `reviewedGrammar` false.
  */
-function grantSqlText(engine: string, sqlText: SqlTextRequest, row: RegisterRow | null, reviewedLanguage: boolean) {
+function grantSqlText(
+  engine: string,
+  sqlText: SqlTextRequest,
+  row: RegisterRow | null,
+  reviewedLanguage: boolean,
+  statesLanguage: boolean,
+) {
   const redaction = redactionRequest(engine, sqlText.redaction);
   const readsSqlText = booleanRequest(engine, "sqlText.readsSqlText", sqlText.readsSqlText);
   const forms = exemptFormsRequest(engine, sqlText.confirmExemptForms);
   const digest = grammarSha256Request(engine, sqlText.grammarSha256);
   const reviewed = row !== null && row.grants.grammarSha256 !== null && digest === row.grants.grammarSha256;
   if (!reviewed) {
+    const languageAlone =
+      row !== null && digest === null && row.grants.grammarSha256 === null && statesLanguage && reviewedLanguage;
     return {
       redaction: NO_REDACTION,
-      readsSqlText: true,
+      readsSqlText: languageAlone ? row.grants.readsSqlText : true,
       confirmExemptForms: Object.freeze([]),
-      decidesAlone: false,
+      decidesAlone: languageAlone && row.grants.decidesAlone,
       reviewedGrammar: false,
     } as const;
   }
@@ -782,10 +798,11 @@ function grantSqlText(engine: string, sqlText: SqlTextRequest, row: RegisterRow 
  * the grant of each SQL text claim, for the grammar the row reviewed (`grantSqlText`):
  * - `redaction`: how the query event log keeps a statement of the engine, `none` where no grant covers it;
  * - `readsSqlText`: whether the confirmation gate reads the engine's text as SQL, true where no grant covers it, and
- *   false only for the statement language data the row reviewed;
+ *   false only for the statement language data the row reviewed, under the language digest alone for an engine that
+ *   states no SQL text;
  * - `confirmExemptForms`: the forms the confirmation gate exempts, none where no grant covers them;
  * a fourth host fact the grant reader reads from no declaration yet, read from the row for the grammar and the
- * statement language data it reviewed:
+ * statement language data it reviewed, or for the language data alone for an engine that states no SQL text:
  * - `decidesAlone`: whether the engine's statement vocabulary may decide the confirmation gate's answer alone, false
  *   where no grant covers it; a vocabulary row's own flag is its request;
  * the row's review of a claim whose request the grants do not hold:
@@ -893,7 +910,7 @@ export function grantEngineClaims(
     servesOneSession: row === null ? null : row.grants.servesOneSession,
     agentExecution: row === null ? false : row.grants.agentExecution,
     catalogReadCommandShaped: row === null ? false : row.grants.catalogReadCommandShaped,
-    ...grantSqlText(engine, sqlText, row, reviewedLanguage),
+    ...grantSqlText(engine, sqlText, row, reviewedLanguage, languageSha256 !== null),
   });
 }
 

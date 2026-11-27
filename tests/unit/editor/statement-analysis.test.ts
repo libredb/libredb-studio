@@ -1027,6 +1027,55 @@ describe("confirmationVerdict of a package engine's reading", () => {
     }
   });
 
+  test("a statement of an engine with no SQL text is answered by its language row alone where its grants grant that, and asks otherwise", () => {
+    // A request language row naming `purge` in a statement that holds it, and no operation it cannot tell from the
+    // text `?`, which it cannot read.
+    const row = (decidesAlone: boolean): DestructiveVocabulary => ({
+      operations: new Set(["purge"]),
+      read: (statement) => (statement === "?" ? undefined : statement.includes("purge") ? ["purge"] : []),
+      decidesAlone,
+    });
+    /** The reading of an engine with no SQL text: no grammar, no grammar reviewed, no exempt form. */
+    const noSqlText = (vocabulary: DestructiveVocabulary | null, readsSqlText: boolean, decidesAlone: boolean) =>
+      ({
+        ...packageReading(null, { reviewedGrammar: false, readsSqlText, confirmExemptForms: [], decidesAlone }),
+        row: vocabulary,
+      }) as StatementReading;
+    const answered = noSqlText(row(true), false, true);
+
+    // Granted: the row's reading is the whole answer, so a read that SQL would read as a write runs, and only what the
+    // row names, or what its reader cannot read, asks. Nothing is checked for an unreadable run.
+    for (const [sql, asks] of [
+      ['{"read": "topics"}', false],
+      ["DELETE FROM t", false],
+      ["SELECT 'never closed", false],
+      ["", false],
+      ['{"purge": "orders"}', true],
+      ["?", true],
+    ] as const) {
+      expect([sql, statementAsks(sql, answered)]).toEqual([sql, asks]);
+    }
+    expect(confirmationVerdict("DELETE FROM t", answered, "Keys", undefined)).toStrictEqual({ decision: "run" });
+    expect(confirmationVerdict('{"purge": "orders"}', answered, "Keys", undefined)).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
+
+    // Anything less: the text is read as SQL, a row that does not decide alone, grants that do not grant it, or no
+    // row: every statement asks, a read included.
+    for (const reading of [
+      noSqlText(row(true), true, true),
+      noSqlText(row(true), false, false),
+      noSqlText(row(false), false, true),
+      noSqlText(null, false, true),
+    ]) {
+      for (const sql of ['{"read": "topics"}', ""]) {
+        expect([sql, reading.grants, statementAsks(sql, reading)]).toEqual([sql, reading.grants, true]);
+      }
+    }
+  });
+
   test("the verdict of a package engine's reading asks about every statement under a grammar no register row reviewed, and reads none of it", () => {
     const unreviewed: GateGrants = {
       reviewedGrammar: false,

@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "2f08cf0ebe3e866190ab39fe8c237060095504f9bb1baf0d5c3a742e54257b23";
+export const MANIFEST_SCHEMA_SHA256 = "83598909835bf427e474ae16cae5c8f9f5173a0fea3cf120e8fbd9f474cd04bc";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -957,7 +957,7 @@ export type HistoryMask = {
 /** A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens. */
 export type CredentialFlag = string;
 
-/** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement and the query event log keeps none of its text. */
+/** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. Null where the engine has no SQL text, which Studio reads as a grammar no register row reviews: the confirmation gate asks about every statement, unless the register row grants under the engine's statement language data that its text is not SQL and that its language's reading is the whole answer, and the query event log keeps none of its text. */
 export type SqlText = {
   /** Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate and the query event log count only where Studio grants it, from the engine's register row for the grammar the row reviewed, and every other reader reads it as declared. */
   readonly readsSqlText: boolean;

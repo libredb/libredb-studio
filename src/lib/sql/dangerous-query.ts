@@ -800,8 +800,9 @@ function explainGrammars(grammar: SqlGrammar, explainReading: StatementReading["
  * dialog's notice exists to avoid. So it is false where the reading's grants grant the claim that the text is not SQL;
  * a claim they leave out is read as SQL.
  *
- * False where no register row reviewed the reading's grammar: the gate asks about every statement there and reads none
- * of it, so nothing is reported as unreadable, as for an engine that states no SQL text, whose grammar is null.
+ * False where no register row reviewed the reading's grammar: the gate reads none of the text there, asking about
+ * every statement or, where the grants grant it, answering by the row alone (`statementAsks`, step 1), so nothing is
+ * reported as unreadable, as for an engine that states no SQL text, whose grammar is null.
  *
  * @throws {Error} `grantsWithoutGrammarDefect(reading.engine)`, where the grants say a row reviewed a grammar and the
  * reading holds none.
@@ -878,7 +879,8 @@ export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boo
  * for the grammar that row reviewed (`legacyEngineGrants` in `@/lib/db/claim-grants`). Any other such claim is read as
  * if the row had not made it: the statement is read as SQL, and the row's own vocabulary is read beside that reading,
  * so the gate asks wherever either asks. Where the engine's register row reviewed no grammar, every statement asks, a
- * read and an empty text included.
+ * read and an empty text included, unless the engine states no SQL text and its row grants its language's claims
+ * (`statementAsks`, step 1).
  *
  * It is `statementAsks` over the type's reading (`readingOfType`), which the browser reads by type until it reads the
  * engine's record: the one check the server's verdict reads too, so the two cannot disagree.
@@ -895,8 +897,10 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
  * engine's record (`confirmationVerdict` in `@/lib/editor/statement-analysis`). In order:
  *
  * 1. Where no register row reviewed the reading's grammar, every statement asks, a read and an empty text included,
- *    before anything is read, as for every engine that states no SQL text, which requests no grammar digest for a row
- *    to review.
+ *    before anything is read, as for an engine that states no SQL text, which requests no grammar digest for a row to
+ *    review; except where the grants grant `readsSqlText: false` and the row decides alone (`rowDecidesAlone`), which
+ *    the grant reader grants only to such an engine, under the statement language data its row reviewed: the row's
+ *    answer is then the whole answer (`rowNamesAsked`), and no later step is reached.
  * 2. The statement is read under the gate grammar, the reading's grammar with only the exempt forms its grants grant.
  * 3. Part of the text that could not be read asks (`unreadableRun`).
  * 4. Where the row decides alone as the grants grant it (`rowDecidesAlone`), the row's answer is the whole answer.
@@ -913,7 +917,12 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
  */
 export function statementAsks(statement: string, reading: StatementReading): boolean {
   const { row, grants } = reading;
-  if (!grants.reviewedGrammar) return true;
+  if (!grants.reviewedGrammar) {
+    // No grammar is read. Only an engine that states no SQL text and whose row granted, under the language data it
+    // reviewed, both that its text is not SQL and that its row decides alone is answered, by its row alone.
+    if (!grants.readsSqlText && rowDecidesAlone(row, grants)) return rowNamesAsked(row, statement);
+    return true;
+  }
   const grammars = explainGrammars(gateGrammar(reading), reading.explainReading);
 
   // Asked FIRST because it is the only question here whose answer does not depend

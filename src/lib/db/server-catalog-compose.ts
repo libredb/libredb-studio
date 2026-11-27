@@ -24,7 +24,8 @@
  * digest, or with none where the register holds none, so each claim is granted at its restrictive value, its SQL text
  * claims with the digest of the grammar it declares (`declaredSqlTextRequest`), so a row grants them only for the
  * grammar it reviewed, or, for an engine whose `sqlText` is null, with the restrictive request, which holds no digest,
- * so no row reviews a grammar for it and its record holds no statement grammar, and its statement language and the
+ * so no row reviews a grammar for it and its record holds no statement grammar (a row reviewing no grammar may still
+ * grant it `readsSqlText: false` and `decidesAlone` under its language data), and its statement language and the
  * claims that loosen the confirmation gate with the digest of the statement language data it declares
  * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, compiles its statement language
  * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none), reads its
@@ -197,7 +198,10 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
 
 /**
  * The SQL text request of an engine whose `sqlText` is null: the restrictive value of every SQL text claim and no
- * grammar digest, so the grant reader grants each at its restrictive value whatever the engine's register row holds.
+ * grammar digest, so no register row reviews a grammar of it and the grant reader grants the redaction and the exempt
+ * forms at their restrictive values whatever the row holds; `readsSqlText` and `decidesAlone` it grants as a row that
+ * reviews no grammar grants them, under the statement language data the engine states and the row reviewed alone, and
+ * at their restrictive values otherwise (`grantSqlText` in ./claim-grants).
  */
 const NO_SQL_TEXT_REQUEST: SqlTextRequest = Object.freeze({
   readsSqlText: true,
