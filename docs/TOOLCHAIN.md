@@ -790,6 +790,7 @@ The rule runs at pack time only, never at admission, and `scripts/providers-pack
 esbuild's ES module bundle of a driver that calls `require` carries a `__require` shim that reads `require` as a value: under Node.js 24 it throws `Dynamic require of "events" is not supported`, and under Bun 1.4.4 it loads the module (measured 2026-11-27), so a test under Bun would pass a bundle Studio's Node.js server cannot load.
 Every refusal is one sentence on standard error; a refused package gets nothing written and a closing sentence saying so, and the other packages are still packed.
 The output directory must exist and lie outside the repository, as must the temporary directory, and an artifact already at `<out>/<name>/<version>` is refused, never overwritten.
+That destination, its existing part resolved through any link, must lie outside the repository too, since `--out` may be an ancestor of the repository or hold a link into it.
 The command prints `<name> <version> <digest>` per package placed, the digest the lock command writes for it, and exits 0 when nothing was refused, 1 when anything was, 2 on any other command line.
 Nothing is written into the repository.
 

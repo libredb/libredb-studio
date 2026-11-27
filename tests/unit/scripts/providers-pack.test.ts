@@ -346,6 +346,20 @@ describe("providers:pack", () => {
         ]),
       });
       expect(fs.readdirSync(out)).toEqual([]);
+
+      // A package directory named on the command line with no package.json, or one that is not a JSON object.
+      const missing = fresh("nopackage");
+      fs.writeFileSync(path.join(missing, MANIFEST_FILE_NAME), minimalManifest("nopackage"));
+      const array = fresh("arraypackage");
+      fs.writeFileSync(path.join(array, "package.json"), "[]\n");
+      expect(pack(planted, out, [missing, array])).toEqual({
+        packed: [],
+        refusals: [missing, array].flatMap((directory) => [
+          `${PREFIX}: ${directory}: its package.json is missing, over its byte limit, or not a JSON object`,
+          wroteNothing(directory),
+        ]),
+      });
+      expect(fs.readdirSync(out)).toEqual([]);
     },
     BUNDLING_TIMEOUT_MS,
   );
@@ -407,6 +421,51 @@ describe("providers:pack", () => {
         `${PREFIX}: ${absent}: the temporary directory does not exist`,
       ]);
       expect(listing(planted)).toEqual(withInside);
+    },
+    BUNDLING_TIMEOUT_MS,
+  );
+
+  test(
+    "a destination <out>/<name>/<version> that lies inside the repository, by --out an ancestor of it or through a link under --out, is refused by name, writing nothing",
+    () => {
+      // A repository whose directory name is a package name, so that --out its parent puts that package inside it.
+      const repository = path.join(fresh("ancestor"), "repository");
+      const files: Record<string, string> = {
+        ...writingPackage("provider-named", "repository", PLAIN_ENTRY),
+        ...writingPackage("provider-linked", "@libredb/provider-linked", PLAIN_ENTRY),
+        ...writingPackage("provider-plain", "@libredb/provider-plain", PLAIN_ENTRY),
+      };
+      for (const [relative, text] of Object.entries(files)) {
+        const file = path.join(repository, ...relative.split("/"));
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+      }
+      const inside = path.join(repository, "inside");
+      fs.mkdirSync(inside);
+      const at = (directory: string): string => path.join(repository, "packages", directory);
+      const before = listing(repository);
+
+      const ancestor = path.dirname(repository);
+      const named = path.join(ancestor, "repository", "1.0.0");
+      expect(pack(repository, ancestor, [at("provider-named")])).toEqual({
+        packed: [],
+        refusals: [`${PREFIX}: ${named} lies inside the repository ${repository}`, wroteNothing(at("provider-named"))],
+      });
+      expect(listing(repository)).toEqual(before);
+
+      // A link at <out>/@libredb into the repository; a junction needs no privilege on Windows, and on POSIX the type
+      // argument is ignored. A package of another scope under the same --out is still packed.
+      const out = fresh("out");
+      fs.symlinkSync(inside, path.join(out, "@libredb"), "junction");
+      const linked = path.join(out, "@libredb", "provider-linked", "1.0.0");
+      const result = pack(repository, out, [at("provider-linked"), at("provider-named")]);
+      expect(result.refusals).toEqual([
+        `${PREFIX}: ${linked} lies inside the repository ${repository}`,
+        wroteNothing(at("provider-linked")),
+      ]);
+      expect(result.packed.map((packed) => packed.directory)).toEqual([path.join(out, "repository", "1.0.0")]);
+      expect(listing(repository)).toEqual(before);
+      fs.unlinkSync(path.join(out, "@libredb"));
     },
     BUNDLING_TIMEOUT_MS,
   );
@@ -655,6 +714,7 @@ describe("providers:pack", () => {
         ...writingPackage("provider-controls", "@libredb/provider-controls", {
           "dist/index.mjs": [
             'import "./two.cjs";',
+            'import "./five.mjs";',
             'import { require as req } from "./four.mjs";',
             'export default await import("./four.mjs");',
             "export const also = await import(`./four.mjs`);",
@@ -669,6 +729,7 @@ describe("providers:pack", () => {
           "dist/two.cjs": 'require("./three.cjs");\nrequire(`./three.cjs`);\nrequire?.("./three.cjs");\n',
           "dist/three.cjs": "exports.x = 1;\n",
           "dist/four.mjs": "const x = 1;\nexport { x as require };\n",
+          "dist/five.mjs": 'export * as require from "./four.mjs";\n',
         }),
         ...writingPackage("provider-declared", "@libredb/provider-declared", {
           ...PLAIN_ENTRY,

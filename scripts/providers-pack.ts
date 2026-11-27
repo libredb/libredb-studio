@@ -41,11 +41,14 @@
  *    a template without substitution, a declared binding named `require` included; it calls `require()` or `import()`
  *    with anything else; or it calls a member named `require`, such as `module.require(x)`. An identifier that is a
  *    name rather than a reference is not read: a non-computed member or key, a label, an imported or exported name,
- *    and the local name of a re-export with a source. Not refused: a member named `require` read without a call,
- *    `process.getBuiltinModule`, which loads built-ins only, and code built at run time by `new Function` or `eval`,
- *    which no rule over the source can follow; an admitted package is not sandboxed (C-102). The rule runs here only,
- *    never at admission. A line is 1 plus the count of line feeds before the node;
- * 9. `<out>/<name>/<version>` does not exist yet; the artifact is then copied there, and its digest printed.
+ *    the name a namespace is re-exported under, and the local name of a re-export with a source. Not refused: a
+ *    member named `require` read without a call, `process.getBuiltinModule`, which loads built-ins only, and code
+ *    built at run time by `new Function` or `eval`, which no rule over the source can follow; an admitted package is
+ *    not sandboxed (C-102). The rule runs here only, never at admission. A line is 1 plus the count of line feeds
+ *    before the node;
+ * 9. `<out>/<name>/<version>`, its existing part resolved through any link, lies outside the repository's real path,
+ *    since `--out` may be an ancestor of the repository or hold a link into it, and does not exist yet; the artifact
+ *    is then copied there, and its digest printed.
  *
  * The build's output lives in a temporary directory under the temporary root, removed whatever happened, so nothing is
  * written into the repository or into a package's directory by the step itself; a build that writes into its own
@@ -162,6 +165,21 @@ function outsideDirectory(directory: string, role: string, repositoryRoot: strin
   return { real };
 }
 
+/**
+ * `out` joined with `segments`, resolved through any link on its existing part: the real path of its longest existing
+ * prefix, joined with the segments that do not exist yet. `out` is a real path. A dangling link on the way is thrown
+ * by its real path's ENOENT, as a filesystem error the step did not expect.
+ */
+function resolvedDestination(out: string, segments: readonly string[]): string {
+  for (let count = segments.length; count > 0; count -= 1) {
+    const existing = path.join(out, ...segments.slice(0, count));
+    if (fs.lstatSync(existing, { throwIfNoEntry: false }) !== undefined) {
+      return path.join(fs.realpathSync.native(existing), ...segments.slice(count));
+    }
+  }
+  return path.join(out, ...segments);
+}
+
 /** The environment a build runs with: the passed variables of `environment`, and `HOME` and `USERPROFILE` at `home`. */
 function buildEnvironment(environment: PackOptions["environment"], home: string): Record<string, string> {
   const passed: Record<string, string> = {};
@@ -238,6 +256,8 @@ function isNamePosition(parent: AnyNode, key: string, reExport: boolean): boolea
       return key === "imported";
     case "ExportSpecifier":
       return key === "exported" || reExport;
+    case "ExportAllDeclaration":
+      return key === "exported";
     case "ImportAttribute":
       return key === "key";
     case "MetaProperty":
@@ -422,7 +442,11 @@ function packOne(
     const findings = admissionFindings(artifact, `${pkg.name} ${pkg.version}`, entry);
     if (findings.length > 0) return findings;
 
-    const target = path.join(out, ...pkg.name.split("/"), pkg.version);
+    const segments = [...pkg.name.split("/"), pkg.version];
+    const target = path.join(out, ...segments);
+    if (liesInside(resolvedDestination(out, segments), options.repositoryRoot)) {
+      return [`${PREFIX}: ${target} lies inside the repository ${options.repositoryRoot}`];
+    }
     if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined) return [`${PREFIX}: ${target} already exists`];
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(artifact, target, { recursive: true, errorOnExist: true, force: false });
