@@ -11,6 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import {
   AGENT_LANGUAGE_MCP_FACETS,
+  type AgentDeclaredMcpTool,
   type AgentLanguageMcpFacet,
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
@@ -252,7 +253,11 @@ describe("the tool names MCP keeps are the arms' own", () => {
     const statementTools: SameUnion<McpStatementTool, AgentLanguageMcpTool> = true;
     const actions: SameUnion<McpToolAction, (typeof SHARED_TOOLS)[number] | AgentLanguageMcpTool> = true;
     const names: SameUnion<McpToolName, McpToolAction> = true;
-    expect([statementTools, actions, names]).toEqual([true, true, true]);
+    // A tool a language declares as data is one of them, by its brand; a bare string is none of them.
+    const declared: SameUnion<Extract<McpToolName, AgentDeclaredMcpTool>, AgentDeclaredMcpTool> = true;
+    // @ts-expect-error A bare string is not a statement tool: only a facet's literal or a declared tool's brand is.
+    const bare: McpStatementTool = String("run_acme_read");
+    expect([statementTools, actions, names, declared, typeof bare]).toEqual([true, true, true, true, "string"]);
   });
 
   test("list_connections' read_tool takes exactly the arms' tools, in record order", () => {

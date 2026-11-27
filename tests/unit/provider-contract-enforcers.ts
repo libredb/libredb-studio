@@ -1085,6 +1085,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine declaration states its statement language data or null, and the data's name equals its agent statement language",
         "a statement language's agent part states its request form as data: a bound in characters, the closed key set, each key's value rule, the keys each read requires or refuses, and each refusal's code and sentence, and names no function",
         "a statement language's agent part states its text as data: the copy, the investigation's words, the posture, the grounding and the advice, each a text or its parts with the values Studio fills, and names no function",
+        "a statement language's agent part states its MCP statement tool as data or null: the tool's name, whether its engines hold a table and its words, each a text or its parts with the values Studio fills, and names no function",
         "a declared text naming a value Studio does not fill into it is refused by name at the fill's pointer",
         "an agent text holds no control character and no character that makes text read other than it is written",
         "an agent part on an engine whose agent mode sends no statement is refused at the agent part",
@@ -1093,11 +1094,16 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a data-declared language's statement is admitted or refused by its declared request form, with its declared sentence and code, and never quoted",
       ],
       "tests/unit/lib/agent/declared-language-pack.test.ts": [
-        "a data-declared language's client and server facets are composed from its data, with no module of its own",
+        "a data-declared language's client, server and MCP facets are composed from its data, with no module of its own",
         "a declared text naming a placeholder Studio does not fill is refused by name",
+        "a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused at load by name",
+      ],
+      "tests/unit/lib/agent/declared-language-drive.test.ts": [
+        "a crafted data-declared language on a legacy engine is fenced on the MCP path with its declared sentence and offered as its statement tool",
       ],
       "tests/unit/db/language-digest.test.ts": [
         "the agent part's text is digested with the rest of the data: any changed byte, fill or part boundary changes the digest, and member order does not",
+        "the agent part's MCP statement tool is digested with the rest of the data: any changed name, flag, byte, fill or part boundary changes the digest, and member order does not",
       ],
     },
     schema: [
@@ -1106,6 +1112,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "/$defs/agentRequestForm",
       "/$defs/agentLanguageText",
       "/$defs/agentText",
+      "/$defs/agentMcpTool",
+      "/$defs/agentMcpText",
     ],
   },
   "M-86": {

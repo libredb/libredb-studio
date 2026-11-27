@@ -3143,7 +3143,7 @@ An engine in `GRANTED_AGENT_EXECUTION_ENGINES` must open at least one workflow t
 
 **Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts`.
 That registry is total over the module languages, `AgentModuleLanguageId`, so a new module language does not compile until it declares its facet, or `null` while it has no MCP tool.
-A language an engine declares as data is held there as `null`: it has no MCP tool yet.
+A language an engine declares as data is held there after the module languages: its facet is composed from its data's MCP part by `languages/declared-mcp.ts`, or `null` where that part is `null`.
 `src/lib/mcp/tools/statement-arms.ts` builds every statement tool from the registry and names no language, and the tool names MCP keeps, the audit actions, `list_connections`' `read_tool` and the route's schema map, are derived from it, so the language edits no file under `src/lib/mcp/`.
 The tool serves an engine only once Studio's grant of `mcp.statementRead` opens it.
 

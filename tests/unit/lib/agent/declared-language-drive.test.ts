@@ -1,5 +1,8 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { acmereadData } from "../../../helpers/declared-agent-language";
@@ -7,8 +10,8 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
 /**
  * A statement language declared as data, `acmeread` (tests/helpers/declared-agent-language.ts), offered on a legacy
  * engine with no module of its own: the language registries hold it beside the module languages, the run's tools,
- * rules and posture read its composed text, and a read is admitted or refused by its declared request form before any
- * provider is acquired.
+ * rules and posture read its composed text, MCP offers its declared statement tool, and a read is admitted or refused
+ * by its declared request form before any provider is acquired, in agent mode and on the MCP path alike.
  *
  * No shipped declaration states agent data yet, so this file substitutes the list of the declared languages' data
  * (`@/lib/db/declared-statement-languages`) with `acmeread` and `acmeplain`, a language with no agent part, and grants
@@ -16,7 +19,9 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
  * on the server by a crafted catalog. MQTT rather than Kafka, so no Kafka test reads a substituted language. The real
  * grant reader is captured as a plain object before the substitution, because a namespace follows its replacement.
  * `mock.module` is process-wide, so the substitutions are made before anything that reads them is loaded: every such
- * module is imported dynamically below them, and the runner gives this file its own process.
+ * module is imported dynamically below them, and the runner gives this file its own process. The crafted catalog is
+ * installed before those imports too, since `MCP_STATEMENT_ARMS` reads each arm's served engines once, when its module
+ * loads (`served-engines.ts`), so a catalog installed later would leave the declared tool serving no engine.
  */
 
 const ACMEREAD = acmereadData();
@@ -34,6 +39,10 @@ mock.module("@/lib/db/claim-grants", () => ({
     mqtt: "acmeread",
   }),
 }));
+
+const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
+const { craftedCatalog } = await import("../../../helpers/package-catalog");
+installServerCatalog(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }));
 
 const {
   AGENT_LANGUAGE_COPY,
@@ -62,7 +71,24 @@ const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
 const { AgentRepairLedger } = await import("@/lib/agent/repair-ledger");
 const { UNAVAILABLE_TEXT } = await import("@/lib/agent/tool-contracts");
 const { agentToolDefinition, runReadQueryTool, selectAgentTools } = await import("@/lib/agent/tools");
-const { MCP_STATEMENT_ARMS, mcpStatementToolFor } = await import("@/lib/mcp/tools/statement-arms");
+const {
+  MCP_STATEMENT_ARMS,
+  MCP_STATEMENT_TOOLS,
+  mcpStatementArm,
+  mcpStatementToolFor,
+  mcpTablelessReadTool,
+  servingStatementArms,
+} = await import("@/lib/mcp/tools/statement-arms");
+const { isMcpToolName, MCP_TOOL_INPUT_SCHEMAS } = await import("@/lib/mcp/tools");
+const { ListedConnectionSchema } = await import("@/lib/mcp/tools/list-connections");
+const { databaseContentNotice, MCP_UNTRUSTED_NOTICE } = await import("@/lib/mcp/output");
+const { providerAuthor } = await import("@/lib/db/operations/provider-text");
+const { McpConnectionContext } = await import("@/lib/mcp/context");
+const { getServerAuditBuffer } = await import("@/lib/audit");
+const { getDBConfig } = await import("@/lib/db-ui-config");
+const { fillAgentText } = await import("@/lib/agent/languages/declared-client");
+const { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import("../../../helpers/mcp-fixtures");
+const { connectClient, handlerServe, testAuthInfo } = await import("../../../helpers/mcp-harness");
 const { ExecutionArtifactStore } = await import("@/lib/db/operations/artifacts");
 const { ExecutionBudgetTracker } = await import("@/lib/db/operations/budgets");
 const { createCanonicalOperationRegistry, isStatementReadOperation } = await import("@/lib/db/operations/descriptors");
@@ -70,15 +96,10 @@ const { admitDeclaredRequest } = await import("@/lib/db/operations/declared-requ
 const { createTargetScope } = await import("@/lib/db/operations/policy");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
-const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
-const { craftedCatalog } = await import("../../../helpers/package-catalog");
 const { CENSUS_CONNECTION } = await import("../../../helpers/census-connection");
 const { createDatabaseProvider } = await import("@/lib/db/factory");
 
-beforeAll(() => {
-  installHostCore(createHostCore(), "test");
-  installServerCatalog(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }));
-});
+beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(() => {
   forgetServerCatalog();
   forgetHostCore();
@@ -88,6 +109,9 @@ const NAME = "acmeread";
 if (!isAgentStatementLanguage(NAME)) throw new Error("the substituted list does not reach the language registries");
 const ACME = NAME;
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
+/** The result limits every statement tool shares, which Studio fills into a declared description as `limits`. */
+const SHARED_LIMITS =
+  "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
 
 describe("a data-declared language in the language registries", () => {
   test("the language registries hold a data-declared language beside the module languages, and refuse one whose name a module or another declared language holds", () => {
@@ -123,10 +147,14 @@ describe("a data-declared language in the language registries", () => {
     expect(Object.keys(AGENT_PACK_REQUIREMENTS).some((key) => key.includes("acme"))).toBe(false);
     expect(Object.values(LANGUAGE_BASE_DEFINITIONS).some((d) => d?.operationId?.startsWith("acmeread"))).toBe(false);
 
-    // No MCP statement tool yet: the facet and the arm are null.
-    expect(Object.hasOwn(AGENT_LANGUAGE_MCP_FACETS, "acmeread")).toBe(true);
-    expect((AGENT_LANGUAGE_MCP_FACETS as Readonly<Record<string, unknown>>).acmeread).toBeNull();
-    expect(MCP_STATEMENT_ARMS[ACME]).toBeNull();
+    // The MCP facet is composed from the data's MCP part, after the module languages' facets, and the arm is built
+    // from it; a declared language whose agent part is null has neither.
+    const facet = AGENT_LANGUAGE_MCP_FACETS[ACME];
+    expect<string | undefined>(facet?.tool).toBe("run_acme_read");
+    expect(facet?.title).toBe(AGENT.mcp?.text.title as string);
+    expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS).at(-1)).toBe("acmeread");
+    expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS)).not.toContain("acmeplain");
+    expect<string | undefined>(MCP_STATEMENT_ARMS[ACME]?.tool).toBe("run_acme_read");
 
     // The load check, read on the module languages this build holds.
     const modules = Object.keys(AGENT_LANGUAGE_COPY).filter((language) => language !== "acmeread");
@@ -172,7 +200,7 @@ describe("a data-declared language in the language registries", () => {
     expect(client.posture.reads(BOUNDS).body).toContain(" 7 rows and 2.5 seconds each.");
 
     expect(agentEnginePack("mqtt")).toBe(agentLanguagePack(ACME));
-    expect(mcpStatementToolFor("mqtt")).toBeNull();
+    expect<string | null>(mcpStatementToolFor("mqtt")).toBe("run_acme_read");
 
     // The read operation is registered and resolved like any language's.
     expect(isStatementReadOperation("acmeread.query.read")).toBe(true);
@@ -200,6 +228,141 @@ describe("a data-declared language in the language registries", () => {
     expect(outcome.kind).toBe("completed");
     expect(admitted.queryReadOnly).toHaveBeenCalledWith('{"read":"topics"}', expect.any(Object), undefined);
     if (outcome.kind === "completed") expect(outcome.artifact.operationId).toBe("acmeread.query.read");
+  });
+
+  test("a crafted data-declared language on a legacy engine is fenced on the MCP path with its declared sentence and offered as its statement tool", async () => {
+    const mcp = AGENT.mcp as NonNullable<typeof AGENT.mcp>;
+    const arm = MCP_STATEMENT_ARMS[ACME];
+    if (arm === null) throw new Error("the declared language's MCP facet builds no arm");
+
+    // The arm: the declared tool on the engine granted the language, with the input Studio fixes.
+    expect<string>(arm.tool).toBe("run_acme_read");
+    expect(arm.title).toBe(mcp.text.title as string);
+    expect(arm.types).toEqual(["mqtt"]);
+    expect(arm.engines).toBe(getDBConfig("mqtt").label);
+    expect(arm.argument).toBe("statement");
+    expect(arm.paging).toBe("none");
+    expect(arm.holdsNoTables).toBe(true);
+    expect(arm.answersWarnings).toBe(false);
+    expect(arm.withholdsDatabase).toBe(false);
+    expect(arm.description).toBe(
+      `${fillAgentText(mcp.text.description, { engines: arm.engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
+    );
+    const input = { connection_id: "seed:plant", statement: '{"read":"topics"}' };
+    expect(arm.inputSchema.safeParse(input).success).toBe(true);
+    for (const refused of [{ database: "d" }, { offset: 0 }, { sql: "x" }, { statement: "" }]) {
+      expect(arm.inputSchema.safeParse({ ...input, ...refused }).success).toBe(false);
+    }
+
+    // The lists MCP keeps hold the declared tool, and the engine's own module tool serves it no more.
+    expect(servingStatementArms()).toContain(arm);
+    expect<readonly string[]>(MCP_STATEMENT_TOOLS).toContain("run_acme_read");
+    expect(isMcpToolName("run_acme_read")).toBe(true);
+    expect(MCP_TOOL_INPUT_SCHEMAS[arm.tool]).toBe(arm.inputSchema);
+    expect(mcpStatementArm(arm.tool)).toBe(arm);
+    expect(ListedConnectionSchema.shape.read_tool.safeParse("run_acme_read").success).toBe(true);
+    expect<string | null>(mcpStatementToolFor("mqtt")).toBe("run_acme_read");
+    expect<string | null>(mcpTablelessReadTool("mqtt")).toBe("run_acme_read");
+    expect(MCP_STATEMENT_ARMS.mqttread?.types).toEqual([]);
+
+    // Through the route: tools/list offers it, a refused request answers the declared sentence before anything is
+    // acquired, and an admitted one reaches the acquisition under the agent read-only profile.
+    pinMcpTestEnvironment();
+    const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-acmeread-"));
+    // The factory's MQTT provider, never connected, with only its read-only statement answered here.
+    const provider = await createDatabaseProvider(CENSUS_CONNECTION.mqtt as DatabaseConnection);
+    const queryReadOnly = spyOn(provider, "queryReadOnly").mockImplementation(
+      async (): Promise<QueryResult> => ({ rows: [{ name: "t" }], fields: ["name"], rowCount: 1, executionTime: 1 }),
+    );
+    const acquire = spyOn(McpConnectionContext.prototype, "acquire").mockImplementation(async () => provider);
+    const serve = handlerServe(testAuthInfo());
+    const call = async (args: Record<string, unknown>) => {
+      const session = await connectClient(serve, { negotiation: "legacy" });
+      try {
+        return (await session.client.callTool({ name: "run_acme_read", arguments: args })) as {
+          isError?: boolean;
+          content: Array<{ type: string; text: string }>;
+        };
+      } finally {
+        await session.close();
+      }
+    };
+    try {
+      writeSeedFile(dir, [{ id: "plant", type: "mqtt", host: "broker.example", port: 1883 }]);
+      const session = await connectClient(serve, { negotiation: "legacy" });
+      try {
+        const listed = (await session.client.listTools()).tools.find((tool) => tool.name === "run_acme_read");
+        expect(listed?.description).toBe(arm.description);
+        expect(Object.keys(listed?.inputSchema.properties ?? {})).toEqual([
+          "connection_id",
+          "statement",
+          "max_rows",
+          "timeout_ms",
+        ]);
+      } finally {
+        await session.close();
+      }
+
+      const marker = randomUUID();
+      const refusedText = JSON.stringify({ read: "topics", topic: marker });
+      const declared = admitDeclaredRequest(AGENT.request, refusedText);
+      expect(declared?.code).toBe("topic-not-taken");
+      const refused = await call({ connection_id: "seed:plant", statement: refusedText });
+      const copy = AGENT_LANGUAGE_COPY[ACME];
+      expect(refused).toEqual({
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `The ${copy.noun} was refused before it reached ${copy.reached} (${declared?.code}). ${declared?.message}`,
+          },
+        ],
+      });
+      expect(copy.noun).toBe(AGENT.text.copy.noun as string);
+      expect(copy.reached).toBe(AGENT.text.copy.reached as string);
+      expect(JSON.stringify(refused)).not.toContain(marker);
+      expect(acquire).not.toHaveBeenCalled();
+      const events = getServerAuditBuffer()
+        .getAll()
+        .filter((event) => event.type === "mcp_operation");
+      expect(events).toEqual([
+        expect.objectContaining({
+          action: "run_acme_read",
+          target: "mcp/decision",
+          result: "failure",
+          reason: "mcp_statement_refused",
+        }),
+      ]);
+
+      // The provider's read is answered through the host core's read-only execute, its row behind the notice.
+      const admitted = await call({ connection_id: "seed:plant", statement: '{"read":"topics"}' });
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(acquire.mock.calls[0]?.[1]).toBe("agent-read-only");
+      expect(queryReadOnly).toHaveBeenCalledTimes(1);
+      expect(queryReadOnly.mock.calls[0]?.[0]).toBe('{"read":"topics"}');
+      expect(admitted.isError ?? false).toBe(false);
+      expect(admitted.content[0]).toEqual({ type: "text", text: databaseContentNotice(providerAuthor("mqtt")) });
+      expect(JSON.parse(admitted.content[1]?.text as string)).toMatchObject({
+        connection_id: "seed:plant",
+        rows: [{ name: "t" }],
+        row_count: 1,
+        truncated: false,
+      });
+      expect(
+        getServerAuditBuffer()
+          .getAll()
+          .filter((event) => event.type === "mcp_operation")
+          .slice(1)
+          .map((event) => [event.action, event.target, event.result]),
+      ).toEqual([
+        ["run_acme_read", "mcp/decision", "success"],
+        ["run_acme_read", "mcp/execution", "success"],
+      ]);
+    } finally {
+      acquire.mockRestore();
+      await resetMcpTestState();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

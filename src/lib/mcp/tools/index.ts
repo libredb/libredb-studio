@@ -1,9 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import type { z } from "zod";
 import type { McpConnectionContext, McpReach } from "../context";
 import { InspectSchemaInputSchema, registerInspectSchema } from "./inspect-schema";
 import { ListConnectionsInputSchema, registerListConnections } from "./list-connections";
 import { registerStatementTools } from "./run-statement";
-import { MCP_STATEMENT_INPUT_SCHEMAS } from "./statement-arms";
+import { MCP_STATEMENT_INPUT_SCHEMAS, type McpStatementTool } from "./statement-arms";
+
+/**
+ * Every MCP tool's name: the metadata tools every engine shares, and each statement tool its language's MCP facet
+ * declares.
+ */
+export type McpToolName = "list_connections" | "inspect_schema" | McpStatementTool;
 
 /**
  * The one map from tool name to the zod object that tool registers (#246).
@@ -14,14 +21,16 @@ import { MCP_STATEMENT_INPUT_SCHEMAS } from "./statement-arms";
  * their arms, in record order; a statement tool is registered only while its arm serves an engine
  * (`MCP_STATEMENT_ARMS`), so its entry here can outlive a listing, and on one token's tools/list only while it serves an
  * engine the token reaches.
+ *
+ * The map is annotated with `McpToolName` rather than read off its own keys, since a statement tool a language declares
+ * as data is a branded string (`AgentDeclaredMcpTool`), and the keys of an object literal that spreads a record keyed
+ * by a branded string leave the brand out; `statement-arms.test.ts` holds the name types equal.
  */
-export const MCP_TOOL_INPUT_SCHEMAS = {
+export const MCP_TOOL_INPUT_SCHEMAS: Readonly<Record<McpToolName, z.ZodObject>> = Object.freeze({
   list_connections: ListConnectionsInputSchema,
   inspect_schema: InspectSchemaInputSchema,
   ...MCP_STATEMENT_INPUT_SCHEMAS,
-} as const;
-
-export type McpToolName = keyof typeof MCP_TOOL_INPUT_SCHEMAS;
+});
 
 /** An own key of the map, so an inherited name such as toString never reaches a schema. */
 export function isMcpToolName(name: unknown): name is McpToolName {
