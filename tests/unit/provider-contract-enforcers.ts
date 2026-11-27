@@ -1163,6 +1163,30 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
   },
+  "M-89": {
+    tests: {
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "an engine declaration states its object model: its container levels, path shapes and name spelling, its kinds with their columns, source, edit flags and row actions, and its agent walk and schema diff scopes, every member required",
+        "an engine of a package that offers objects.tree is refused as object-model-missing unless its declaration states its object model",
+        "a repeated container level id or object kind id is refused at the later one's pointer",
+        "a maintenance spec naming a kind the object model does not state is refused at its pointer",
+        "a masked kind the object model does not state is refused at its pointer",
+        "a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer",
+        "a maintenance spec kind or a catalog capture kind word of an engine that states no object model is refused at its pointer",
+        "an engine declaration's object model is refused at its own pointer under validateEngine",
+        "an object model refusal carries no value of the manifest",
+      ],
+      "packages/provider-sdk/tests/manifest/schema.test.ts": [
+        "the object model is bounded: two container levels, 64 object kinds, 16 row actions, and 64 kinds in each kind list",
+      ],
+      "tests/unit/db/object-model-declarations.test.ts": [
+        "each legacy provider's object model, projected into its declaration, is admitted by the SDK's schema and every object model rule, under each connection variant reachable without a server",
+        "a planted projection fails each object model rule by name at its pointer",
+        "the projection reads every member of the schema's object model and of each kind, and every member a provider answers is read or classified",
+      ],
+    },
+    schema: ["/$defs/engineDeclaration/properties/objects", "/$defs/objectModel"],
+  },
   "V-1": {
     tests: {
       "packages/provider-sdk/tests/values/tags.test.ts": [

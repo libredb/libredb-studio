@@ -159,13 +159,54 @@ export function packageRow(
 }
 
 /**
+ * An object model stating each kind `kindWords` names and nothing else: no container level, no row action, every kind
+ * a relation with columns. A kind a catalog capture's kind word names is one the engine's model states.
+ */
+function kindWordsModel(kindWords: readonly { readonly kind: string }[]): Record<string, unknown> {
+  const kinds = [...new Set(kindWords.map(({ kind }) => kind))];
+  return {
+    containerLevels: [],
+    containerPathShapes: "exact",
+    containerNameSpelling: null,
+    objectKinds: kinds.map((id) => ({
+      id,
+      role: "relation",
+      label: id,
+      labelPlural: id,
+      hasSource: false,
+      sourceLanguage: null,
+      hasColumns: true,
+      acceptsSourceEdits: false,
+      childKinds: [],
+      attachedTo: null,
+      acceptsRowWrites: false,
+      enumeratedBy: null,
+      countIsListing: false,
+      machineNames: null,
+      group: null,
+    })),
+    rowActions: [],
+    containersNameKinds: false,
+    tablesNeedContainer: false,
+    tablesAreDerivedGroupings: false,
+    agentWalkScope: null,
+    schemaDiffScope: null,
+    maskedNameKinds: [],
+  };
+}
+
+/**
  * The loosest request of every claim the SDK's validator admits for an engine, each opposite its restrictive value:
- * postgres's agent segment and monitoring panels, read from its declaration, so its statement language is `sql`.
+ * postgres's agent segment and monitoring panels, read from its declaration, so its statement language is `sql`, with
+ * an object model stating the kinds its catalog capture's kind words name (`kindWordsModel`).
  */
 export function withLoosestClaims(engine: EditableEngine): void {
   const postgres = JSON.parse(
     readFileSync(path.join(REPOSITORY_ROOT, "src/lib/db/engine-declarations/postgres.json"), "utf8"),
-  ) as { agent: unknown; facets: Record<string, unknown> };
+  ) as {
+    agent: { overlay: { dialect: { catalogCapture: { kindWords: { kind: string }[] } } } };
+    facets: Record<string, unknown>;
+  };
   engine.policy = {
     writeReach: "none",
     readsFileAccessPosture: false,
@@ -197,6 +238,7 @@ export function withLoosestClaims(engine: EditableEngine): void {
     agentReadings: ["sessions", "health"],
   };
   (engine as Record<string, unknown>).agent = postgres.agent;
+  (engine as Record<string, unknown>).objects = kindWordsModel(postgres.agent.overlay.dialect.catalogCapture.kindWords);
 }
 
 /**

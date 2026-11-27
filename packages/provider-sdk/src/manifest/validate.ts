@@ -131,6 +131,10 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
   "plan-estimate-prefix-executes",
+  "object-model-missing",
+  "object-level-duplicate",
+  "object-kind-duplicate",
+  "object-kind-unstated",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -831,6 +835,62 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
   return sqlDialectRefusals(dialect, `${pointer}/dialect`);
 }
 
+/**
+ * The rules of an engine's object model the schema cannot state, at pointers under `at`: each container level id and
+ * each object kind id once, the later repeat refused, and every kind the declaration names elsewhere one the model
+ * states: a masked kind, a row action's kind, a child kind, an attached kind, a maintenance spec's kind and a catalog
+ * capture's kind word. A repeated kind still counts as stated, so only the repeat itself is refused. A declaration that
+ * states no model is read by none of them here: `manifestRuleRefusals` refuses its facet kinds, since no model states
+ * any kind, and requires a model where the package offers objects.tree. A declaration read alone keeps those two
+ * rules out, so a legacy declaration with no model stays admitted under `validateEngine`.
+ */
+function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const model = engine.objects;
+  if (model === undefined) return [];
+  const refusals: SchemaRefusal[] = [];
+  const base = `${at}/objects`;
+  const levels = new Set<string>();
+  model.containerLevels.forEach(({ id }, index) => {
+    if (levels.has(id)) refusals.push(schemaRefusal("object-level-duplicate", `${base}/containerLevels/${index}/id`));
+    levels.add(id);
+  });
+  const stated = new Set<string>();
+  model.objectKinds.forEach(({ id }, index) => {
+    if (stated.has(id)) refusals.push(schemaRefusal("object-kind-duplicate", `${base}/objectKinds/${index}/id`));
+    stated.add(id);
+  });
+  const named = (kind: string, pointer: string) => {
+    if (!stated.has(kind)) refusals.push(schemaRefusal("object-kind-unstated", pointer));
+  };
+  model.maskedNameKinds.forEach((kind, index) => named(kind, `${base}/maskedNameKinds/${index}`));
+  model.rowActions.forEach((action, index) => {
+    action.kinds.forEach((kind, position) => named(kind, `${base}/rowActions/${index}/kinds/${position}`));
+  });
+  model.objectKinds.forEach(({ childKinds, attachedTo }, index) => {
+    childKinds.forEach((kind, position) => named(kind, `${base}/objectKinds/${index}/childKinds/${position}`));
+    if (attachedTo !== null) named(attachedTo, `${base}/objectKinds/${index}/attachedTo`);
+  });
+  for (const [kind, pointer] of facetKindReferences(engine, at)) named(kind, pointer);
+  return refusals;
+}
+
+/**
+ * Each object kind an engine declaration names outside its object model, with its pointer under `at`: a maintenance
+ * spec's kind and a catalog capture's kind word.
+ */
+function facetKindReferences(engine: EngineDeclaration, at: string): [kind: string, pointer: string][] {
+  const references: [kind: string, pointer: string][] = [];
+  engine.facets.maintenanceSpecs.forEach(({ kinds }, index) => {
+    kinds?.forEach((kind, position) =>
+      references.push([kind, `${at}/facets/maintenanceSpecs/${index}/kinds/${position}`]),
+    );
+  });
+  engine.agent.overlay?.dialect?.catalogCapture?.kindWords.forEach(({ kind }, index) => {
+    references.push([kind, `${at}/agent/overlay/dialect/catalogCapture/kindWords/${index}/kind`]);
+  });
+  return references;
+}
+
 /** Whether `text` is exactly one well-formed code point, never a lone surrogate. */
 function isOneCharacter(text: string): boolean {
   return [...text].length === 1 && text.isWellFormed();
@@ -1076,7 +1136,8 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
 
 /**
  * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, agent readings, agent
- * overlay, statement language data, claims and safeguards the schema cannot state, at pointers under `at`.
+ * overlay, statement language data, claims, safeguards and object model the schema cannot state, at pointers under
+ * `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -1115,6 +1176,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...statementLanguageDataRefusals(engine, at));
   refusals.push(...claimRuleRefusals(engine, at));
   refusals.push(...safeguardRuleRefusals(engine, at));
+  refusals.push(...objectModelRuleRefusals(engine, at));
   return refusals;
 }
 
@@ -1148,7 +1210,9 @@ const PROXY_VARIABLES: readonly string[] = Object.freeze(["HTTP_PROXY", "HTTPS_P
 
 /**
  * The rules of a whole manifest the schema cannot state: no proxy variable in the environment, unique engine ids,
- * compatibility entries that match, and fence aliases that name one engine each.
+ * compatibility entries that match, fence aliases that name one engine each, an object model stated by every
+ * engine where the package offers objects.tree, since the tree is read only through it, and no maintenance spec kind
+ * or catalog capture kind word in an engine that states no model, since no model states that kind.
  */
 function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
@@ -1163,6 +1227,14 @@ function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVoc
     if (declared.has(engine.id)) refusals.push(schemaRefusal("engine-id-duplicate", `/engines/${index}/id`));
     declared.add(engine.id);
     if (!covered.has(engine.id)) refusals.push(schemaRefusal("compatibility-engine-missing", `/engines/${index}/id`));
+    if (engine.objects === undefined) {
+      if (manifest.calls.objects.tree === "offered") {
+        refusals.push(schemaRefusal("object-model-missing", `/engines/${index}`));
+      }
+      for (const [, pointer] of facetKindReferences(engine, `/engines/${index}`)) {
+        refusals.push(schemaRefusal("object-kind-unstated", pointer));
+      }
+    }
     refusals.push(...engineRuleRefusals(engine, `/engines/${index}`, vocabularies));
   });
   refusals.push(...fenceAliasRuleRefusals(manifest.engines));
@@ -1431,5 +1503,13 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The kind word at ${at} is already given by an earlier kind word of the capture.`;
     case "plan-estimate-prefix-executes":
       return `The estimating prefix at ${at} holds ANALYZE or ANALYSE, a word that runs the plan rather than estimating it.`;
+    case "object-model-missing":
+      return `The engine declaration at ${at} states no object model, which an engine of a package that offers objects.tree states.`;
+    case "object-level-duplicate":
+      return `The container level id at ${at} repeats the id of an earlier level of the engine's object model.`;
+    case "object-kind-duplicate":
+      return `The object kind id at ${at} repeats the id of an earlier kind of the engine's object model.`;
+    case "object-kind-unstated":
+      return `The object kind at ${at} is not one the engine's object model states, or the engine states no object model.`;
   }
 }

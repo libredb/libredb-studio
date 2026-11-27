@@ -383,9 +383,10 @@ function maintenanceSpec(operation: string, label: string, perEntity: boolean, g
  * The fixture's one engine offering five maintenance operations, each with a spec of one shipped shape, in the list's
  * order: both placements (vacuum), the whole database only (check), one row only with its kinds, a typed target, a
  * description and a preview (release), a whole-database card with its title, description and typed confirmation
- * (compact), and placed nowhere (kill).
+ * (compact), and placed nowhere (kill). The engine's object model states the release spec's kinds (`statingKinds`).
  */
 function withMaintenance(m: Json): void {
+  statingKinds(m, ["collection", "materialized_query_table", "file-format"]);
   facetsOf(m).maintenance = ["vacuum", "check", "release", "compact", "kill"];
   facetsOf(m).maintenanceSpecs = [
     maintenanceSpec("vacuum", "Vacuum", true, true),
@@ -451,6 +452,71 @@ const OVERLAY = "/engines/0/agent/overlay";
 
 /** The pointer of the fixture's one engine's SQL dialect. */
 const DIALECT = `${OVERLAY}/dialect`;
+
+/** The pointer of the fixture's one engine's object model. */
+const OBJECTS = "/engines/0/objects";
+
+/** The object model of the fixture's one engine. */
+const objectsOf = (m: Json): Json => m.engines[0].objects;
+
+/** An object kind `id`, a relation with columns and nothing else, every member written out, then `rest`. */
+function objectKind(id: string, rest: Json = {}): Json {
+  return {
+    id,
+    role: "relation",
+    label: "Item",
+    labelPlural: "Items",
+    hasSource: false,
+    sourceLanguage: null,
+    hasColumns: true,
+    acceptsSourceEdits: false,
+    childKinds: [],
+    attachedTo: null,
+    acceptsRowWrites: false,
+    enumeratedBy: null,
+    countIsListing: false,
+    machineNames: null,
+    group: null,
+    ...rest,
+  };
+}
+
+/**
+ * A small object model, every member written out: one schema level, a kind `item`, a kind `part` attached to it, and
+ * one row action on `item`.
+ */
+function objectModel(): Json {
+  return {
+    containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+    containerPathShapes: "exact",
+    containerNameSpelling: null,
+    objectKinds: [objectKind("item"), objectKind("part", { role: "attached", attachedTo: "item", hasColumns: false })],
+    rowActions: [{ id: "inspect", label: "Inspect", kinds: ["item"], activates: false }],
+    containersNameKinds: false,
+    tablesNeedContainer: false,
+    tablesAreDerivedGroupings: false,
+    agentWalkScope: null,
+    schemaDiffScope: null,
+    maskedNameKinds: [],
+  };
+}
+
+/**
+ * Each of `kinds` stated in the fixture's one engine's object model, after the kinds it already states; an engine that
+ * states no model first states `objectModel()`, since a kind the declaration names is one its model states.
+ */
+function statingKinds(m: Json, kinds: readonly string[]): void {
+  m.engines[0].objects ??= objectModel();
+  objectsOf(m).objectKinds.push(...kinds.map((kind) => objectKind(kind)));
+}
+
+/** The fixture with its package offering `objects.tree` and its one engine stating `objectModel()`, then `change`. */
+const modelled = (change: (m: Json) => void = () => {}) =>
+  manifest((m) => {
+    m.calls.objects.tree = "offered";
+    m.engines[0].objects = objectModel();
+    change(m);
+  });
 
 /** The pointer of the fixture's one engine's statement language data. */
 const LANGUAGE_DATA = "/engines/0/statementLanguageData";
@@ -715,8 +781,12 @@ function sqlDialect(): Json {
   };
 }
 
-/** The fixture's one engine as an SQL engine whose overlay gives `sqlDialect()` and a grounding override. */
+/**
+ * The fixture's one engine as an SQL engine whose overlay gives `sqlDialect()` and a grounding override, its object model
+ * stating the capture's kind words (`statingKinds`).
+ */
 function withSqlDialect(m: Json): void {
+  statingKinds(m, ["table", "view", "sequence"]);
   agentOf(m).statementLanguage = "sql";
   agentOf(m).overlay = { dialect: sqlDialect(), grounding: "groundingOverride" };
 }
@@ -3974,6 +4044,7 @@ describe("rules the schema cannot state", () => {
   test("a dialect on an engine of another family is refused as agent-dialect-unspoken", () => {
     const changed = kafkaManifest();
     agentOf(changed).overlay.dialect = sqlDialect();
+    statingKinds(changed, ["table", "view", "sequence"]);
 
     expect(refusalsFor(changed)).toEqual([refusal("agent-dialect-unspoken", DIALECT)]);
   });
@@ -4826,7 +4897,10 @@ describe("the calls segment", () => {
     expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "maybe")))).toEqual([
       refusal("value-not-allowed", "/calls/objects/tree"),
     ]);
-    expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "offered")))).toEqual([]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "offered")))).toEqual([
+      refusal("object-model-missing", "/engines/0"),
+    ]);
+    expect(refusalsFor(modelled())).toEqual([]);
   });
   test("calls that leave out maintenance, or maintenance that leaves out run or preview, are refused as missing-key", () => {
     expect(refusalsFor(manifest((m) => delete m.calls.maintenance))).toEqual([
@@ -4863,6 +4937,229 @@ describe("the calls segment", () => {
       refusal("value-not-allowed", "/calls/monitoring/panel"),
     ]);
     expect(refusalsFor(manifest((m) => (m.calls.monitoring = { panel: "offered", poolStats: "offered" })))).toEqual([]);
+  });
+});
+
+describe("the object model", () => {
+  test("an engine declaration states its object model: its container levels, path shapes and name spelling, its kinds with their columns, source, edit flags and row actions, and its agent walk and schema diff scopes, every member required", () => {
+    const stated = modelled((m) => {
+      Object.assign(objectsOf(m), {
+        containerLevels: [
+          { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+          { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        ],
+        containerPathShapes: "prefixes",
+        containerNameSpelling: "engine",
+        containersNameKinds: true,
+        tablesNeedContainer: true,
+        tablesAreDerivedGroupings: true,
+        agentWalkScope: {
+          mode: "session-default",
+          alsoWalk: [["Main"], ["Main", "Other"]],
+          whenNoDefault: { walk: "parent-default-children", skip: ["SYSTEM_SCHEMA"] },
+        },
+        schemaDiffScope: "agent-walk",
+        maskedNameKinds: ["part"],
+      });
+      objectsOf(m).objectKinds.push(
+        objectKind("routine", {
+          role: "routine",
+          hasSource: true,
+          sourceLanguage: "sql",
+          hasColumns: false,
+          acceptsSourceEdits: true,
+          childKinds: ["item"],
+          acceptsRowWrites: true,
+          enumeratedBy: "key-browser",
+          countIsListing: true,
+          machineNames: "withheld",
+          group: { id: "access-control", label: "Access Control" },
+        }),
+      );
+      objectsOf(m).rowActions[0].activates = true;
+    });
+
+    expect(refusalsFor(modelled())).toEqual([]);
+    expect(refusalsFor(stated)).toEqual([]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).schemaDiffScope = "session-container")))).toEqual([]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).containerLevels = [])))).toEqual([]);
+    for (const member of Object.keys(objectModel())) {
+      expect(refusalsFor(modelled((m) => delete objectsOf(m)[member]))).toEqual([
+        refusal("missing-key", OBJECTS, member),
+      ]);
+    }
+    for (const member of Object.keys(objectKind("item"))) {
+      expect(refusalsFor(modelled((m) => delete objectsOf(m).objectKinds[0][member]))).toEqual([
+        refusal("missing-key", `${OBJECTS}/objectKinds/0`, member),
+      ]);
+    }
+    expect(refusalsFor(modelled((m) => (objectsOf(m).bogus = 1)))).toEqual([refusal("unknown-key", OBJECTS, "bogus")]);
+    expect(
+      refusalsFor(
+        modelled((m) => {
+          const [level] = objectsOf(m).containerLevels;
+          objectsOf(m).containerLevels = [level, { ...level, id: "catalog" }, { ...level, id: "catalog" }];
+        }),
+      ),
+    ).toEqual([refusal("too-many", `${OBJECTS}/containerLevels`)]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).containerLevels[0].id = "table")))).toEqual([
+      refusal("value-not-allowed", `${OBJECTS}/containerLevels/0/id`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).objectKinds[0].id = "Bad Id")))).toEqual([
+      refusal("pattern-mismatch", `${OBJECTS}/objectKinds/0/id`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).objectKinds[0].role = "table")))).toEqual([
+      refusal("value-not-allowed", `${OBJECTS}/objectKinds/0/role`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).containerPathShapes = null)))).toEqual([
+      refusal("value-not-allowed", `${OBJECTS}/containerPathShapes`),
+      refusal("wrong-type", `${OBJECTS}/containerPathShapes`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).agentWalkScope = { mode: "everything" })))).toEqual([
+      refusal("no-variant", `${OBJECTS}/agentWalkScope`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).rowActions[0].kinds = [])))).toEqual([
+      refusal("too-few", `${OBJECTS}/rowActions/0/kinds`),
+    ]);
+  });
+
+  test("an engine of a package that offers objects.tree is refused as object-model-missing unless its declaration states its object model", () => {
+    const offered = manifest((m) => (m.calls.objects.tree = "offered"));
+
+    expect(refusalsFor(offered)).toEqual([refusal("object-model-missing", "/engines/0")]);
+    expect(refusalsFor(modelled())).toEqual([]);
+    // The model is optional where the package offers no tree: an engine may state it, or leave it out.
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(refusalsFor(manifest((m) => (m.engines[0].objects = objectModel())))).toEqual([]);
+    expect(refusalsFor(modelled((m) => (m.engines[0].objects = null)))).toEqual([refusal("wrong-type", OBJECTS)]);
+  });
+
+  test("a repeated container level id or object kind id is refused at the later one's pointer", () => {
+    const repeated = modelled((m) => {
+      objectsOf(m).containerLevels = [
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "schema", label: "Folder", labelPlural: "Folders" },
+      ];
+      objectsOf(m).objectKinds.push(objectKind("item", { label: "Other" }), objectKind("item"));
+    });
+
+    expect(refusalsFor(repeated)).toEqual([
+      refusal("object-level-duplicate", `${OBJECTS}/containerLevels/1/id`),
+      refusal("object-kind-duplicate", `${OBJECTS}/objectKinds/2/id`),
+      refusal("object-kind-duplicate", `${OBJECTS}/objectKinds/3/id`),
+    ]);
+  });
+
+  test("a maintenance spec naming a kind the object model does not state is refused at its pointer", () => {
+    const unstated = modelled((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m)[2].kinds = ["absent", "item", "gone"];
+    });
+
+    expect(refusalsFor(unstated)).toEqual([
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/0`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/2`),
+    ]);
+    expect(refusalsFor(modelled(withMaintenance))).toEqual([]);
+    // A spec with no kind list runs on every relation kind, so it names no kind the model must state.
+    expect(refusalsFor(modelled((m) => (withMaintenance(m), (maintenanceSpecsOf(m)[2].kinds = null))))).toEqual([]);
+  });
+
+  test("a masked kind the object model does not state is refused at its pointer", () => {
+    expect(refusalsFor(modelled((m) => (objectsOf(m).maskedNameKinds = ["part", "missing"])))).toEqual([
+      refusal("object-kind-unstated", `${OBJECTS}/maskedNameKinds/1`),
+    ]);
+    expect(refusalsFor(modelled((m) => (objectsOf(m).maskedNameKinds = ["part", "part"])))).toEqual([
+      refusal("duplicate", `${OBJECTS}/maskedNameKinds/1`),
+    ]);
+  });
+
+  test("a row action, a child kind, an attached kind or a catalog capture kind word naming a kind the object model does not state is refused at its pointer", () => {
+    const unstated = modelled((m) => {
+      withSqlDialect(m);
+      sqlDialectOf(m).catalogCapture.kindWords[1].kind = "lost";
+      objectsOf(m).rowActions[0].kinds = ["item", "missing"];
+      objectsOf(m).objectKinds[0].childKinds = ["absent"];
+      objectsOf(m).objectKinds[1].attachedTo = "gone";
+    });
+    const stated = modelled(withSqlDialect);
+
+    expect(refusalsFor(unstated)).toEqual([
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/1/kind`),
+      refusal("object-kind-unstated", `${OBJECTS}/objectKinds/0/childKinds/0`),
+      refusal("object-kind-unstated", `${OBJECTS}/objectKinds/1/attachedTo`),
+      refusal("object-kind-unstated", `${OBJECTS}/rowActions/0/kinds/1`),
+    ]);
+    expect(refusalsFor(stated)).toEqual([]);
+  });
+
+  test("a maintenance spec kind or a catalog capture kind word of an engine that states no object model is refused at its pointer", () => {
+    const unmodelled = manifest((m) => {
+      withMaintenance(m);
+      withSqlDialect(m);
+      delete m.engines[0].objects;
+    });
+
+    // No model states any kind, so every kind the declaration names is unstated, whether or not the package offers
+    // objects.tree.
+    expect(refusalsFor(unmodelled)).toEqual([
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/0/kind`),
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/1/kind`),
+      refusal("object-kind-unstated", `${DIALECT}/catalogCapture/kindWords/2/kind`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/0`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/1`),
+      refusal("object-kind-unstated", `${MAINTENANCE_SPECS}/2/kinds/2`),
+    ]);
+    // A spec with no kind list and a dialect with no catalog capture name no kind, so they need no model.
+    const unnamed = manifest((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m)[2].kinds = null;
+      withSqlDialect(m);
+      sqlDialectOf(m).catalogCapture = null;
+      delete m.engines[0].objects;
+    });
+    expect(refusalsFor(unnamed)).toEqual([]);
+  });
+
+  test("an engine declaration's object model is refused at its own pointer under validateEngine", () => {
+    const declaration = modelled((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m)[2].kinds = ["absent"];
+      objectsOf(m).objectKinds.push(objectKind("item"));
+      objectsOf(m).maskedNameKinds = ["missing"];
+    }).engines[0] as Json;
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("object-kind-unstated", "/facets/maintenanceSpecs/2/kinds/0"),
+        refusal("object-kind-unstated", "/objects/maskedNameKinds/0"),
+        refusal("object-kind-duplicate", "/objects/objectKinds/5/id"),
+      ],
+    });
+    // A declaration read alone has no package calls, so the model's absence and the kinds an engine with no model names
+    // are the manifest's rules, not the engine's.
+    expect(validator.validateEngine(manifest().engines[0])).toEqual({ admitted: true, engine: manifest().engines[0] });
+    const unmodelled = manifest((m) => (withMaintenance(m), withSqlDialect(m), delete m.engines[0].objects)).engines[0];
+    expect(validator.validateEngine(unmodelled)).toEqual({ admitted: true, engine: unmodelled });
+  });
+
+  test("an object model refusal carries no value of the manifest", () => {
+    const planted = `planted${randomUUID().replaceAll("-", "")}`;
+    const refusals = refusalsFor(
+      modelled((m) => {
+        objectsOf(m).maskedNameKinds = [planted];
+        objectsOf(m).objectKinds.push(objectKind(planted), objectKind(planted));
+        objectsOf(m).rowActions[0].kinds = [`${planted}x`];
+      }),
+    );
+
+    expect(refusals).toEqual([
+      refusal("object-kind-duplicate", `${OBJECTS}/objectKinds/3/id`),
+      refusal("object-kind-unstated", `${OBJECTS}/rowActions/0/kinds/0`),
+    ]);
+    expect(JSON.stringify(refusals)).not.toContain(planted);
+    for (const item of refusals) expect(refusalSentence(item)).not.toContain(planted);
   });
 });
 
