@@ -1040,8 +1040,8 @@ The facet has no honours list: a provider honours every member of the request it
 
 ### C-62 (normative): A tree answer is read through the SDK's check
 
-The host reads a tree answer with `checkTreeAnswer`, which refuses as `tree-answer-unreadable` an answer that is not its action's form, a key the form cannot have, a value outside the SDK's object tree types, more details than the request's limit and `needsConfiguration` where C-61 does not allow it, never calling a getter or naming a value; past the check it reads the answer by reference and decides nothing on its values.
-An optional member present with no value reads as absent.
+The host reads a tree answer with `checkTreeAnswer`, which refuses as `tree-answer-unreadable` an answer that is not its action's form, a key the form cannot have (a list's included, any but its indexes and `length`), a value outside the SDK's object tree types, more details than the request's limit and `needsConfiguration` where C-61 does not allow it, never calling a getter or naming a value; past the check it reads the answer by reference and decides nothing on its values.
+An optional member, or a member of another form of a union, present with no value reads as absent.
 
 ### C-63 (informative): A provider honours every member of a tree request
 

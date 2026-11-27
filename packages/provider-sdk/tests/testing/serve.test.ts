@@ -1001,7 +1001,7 @@ describe("serve", () => {
       const refused = await failure(async () => impl.objects?.tree?.(opened.handle, request, callContext()));
       expect(refused).toBeInstanceOf(CallRefusalError);
       expect((refused as CallRefusalError).refusals).toEqual(refusals);
-      expect(checkTreeAnswer(request, answer)).toEqual(refusals);
+      expect(checkTreeAnswer(request, answer)).toEqual({ kind: "refused", refusals });
     }
     // Each answer crossed whole before the host's side read it.
     expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(

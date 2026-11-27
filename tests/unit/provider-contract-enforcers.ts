@@ -2587,6 +2587,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "needsConfiguration under a parent or beside a container, and more details than the request's limit, are refused as tree-answer-unreadable",
         "a getter in a tree answer is refused and never called, and an optional member present with no value reads as absent",
         "a well-formed answer of each action passes, an inherited key name included, without throwing",
+        "a tree answer the check reads is answered as itself, by reference, and a refused one as its refusals alone",
+        "a member of another arm of a union present with no value reads as absent, so the arm its defined keys name is read",
+        "a tree answer whose reading throws is refused at the pointer being read, and the check never throws",
+        "an answer list with an own key that is neither an index nor its length is refused at that key, by name",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served tree answer outside its action's form is refused on the host side with the core's refusals",

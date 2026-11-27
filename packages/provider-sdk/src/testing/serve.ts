@@ -617,9 +617,9 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
         ...(decoded as unknown as ExecuteAnswer),
         results: ids.map((id, index) => servedSource(id, descriptors[index] as Record<string, unknown>)),
       };
-      const answerRefusals = checkExecuteAnswer(crossed);
-      if (answerRefusals.length > 0) throw new CallRefusalError(answerRefusals);
-      return crossed;
+      const check = checkExecuteAnswer(crossed);
+      if (check.kind === "refused") throw new CallRefusalError(check.refusals);
+      return check.answer;
     } catch (error) {
       return throwAfterClosing(
         error,
@@ -664,9 +664,9 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
               request,
               ctx,
             );
-            const answerRefusals = checkTreeAnswer(request, answer);
-            if (answerRefusals.length > 0) throw new CallRefusalError(answerRefusals);
-            return answer;
+            const check = checkTreeAnswer(request, answer);
+            if (check.kind === "refused") throw new CallRefusalError(check.refusals);
+            return check.answer;
           },
         };
   const servedMaintenance: MaintenanceImpl<ServedHandle> = {

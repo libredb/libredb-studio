@@ -63,8 +63,8 @@ import { type BridgedConsole, bridgedConsole } from "@/lib/provider-host/legacy-
  * read, the statement timeout and the slack. A provider's error passes as the same object, and a read's failure after
  * its wait ended is logged by route, action, kind and code, never its text. A read naming a level or a kind the
  * session's object model does not state is refused before any call as `StudioObjectModelRefusal`, outcome not-sent.
- * Every other refusal is a defect of Studio's bridge, which offers `objects.tree` on every session (the accessor's
- * rules). The facade takes no catalog, so no catalog choice is honoured on this path, and each caller's own checks and
+ * Every other refusal before the call is a defect of Studio's bridge, which offers `objects.tree` on every session (the
+ * accessor's rules), and a refusal of the answer is a defect of the legacy provider's own code, which is Studio's. The facade takes no catalog, so no catalog choice is honoured on this path, and each caller's own checks and
  * scrubs run where they ran. A containers
  * answer that says the inventory needs configuration (`needsConfiguration`, clause C-61) is answered by
  * `listContainers` as its containers alone.

@@ -14,8 +14,10 @@
  * against the form its request's action answers (clause C-62), whatever session answered it, a package's or the
  * bridge's: one that is not that form is refused as a record, `called` true, each refusal naming the rule
  * `tree-answer-unreadable` and its pointer, never a value. Past the check the answer is the session's own, by
- * reference, typed as its action's form (`TreeAnswerOf`): the caller reads the member its action answers and checks
- * nothing of its own. A wait the signal ends answers a stop, the signal's
+ * reference, typed as its action's form (`TreeAnswerOf`) as the check answers it: the caller reads the member its
+ * action answers and checks nothing of its own. The core reads the answer by reference past the check under operator
+ * trust, the trust an installed package runs under, so a package that changes its answer after the check is not
+ * guarded against. A wait the signal ends answers a stop, the signal's
  * reason by reference, and `settled`, which resolves once the call the host stopped waiting for has settled either way;
  * a failure after the stop reaches `ports.late` once and a later answer is dropped, so no promise the host stopped
  * waiting for is left without a handler. A provider's error passes by reference.
@@ -114,10 +116,9 @@ export async function treeCall<R extends TreeRequest>(
   const call = startCall(() => sessionTree(session, request, ctx));
   try {
     const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
-    const refusals = checkTreeAnswer(request, answer);
-    if (refusals.length > 0) return { kind: "refused", called: true, refusals };
-    // checkTreeAnswer holds the answer to the form the request's action answers, which TreeAnswerOf names.
-    return { kind: "answered", answer: answer as TreeAnswerOf<R["action"]> };
+    const check = checkTreeAnswer(request, answer);
+    if (check.kind === "refused") return { kind: "refused", called: true, refusals: check.refusals };
+    return { kind: "answered", answer: check.answer };
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(call) };

@@ -79,9 +79,9 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "execute-answer-unreadable",
   /**
    * A tree answer the host reads that is not its action's form: not a plain record, a member missing where the SDK
-   * requires it or behind an accessor, a key the form cannot have (`name` the key), a value not of the SDK's object
-   * tree types there, more details than the request's limit, or `needsConfiguration` where C-61 does not allow it; the
-   * pointer is into the answer.
+   * requires it or behind an accessor, a key the form cannot have, a list's key that is no index included (`name` the
+   * key), a value not of the SDK's object tree types there, more details than the request's limit,
+   * `needsConfiguration` where C-61 does not allow it, or a value whose reading throws; the pointer is into the answer.
    */
   "tree-answer-unreadable",
 ] as const);

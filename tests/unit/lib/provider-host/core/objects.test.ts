@@ -1,7 +1,9 @@
 /**
  * The host core's tree call (src/lib/provider-host/core/objects.ts; docs/providers/CONTRACT.md, clause C-64): a tree
  * call is checked before it is made and refused as a record, runs on a context and request frozen in place, is waited
- * for until the call's signal, and answers the session's own answer by reference, as the console calls answer theirs.
+ * for until the call's signal, and reads its answer with `checkTreeAnswer` against its action's form: one that is not
+ * that form is refused as a record, and one that is is answered as the session's own answer, by reference, as the
+ * console calls answer theirs.
  *
  * Every session here is a fake whose `tree` the test drives through promises it settles itself; no assertion follows a
  * timer. `objects-bounds.test.ts` holds a tree call that never settles, with a real deadline, in a bounded Node child.

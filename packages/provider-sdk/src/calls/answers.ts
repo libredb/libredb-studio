@@ -10,22 +10,28 @@
  * `checkTransactionStatement`, and every other result is closed unread.
  *
  * The host passes a tree answer on to the caller whole, by reference, so `checkTreeAnswer` reads all of it once, here,
- * against the form its request's action answers: every record closed over the members the SDK's object tree types
- * state, a key outside them refused by name, and a value of another type, more details than the request's limit or
- * `needsConfiguration` where clause C-61 does not allow it refused at its pointer as `tree-answer-unreadable`. Each
- * record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
- * typecheck here until its form names it, as the frame reader's shapes do.
+ * against the form its request's action answers: every record and every list closed over the members the SDK's object
+ * tree types state, a key outside them refused by name, and a value of another type, more details than the request's
+ * limit or `needsConfiguration` where clause C-61 does not allow it refused at its pointer as `tree-answer-unreadable`.
+ * Each record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
+ * typecheck here until its form names it, as the frame reader's shapes do. A reading of the tree answer that throws, a
+ * revoked Proxy or a trap that throws, is refused at the pointer being read, so the tree check never throws.
+ *
+ * Each check answers an `AnswerCheck`: the answer itself, by reference, typed as the form it was read as, where it
+ * refuses nothing, and its refusals alone otherwise, so a caller past the check reads the answer typed with no cast of
+ * its own.
  *
  * Each reader reads the answer by its own property descriptors: a getter is never called but refused, an inherited
  * property is never read, and no refusal carries a value of the answer. An optional member present as an own data
- * property whose value is `undefined` reads as absent, in both answers, since the SDK's optional types admit it; a
- * required member present so is missing.
+ * property whose value is `undefined` reads as absent, in both answers, since the SDK's optional types admit it, and
+ * so does a member of another arm of a union in a tree answer; a required member present so is missing.
  */
-import { isPlainRecord, pointerTo, readOwn } from "./records";
+import { isPlainRecord, type OwnRead, pointerTo, readOwn } from "./records";
 import type { CallRefusal } from "./refusals";
 import type {
   ColumnSchema,
   Container,
+  ExecuteAnswer,
   DatabaseObject,
   ExclusionConstraintSchema,
   ForeignKeySchema,
@@ -38,8 +44,28 @@ import type {
   TreeCountAnswer,
   TreeDescribeAnswer,
   TreeListAnswer,
+  TreeAnswerOf,
   TreeRequest,
 } from "./types";
+
+/**
+ * What a check answers of an answer: the answer itself, by reference, typed as the form the check read it as, where it
+ * refuses nothing, and only its refusals, never the answer, where it refuses any.
+ */
+export type AnswerCheck<Answer> =
+  | { readonly kind: "read"; readonly answer: Answer }
+  | { readonly kind: "refused"; readonly refusals: readonly CallRefusal[] };
+
+/**
+ * The check of `answer` that found `refusals`: refused where there are any, and otherwise the answer read as `Answer`,
+ * the form the refusals' reader held it to, which is what makes the type true; no other function in the SDK types an
+ * answer by its check.
+ */
+function checked<Answer>(answer: unknown, refusals: readonly CallRefusal[]): AnswerCheck<Answer> {
+  if (refusals.length > 0) return { kind: "refused", refusals };
+  // The reader that found no refusal read every member `Answer` states that the host reads, as its type.
+  return { kind: "read", answer: answer as Answer };
+}
 
 /** The members a warning can have: its message, and its optional code and severity. */
 const WARNING_MEMBERS: readonly string[] = Object.freeze(["message", "code", "severity"]);
@@ -143,9 +169,9 @@ function readOwnData(target: unknown, key: string): unknown {
  * later result read; the execution time at `/executionTimeMs`, a finite non-negative number; the warning list at
  * `/warnings`, an own data array, and each warning in it (`warningRefusals`). A member that is missing, an accessor or
  * not of its type is refused at its pointer, a key a warning cannot have is named, and no refusal carries a value.
- * Never throws: an answer that is no object has none of its members.
+ * An answer that is no object has none of its members.
  */
-export function checkExecuteAnswer(answer: unknown): readonly CallRefusal[] {
+function executeAnswerRefusals(answer: unknown): readonly CallRefusal[] {
   const refusals: CallRefusal[] = [];
   const results = readOwn(answer, "results");
   if (results.kind === "data" && Array.isArray(results.value)) {
@@ -174,6 +200,16 @@ export function checkExecuteAnswer(answer: unknown): readonly CallRefusal[] {
   return refusals;
 }
 
+/**
+ * `answer`, what a console execute answered, read where the host reads it (`executeAnswerRefusals`): the answer itself,
+ * typed as the SDK's `ExecuteAnswer`, where no member the host reads here is refused, and the refusals otherwise. The
+ * members it does not read are read where the module's docblock says. A reading that throws, a Proxy's trap, passes to
+ * the caller.
+ */
+export function checkExecuteAnswer(answer: unknown): AnswerCheck<ExecuteAnswer> {
+  return checked(answer, executeAnswerRefusals(answer));
+}
+
 /** The refusal of the tree answer member at `pointer`, or of its key `name`, a key the form cannot have. */
 function treeUnreadable(pointer: string, name?: string): CallRefusal {
   return name === undefined
@@ -183,6 +219,30 @@ function treeUnreadable(pointer: string, name?: string): CallRefusal {
 
 /** How one value of a tree answer is read: each way it is not its form, appended to `out`, pointed at `pointer`. */
 type TreeForm = (value: unknown, pointer: string, out: CallRefusal[]) => void;
+
+/**
+ * `form`, with a throw while it reads its value, a revoked Proxy or a trap that throws, refused at the value's pointer,
+ * so no reading of an answer throws past the check. Every form that reads more than the value's type is guarded.
+ */
+function guarded(form: TreeForm): TreeForm {
+  return (value, pointer, out) => {
+    try {
+      form(value, pointer, out);
+    } catch {
+      out.push(treeUnreadable(pointer));
+    }
+  };
+}
+
+/** The own property `key` of `target` (`readOwn`), or undefined, its pointer `at` refused, when reading it throws. */
+function readAt(target: unknown, key: string, at: string, out: CallRefusal[]): OwnRead | undefined {
+  try {
+    return readOwn(target, key);
+  } catch {
+    out.push(treeUnreadable(at));
+    return undefined;
+  }
+}
 
 /** Text. */
 const textForm: TreeForm = (value, pointer, out) => {
@@ -204,24 +264,35 @@ const provenanceForm: TreeForm = (value, pointer, out) => {
   if (value !== "sampled") out.push(treeUnreadable(pointer));
 };
 
+/** Whether `key` is an index of a list of `length` items: a canonical array index below the length. */
+function isIndexOf(key: string, length: number): boolean {
+  return /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < length;
+}
+
 /**
  * A list of `item`: an own data array, each index an own data element read as `item`; a hole or an accessor is refused
- * at its index.
+ * at its index, and an own key that is neither an index nor `length` is refused by name, as a record's key outside its
+ * form is.
  */
 function listForm(item: TreeForm): TreeForm {
-  return (value, pointer, out) => {
+  return guarded((value, pointer, out) => {
     if (!Array.isArray(value)) {
       out.push(treeUnreadable(pointer));
       return;
     }
     const items: readonly unknown[] = value;
-    for (let index = 0; index < items.length; index++) {
-      const read = readOwn(items, String(index));
+    const length = items.length;
+    for (let index = 0; index < length; index++) {
       const at = pointerTo(pointer, index);
+      const read = readAt(items, String(index), at, out);
+      if (read === undefined) continue;
       if (read.kind === "data") item(read.value, at, out);
       else out.push(treeUnreadable(at));
     }
-  };
+    for (const key of Object.getOwnPropertyNames(items)) {
+      if (key !== "length" && !isIndexOf(key, length)) out.push(treeUnreadable(pointerTo(pointer, key), key));
+    }
+  });
 }
 
 /** A member a record form reads where the SDK type requires it. */
@@ -243,46 +314,76 @@ type TreeShape<T> = {
   readonly [K in keyof T]-?: Partial<Pick<T, K>> extends Pick<T, K> ? OptionalMember : RequiredMember;
 };
 
+/** The members of a record form, by key, whatever SDK type they were declared against. */
+type Members = Readonly<Record<string, RequiredMember | OptionalMember>>;
+
 const required = (form: TreeForm): RequiredMember => ({ required: form });
 const optional = (form: TreeForm): OptionalMember => ({ optional: form });
 
+/** `shape`, declared against the SDK type `T`, as the members of one arm of a union (`chosenForm`). */
+function armOf<T>(shape: TreeShape<T>): Members {
+  return shape;
+}
+
 /**
- * A closed record of the SDK type `T`, read as `shape` names its members: a plain record, refused once at its pointer
- * otherwise. Each own key is read in the answer's order: a key the shape does not name is refused by name, an accessor
- * at its pointer, and a data member as its form, except an optional member whose value is `undefined`, which reads as
- * absent. A required member the record does not have is then refused at its pointer, in the shape's order.
+ * A closed record of `members`, read in the answer's order: a plain record, refused once at its pointer otherwise.
+ * Each own key is read in the answer's order: a key `members` does not name is refused by name, except a key of
+ * `absentKeys` whose value is `undefined`, which reads as absent; an accessor is refused at its pointer, and a data
+ * member is read as its form, except an optional member whose value is `undefined`, which reads as absent. A required
+ * member the record does not have is then refused at its pointer, in the members' order.
  */
-function recordForm<T>(shape: TreeShape<T>): TreeForm {
-  const members: Readonly<Record<string, RequiredMember | OptionalMember>> = shape;
-  return (value, pointer, out) => {
+function closedForm(members: Members, absentKeys: readonly string[]): TreeForm {
+  return guarded((value, pointer, out) => {
     if (!isPlainRecord(value)) {
       out.push(treeUnreadable(pointer));
       return;
     }
-    for (const key of Object.getOwnPropertyNames(value)) {
+    const keys = Object.getOwnPropertyNames(value);
+    for (const key of keys) {
       const at = pointerTo(pointer, key);
       const member = Object.hasOwn(members, key) ? members[key] : undefined;
-      const read = readOwn(value, key);
-      if (member === undefined) out.push(treeUnreadable(at, key));
-      else if (read.kind !== "data") out.push(treeUnreadable(at));
+      const read = readAt(value, key, at, out);
+      if (read === undefined) continue;
+      if (member === undefined) {
+        if (!(absentKeys.includes(key) && read.kind === "data" && read.value === undefined)) {
+          out.push(treeUnreadable(at, key));
+        }
+      } else if (read.kind !== "data") out.push(treeUnreadable(at));
       else if ("required" in member) member.required(read.value, at, out);
       else if (read.value !== undefined) member.optional(read.value, at, out);
     }
     for (const [key, member] of Object.entries(members)) {
-      if ("required" in member && !Object.hasOwn(value, key)) out.push(treeUnreadable(pointerTo(pointer, key)));
+      if ("required" in member && !keys.includes(key)) out.push(treeUnreadable(pointerTo(pointer, key)));
     }
-  };
+  });
+}
+
+/** A closed record of the SDK type `T`, read as `shape` names its members (`closedForm`). */
+function recordForm<T>(shape: TreeShape<T>): TreeForm {
+  return closedForm(shape, []);
 }
 
 /**
- * A record of one of several closed forms, chosen by the first of `forms` whose key the record has as its own,
- * `otherwise` when it has none of them.
+ * A record of one of the closed forms of a union's arms, chosen by the first of `arms` whose key the record has as its
+ * own accessor or as its own data property with a value, `otherwise` when it has none of them. A member of another
+ * arm present with the value `undefined` reads as absent in the arm chosen, as an optional member does, so no
+ * undefined member chooses an arm or is refused in one; one with a value is refused by name, as any key the arm cannot
+ * have.
  */
-function chosenForm(forms: readonly (readonly [string, TreeForm])[], otherwise: TreeForm): TreeForm {
-  return (value, pointer, out) => {
-    const chosen = forms.find(([key]) => readOwn(value, key).kind !== "absent");
-    (chosen === undefined ? otherwise : chosen[1])(value, pointer, out);
-  };
+function chosenForm(arms: readonly (readonly [string, Members])[], otherwise: Members): TreeForm {
+  const all = [...arms.map(([, members]) => members), otherwise];
+  const keysOf = (members: Members): readonly string[] => [
+    ...new Set(all.flatMap((other) => Object.keys(other)).filter((key) => !Object.hasOwn(members, key))),
+  ];
+  const forms = arms.map(([key, members]) => [key, closedForm(members, keysOf(members))] as const);
+  const fallback = closedForm(otherwise, keysOf(otherwise));
+  return guarded((value, pointer, out) => {
+    const chosen = forms.find(([key]) => {
+      const read = readOwn(value, key);
+      return read.kind === "accessor" || (read.kind === "data" && read.value !== undefined);
+    });
+    (chosen === undefined ? fallback : chosen[1])(value, pointer, out);
+  });
 }
 
 const textListForm = listForm(textForm);
@@ -302,38 +403,34 @@ type SampledCount = Extract<KindCount, { readonly sampledFrom: string }>;
 /** A counted kind: a count, and the sentence for what bounded it where it was read from a bounded sample. */
 type CountedKind = Omit<SampledCount, "sampledFrom"> & Partial<Pick<SampledCount, "sampledFrom">>;
 
-/** The SDK's `KindCount`: the engine's sentence when it has an own `unavailable`, a count otherwise. */
+/** The SDK's `KindCount`: the engine's sentence when it has an own `unavailable` with a value, a count otherwise. */
 const kindCountForm = chosenForm(
-  [
-    [
-      "unavailable",
-      recordForm<Extract<KindCount, { readonly unavailable: string }>>({ unavailable: required(textForm) }),
-    ],
-  ],
-  recordForm<CountedKind>({ count: required(countForm), sampledFrom: optional(textForm) }),
+  [["unavailable", armOf<Extract<KindCount, { readonly unavailable: string }>>({ unavailable: required(textForm) })]],
+  armOf<CountedKind>({ count: required(countForm), sampledFrom: optional(textForm) }),
 );
 
 /** A count answer's counts: a plain record whose every own key is a kind, any text, and every value a `KindCount`. */
-const countsForm: TreeForm = (value, pointer, out) => {
+const countsForm: TreeForm = guarded((value, pointer, out) => {
   if (!isPlainRecord(value)) {
     out.push(treeUnreadable(pointer));
     return;
   }
   for (const key of Object.getOwnPropertyNames(value)) {
-    const read = readOwn(value, key);
     const at = pointerTo(pointer, key);
+    const read = readAt(value, key, at, out);
+    if (read === undefined) continue;
     if (read.kind === "data") kindCountForm(read.value, at, out);
     else out.push(treeUnreadable(at));
   }
-};
+});
 
 /** The SDK's `ObjectReadRange`: one key, every key under a prefix, or a range, told apart by their own keys. */
 const readRangeForm = chosenForm(
   [
-    ["key", recordForm<Extract<ObjectReadRange, { readonly key: string }>>({ key: required(textForm) })],
-    ["prefix", recordForm<Extract<ObjectReadRange, { readonly prefix: string }>>({ prefix: required(textForm) })],
+    ["key", armOf<Extract<ObjectReadRange, { readonly key: string }>>({ key: required(textForm) })],
+    ["prefix", armOf<Extract<ObjectReadRange, { readonly prefix: string }>>({ prefix: required(textForm) })],
   ],
-  recordForm<Extract<ObjectReadRange, { readonly start: string }>>({
+  armOf<Extract<ObjectReadRange, { readonly start: string }>>({
     start: required(textForm),
     end: required(textForm),
   }),
@@ -372,9 +469,9 @@ const indexesUnavailableForm = recordForm<Extract<ObjectDetail["indexes"], { rea
 });
 
 /** An object's indexes: a list of the SDK's `IndexSchema`, or the engine's sentence where the read was refused. */
-const indexesForm: TreeForm = (value, pointer, out) => {
+const indexesForm: TreeForm = guarded((value, pointer, out) => {
   (Array.isArray(value) ? indexListForm : indexesUnavailableForm)(value, pointer, out);
-};
+});
 
 /** The SDK's `ObjectDetail`. */
 const detailForm = recordForm<ObjectDetail>({
@@ -409,29 +506,51 @@ const batchForm = recordForm<ObjectDetailBatch>({
   ),
 });
 
-/** The length of `answer`'s own data array `key`, or undefined when it holds none there. */
-function ownLength(answer: unknown, key: string): number | undefined {
-  const value = readOwnData(answer, key);
-  return Array.isArray(value) ? value.length : undefined;
+/**
+ * The own data property `key` of `answer`, a record its form already read, read again past the form; undefined, its
+ * pointer refused, when this reading throws.
+ */
+function readAgain(answer: unknown, key: string, out: CallRefusal[]): unknown {
+  const read = readAt(answer, key, pointerTo("", key), out);
+  return read?.kind === "data" ? read.value : undefined;
+}
+
+/**
+ * The length of `answer`'s own data array `key`, read again past the form, or undefined when it holds none there or,
+ * its pointer refused, when reading the length throws.
+ */
+function lengthAgain(answer: unknown, key: string, out: CallRefusal[]): number | undefined {
+  const value = readAgain(answer, key, out);
+  if (!Array.isArray(value)) return undefined;
+  try {
+    return value.length;
+  } catch {
+    out.push(treeUnreadable(pointerTo("", key)));
+    return undefined;
+  }
 }
 
 /**
  * Every way `answer`, what an `objects.tree` call answered `request`, is not its action's form (clause C-62), as
  * `tree-answer-unreadable` at a pointer into the answer: a `containers` request answers `TreeContainersAnswer`, a
  * `count` request `TreeCountAnswer`, a `list` request `TreeListAnswer`, a `describe` request `TreeDescribeAnswer` and a
- * `describeMany` request `ObjectDetailBatch`, each record closed over the members the SDK's object tree types state, every
- * count a non-negative safe integer. Past the form it refuses `needsConfiguration` sent with a `parent` or beside a
- * container (clause C-61), and more details than a `describeMany` request's `limit`. An optional member present as an
- * own `undefined` reads as absent; a getter is refused, never called, an inherited property is never read, and no
- * refusal carries a value. Never throws; an action no form exists for is not this check's, and answers no refusal.
+ * `describeMany` request `ObjectDetailBatch`, each record and each list closed over the members the SDK's object tree
+ * types state, every count a non-negative safe integer. Past the form it refuses `needsConfiguration` sent with a
+ * `parent` or beside a container (clause C-61), and more details than a `describeMany` request's `limit`, reading
+ * neither of an answer that is no record nor a list the form refused, so no pointer is refused twice. An optional member present as an own `undefined` reads as absent, as does a
+ * member of another arm of a union; a getter is refused, never called, an inherited property is never read, and no
+ * refusal carries a value. A reading that throws, a revoked Proxy or a trap that throws, is refused at the pointer
+ * being read, so this never throws. An action no form exists for is not this check's, and answers no refusal.
  */
-export function checkTreeAnswer(request: TreeRequest, answer: unknown): readonly CallRefusal[] {
+function treeAnswerRefusals(request: TreeRequest, answer: unknown): readonly CallRefusal[] {
   const refusals: CallRefusal[] = [];
+  const refusedAt = (pointer: string): boolean => refusals.some((refusal) => refusal.pointer === pointer);
   switch (request.action) {
     case "containers": {
       containersAnswerForm(answer, "", refusals);
-      const needsConfiguration = readOwnData(answer, "needsConfiguration");
-      const listed = ownLength(answer, "containers") ?? 0;
+      if (refusedAt("")) break;
+      const needsConfiguration = readAgain(answer, "needsConfiguration", refusals);
+      const listed = refusedAt("/containers") ? 0 : (lengthAgain(answer, "containers", refusals) ?? 0);
       if (typeof needsConfiguration === "string" && (request.parent !== undefined || listed > 0)) {
         refusals.push(treeUnreadable("/needsConfiguration"));
       }
@@ -448,7 +567,8 @@ export function checkTreeAnswer(request: TreeRequest, answer: unknown): readonly
       break;
     case "describeMany": {
       batchForm(answer, "", refusals);
-      const described = ownLength(answer, "details");
+      if (refusedAt("") || refusedAt("/details")) break;
+      const described = lengthAgain(answer, "details", refusals);
       if (request.limit !== undefined && described !== undefined && described > request.limit) {
         refusals.push(treeUnreadable("/details"));
       }
@@ -456,4 +576,16 @@ export function checkTreeAnswer(request: TreeRequest, answer: unknown): readonly
     }
   }
   return refusals;
+}
+
+/**
+ * `answer`, what an `objects.tree` call answered `request`, read against its action's form (`treeAnswerRefusals`):
+ * the answer itself, typed as that form (`TreeAnswerOf`), where nothing is refused, and the refusals otherwise. Never
+ * throws.
+ */
+export function checkTreeAnswer<R extends TreeRequest>(
+  request: R,
+  answer: unknown,
+): AnswerCheck<TreeAnswerOf<R["action"]>> {
+  return checked(answer, treeAnswerRefusals(request, answer));
 }
