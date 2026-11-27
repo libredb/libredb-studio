@@ -39,11 +39,12 @@ import { type BridgedConsole, bridgedConsole } from "@/lib/provider-host/legacy-
  * `objectTree` is the caller facade of the object tree's reads: the six tree routes under `POST /api/db/objects/` and
  * the VS Code backend's tree calls read every container listing, count, object listing and description through it.
  * Each read is one host core tree call on the legacy bridge's session of the provider its caller resolved, one session
- * built when the facade is, as `cancelEditorRun` builds it, on the core the process's composition root installed, read
- * before anything else in each read, so a read made before the install fails by name and reaches no provider. It builds
- * a fresh request for each read, with copies of the caller's arrays, so the core freezes nothing a caller holds. The
- * facade's `objectModel` is that session's, the model the host core holds every read to (clause M-89), and the one
- * its callers read the engine's levels and kinds through.
+ * built when the facade is, as `cancelEditorRun` builds it. Building it reads the provider's capabilities once, to state
+ * the session's object model, before the host core is read; each read then reads the core the process's composition
+ * root installed before anything else, so a read made before the install fails by name and sends the provider no tree
+ * call. It builds a fresh request for each read, with copies of the caller's arrays, so the core freezes nothing a
+ * caller holds. The facade's `objectModel` is that session's, the model the host core holds every read to (clause
+ * M-89), and the one its callers read the engine's levels and kinds through.
  *
  * Deadlines. Each read waits until its own deadline, `executeDeadline` taken at that read's start, the statement
  * timeout plus `EXECUTE_SLACK_MS`, and until the caller's signal. An inventory's and a search's walks take one deadline
@@ -216,9 +217,9 @@ function treeReads(read: (request: TreeRequest) => Promise<TreeAnswer>) {
 }
 
 /**
- * The object tree of `provider` on one bridged session, built when this is called, each read a host core tree call on
- * it under its own deadline, taken from `clock` at its start, and `caller`, its failures after the caller left logged
- * under `route`.
+ * The object tree of `provider` on one bridged session, built when this is called, which reads the provider's
+ * capabilities for its object model; each read a host core tree call on it under its own deadline, taken from `clock`
+ * at its start, and `caller`, its failures after the caller left logged under `route`.
  */
 export function objectTree(
   provider: DatabaseProvider,

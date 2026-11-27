@@ -476,7 +476,7 @@ describe("objectTree", () => {
     expect(caught.map((error) => (error as Error).message)).toEqual([beside, beside, below, below]);
   });
 
-  test("a tree read before the host core is installed fails by name and reaches no provider", async () => {
+  test("a tree read before the host core is installed fails by name and sends the provider no tree call, its capabilities read once when the facade is built", async () => {
     const provider = providerOf();
     const real = hostCore();
     forgetHostCore();
@@ -490,6 +490,8 @@ describe("objectTree", () => {
 
     for (const error of caught) expect(error).toBeInstanceOf(HostCoreBootOrderError);
     for (const { action } of READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+    // Building the facade states its session's object model, the one provider read made before the core is read.
+    expect(mockOf(provider.getCapabilities)).toHaveBeenCalledTimes(1);
   });
 });
 
