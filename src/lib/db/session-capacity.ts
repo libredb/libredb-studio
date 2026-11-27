@@ -7,15 +7,15 @@
  * it. A connection serves one session where the `servesOneSession` grant of its engine record (`servedEngineRecord` in
  * `./server-catalog`) names a reason, the reason its row of the grant register names from Studio's census, and where its
  * database is in memory, one database per handle, as the file admission reads the name (`namesInMemoryDatabase` in
- * `./provider-files`). It serves several otherwise.
+ * `./provider-files`), which only a connection of a legacy provider's record names: a provider package's connection
+ * names no file Studio admits (clause C-109). It serves several otherwise.
  *
  * The class decides sharing only and authorizes nothing: the provider factory reads it to choose which session a tree,
- * monitoring or health read, or a kill, runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass
- * the same checks.
+ * monitoring or health read, or a kill, runs on (`getOrCreateMetadataProvider` and `getOrCreateMetadataSession` in
+ * `./factory`), and both sessions pass the same checks.
  */
-import type { DatabaseConnection } from "@/lib/types";
 import { namesInMemoryDatabase } from "./provider-files";
-import { servedEngineRecord } from "./server-catalog";
+import { type EngineConnection, offersLegacyProvider, servedEngineRecord } from "./server-catalog";
 
 /** Whether a connection's tree reads on the editor's session (`one`) or on a metadata session of its own. */
 export type SessionCapacity = "one" | "several";
@@ -28,7 +28,8 @@ export type SessionCapacity = "one" | "several";
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {DatabaseConfigError} When the file it names is refused by name, as the file admission refuses it.
  */
-export function sessionCapacity(connection: DatabaseConnection): SessionCapacity {
-  if (servedEngineRecord(connection.type).grants.servesOneSession !== null) return "one";
-  return namesInMemoryDatabase(connection) ? "one" : "several";
+export function sessionCapacity(connection: EngineConnection): SessionCapacity {
+  const engine = servedEngineRecord(connection.type);
+  if (engine.grants.servesOneSession !== null) return "one";
+  return offersLegacyProvider(engine, connection) && namesInMemoryDatabase(connection) ? "one" : "several";
 }

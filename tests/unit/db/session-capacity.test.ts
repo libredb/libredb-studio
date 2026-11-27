@@ -117,7 +117,7 @@ describe("sessionCapacity", () => {
   test("the class reads Studio's records and the connection, never a provider or a manifest", () => {
     const source = readFileSync(path.join(originalDirectory, "src/lib/db/session-capacity.ts"), "utf8");
     const imports = [...source.matchAll(/^import[^;]*?from\s+"([^"]+)";/gm)].map((match) => match[1]).sort();
-    expect(imports).toEqual(["./provider-files", "./server-catalog", "@/lib/types"]);
+    expect(imports).toEqual(["./provider-files", "./server-catalog"]);
     // A connection whose type names no engine is refused by name by the record's lookup, before the connection is read.
     const refused = (() => {
       try {

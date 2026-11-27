@@ -253,4 +253,19 @@ describe("the open context of a provider package's engine", () => {
     expect(open({})).toEqual({ ...DEFAULT_POOL_CONFIG });
     expect(open({ owner: "sub-1", ownerPoolMax: 3 })).toEqual({ ...DEFAULT_POOL_CONFIG, min: 0, max: 3 });
   });
+
+  test("the pool is the metadata session's smaller pool when the open asks for it, shared and owned", () => {
+    const pool = { min: 0, max: 2 } as const;
+    const open = (execution: Record<string, unknown>) =>
+      packageOpenContext({
+        connection: connectionOf(plain),
+        engine: plain,
+        execution,
+        deadline: Date.now() + 1000,
+        signal,
+        pool,
+      }).pool;
+    expect(open({})).toEqual({ ...DEFAULT_POOL_CONFIG, min: 0, max: 2 });
+    expect(open({ owner: "sub-1", ownerPoolMax: 7 })).toEqual({ ...DEFAULT_POOL_CONFIG, min: 0, max: 2 });
+  });
 });
