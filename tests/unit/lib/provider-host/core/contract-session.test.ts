@@ -59,8 +59,10 @@ const PANELS: MonitoringPanels = {
   indexes: NOT,
   storage: NOT,
 };
-/** A panel answer the host core passes by reference, never reading its form. */
-const OVERVIEW = { overview: { version: "1" } } as unknown as MonitoringPanelAnswer;
+/** A panel answer of its panel's form, which the host core reads once and then passes by reference. */
+const OVERVIEW: MonitoringPanelAnswer = {
+  overview: { version: "1", uptime: "0", maxConnections: 0, databaseSize: "0", tableCount: 0, indexCount: 0 },
+};
 const HEALTH: HealthInfo = { databaseSize: "1 MB", cacheHitRatio: "99%", slowQueries: [], activeSessions: [] };
 const NO_ENV = envReader([], () => undefined);
 
@@ -475,10 +477,8 @@ describe("a session opened on a provider package", () => {
     expect((await core.treeCall(session, { action: "containers" } as never, callContext(), ports)).kind).toBe(
       "answered",
     );
-    expect(await core.panelCall(session, { panel: "overview" }, callContext(), ports)).toEqual({
-      kind: "answered",
-      answer: OVERVIEW,
-    });
+    const panel = await core.panelCall(session, { panel: "overview" }, callContext(), ports);
+    expect(panel.kind === "answered" && panel.answer).toBe(OVERVIEW);
     expect((await core.poolStatsCall(session, callContext(), ports)).kind).toBe("answered");
     const health = await core.healthCall(session, callContext(), ports);
     expect(health.kind === "answered" && health.answer).toBe(HEALTH);

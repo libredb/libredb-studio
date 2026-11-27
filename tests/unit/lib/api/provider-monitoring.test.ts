@@ -65,6 +65,18 @@ function providerOf(queryTimeout?: number, extra: Record<string, unknown> = {}):
   return Object.assign(provider, extra);
 }
 
+/** An overview panel's figures, of the SDK's `DatabaseOverview`, its text generated at run time. */
+function overviewOf(): Record<string, unknown> {
+  return {
+    version: marker(),
+    uptime: marker(),
+    maxConnections: 0,
+    databaseSize: marker(),
+    tableCount: 0,
+    indexCount: 0,
+  };
+}
+
 /** The mock behind a provider's member, for its recorded calls and its implementation. */
 const mockOf = (fn: unknown) => fn as ReturnType<typeof mock>;
 
@@ -168,7 +180,12 @@ describe("providerMonitoring", () => {
   test("a dashboard read answers each panel's own answer by reference in the orchestration's four states, and a pool statistics read the provider's own", async () => {
     const stats = { total: 4, idle: 1, active: 3, waiting: 0, max: 10 };
     const provider = providerOf(undefined, { getPoolStats: mock(() => stats) });
-    const answers = Object.fromEntries(MEMBERS.map((member) => [member, [{ marker: marker() }]]));
+    // Each member's answer of its panel's form, a fresh object each, so each is told apart by reference.
+    const answers: Record<string, unknown> = {
+      ...Object.fromEntries(MEMBERS.map((member) => [member, []])),
+      getOverview: overviewOf(),
+      getPerformanceMetrics: { cacheHitAdvice: marker() },
+    };
     for (const member of MEMBERS) mockOf(provider[member]).mockImplementation(async () => answers[member]);
     const failed = new Error(marker());
     mockOf(provider.getActiveSessions).mockImplementation(async () => {
@@ -573,7 +590,7 @@ describe("the health and overview reads", () => {
 
   test("an overview read is one host core panel call where the engine offers the overview, answering its figures by reference, and reads nothing where it does not", async () => {
     const provider = providerOf(2_000);
-    const overview = { marker: marker() };
+    const overview = overviewOf();
     mockOf(provider.getOverview).mockImplementation(async () => overview);
     const s3 = createMockProvider({ type: "s3" });
     const panels: { request: MonitoringPanelRequest; ctx: CallContext }[] = [];

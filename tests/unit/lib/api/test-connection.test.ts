@@ -77,6 +77,9 @@ function testConnection(tested: DatabaseConnection, context: EditorExecutionCont
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
 
+/** A health answer of the SDK's `HealthInfo`, which the host core reads before the test does. */
+const HEALTH = { databaseSize: "0 B", cacheHitRatio: "0", slowQueries: [], activeSessions: [] };
+
 interface RecordingSteps {
   connect?: () => Promise<void>;
   getHealth?: () => Promise<unknown>;
@@ -95,7 +98,7 @@ function recording(over: RecordingSteps = {}): DatabaseProvider {
     };
   const provider = Object.assign(createMockProvider(), {
     connect: mock(step("connect", over.connect ?? (async () => {}))),
-    getHealth: mock(step("getHealth", over.getHealth ?? (async () => ({})))),
+    getHealth: mock(step("getHealth", over.getHealth ?? (async () => HEALTH))),
     disconnect: mock(step("disconnect", over.disconnect ?? (async () => {}))),
   });
   if (over.connectWarnings) Object.assign(provider, { connectWarnings: step("connectWarnings", over.connectWarnings) });
