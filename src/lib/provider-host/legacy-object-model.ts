@@ -119,11 +119,11 @@ function walkScope(scope: NonNullable<ProviderCapabilities["agentWalkScope"]>): 
 /** The object model `capabilities` answer, in the declaration's form, every member written out. */
 export function declaredObjectModel(capabilities: ProviderCapabilities): ObjectModel {
   return {
-    containerLevels: (capabilities.containerLevels ?? []).map(level),
+    containerLevels: (capabilities.containerLevels ?? []).map((entry) => level(entry)),
     containerPathShapes: capabilities.containerPathShapes ?? "exact",
     containerNameSpelling: capabilities.containerNameSpelling ?? null,
-    objectKinds: (capabilities.objectKinds ?? []).map(kind),
-    rowActions: (capabilities.rowActions ?? []).map(rowAction),
+    objectKinds: (capabilities.objectKinds ?? []).map((entry) => kind(entry)),
+    rowActions: (capabilities.rowActions ?? []).map((entry) => rowAction(entry)),
     containersNameKinds: capabilities.containersNameKinds === true,
     tablesNeedContainer: capabilities.tablesNeedContainer === true,
     tablesAreDerivedGroupings: capabilities.tablesAreDerivedGroupings === true,
