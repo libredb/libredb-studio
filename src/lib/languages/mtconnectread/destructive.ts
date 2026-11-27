@@ -7,9 +7,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * verb to find. The row names no operation ON PURPOSE, in the shape Prometheus and Kafka use: naming one would claim
  * this provider can send it.
  */
-export const MTCONNECT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const MTCONNECT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

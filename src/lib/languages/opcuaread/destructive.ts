@@ -7,9 +7,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * is exhaustive over every engine whose text is not SQL, and its operations list is empty by construction: the client
  * seam names eight read services and none of them writes.
  */
-export const OPCUA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const OPCUA_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

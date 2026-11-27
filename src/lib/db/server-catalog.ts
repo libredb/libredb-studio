@@ -37,6 +37,12 @@
  *   package's name, version and digest, or, where the register holds none, each claim at its restrictive value; its
  *   SQL text claims only for the grammar the row reviewed, and whether it did, and its statement language,
  *   decides-alone and text-not-SQL claims also only for the statement language data the row reviewed;
+ * - `statementLanguageRow`: the engine's statement language row, the one the confirmation gate, the console text bound
+ *   and the editor's refusal read (`statementLanguageRow` in ./statement-language-row), composed for a package from
+ *   the statement language data its declaration states and for a legacy engine from Studio's code row of its id, once,
+ *   when the record is composed; null where the engine's statements are SQL or it states no SQL text;
+ * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
+ *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *
@@ -75,6 +81,8 @@
 import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { EngineGrants } from "@/lib/db/claim-grants";
+import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
+import type { StatementReading } from "@/lib/sql/dangerous-query";
 import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
 import type { DeclaredSession } from "@/lib/provider-host/core/contract-session";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
@@ -167,16 +175,6 @@ export interface EngineOffers {
   readonly catalog: boolean;
   /** An unbounded page (`options.unlimited`); the provider contract always pumps a bounded one. */
   readonly unboundedPage: boolean;
-  /** Studio's console text bound for the engine (`consoleTextByteLimit` in ./destructive-commands), read by its id. */
-  readonly consoleTextBound: boolean;
-  /**
-   * Studio's statement vocabulary rows for the engine, read by its id: the confirmation gate reads a statement through
-   * the reading of the connection's type (`readingOfType` in src/lib/sql/dangerous-query.ts). An engine without them is
-   * read with no row, under its `statementGrammar` with the claims that loosen the gate its record grants for the
-   * grammar its register row reviewed, every statement asked where no row reviewed it. Either reading goes through the
-   * one verdict function (`confirmationVerdict` in src/lib/editor/statement-analysis.ts).
-   */
-  readonly statementVocabulary: boolean;
   /** An SSH tunnel core opens for the connection. */
   readonly sshTunnel: boolean;
   /** Host files: the host path fields and the local file core admits for the connection. */
@@ -207,6 +205,16 @@ export interface EngineRecord {
    * (`buildQueryEvent` in src/lib/query-events/build.ts).
    */
   readonly statementGrammar: SqlGrammar | null;
+  /**
+   * The engine's statement language row, or null where its statements are SQL or it states no SQL text: what the
+   * confirmation gate reads beside the statement grammar, through the reading of the record (`readingOfRecord` in
+   * src/lib/sql/dangerous-query.ts), and what the console text bound and the editor's refusal are read from
+   * (`rowTextByteLimit` and `rowRefusal` in ./statement-language-row). The row's claims count only as `grants` grant
+   * them.
+   */
+  readonly statementLanguageRow: DestructiveVocabulary | null;
+  /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */
+  readonly explainReading: StatementReading["explainReading"];
   readonly offers: EngineOffers;
 }
 

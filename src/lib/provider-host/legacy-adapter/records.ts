@@ -12,6 +12,12 @@
  *   only where the entry states it, so a named check is the function Studio's own source holds for the engine;
  * - `grants`: Studio's grant of its claims against its legacy row of the grant register (`legacyEngineGrants`);
  * - `statementGrammar`: its row of Studio's grammar table (`sqlGrammarFor`);
+ * - `statementLanguageRow`: Studio's code row of its id (`codeStatementLanguageRow`), as the one resolver answers it
+ *   (`statementLanguageRow`) with no declared data, since no projection carries a legacy declaration's statement
+ *   language data: every one states null, which tests/unit/db/engine-declarations.test.ts holds. The row is the one
+ *   object the browser reads by type, frozen where its module declares it, and read here once, when the record is
+ *   composed;
+ * - `explainReading`: `"declared"`, the explain value its grammar declares;
  * - `source`: the legacy identity (./identity), with no digest and no package;
  * - `offers`: `LEGACY_OFFERS`, every offer a legacy provider makes today.
  * The records are kept in one `Map`, typed read-only and keyed in the engine catalog's order, each record and every
@@ -22,6 +28,7 @@
 import type { CredentialWarning } from "@libredb/provider-sdk/manifest";
 import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { CONNECTION_FORM, type FieldRuleSpec } from "@/lib/db/connection-form";
+import { codeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
 import {
   BUNDLED_CONNECTION_STRING_ACCEPTED,
@@ -37,6 +44,7 @@ import {
 } from "@/lib/db/engine-catalog/connection.generated";
 import type { EngineId, EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
 import { sqlGrammarFor } from "@/lib/db/sql-grammar";
+import { statementLanguageRow } from "@/lib/db/statement-language-row";
 import type { DatabaseType } from "@/lib/types";
 import { LEGACY_ENGINE_IDS, LEGACY_SOURCE_NAME, LEGACY_SOURCE_VERSION } from "./identity";
 
@@ -47,8 +55,6 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
   database: true,
   catalog: true,
   unboundedPage: true,
-  consoleTextBound: true,
-  statementVocabulary: true,
   sshTunnel: true,
   hostFiles: true,
   testCautions: true,
@@ -95,6 +101,11 @@ function legacyRecord(id: DatabaseType): EngineRecord {
     fieldRules: fieldRulesOf(id),
     grants: legacyEngineGrants(id),
     statementGrammar: sqlGrammarFor(id).grammar,
+    // No declared data: no projection carries a legacy declaration's statement language data, and every one states
+    // null. The change that writes the first language as data hands its projection's data here and deletes the code
+    // row.
+    statementLanguageRow: statementLanguageRow(id, null, codeStatementLanguageRow(id)),
+    explainReading: "declared",
     offers: LEGACY_OFFERS,
   });
 }

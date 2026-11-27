@@ -4,6 +4,7 @@ import { legacyEngineGrants } from "@/lib/db/claim-grants";
 import { assertDatabaseType, quoteTypeId } from "@/lib/db/type-id";
 import { codeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { type GateGrants, rowDecidesAlone, rowNamesAsked } from "@/lib/db/statement-language-row";
 import {
   confirmFormQuery,
@@ -646,10 +647,13 @@ export function writesUnderGrammar(statement: string, grammar: SqlGrammar): bool
 }
 
 /**
- * What the confirmation gate reads one engine's statements with, handed to it whole, so that it never reads a type:
+ * What the confirmation gate reads one engine's statements with, handed to it whole, so that it never reads a type. A
+ * server reader takes it from the engine's record (`readingOfRecord`), and the browser from the connection's type
+ * (`readingOfType`) until it reads the record:
  *
- * - `engine`: the engine's id, named only by the host defect `grantsWithoutGrammarDefect`. The reading of no
- *   connection names none (the empty string), and it always holds a grammar, so it never raises that defect.
+ * - `engine`: the engine's id, named only by the host defects `grantsWithoutGrammarDefect` and `analyzeStatement`'s
+ *   for a reading with no grammar. The reading of no connection names none (the empty string), and it always holds a
+ *   grammar, so it never raises either defect.
  * - `row`: the engine's statement language row, or null where its statements are SQL or it states no SQL text, read
  *   only through the row readers of `@/lib/db/statement-language-row`.
  * - `grammar`: the SQL grammar the engine's declaration states, or null where it states no SQL text.
@@ -707,6 +711,24 @@ export function readingOfType(databaseType?: DatabaseType): StatementReading {
     grammar: resolveSqlGrammar(databaseType),
     grants: legacyEngineGrants(databaseType),
     explainReading: "declared",
+  };
+}
+
+/**
+ * The reading of `engine`, a record of the server's engine catalog, as every server reader of the confirmation gate
+ * reads a statement: the record's statement language row, statement grammar, grants and explain reading, each the
+ * record's own, so no type is read. Only the members the reading needs are taken, so this module imports nothing of
+ * the catalog.
+ */
+export function readingOfRecord(
+  engine: Pick<EngineRecord, "id" | "statementLanguageRow" | "statementGrammar" | "grants" | "explainReading">,
+): StatementReading {
+  return {
+    engine: engine.id,
+    row: engine.statementLanguageRow,
+    grammar: engine.statementGrammar,
+    grants: engine.grants,
+    explainReading: engine.explainReading,
   };
 }
 

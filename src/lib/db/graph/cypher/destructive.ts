@@ -9,7 +9,7 @@ import type { DestructiveVocabulary, OperationReader } from "@/lib/db/destructiv
  * refuses what the words miss, and the statement runs in a READ session besides. A confirmation would ask
  * about a statement that cannot run.
  */
-const NEO4J_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+const NEO4J_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /**
  * What a Cypher buffer would run: never an operation this gate asks about.
@@ -25,8 +25,8 @@ const readNeo4jOperations: OperationReader = () => [];
  * The provider refuses every write before sending it, so a confirmation would ask about a statement that cannot run
  * (Neo4j spec 5.5).
  */
-export const NEO4J_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const NEO4J_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: NEO4J_DESTRUCTIVE_OPERATIONS,
   read: readNeo4jOperations,
   decidesAlone: true,
-};
+});

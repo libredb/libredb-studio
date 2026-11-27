@@ -14,7 +14,7 @@ import { milvusPhase0, parseMilvusRequest } from "./request";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "./routes";
 
 /** The operations the gate asks about: none in v1 (5.4, E10). */
-export const MILVUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+export const MILVUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /** The browser does not know the connection's database, and no phase 0 rule depends on it. */
 const ANY_DATABASE = { database: "default" };

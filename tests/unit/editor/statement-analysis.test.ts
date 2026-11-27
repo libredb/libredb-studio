@@ -462,7 +462,7 @@ function inputOf(c: Case): StatementAnalysisInput {
     text: c.text,
     selection: c.selection,
     cursor: c.cursor,
-    databaseType: c.type,
+    reading: readingOfType(c.type),
     capabilities,
     connectionName: c.name ?? "census",
   };
@@ -485,6 +485,22 @@ describe("analyzeStatement", () => {
     const c9 = CASES.find((c) => c.id === "C9") as Case;
     expect(analyzeStatement({ ...inputOf(c9), connectionName: undefined })).toStrictEqual(
       refuse(ETCD_EVERY_KEY, 0, 15, TYPED_NAME_MISSING_REFUSAL),
+    );
+  });
+
+  test("analyzeStatement refuses a reading with no grammar as a host defect, naming the engine", () => {
+    // The analysis serves an engine whose declaration states SQL text, whose record holds a grammar; a reading without
+    // one is the host's defect, raised before anything is read, never read as some other grammar.
+    const rt1 = inputOf(CASES[0]);
+    const grammarless: StatementReading = {
+      engine: "acmenogrammar",
+      row: null,
+      grammar: null,
+      grants: { reviewedGrammar: false, readsSqlText: true, confirmExemptForms: [], decidesAlone: false },
+      explainReading: "either",
+    };
+    expect(() => analyzeStatement({ ...rt1, reading: grammarless })).toThrow(
+      'The engine "acmenogrammar"\'s reading holds no SQL grammar, so its statement cannot be analysed: a host defect, since only an engine whose declaration states SQL text is analysed.',
     );
   });
 
@@ -838,7 +854,7 @@ describe("the connection's environment", () => {
     const input: StatementAnalysisInput = {
       text: "DELETE FROM t",
       ...at(0),
-      databaseType: "postgres",
+      reading: readingOfType("postgres"),
       capabilities,
       connectionName: name,
     };

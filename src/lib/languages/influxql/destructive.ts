@@ -14,7 +14,7 @@ import {
  * lexical fault) the editor refuses before anything is sent, and on 1.x and 2.x that policy is the only boundary
  * before `DROP DATABASE`.
  */
-export const INFLUXDB_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const INFLUXDB_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: INFLUXQL_DESTRUCTIVE_OPERATIONS,
   read: readInfluxqlOperations,
   decidesAlone: true,
@@ -22,4 +22,4 @@ export const INFLUXDB_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: influxqlRefusal,
   maxTextBytes: INFLUXQL_MAX_TEXT_BYTES,
-};
+});

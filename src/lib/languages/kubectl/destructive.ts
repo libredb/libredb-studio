@@ -8,7 +8,7 @@ import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
  * Not an omission. A mutating kubectl command is refused before any request, and the Kubernetes provider's request
  * policy admits GET and the three self reviews only, so a confirmation would ask about a statement that cannot run.
  */
-const KUBERNETES_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+const KUBERNETES_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /**
  * What a kubectl statement would run: never an operation this gate asks about.
@@ -25,11 +25,11 @@ const readKubernetesOperations: OperationReader = () => [];
  * objects, so none is posted for an AI analysis. What the console's parser refuses (a write, exec or a tunnel, a
  * connection flag, a flag outside v1) the editor refuses before anything is sent, past the dialect's own byte bound.
  */
-export const KUBERNETES_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const KUBERNETES_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
   read: readKubernetesOperations,
   decidesAlone: true,
   safetyAnalysis: false,
   refuse: kubectlRefusal,
   maxTextBytes: KUBECTL_MAX_TEXT_BYTES,
-};
+});

@@ -80,8 +80,8 @@ const readMongodbOperations: OperationReader = (query) => {
 };
 
 /** MongoDB's row of the confirmation gate's vocabulary. */
-export const MONGODB_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: MONGODB_DESTRUCTIVE_OPERATIONS,
+export const MONGODB_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(MONGODB_DESTRUCTIVE_OPERATIONS),
   read: readMongodbOperations,
   decidesAlone: false,
-};
+});

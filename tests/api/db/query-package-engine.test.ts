@@ -117,6 +117,8 @@ const LOOSE = "acmeqloose";
 const WORDS = "acmeqwords";
 const REVIEWED = "acmeqreviewed";
 const NOSQL = "acmeqnosql";
+const DECIDES = "acmeqdecides";
+const CHANGED = "acmeqchanged";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
 
@@ -154,6 +156,19 @@ const NOSQL_PACKAGE: SessionPackage = {
   },
 };
 
+/**
+ * A package declaring the statement language data its register row reviews, with its grammar, and whose row grants the
+ * data's claim that its reader's answer is the gate's whole answer.
+ */
+const DECIDES_PACKAGE: SessionPackage = { name: "acme-q-decides", engine: DECIDES, edit: withStatementLanguageData };
+/** The same declaration, whose register row reviewed data one byte different from the data it declares. */
+const CHANGED_PACKAGE: SessionPackage = { name: "acme-q-changed", engine: CHANGED, edit: withStatementLanguageData };
+/** `ACME_LANGUAGE_DATA` with one byte changed: its bound is 4097 rather than 4096. */
+const CHANGED_LANGUAGE_DATA = {
+  ...ACME_LANGUAGE_DATA,
+  confirmation: { ...ACME_LANGUAGE_DATA.confirmation, maxTextBytes: 4097 },
+};
+
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
   engines = await admitSessionPackages(
@@ -166,6 +181,8 @@ beforeAll(async () => {
       { name: "acme-q-words", engine: WORDS },
       REVIEWED_PACKAGE,
       NOSQL_PACKAGE,
+      DECIDES_PACKAGE,
+      CHANGED_PACKAGE,
     ],
     {
       [WORDS]: { ownWords: "scrubbed" },
@@ -183,6 +200,16 @@ beforeAll(async () => {
         redaction: { kind: "sql", nameQuote: '"' },
         readsSqlText: false,
         confirmExemptForms: [EXEMPT_FORM],
+        decidesAlone: true,
+      },
+      [DECIDES]: {
+        grammarSha256: declaredGrammarSha256(DECIDES_PACKAGE),
+        languageSha256: languageDataSha256(ACME_LANGUAGE_DATA),
+        decidesAlone: true,
+      },
+      [CHANGED]: {
+        grammarSha256: declaredGrammarSha256(CHANGED_PACKAGE),
+        languageSha256: languageDataSha256(CHANGED_LANGUAGE_DATA),
         decidesAlone: true,
       },
     },
@@ -472,6 +499,47 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(names(loose)).toEqual(["open", "execute", "execute", "execute"]);
   });
 
+  test("a package engine's declared language data, reviewed by its row with decidesAlone granted, runs a SQL write, answers 413 past its stated byte bound, and one changed byte reads the statement as SQL", async () => {
+    // Its data names no operation and its reader names none, so with the decides-alone claim granted every statement
+    // whose text reads runs, a SQL write included.
+    const decides = hooksFor(DECIDES);
+    const decidesConnection = connectionOf(DECIDES);
+    expect(engines.get(DECIDES)?.grants).toMatchObject({ reviewedGrammar: true, decidesAlone: true });
+    for (const sql of ["DELETE FROM t", "SELECT 1"]) {
+      const ran = await post({ connection: decidesConnection, sql, confirmation: "ask" });
+      expect([sql, ran.status]).toEqual([sql, 200]);
+    }
+    expect(names(decides)).toEqual(["open", "execute", "execute"]);
+    // The bound its data states holds on the query route, before any open, reviewed or not; a text at it runs.
+    const padded = (bytes: number) => `SELECT 1 -- ${"x".repeat(bytes - "SELECT 1 -- ".length)}`;
+    const over = await post({ connection: decidesConnection, sql: padded(4097), confirmation: "ask" });
+    expect(over).toEqual({
+      status: 413,
+      body: {
+        error:
+          "The statement is 4097 bytes in UTF-8, over the 4096-byte limit for this connection type. Shorten it to run it.",
+      },
+    });
+    expect(names(decides)).toEqual(["open", "execute", "execute"]);
+    expect((await post({ connection: decidesConnection, sql: padded(4096), confirmation: "ask" })).status).toBe(200);
+    expect(names(decides)).toEqual(["open", "execute", "execute", "execute"]);
+
+    // A row that reviewed data one byte different grants none of the data's claims: the statement is read as SQL under
+    // the grammar the row reviewed, so a write asks and a read runs.
+    const changed = hooksFor(CHANGED);
+    const changedConnection = connectionOf(CHANGED);
+    expect(engines.get(CHANGED)?.grants).toMatchObject({ reviewedGrammar: true, decidesAlone: false });
+    const asked = await post({ connection: changedConnection, sql: "DELETE FROM t", confirmation: "ask" });
+    expect(asked.status).toBe(428);
+    expect(names(changed)).toEqual([]);
+    expect((await post({ connection: changedConnection, sql: "SELECT 1", confirmation: "ask" })).status).toBe(200);
+    expect(names(changed)).toEqual(["open", "execute"]);
+
+    // A package that declares no data and whose grammar no row reviewed still asks about a read.
+    hooksFor(MAIN);
+    expect((await post({ connection: connectionOf(MAIN), sql: "SELECT 1", confirmation: "ask" })).status).toBe(428);
+  });
+
   test("bound params and an offset the package does not honour are refused before the call, not-sent", async () => {
     const seen = hooksFor(MAIN);
     const connection = connectionOf(MAIN);
@@ -614,7 +682,8 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
     expect(names(seen)).toEqual([]);
 
-    // The package's record offers no console text bound: a text over the smallest bound a shipped engine declares runs.
+    // The package declares no statement language data, so its record holds no row and states no console text bound: a
+    // text over the smallest bound a shipped engine declares runs.
     const bounds = EXTERNAL_DATABASE_TYPES.map((type) => consoleTextByteLimit(type)).filter(
       (bound): bound is number => bound !== undefined,
     );

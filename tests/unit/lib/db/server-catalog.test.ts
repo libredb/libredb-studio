@@ -55,8 +55,11 @@ import {
 import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { EngineDeclaration, GrammarFacts } from "@libredb/provider-sdk/manifest";
+import { codeStatementLanguageRow, consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { rowTextByteLimit } from "@/lib/db/statement-language-row";
+import { readingOfRecord, readingOfType } from "@/lib/sql/dangerous-query";
 import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import ts from "typescript";
 import {
@@ -76,18 +79,27 @@ import {
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 
 /** Every member of an engine record, legacy or package. */
-const RECORD_KEYS = ["catalog", "connection", "fieldRules", "grants", "id", "offers", "source", "statementGrammar"];
+const RECORD_KEYS = [
+  "catalog",
+  "connection",
+  "explainReading",
+  "fieldRules",
+  "grants",
+  "id",
+  "offers",
+  "source",
+  "statementGrammar",
+  "statementLanguageRow",
+];
 
 /** Every offer of an engine record. */
 const OFFER_KEYS = [
   "catalog",
-  "consoleTextBound",
   "database",
   "explain",
   "hostFiles",
   "legacyProvider",
   "sshTunnel",
-  "statementVocabulary",
   "testCautions",
   "unboundedPage",
 ];
@@ -326,12 +338,61 @@ describe("one engine record for every engine", () => {
     expect(Object.keys(packaged.engine).sort()).toEqual(RECORD_KEYS);
     expect(Object.keys(legacy.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(packaged.engine.offers).sort()).toEqual(OFFER_KEYS);
-    // Studio's statement vocabulary rows are keyed by a legacy engine's id; a package's engine has none.
-    expect([legacy.engine.offers.statementVocabulary, packaged.engine.offers.statementVocabulary]).toEqual([
+    expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
+  });
+
+  test("an engine record offers no statementVocabulary and no consoleTextBound; its console bound is its statement language row's", () => {
+    // A legacy record holds Studio's code row of its id, by identity, and the gate reads it as the reading of the type.
+    for (const id of declaredIds()) {
+      assertDatabaseType(id);
+      const type: DatabaseType = id;
+      const engine = servedRecord(id);
+      expect(engine.offers).not.toHaveProperty("statementVocabulary");
+      expect(engine.offers).not.toHaveProperty("consoleTextBound");
+      expect([id, engine.statementLanguageRow]).toEqual([id, codeStatementLanguageRow(type)]);
+      expect(engine.statementLanguageRow).toBe(codeStatementLanguageRow(type));
+      expect([id, rowTextByteLimit(engine.statementLanguageRow)]).toEqual([id, consoleTextByteLimit(type)]);
+      expect(engine.explainReading).toBe("declared");
+      const byRecord = readingOfRecord(engine);
+      const byType = readingOfType(type);
+      expect(Object.keys(byRecord).sort()).toEqual(Object.keys(byType).sort());
+      for (const member of Object.keys(byType) as (keyof typeof byType)[]) {
+        expect([id, member, byRecord[member] === byType[member]]).toEqual([id, member, true]);
+      }
+    }
+
+    // A package's record holds the row compiled from the data it declares, frozen, and reads its explain claim under
+    // either value; one that declares no data holds none.
+    const declaring = admittedManifest("acmerowdata", (engine) => withStatementLanguageData(engine));
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-rowdata", declaring), admittedFor("acme-rownone", admittedManifest("acmerownone"))],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
+    );
+    const data = servedRecord("acmerowdata");
+    const row = data.statementLanguageRow;
+    if (row === null) throw new Error("a package that declares statement language data holds no row");
+    expect(Object.isFrozen(row)).toBe(true);
+    expect(Object.isFrozen(row.operations)).toBe(true);
+    expect([[...row.operations], row.read("DELETE FROM t"), row.decidesAlone, row.safetyAnalysis]).toEqual([
+      [],
+      [],
       true,
       false,
     ]);
-    expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
+    expect(rowTextByteLimit(row)).toBe(4096);
+    expect(data.explainReading).toBe("either");
+    const none = servedRecord("acmerownone");
+    expect([none.statementLanguageRow, none.explainReading]).toEqual([null, "either"]);
+    expect(readingOfRecord(none)).toEqual({
+      engine: "acmerownone",
+      row: null,
+      grammar: none.statementGrammar,
+      grants: none.grants,
+      explainReading: "either",
+    });
   });
 
   test("serverEngine reads no isDatabaseType: an id outside the catalog's map is refused with typeIdRefusal's answer, unchanged", () => {

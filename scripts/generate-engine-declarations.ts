@@ -115,7 +115,7 @@
  *
  * The statement language data, `statementLanguageData`, is authored as a whole and written back as the committed file
  * states it: null in every declaration of this directory, since each engine's statement language is Studio's own
- * module. No projection reads it, and no confirmation check reads it yet.
+ * module, which each engine's record holds as its statement language row. No projection reads it.
  *
  * The facets are authored, written back as the committed file states them: the monitoring panels, the maintenance
  * operations, their specs and the agent readings. The generator reads neither the engine's `ENGINE_FACETS` row nor the

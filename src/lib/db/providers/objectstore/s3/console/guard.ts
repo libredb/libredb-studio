@@ -10,7 +10,7 @@
 import { parseS3Command } from "./commands";
 
 /** The operations the confirmation gate asks about: none, because v1 only reads. */
-export const S3_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+export const S3_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /** The vocabulary row's `refuse`: the parser with the browser's context; undefined to send. */
 export function s3Refusal(text: string): string | undefined {

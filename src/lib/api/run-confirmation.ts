@@ -5,15 +5,15 @@
  * after their own field checks and before the admission gate and any provider, and so does the VS Code extension's
  * backend child on every `query/run` (route `vscode/query/run`, docs/VSCODE_EXTENSION.md), each handing it the server
  * catalog's record of the connection's engine. It classifies the submitted statement with `confirmationVerdict`, the one
- * verdict function the web editor's dialog and `POST /api/db/statement/analyze` read too, over the reading the record
- * gives: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`), the
- * reading of the connection's type (`readingOfType`), with Studio's code row, the type's grammar and the grants Studio
- * holds for it; for any other engine, no row, the grammar the record holds (`EngineRecord.statementGrammar`, the one a
- * package's declaration states, or none where it states no SQL text), the claims that loosen the gate the record
- * grants (`EngineRecord.grants`), and the explain claim read under either value, every statement asked where no
- * register row reviewed that grammar, as none can where the record holds none (docs/providers/CONTRACT.md, clauses S-3
- * and S-8). It then decides what the request gets, by the request's `confirmation` field and the mode
- * (`LIBREDB_RUN_CONFIRMATION`):
+ * verdict function the web editor's dialog and `POST /api/db/statement/analyze` read too, over the reading of the
+ * engine's record (`readingOfRecord`), for every engine alike and never by the connection's type: the record's
+ * statement language row (`EngineRecord.statementLanguageRow`, Studio's code row of a legacy engine or the row compiled
+ * from the statement language data a package's declaration states, none where the statements are SQL), its statement
+ * grammar (`EngineRecord.statementGrammar`, none where the declaration states no SQL text), the claims that loosen the
+ * gate the record grants (`EngineRecord.grants`) and how it reads the explain claim (`EngineRecord.explainReading`),
+ * every statement asked where no register row reviewed that grammar, as none can where the record holds none
+ * (docs/providers/CONTRACT.md, clauses S-3, S-8 and C-38). It then decides what the request gets, by the request's
+ * `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |
  * |---|---|---|---|---|
@@ -34,9 +34,8 @@
  *
  * A reader that throws is the gate asking: the verdict is `confirm` with `classificationFailed`, asking for the
  * connection's name on a production connection (refused where it has none), and one error line names the route, the
- * connection type and the error's name, never the statement. A record that offers the vocabulary rows and no legacy
- * provider is a host defect, raised before any reading (`legacyConnection`), never read as a classification failure.
- * The token binds the connection by its fields, whichever reader read the statement.
+ * connection type and the error's name, never the statement. The token binds the connection by its fields, whichever
+ * engine's record read the statement.
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
@@ -48,7 +47,7 @@ import {
   verifyRunConfirmation,
 } from "@/lib/api/run-confirmation-token";
 import { runConfirmationMode } from "@/lib/config/run-confirmation";
-import { type EngineConnection, type EngineRecord, legacyConnection } from "@/lib/db/server-catalog";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import {
   type ConfirmationVerdict,
   confirmationVerdict,
@@ -57,7 +56,7 @@ import {
   TYPED_NAME_MISSING_REFUSAL,
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
-import { readingOfType, type StatementReading } from "@/lib/sql/dangerous-query";
+import { readingOfRecord } from "@/lib/sql/dangerous-query";
 import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
 
 /** The refusal of a `confirmation` field of any other shape, before anything is classified. */
@@ -108,7 +107,7 @@ export interface RunGateRequest {
   readonly issuer: RunConfirmationIssuer;
   /** The connection the request resolved, after any override the route applies to it. */
   readonly connection: EngineConnection;
-  /** The server catalog's record of the connection's engine, whose offers say which reader reads the statement. */
+  /** The server catalog's record of the connection's engine, whose reading the statement is read under. */
   readonly engine: EngineRecord;
   /** The request's catalog (`requestCatalog`). */
   readonly catalog: string | undefined;
@@ -147,7 +146,7 @@ function readConfirmationField(value: unknown): ConfirmationField | null {
   return { kind: "token", token, typed: typed as string | undefined };
 }
 
-/** What the gate reads: the request, and the reader of its verdict the record offers. */
+/** What the gate reads: the request, and the reader of its verdict over the engine's record. */
 interface GateRequest extends RunGateRequest {
   readonly verdict: () => ConfirmationVerdict;
 }
@@ -174,29 +173,13 @@ function classify(request: GateRequest): RunVerdict | { readonly decision: "refu
 }
 
 /**
- * Decides what a run request gets, its statement read by the reader its engine's record offers; throws the mode's
+ * Decides what a run request gets, its statement read under the reading of its engine's record; throws the mode's
  * `DatabaseConfigError` when the setting cannot be read.
- *
- * @throws {Error} A host defect: when the record offers Studio's statement vocabulary rows and no legacy provider.
  */
 export async function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
   const { engine, connection, sql } = request;
   const { name, environment } = connection;
-  let reading: () => StatementReading;
-  if (engine.offers.statementVocabulary) {
-    // Read before the gate, outside the reader: a record that disagrees with itself is raised, not asked about.
-    const { type } = legacyConnection(engine, connection);
-    reading = () => readingOfType(type);
-  } else {
-    reading = () => ({
-      engine: engine.id,
-      row: null,
-      grammar: engine.statementGrammar,
-      grants: engine.grants,
-      explainReading: "either",
-    });
-  }
-  const verdict = () => confirmationVerdict(sql, reading(), name, environment);
+  const verdict = () => confirmationVerdict(sql, readingOfRecord(engine), name, environment);
   return gate({ ...request, verdict }, clock);
 }
 

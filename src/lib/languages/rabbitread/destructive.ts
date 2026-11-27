@@ -6,9 +6,9 @@ import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
  * A read request reads a stream's messages and nothing else, so no destructive verb exists to read and nothing is
  * posted for an AI analysis.
  */
-export const RABBITMQ_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
-  operations: new Set<string>(),
+export const RABBITMQ_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
+  operations: Object.freeze(new Set<string>()),
   read: () => [],
   decidesAlone: true,
   safetyAnalysis: false,
-};
+});

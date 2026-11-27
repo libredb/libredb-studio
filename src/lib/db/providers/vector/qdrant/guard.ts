@@ -11,7 +11,7 @@ import { parseQdrantRequest, qdrantPhase0 } from "./request";
  */
 
 /** The operations that ask for a confirmation: none, because every route the console runs is a read. */
-export const QDRANT_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+export const QDRANT_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /** The sentence a statement is refused with, or undefined to send it. */
 export function qdrantRefusal(text: string): string | undefined {

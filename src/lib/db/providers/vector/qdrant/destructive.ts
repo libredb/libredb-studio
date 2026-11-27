@@ -13,7 +13,7 @@ import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
  * parse. A v1 request only reads, so nothing asks; what guard.ts refuses (a write route, an inference input other
  * than local BM25, an unknown key) the editor refuses before anything is sent.
  */
-export const QDRANT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const QDRANT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: QDRANT_DESTRUCTIVE_OPERATIONS,
   read: readQdrantOperations,
   decidesAlone: true,
@@ -21,4 +21,4 @@ export const QDRANT_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: qdrantRefusal,
   maxTextBytes: QDRANT_CONSOLE.maxTextBytes,
-};
+});

@@ -60,7 +60,7 @@ export interface CommandAssessment {
  * The names the gate asks about (spec 5.5): the writes that change or remove keys, and the lease
  * revoke that deletes them.
  */
-export const ETCD_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set(["put", "del", "lease revoke"]);
+export const ETCD_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set(["put", "del", "lease revoke"]));
 
 /** What a whole-key-space delete lists as its target (spec 5.5, R13 D2). */
 const EVERY_KEY = "every key";

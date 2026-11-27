@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
-import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
+import { installStandInRecord } from "../../helpers/stand-in-record";
+import { STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
@@ -1947,7 +1948,7 @@ describe("POST /api/db/query: a declared console text bound", () => {
     mockGetOrCreateEditorSession.mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
-    remove = installStandInVocabulary({ maxTextBytes: LIMIT });
+    remove = installStandInRecord({ maxTextBytes: LIMIT });
   });
 
   afterEach(() => {

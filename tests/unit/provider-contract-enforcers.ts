@@ -2053,6 +2053,17 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-38": {
     tests: {
+      "tests/api/db/query-package-engine.test.ts": [
+        "a package engine's declared language data, reviewed by its row with decidesAlone granted, runs a SQL write, answers 413 past its stated byte bound, and one changed byte reads the statement as SQL",
+      ],
+      "tests/unit/db/confirmation-gate-imports.test.ts": [
+        "the confirmation gate imports no module of a statement language some engine declares as data",
+        "the check names a gate module of a crafted declared language",
+      ],
+      "tests/unit/db/statement-language-row.test.ts": [
+        "an engine's statement language row is its declared data where it declares some, Studio's code row for a legacy engine otherwise, and none for SQL",
+        "a data row's decidesAlone counts only where the engine's grants grant it",
+      ],
       "tests/unit/editor/statement-analysis.test.ts": [
         "answers run for a read",
         "answers confirm for a write",
@@ -2060,6 +2071,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/api/run-confirmation.test.ts": [
         "a reader that throws asks, marked classificationFailed, and logs no text",
+        "the gate reads the record's statement language row and never the connection's type, for a legacy and a package engine alike",
+      ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "an engine record offers no statementVocabulary and no consoleTextBound; its console bound is its statement language row's",
       ],
     },
   },

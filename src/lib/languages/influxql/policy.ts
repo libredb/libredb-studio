@@ -459,7 +459,7 @@ export function influxqlRefusal(text: string): string | undefined {
 }
 
 /** None: no allowed statement writes. */
-export const INFLUXQL_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+export const INFLUXQL_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /** The operations of a text for the confirmation gate: none when it is a read, undefined when it is refused. */
 export function readInfluxqlOperations(text: string): readonly string[] | undefined {

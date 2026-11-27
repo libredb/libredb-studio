@@ -13,7 +13,7 @@ import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
  * parse. A v1 request only reads, so nothing asks; what guard.ts refuses (a write route, a server-side function, an
  * endpoint-bearing key) the editor refuses before anything is sent.
  */
-export const MILVUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
+export const MILVUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = Object.freeze({
   operations: MILVUS_DESTRUCTIVE_OPERATIONS,
   read: readMilvusOperations,
   decidesAlone: true,
@@ -21,4 +21,4 @@ export const MILVUS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   safetyAnalysis: false,
   refuse: milvusRefusal,
   maxTextBytes: MILVUS_CONSOLE.maxTextBytes,
-};
+});
