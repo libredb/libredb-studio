@@ -4369,42 +4369,56 @@ describe("the census", () => {
   });
 
   test("agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it", () => {
-    const tables = {
-      languages: declaredRecord((d) => d.agent.statementLanguage) as Readonly<
-        Record<DatabaseType, AgentStatementLanguageId | null>
-      >,
-      variants: AGENT_WORKFLOW_VARIANTS,
-      requirementEngines: AGENT_REQUIREMENT_ENGINES,
-      reviewed: legacyRegisterEngines("agentExecution"),
-    };
+    const executes = legacyRegisterEngines("agentExecution");
+    const languages = declaredRecord((d) => d.agent.statementLanguage) as Readonly<
+      Record<DatabaseType, AgentStatementLanguageId | null>
+    >;
+    const readings = declaredRecord((d) => d.facets.agentReadings);
     // The SQL record is total over the workflows, so every workflow of every language is among its keys.
     const workflows = Object.keys(AGENT_WORKFLOW_VARIANTS.sql) as AgentRunWorkflowType[];
     const modes: readonly AgentRunMode[] = ["planning", "agent"];
+    // Whether the workflow opens, read from the committed declaration and the register row alone, never from the
+    // availability reader: plan mode opens everything, operations needs a reading, and a statement workflow needs a
+    // declared language, an agent execution grant, the language's variant and every requirement that variant names.
+    const expectedOpen = (type: DatabaseType, mode: AgentRunMode, workflow: AgentRunWorkflowType): boolean => {
+      if (mode === "planning") return true;
+      const reads = readings[type].length > 0;
+      if (workflow === "operations") return reads;
+      const language = languages[type];
+      if (language === null || !executes.includes(type)) return false;
+      const variant = Object.hasOwn(AGENT_WORKFLOW_VARIANTS[language], workflow)
+        ? AGENT_WORKFLOW_VARIANTS[language][workflow]
+        : undefined;
+      if (variant === undefined) return false;
+      return variant.requires.every((requirement) =>
+        requirement === "agent-readings" ? reads : AGENT_REQUIREMENT_ENGINES[requirement].includes(type),
+      );
+    };
     const answers = SHIPPED_DATABASE_TYPES.flatMap((type) =>
       modes.flatMap((mode) =>
         workflows.map((workflow) => ({
           key: `${type} ${mode} ${workflow}`,
-          declared: workflowAvailability(mode, workflow, legacyAgentEngine(type), tables),
-          recorded: workflowAvailability(mode, workflow, legacyAgentEngine(type)),
+          expected: expectedOpen(type, mode, workflow),
+          served: workflowAvailability(mode, workflow, servedEngineRecord(type)).open,
         })),
       ),
     );
 
-    expect(answers.filter(({ declared, recorded }) => !sameValue(declared, recorded)).map(({ key }) => key)).toEqual(
-      [],
-    );
+    expect(answers.filter(({ expected, served }) => expected !== served).map(({ key }) => key)).toEqual([]);
     // Vacuity: some engine opens operations and no statement workflow, and some opens a statement workflow.
-    const opens = (type: DatabaseType, workflow: AgentRunWorkflowType): boolean =>
-      workflowAvailability("agent", workflow, legacyAgentEngine(type), tables).open;
     const statementWorkflows = workflows.filter((workflow) => workflow !== "operations");
     expect(
       SHIPPED_DATABASE_TYPES.some(
-        (type) => opens(type, "operations") && !statementWorkflows.some((workflow) => opens(type, workflow)),
+        (type) =>
+          expectedOpen(type, "agent", "operations") &&
+          !statementWorkflows.some((workflow) => expectedOpen(type, "agent", workflow)),
       ),
     ).toBe(true);
-    expect(SHIPPED_DATABASE_TYPES.some((type) => statementWorkflows.some((workflow) => opens(type, workflow)))).toBe(
-      true,
-    );
+    expect(
+      SHIPPED_DATABASE_TYPES.some((type) =>
+        statementWorkflows.some((workflow) => expectedOpen(type, "agent", workflow)),
+      ),
+    ).toBe(true);
   });
 
   test("connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row", () => {
