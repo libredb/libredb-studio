@@ -54,7 +54,9 @@
  */
 import { createHash } from "node:crypto";
 import {
+  type Dirent,
   closeSync,
+  fstatSync,
   lstatSync,
   openSync,
   readdirSync,
@@ -215,12 +217,48 @@ export function regularFiles(
   return walk(directory, { roots: within, skipped: [] }, onLink);
 }
 
+/**
+ * A descriptor of `file` whose fstat confirms a regular file, so what is read is what was judged: no path is checked
+ * and then read. A path that is no longer a regular file raises an error naming it.
+ */
+function openRegularFile(file: string): number {
+  const descriptor = openSync(file, "r");
+  if (!fstatSync(descriptor).isFile()) {
+    closeSync(descriptor);
+    throw new Error(`${file} is no longer a regular file`);
+  }
+  return descriptor;
+}
+
+/** The bytes of `file`, read through one descriptor that `openRegularFile` confirms. */
+function readRegularFile(file: string): Buffer {
+  const descriptor = openRegularFile(file);
+  try {
+    return readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** Whether the directory listing of `file`'s parent names it a regular file: a link is not one, and is not followed. */
+function listedAsFile(file: string): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(path.dirname(file), { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
+  }
+  return entries.find((entry) => entry.name === path.basename(file))?.isFile() === true;
+}
+
 /** A file's SHA-256 and the needles it holds, read in chunks of `chunkSize` bytes with an overlap. */
 function scanFile(file: string, needles: readonly Buffer[], chunkSize: number): { digest: string; found: Buffer[] } {
   const overlap = Math.max(0, ...needles.map((needle) => needle.length - 1));
   const hash = createHash("sha256");
   const found = new Set<Buffer>();
-  const descriptor = openSync(file, "r");
+  const descriptor = openRegularFile(file);
   try {
     const chunk = Buffer.alloc(chunkSize);
     let tail = Buffer.alloc(0);
@@ -278,8 +316,11 @@ function exceptionProblem(entry: CoreImportedDriver, repositoryRoot: string): st
     );
   }
   const file = path.join(repositoryRoot, ...normal.split("/"));
-  if (lstatSync(file, { throwIfNoEntry: false })?.isFile() !== true) return refuse("the importer does not exist");
-  const specifiers = ts.preProcessFile(readFileSync(file, "utf8"), true, true).importedFiles.map((ref) => ref.fileName);
+  // The importer's type comes from its parent's listing and its bytes through one descriptor (CodeQL
+  // js/file-system-race): no path is checked and then read.
+  if (!listedAsFile(file)) return refuse("the importer does not exist");
+  const text = readRegularFile(file).toString("utf8");
+  const specifiers = ts.preProcessFile(text, true, true).importedFiles.map((ref) => ref.fileName);
   const imports = specifiers.some(
     (specifier) => !specifier.startsWith(".") && packageNameOf(specifier) === entry.driver,
   );
@@ -338,7 +379,7 @@ function comparedPackage(
   const name = manifest.name;
   const refusals: string[] = [];
   const record = (file: string, label: string): boolean => {
-    const bytes = readFileSync(file);
+    const bytes = readRegularFile(file);
     if (bytes.length === 0) return false;
     const digest = sha256(bytes);
     if (!digests.has(digest)) digests.set(digest, label);

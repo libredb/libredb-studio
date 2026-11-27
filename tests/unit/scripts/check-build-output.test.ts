@@ -16,6 +16,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import * as check from "../../../scripts/check-build-output";
 import { providerPackageDirectories } from "../../../scripts/workspace-packages.mjs";
+import { testIf } from "../../helpers/posix-tools";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts", "check-build-output.ts");
@@ -188,6 +189,23 @@ describe("the build output check", () => {
       `${path.join(both, "node_modules", "beta-driver", "index.js")} equals beta-driver index.js, a driver ${PACKAGE_NAME} declares`,
     ]);
   });
+
+  // A file link needs a privilege on Windows, and a directory junction cannot stand for a file.
+  testIf(
+    process.platform === "win32" ? "a file link needs a privilege on Windows" : null,
+    "an importer that is a symbolic link is refused as not existing, its target never read",
+    () => {
+      const importer = "src/lib/uses-alpha.ts";
+      const root = repository({
+        extra: { [importer]: 'import { driver } from "alpha-driver";\nexport default driver;\n' },
+      });
+      fs.symlinkSync(path.join(root, ...importer.split("/")), path.join(root, "src", "lib", "linked.ts"));
+      const entry = { driver: "alpha-driver", importer: "src/lib/linked.ts" };
+      expect(run(root, standalone(), { exceptions: [entry] }).problems).toEqual([
+        "check-build-output: the exception for alpha-driver imported by src/lib/linked.ts: the importer does not exist",
+      ]);
+    },
+  );
 
   test("a payload file holding a provider package's name fails by file, across a chunk boundary, and a clean payload passes naming each package and its counts", () => {
     const root = repository();
