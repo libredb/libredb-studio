@@ -1360,6 +1360,11 @@ const healthUnreadable = refusalOf("health-answer-unreadable");
 const runUnreadable = refusalOf("maintenance-run-answer-unreadable");
 const previewUnreadable = refusalOf("maintenance-preview-answer-unreadable");
 
+/** A copy of `record` without its member `key`. */
+function without(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([name]) => name !== key));
+}
+
 /** The refusals of `check`, none where it read the answer. */
 function refusalsOf(check: AnswerCheck<unknown>): readonly CallRefusal[] {
   return check.kind === "read" ? [] : check.refusals;
@@ -1552,7 +1557,7 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
     ]);
 
     // Each member of its type: a required one missing, a key the form cannot have, and each value kind.
-    const { maxConnections: _, ...noCeiling } = overviewOf();
+    const noCeiling = without(overviewOf(), "maxConnections");
     expect(panel(requests.overview, { overview: noCeiling })).toEqual([panelUnreadable("/overview/maxConnections")]);
     const planted = marker();
     expect(panel(requests.overview, { overview: overviewOf({ [planted]: marker() }) })).toEqual([
@@ -1630,7 +1635,7 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
     const health = (answer: unknown) => refusalsOf(checkHealthAnswer(answer));
 
     expect(pool(poolOf())).toEqual([]);
-    const { waiting: _, ...noWaiting } = poolOf();
+    const noWaiting = without(poolOf(), "waiting");
     expect(pool(noWaiting)).toEqual([poolUnreadable("/waiting")]);
     for (const value of NON_COUNTS) {
       expect(pool(poolOf({ total: value, max: value }))).toEqual([poolUnreadable("/total"), poolUnreadable("/max")]);
@@ -1646,7 +1651,7 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
       healthUnreadable("/description", "description"),
       healthUnreadable("/roundTripMs", "roundTripMs"),
     ]);
-    const { slowQueries: __, ...noSlowQueries } = healthOf();
+    const noSlowQueries = without(healthOf(), "slowQueries");
     expect(health(noSlowQueries)).toEqual([healthUnreadable("/slowQueries")]);
     for (const value of NON_COUNTS) {
       expect(health(healthOf({ activeConnections: value }))).toEqual([healthUnreadable("/activeConnections")]);
@@ -1654,7 +1659,7 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
         healthUnreadable("/slowQueries/0/calls"),
       ]);
     }
-    const { user: ___, ...noUser } = healthSessionOf();
+    const noUser = without(healthSessionOf(), "user");
     expect(health(healthOf({ activeSessions: [noUser], databaseSize: 8 }))).toEqual([
       healthUnreadable("/databaseSize"),
       healthUnreadable("/activeSessions/0/user"),
@@ -1671,7 +1676,7 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
 
     expect(run(runOf())).toEqual([]);
     expect(run(runOf({ rows: undefined, fields: undefined }))).toEqual([]);
-    const { rows: _, fields: __, ...bare } = runOf();
+    const bare = without(without(runOf(), "rows"), "fields");
     expect(run(bare)).toEqual([]);
     // Every value of the codec's domain passes: a bigint, bytes, a valid date, a nested record, a non-finite number.
     const cells = {
