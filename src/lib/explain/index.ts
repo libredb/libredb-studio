@@ -40,6 +40,14 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
   "spark-text": sparkTextStrategy,
 };
 
+/**
+ * The formats Studio holds an explain strategy for, each strategy's own format in the registry's order, frozen: the
+ * names admission holds a declared explain format to (src/lib/db/studio-held-names.ts).
+ */
+export const EXPLAIN_FORMATS: readonly ExplainFormat[] = Object.freeze(
+  Object.values(registry).map((strategy) => strategy.format),
+);
+
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {
   return format ? registry[format] : null;
 }

@@ -5,13 +5,44 @@
  * like the Kafka provider's.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { compileManifestValidator } from "@libredb/provider-sdk/manifest";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
 const SCHEMA = JSON.parse(SCHEMA_BYTES.toString("utf8")) as unknown;
 const validator = compileManifestValidator(SCHEMA_BYTES);
+
+/**
+ * Engine ids as the isolation ratchet defines them (scripts/isolation-ratchet.ts): the base name of every legacy
+ * declaration under src/lib/db/engine-declarations/ and the id of every packages/provider-<id>/ directory but the SDK's.
+ * The leg reads Studio's tree from the repository root; when the SDK leaves this repository it is dropped, since the
+ * ratchet's `nonEnginePackages` counter holds the same rule.
+ */
+function engineIds(): Set<string> {
+  const root = path.join(import.meta.dir, "../../../..");
+  const declarations = readdirSync(path.join(root, "src/lib/db/engine-declarations"))
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length));
+  const packaged = readdirSync(path.join(root, "packages"))
+    .filter((directory) => directory.startsWith("provider-") && directory !== "provider-sdk")
+    .map((directory) => directory.slice("provider-".length));
+  return new Set([...declarations, ...packaged]);
+}
+
+/** Every `enum` value in the document, by the JSON Pointer of the schema that states it. */
+function enumValues(node: unknown, pointer: string, found: [string, unknown][]): [string, unknown][] {
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => enumValues(item, `${pointer}/${index}`, found));
+    return found;
+  }
+  if (typeof node !== "object" || node === null) return found;
+  for (const [key, member] of Object.entries(node)) {
+    if (key === "enum" && Array.isArray(member)) for (const value of member) found.push([pointer, value]);
+    else enumValues(member, `${pointer}/${key}`, found);
+  }
+  return found;
+}
 
 function fixture(name: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures", name), "utf8")) as Record<string, unknown>;
@@ -96,5 +127,17 @@ describe("the manifest schema", () => {
     expect(facets.maintenance?.maxItems).toBe(schema.$defs.maintenanceOperation?.enum?.length);
     expect(schema.$defs.agentReading?.enum).toHaveLength(6);
     expect(facets.agentReadings?.maxItems).toBe(schema.$defs.agentReading?.enum?.length);
+  });
+
+  test("the manifest schema names no engine id: every editor name is a form, and no enum value is an engine id", () => {
+    const defs = (SCHEMA as { $defs: Record<string, Record<string, unknown>> }).$defs;
+    const names = ["explainFormat", "queryDialect", "queryLanguage", "monacoLanguageId", "formatterLanguage"];
+    const forms = names.map((name) => [name, typeof defs[name]?.pattern, defs[name]?.enum]);
+    const ids = engineIds();
+    const naming = enumValues(SCHEMA, "", []).filter(([, value]) => typeof value === "string" && ids.has(value));
+
+    expect(ids.size).toBeGreaterThan(40);
+    expect(forms).toEqual(names.map((name) => [name, "string", undefined]));
+    expect(naming).toEqual([]);
   });
 });

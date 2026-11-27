@@ -6,7 +6,7 @@
     "coreHandwritten.filesNamingAnEngine": 101,
     "coreHandwritten.linesNamingAnEngine": 1226,
     "coreHandwritten.linesNamingASingleEngineLanguage": 439,
-    "coreGenerated.lines": 11102,
+    "coreGenerated.lines": 11099,
     "statementLanguages.lines": 19058,
     "legacyProviders.files": 783,
     "agentLanguages.filesInLanguageDirs": 212,
@@ -16,7 +16,7 @@
     "providerIntegrationTestsInCore": 43,
     "inwardImportPairs": 259,
     "engineKeyedTypePositions": 55,
-    "nonEnginePackages.linesNamingAnEngine": 89,
+    "nonEnginePackages.linesNamingAnEngine": 0,
     "grantRegister.legacyRows": 43
   },
   "ids": {
@@ -66,27 +66,6 @@
       "weaviate"
     ],
     "enginesInPackages.ids": [],
-    "nonEnginePackages.engineIdsNamed": [
-      "etcd",
-      "firestore",
-      "kafka",
-      "libredb",
-      "milvus",
-      "modbus",
-      "mqtt",
-      "mtconnect",
-      "netconf",
-      "opcua",
-      "oxia",
-      "postgres",
-      "qdrant",
-      "rabbitmq",
-      "redis",
-      "s3",
-      "snmp",
-      "snowflake",
-      "sparkplug",
-      "weaviate"
-    ]
+    "nonEnginePackages.engineIdsNamed": []
   }
 }

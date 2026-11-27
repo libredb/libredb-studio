@@ -13,7 +13,11 @@
  *    schema is applied, and the sentence names Studio's contract, never the manifest's;
  * 3. the SDK's validator, the schema then its code rules, the same rules Studio's generator admits its own
  *    declarations by (`PROVIDER_SCHEMA_INVALID`, the first refusal's rule and pointer and the count of the rest, never
- *    a key); the manifest admitted is deep-frozen;
+ *    a key), then the names only Studio's tables give meaning to, each engine's explain format, query dialect, query
+ *    language, Monaco language and formatter language held to the tables the caller hands in (`./held-names`): a name
+ *    none holds is `PROVIDER_SCHEMA_INVALID`, `value-not-allowed` at its pointer with the count of the other unheld
+ *    names, the answer the schema gave while it listed Studio's names, never the name; the manifest admitted is
+ *    deep-frozen;
  * 4. its engine ids and its name: an engine id the legacy adapter serves (`LEGACY_ENGINE_IDS`, the ids of Studio's
  *    bundled engines), the package name the legacy adapter serves them under (`LEGACY_SOURCE_NAME`,
  *    `legacy-package`), an engine id that is an own key of `Object.prototype` (a table keyed by plain object would
@@ -56,7 +60,7 @@
  * (C-93). Admission grants no claim: every claim of its engines is read at its restrictive value where no register row
  * grants it (C-97, M-84), whatever the manifest requests, and the server catalog's composer reads that row. It binds
  * no named function through any of Studio's function tables and reads no table keyed by engine id: a function name is
- * read for its form by the schema only.
+ * read for its form by the schema only, and the held names are tables keyed by name that boot hands in.
  *
  * A host defect is thrown, never answered as a refusal: a validator for another contract than `HOST_CONTRACT`, a
  * loader option out of its range (the loader's TypeError), and a filesystem error without an errno code.
@@ -71,6 +75,7 @@ import {
   type ManifestValidator,
   type ProviderManifest,
 } from "@libredb/provider-sdk/manifest";
+import { type HeldNames, unheldNamePointers } from "./held-names";
 import { LEGACY_ENGINE_IDS, LEGACY_SOURCE_NAME } from "./legacy-adapter/identity";
 import {
   type ArtifactFile,
@@ -119,6 +124,8 @@ export function hostManifestValidator(schemaBytes: Uint8Array): ManifestValidato
 export interface AdmissionOptions {
   /** From `hostManifestValidator`, compiled once per boot. */
   readonly validator: ManifestValidator;
+  /** The names a package engine's explain format, dialect, languages and formatter language must be one of. */
+  readonly heldNames: HeldNames;
   /** The loader's import deadline, a whole number of milliseconds. */
   readonly deadlineMs: number;
   /** The loader's port for an import that settles after its refusal. */
@@ -204,8 +211,10 @@ function listed(pkg: VerifiedPackage, relative: string): ArtifactFile | undefine
   return pkg.files.find((file) => file.path === relative);
 }
 
-/** The package's manifest, read, bound to the listing and admitted by the validator, deep-frozen. */
-function admitManifest(pkg: VerifiedPackage, validator: ManifestValidator): ProviderManifest {
+/**
+ * The package's manifest, read, bound to the listing, admitted by the validator and by `heldNames`, deep-frozen.
+ */
+function admitManifest(pkg: VerifiedPackage, validator: ManifestValidator, heldNames: HeldNames): ProviderManifest {
   const file = listed(pkg, MANIFEST_FILE_NAME);
   // The lock's read read the manifest within its cap, so an unlisted or longer one changed since.
   const bytes = file === undefined ? undefined : readListed(pkg, file, MANIFEST_BYTE_CAP);
@@ -226,6 +235,11 @@ function admitManifest(pkg: VerifiedPackage, validator: ManifestValidator): Prov
     if (first.code === "PROVIDER_CONTRACT_UNSUPPORTED") throw new Refused(contractRefusal(pkg, HOST_CONTRACT));
     throw new Refused(schemaRefusal(pkg, first.rule, first.pointer, verdict.refusals.length - 1));
   }
+  const unheld = verdict.manifest.engines.flatMap((engine, index) =>
+    unheldNamePointers(engine, heldNames).map((pointer) => `/engines/${index}${pointer}`),
+  );
+  const [pointer] = unheld;
+  if (pointer !== undefined) throw new Refused(schemaRefusal(pkg, "value-not-allowed", pointer, unheld.length - 1));
   return deepFreeze(verdict.manifest);
 }
 
@@ -362,7 +376,7 @@ function checkImplProxies(pkg: VerifiedPackage, record: object): object | undefi
 
 /** The admission of `pkg`, before its answer is built; every refusal is thrown as `Refused`. */
 async function admit(pkg: VerifiedPackage, options: AdmissionOptions): Promise<AdmittedProviderRecord> {
-  const manifest = admitManifest(pkg, options.validator);
+  const manifest = admitManifest(pkg, options.validator, options.heldNames);
   checkServed(pkg, manifest);
   checkEntryFormat(pkg, manifest.runtime.entry);
   checkTypeScript(pkg);

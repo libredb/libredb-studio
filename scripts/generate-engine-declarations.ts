@@ -142,6 +142,16 @@
  * console's grammar and routes, stay browser code Studio's editor reads, composed with the accent and console the
  * declarations state (src/lib/db/editor-language/index.ts).
  *
+ * Every built declaration is held to the names Studio holds, `STUDIO_HELD_NAMES` (src/lib/db/studio-held-names.ts),
+ * the tables admission holds a package engine to: a declaration stating an explain format, query dialect, query
+ * language, Monaco language or formatter language none holds stops this script by engine and pointer, as the schema
+ * stopped it while it listed Studio's names. The explain formats and the query languages are code tables, the explain
+ * strategies and the tab types. The dialects, the Monaco languages and the formatter languages are projected from the
+ * committed declarations themselves, so for those the check holds a declaration to the committed projection, and
+ * Studio's code holds the names further: a dialect by the provider's typed capabilities, a Monaco language by the type
+ * of `DIALECT_EDITORS` and by `EDITOR_LANGUAGES`' refusal at load of a language it holds no code for, and a formatter
+ * language by the SQL formatter, which refuses a language sql-formatter does not format.
+ *
  * Run: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]
  * --write writes every declaration and removes a `.json` file for an id no longer shipped, --check exits 1 naming each
  * declaration that differs, is missing or is not a shipped id, and --out names another directory for either, resolved
@@ -172,7 +182,9 @@ import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import { SHIPPED_DATABASE_TYPES } from "../src/lib/db/compatibility";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
+import { STUDIO_HELD_NAMES } from "../src/lib/db/studio-held-names";
 import type { ProviderCapabilities } from "../src/lib/db/types";
+import { unheldNamePointers } from "../src/lib/provider-host/held-names";
 import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
@@ -474,7 +486,8 @@ export function buildAgentOverlay(
  * One engine's declaration: its `authored` members as given, and every other member read from every table the contract
  * states for it and from its provider's capabilities.
  *
- * @throws {Error} When `authored` names another engine id than `type`, and each refusal of the members it builds.
+ * @throws {Error} When `authored` names another engine id than `type`, each refusal of the members it builds, and, naming
+ * the engine and every pointer, when the declaration states a name Studio does not hold (`unheldNamePointers`).
  */
 export function buildEngineDeclaration(
   type: DatabaseType,
@@ -485,7 +498,7 @@ export function buildEngineDeclaration(
     throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
   }
   const bound = boundSegments(type, authored);
-  return {
+  const declaration: EngineDeclaration = {
     id: type,
     displayName: authored.displayName,
     location: authored.location,
@@ -531,6 +544,11 @@ export function buildEngineDeclaration(
     mcp: authored.mcp,
     safeguards: authored.safeguards,
   };
+  const unheld = unheldNamePointers(declaration, STUDIO_HELD_NAMES);
+  if (unheld.length > 0) {
+    throw new Error(`${type}: the declaration states a name Studio does not hold at ${unheld.join(", ")}`);
+  }
+  return declaration;
 }
 
 /** A declaration's bytes: two-space JSON and a final newline. */

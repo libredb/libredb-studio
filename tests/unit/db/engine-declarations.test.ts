@@ -35,7 +35,6 @@ import {
   type CredentialWarning as ManifestCredentialWarning,
   type DdlTypeSpellings,
   type EngineDeclaration,
-  type ExplainFormat as ManifestExplainFormat,
   type FieldName,
   type FieldPlacement as ManifestFieldPlacement,
   type FormatterLanguage,
@@ -51,14 +50,11 @@ import {
   type McpClaims,
   type MetadataOnlyKind,
   type MigrationDdl,
-  type MonacoLanguageId,
   type NonFiniteLiterals,
   type PlaceableFieldName,
   type PlanEstimateSessionMode,
   type PolicyClaims,
   type ProcedureBodies,
-  type QueryDialect as ManifestQueryDialect,
-  type QueryLanguage,
   type Safeguards,
   type ScriptFacts,
   type ScriptUnit,
@@ -164,7 +160,7 @@ import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
-import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
+import { EDITOR_LANGUAGES } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
 import { SQL_ENGINE_GENERATORS, SQL_GENERATOR_FUNCTIONS, type SqlGeneratorFunctions } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
@@ -205,7 +201,6 @@ import { SPARK_PASTE_READER } from "@/lib/db/providers/sql/spark/connection-stri
 import {
   type AgentCredentialForm as ProviderAgentCredentialForm,
   declaredEntityOperations,
-  type ExplainFormat,
   type MaintenanceOperation,
   type MaintenanceOperationSpec,
   maintenanceControl,
@@ -213,7 +208,7 @@ import {
   type WritePath,
   type WritePathReach,
 } from "@/lib/db/types";
-import { getExplainStrategy } from "@/lib/explain";
+import { EXPLAIN_FORMATS, getExplainStrategy } from "@/lib/explain";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
 import { editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
 import { historyMaskOf } from "@/lib/history-mask";
@@ -882,6 +877,11 @@ function readings(sql: string, grammar: SqlGrammar): unknown {
 /** The schema's generic fence tags: the tags of a language several engines speak, which name no engine. */
 const GENERIC_FENCE_TAGS: readonly string[] = (SCHEMA.$defs.genericFenceTag?.enum ?? []).map(String);
 
+/** Whether `name` is a dialect `QUERY_DIALECTS` holds a row for, read as an own key. */
+function isQueryDialect(name: string): name is QueryDialect {
+  return Object.hasOwn(QUERY_DIALECTS, name);
+}
+
 /**
  * The dialect table the declarations state, built here from them: each dialect's row read from the first declaration
  * that names it, its tab named by the dialect, and every member as written, a history mask null where it has none. A second
@@ -892,19 +892,21 @@ function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
   for (const type of SHIPPED_DATABASE_TYPES) {
     const row = declared(type).editor.dialect;
     if (row === null) continue;
+    const name = row.name;
+    if (!isQueryDialect(name)) throw new Error(`${type}: the ${name} dialect has no QUERY_DIALECTS row`);
     const spec: DialectSpec = {
-      tabType: row.name,
+      tabType: name,
       offersColumnProfiling: row.offersColumnProfiling,
       offersCodeGeneration: row.offersCodeGeneration,
       offersCountQuery: row.offersCountQuery,
       offersSqlExport: row.offersSqlExport,
       historyMask: row.historyMask === null ? null : { credentialFlags: [...row.historyMask.credentialFlags] },
     };
-    const earlier = table[row.name];
+    const earlier = table[name];
     if (earlier !== undefined && !sameValue(earlier, spec)) {
-      throw new Error(`${type}: the ${row.name} dialect's row differs from an earlier declaration's`);
+      throw new Error(`${type}: the ${name} dialect's row differs from an earlier declaration's`);
     }
-    table[row.name] = spec;
+    table[name] = spec;
   }
   return table as Record<QueryDialect, DialectSpec>;
 }
@@ -914,7 +916,7 @@ function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
  * clause S-23), written here from the contract rather than read from `resolveTabType`, so the census holds that ladder
  * to it.
  */
-const LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, QueryTab["type"]>> = {
+const LANGUAGE_TAB_TYPES: Readonly<Record<ProviderCapabilities["queryLanguage"], QueryTab["type"]>> = {
   sql: "sql",
   json: "mongodb",
   promql: "promql",
@@ -924,7 +926,20 @@ const LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, QueryTab["type"]>> = {
 
 /** The tab type a declaration's engine opens its tabs under: its dialect's name, or its query language's tab type. */
 function declaredTabType(d: EngineDeclaration): QueryTab["type"] {
-  return d.editor.dialect === null ? LANGUAGE_TAB_TYPES[d.editor.language.queryLanguage] : d.editor.dialect.name;
+  const dialect = d.editor.dialect;
+  if (dialect !== null) {
+    if (!isQueryDialect(dialect.name))
+      throw new Error(`${d.id}: the ${dialect.name} dialect has no QUERY_DIALECTS row`);
+    return dialect.name;
+  }
+  const language = d.editor.language.queryLanguage;
+  if (!isQueryLanguage(language)) throw new Error(`${d.id}: the query language ${language} has no tab type`);
+  return LANGUAGE_TAB_TYPES[language];
+}
+
+/** Whether `language` is a query language `LANGUAGE_TAB_TYPES` holds a tab type for, read as an own key. */
+function isQueryLanguage(language: string): language is ProviderCapabilities["queryLanguage"] {
+  return Object.hasOwn(LANGUAGE_TAB_TYPES, language);
 }
 
 /**
@@ -1291,6 +1306,69 @@ describe("the committed declarations", () => {
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
     ).toThrow('postgres: the authored members given name the engine id "mysql"');
+  });
+
+  test("the declaration generator refuses, by engine and pointer, a declaration stating an explain format, query dialect, query language, Monaco language or formatter language Studio does not hold", () => {
+    // The capabilities as the generator reads them, the JSON line the capability child writes, so a provider stating a
+    // name outside core's unions reaches the check as it would from that child.
+    const read = (capabilities: ProviderCapabilities, change: Record<string, unknown>): ProviderCapabilities =>
+      JSON.parse(JSON.stringify({ ...capabilities, ...change }));
+    const kafka = authored("kafka");
+    const kafkaDialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const postgres = authored("postgres");
+    const cases: [DatabaseType, ProviderCapabilities, AuthoredMembers, string][] = [
+      ["postgres", read(CAPABILITIES.postgres, { explainFormat: "example-plan" }), postgres, "/editor/explainFormat"],
+      [
+        "kafka",
+        read(CAPABILITIES.kafka, { queryDialect: "exampledialect" }),
+        { ...kafka, editor: { ...kafka.editor, dialect: { ...kafkaDialect, name: "exampledialect" } } },
+        "/editor/dialect/name",
+      ],
+      [
+        "postgres",
+        read(CAPABILITIES.postgres, { queryLanguage: "exampleql" }),
+        {
+          ...postgres,
+          editor: { ...postgres.editor, language: { ...postgres.editor.language, queryLanguage: "exampleql" } },
+        },
+        "/editor/language/queryLanguage",
+      ],
+      [
+        "postgres",
+        CAPABILITIES.postgres,
+        {
+          ...postgres,
+          editor: { ...postgres.editor, language: { ...postgres.editor.language, monacoId: "example-editor" } },
+        },
+        "/editor/language/monacoId",
+      ],
+      [
+        "postgres",
+        CAPABILITIES.postgres,
+        {
+          ...postgres,
+          sqlText: {
+            ...postgres.sqlText,
+            grammar: { ...postgres.sqlText.grammar, formatterLanguage: "exampleformat" },
+          },
+        },
+        "/sqlText/grammar/formatterLanguage",
+      ],
+    ];
+    for (const [type, capabilities, members, pointer] of cases) {
+      expect(() => buildEngineDeclaration(type, capabilities, members)).toThrow(
+        `${type}: the declaration states a name Studio does not hold at ${pointer}`,
+      );
+    }
+    const both = {
+      ...postgres,
+      editor: { ...postgres.editor, language: { ...postgres.editor.language, monacoId: "example-editor" } },
+      sqlText: { ...postgres.sqlText, grammar: { ...postgres.sqlText.grammar, formatterLanguage: "exampleformat" } },
+    };
+    expect(() => buildEngineDeclaration("postgres", CAPABILITIES.postgres, both)).toThrow(
+      "postgres: the declaration states a name Studio does not hold at /editor/language/monacoId, /sqlText/grammar/formatterLanguage",
+    );
+    expect(buildEngineDeclaration("postgres", CAPABILITIES.postgres, postgres)).toEqual(declared("postgres"));
   });
 
   test("a committed declaration lacking an authored member, or naming another id than its file, is refused by name", () => {
@@ -3044,7 +3122,9 @@ describe("the census", () => {
       // Vacuity: the variable changes what the provider declares when it is read in this process.
       expect(inProcess.explainFormat).toBeUndefined();
       expect(census.firestore.explainFormat).toBeDefined();
-      expect(census.firestore.explainFormat).toBe(declared("firestore").editor.explainFormat ?? undefined);
+      expect<string | undefined>(census.firestore.explainFormat).toBe(
+        declared("firestore").editor.explainFormat ?? undefined,
+      );
       expect(census).toEqual(CAPABILITIES);
     } finally {
       if (ambient === undefined) delete process.env[FIRESTORE_EMULATOR_VARIABLE];
@@ -3057,8 +3137,12 @@ describe("the census", () => {
       (format) => format !== null,
     );
 
+    // Each format is read through Studio's own list of the formats it holds a strategy for, so one it holds none for
+    // finds no strategy.
+    const strategyOf = (format: string) => getExplainStrategy(EXPLAIN_FORMATS.find((held) => held === format));
+
     expect(formats.length).toBeGreaterThan(0);
-    expect(formats.filter((format) => getExplainStrategy(format)?.format !== format)).toEqual([]);
+    expect(formats.filter((format) => strategyOf(format)?.format !== format)).toEqual([]);
   });
 
   test("editor.dialect is the provider's query dialect with its QUERY_DIALECTS row", () => {
@@ -4280,15 +4364,13 @@ describe("the vocabularies", () => {
       Equal<JwtAccessClaim, Extract<CredentialWarning, { kind: "jwt" }>["access"][number]>,
       Equal<PlaceableFieldName, PlaceableField>,
       Equal<SelectFieldName, "saslMechanism" | "authMethod">,
-      Equal<Exclude<ManifestExplainFormat, null>, ExplainFormat>,
-      Equal<ManifestQueryDialect, QueryDialect>,
       Equal<HashRule, HashGrammar>,
       Equal<BracketRule, BracketGrammar>,
       Equal<BlockCommentRule, BlockCommentGrammar>,
       Equal<ProcedureBodies, ProceduralBlockGrammar>,
       Equal<ScriptUnit, ScriptGrammar["unit"]>,
       Equal<ScriptFacts["separatorLine"], ScriptGrammar["separatorLine"]>,
-      Equal<Exclude<FormatterLanguage, "postgresql">, NonNullable<SqlGrammar["formatterLanguage"]>>,
+      Equal<FormatterLanguage, NonNullable<SqlGrammar["formatterLanguage"]>>,
       Equal<StatementRedaction["kind"], SqlRedaction["kind"]>,
       Equal<keyof DdlTypeSpellings, InferredKind>,
       Equal<keyof TypeFamilies, InferredKind>,
@@ -4296,8 +4378,6 @@ describe("the vocabularies", () => {
       Equal<InsertForm, ExportSpec["insertForm"]>,
       Equal<MigrationDdl["tableDdl"], MigrationDdlSpec["tableDdl"]>,
       Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
-      Equal<QueryLanguage, ProviderCapabilities["queryLanguage"]>,
-      Equal<MonacoLanguageId, EditorLanguage>,
       Equal<WriteReachClaim, WriteReach>,
       Equal<keyof WritePaths, WritePath>,
       Equal<WritePathEvidence["reach"], WritePathReach["reach"]>,
@@ -4346,36 +4426,14 @@ describe("the vocabularies", () => {
       true,
       true,
       true,
-      true,
-      true,
-      true,
-      true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 40 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 36 }, () => true));
   });
 
-  test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {
-    const formats = enumOf("explainFormat").filter((format) => format !== null) as ExplainFormat[];
-
-    expect(enumOf("explainFormat")).toContain(null);
-    expect(formats.filter((format) => getExplainStrategy(format)?.format !== format)).toEqual([]);
-    expect(sorted(enumOf("queryDialect"))).toEqual(sorted(Object.keys(QUERY_DIALECTS)));
+  test("the generic fence tags are Studio's", () => {
     expect(sorted(enumOf("genericFenceTag"))).toEqual(
       sorted([...QUERY_FENCE_ALIASES].filter((tag) => !Object.hasOwn(ALIAS_ENGINES, tag))),
     );
-  });
-
-  test("the query languages and the editor languages are Studio's", () => {
-    const queryLanguages: Readonly<Record<ProviderCapabilities["queryLanguage"], true>> = {
-      sql: true,
-      json: true,
-      promql: true,
-      cypher: true,
-      influxql: true,
-    };
-
-    expect(sorted(enumOf("queryLanguage"))).toEqual(sorted(Object.keys(queryLanguages)));
-    expect(sorted(enumOf("monacoLanguageId"))).toEqual(sorted(Object.keys(EDITOR_LANGUAGES)));
   });
 });

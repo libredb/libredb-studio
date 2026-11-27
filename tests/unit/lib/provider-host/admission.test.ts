@@ -26,6 +26,7 @@ import { admitted, type LoadRefusalReason, loadPackage } from "@libredb/provider
 import { PROVIDER_CONTRACT, type ProviderImpl } from "@libredb/provider-sdk/calls";
 import { type ManifestValidator, ManifestSchemaDigestError } from "@libredb/provider-sdk/manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import {
   admitPackage,
   HOST_CONTRACT,
@@ -187,7 +188,12 @@ function verifiedFromWalk(written: Written, overrides: Partial<VerifiedPackage> 
 
 /** Admits `pkg` with the host validator, or `validator`. */
 function admit(pkg: VerifiedPackage, validator: ManifestValidator = VALIDATOR): Promise<PackageAdmission> {
-  return admitPackage(pkg, { validator, deadlineMs: DEADLINE_MS, onLateSettle: () => undefined });
+  return admitPackage(pkg, {
+    validator,
+    heldNames: STUDIO_HELD_NAMES,
+    deadlineMs: DEADLINE_MS,
+    onLateSettle: () => undefined,
+  });
 }
 
 /** The refusal of an admission that must refuse. */
@@ -208,6 +214,33 @@ async function registered(pkg: VerifiedPackage): Promise<string> {
 async function outcome(pkg: VerifiedPackage, validator?: ManifestValidator): Promise<string> {
   const answer = await admit(pkg, validator);
   return answer.admitted ? "admitted" : `${answer.refusal.code} ${answer.refusal.rule}`;
+}
+
+/** The members of a manifest's engine the held-names cases change. */
+interface EngineOf {
+  editor: {
+    explainFormat: string | null;
+    dialect: Record<string, unknown> | null;
+    language: { queryLanguage: string; monacoId: string };
+  };
+  sqlText: { grammar: { formatterLanguage: string } };
+}
+
+/** The first engine of `manifest`, as the held-names cases change it. */
+function engineOf(manifest: Manifest): EngineOf {
+  return manifest.engines[0] as unknown as EngineOf;
+}
+
+/** A query dialect row naming `name`, offering nothing and masking no flag. */
+function dialectRow(name: string): Record<string, unknown> {
+  return {
+    name,
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+    historyMask: null,
+  };
 }
 
 /** A validator of the host contract whose every call throws: a case that reaches it fails. */
@@ -637,6 +670,73 @@ describe("before the import", () => {
     );
   });
 
+  test("admission refuses a declared query dialect, Monaco language, formatter language, explain format or query language Studio does not hold, by name at its pointer", async () => {
+    // Each name is of its member's form and generated, so it is no engine id and no name Studio holds.
+    const unheld = (): string => `x${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const cases: [(engine: EngineOf, name: string) => void, string][] = [
+      [(engine, name) => (engine.editor.explainFormat = name), "/engines/0/editor/explainFormat"],
+      [(engine, name) => (engine.editor.dialect = dialectRow(name)), "/engines/0/editor/dialect/name"],
+      [(engine, name) => (engine.editor.language.queryLanguage = name), "/engines/0/editor/language/queryLanguage"],
+      [(engine, name) => (engine.editor.language.monacoId = name), "/engines/0/editor/language/monacoId"],
+      [
+        (engine, name) => (engine.sqlText.grammar.formatterLanguage = name),
+        "/engines/0/sqlText/grammar/formatterLanguage",
+      ],
+    ];
+    for (const [change, pointer] of cases) {
+      const own = names();
+      const name = unheld();
+      const manifest = manifestFor(own.id);
+      change(engineOf(manifest), name);
+      const written = write({ name: own.name, id: own.id, manifest });
+      const refusal = refusalOf(await admit(verified(written)));
+      expect(refusal).toEqual({
+        code: "PROVIDER_SCHEMA_INVALID",
+        rule: "value-not-allowed",
+        name: own.name,
+        version: "1.0.0",
+        pointer,
+        more: 0,
+        sentence: `PROVIDER_SCHEMA_INVALID: ${own.name} 1.0.0: its manifest is not one the provider contract admits: value-not-allowed at ${pointer}`,
+      });
+      expect(JSON.stringify(refusal).includes(name)).toBe(false);
+      expect(fs.existsSync(written.sentinel)).toBe(false);
+    }
+
+    const own = names();
+    const manifest = manifestFor(own.id);
+    engineOf(manifest).editor.language.monacoId = unheld();
+    engineOf(manifest).editor.explainFormat = unheld();
+    const written = write({ name: own.name, id: own.id, manifest });
+    const refusal = refusalOf(await admit(verified(written)));
+    expect([refusal.code, refusal.rule, refusal.pointer, refusal.more]).toEqual([
+      "PROVIDER_SCHEMA_INVALID",
+      "value-not-allowed",
+      "/engines/0/editor/explainFormat",
+      1,
+    ]);
+    expect(fs.existsSync(written.sentinel)).toBe(false);
+  });
+
+  test("admission admits every such name a legacy declaration states", async () => {
+    const held = STUDIO_HELD_NAMES;
+    const longest = Math.max(...Object.values(held).map((list) => list.length));
+    const at = (list: readonly string[], index: number): string => list[index % list.length] as string;
+    for (let index = 0; index < longest; index += 1) {
+      const own = names();
+      const manifest = manifestFor(own.id);
+      const engine = engineOf(manifest);
+      engine.editor.explainFormat = at(held.explainFormats, index);
+      engine.editor.dialect = dialectRow(at(held.queryDialects, index));
+      engine.editor.language.queryLanguage = at(held.queryLanguages, index);
+      engine.editor.language.monacoId = at(held.monacoLanguages, index);
+      engine.sqlText.grammar.formatterLanguage = at(held.formatterLanguages, index);
+      const written = write({ name: own.name, id: own.id, manifest });
+      expect(await outcome(verified(written))).toBe("admitted");
+      expect(fs.existsSync(written.sentinel)).toBe(true);
+    }
+  });
+
   test("a manifest or package.json changed after the lock read is refused as PROVIDER_DIGEST_MISMATCH before any import", async () => {
     const edits: [string, (directory: string) => void][] = [
       ["a byte appended", (d) => fs.appendFileSync(path.join(d, MANIFEST_FILE_NAME), " ")],
@@ -926,6 +1026,7 @@ describe("the import and the record", () => {
     });
     const lateAnswer = await admitPackage(verified(late), {
       validator: VALIDATOR,
+      heldNames: STUDIO_HELD_NAMES,
       deadlineMs: 50,
       onLateSettle: () => settled(),
     });

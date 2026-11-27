@@ -7,6 +7,7 @@
  * module holds what needs no row: the type, the compatibility default a call naming no dialect reads with, and
  * the one reading of a grammar that needs nothing but the grammar.
  */
+import type { FormatterLanguage } from "../manifest/manifest-types.generated";
 
 /**
  * What a `#` opens.
@@ -340,7 +341,7 @@ export interface SqlGrammar {
    * The sql-formatter language the editor's Format uses for this dialect. Absent means `postgresql`, the language
    * every dialect formatted with before a dialect declared one (SF-041).
    */
-  readonly formatterLanguage?: "snowflake";
+  readonly formatterLanguage?: FormatterLanguage;
   /**
    * Keywords and functions the editor's completion offers on this dialect beside the shared lists (SF-042). A function
    * is inserted as a call. Absent means the shared lists alone.
@@ -364,9 +365,9 @@ export interface SqlGrammar {
    * Whether `EXPLAIN ANALYZE` executes the explained statement.
    *
    * True on PostgreSQL: `EXPLAIN` only plans unless `ANALYZE` (or the British `ANALYSE`) is enabled, and then it runs
-   * the statement. CockroachDB connections are the `postgres` type-id and share that grammar. Absent means false, and
-   * a plain `EXPLAIN` describes without running, so the confirmation gate must not treat the word `EXPLAIN` itself as
-   * a write and must not ask about a statement that is only planned.
+   * the statement. CockroachDB connections share that grammar. Absent means false, and a plain `EXPLAIN` describes
+   * without running, so the confirmation gate must not treat the word `EXPLAIN` itself as a write and must not ask
+   * about a statement that is only planned.
    *
    * It is a fact the text cannot settle: `EXPLAIN ANALYZE DELETE FROM t` deletes the rows where the option executes
    * and is a plan where it does not, so under the wrong reading the `DELETE` would run with no confirmation, or a

@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "a34e97848918f43c491ae2ed3cd9ac5549c94a97a32c2c6bd7455a874de042e4";
+export const MANIFEST_SCHEMA_SHA256 = "b4e1d6915533e58051fc084d23db983e6bfd9061368fa492a824461ad0eef63e";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -729,47 +729,11 @@ export type FenceTag = string;
 /** The fence tags of a query language several engines speak: a block under one of them holds a query and names no engine, so no engine declares one as an alias. */
 export type GenericFenceTag = "sql" | "cql";
 
-/** The format of the engine's query plans, one of Studio's explain strategies, as the provider declares it for a connection it has not connected; Studio reads a plan with that format's strategy. Null where the engine offers no explain. */
-export type ExplainFormat =
-  | "postgres-json"
-  | "postgres-text"
-  | "postgres-text-analyze"
-  | "mysql-json"
-  | "mysql-text"
-  | "sqlite-queryplan"
-  | "couchbase-json"
-  | "clickhouse-json"
-  | "druid-native"
-  | "trino-json"
-  | "duckdb-json"
-  | "databend-text"
-  | "bigquery-dryrun"
-  | "snowflake-json"
-  | "firestore-explain"
-  | "spark-text"
-  | null;
+/** The format of the engine's query plans, as the provider declares it for a connection it has not connected: a lower-case letter, then lower-case letters, digits and single hyphens, at most 32 characters; Studio admits only a format it holds an explain strategy for, and reads a plan with that format's strategy. Null where the engine offers no explain. */
+export type ExplainFormat = string | null;
 
-/** A query dialect Studio's editor reads: a grammar of JSON or of a command line that is neither MongoDB's JSON nor SQL. */
-export type QueryDialect =
-  | "libredb"
-  | "redis"
-  | "kafka"
-  | "etcd"
-  | "milvus"
-  | "qdrant"
-  | "weaviate"
-  | "oxia"
-  | "s3"
-  | "mqtt"
-  | "firestore"
-  | "rabbitmq"
-  | "kubectl"
-  | "opcua"
-  | "mtconnect"
-  | "modbus"
-  | "netconf"
-  | "snmp"
-  | "sparkplug";
+/** A query dialect Studio's editor reads, a grammar of JSON or of a command line that is neither MongoDB's JSON nor SQL: a lower-case letter, then up to 31 lower-case letters or digits; Studio admits only a dialect it holds a dialect row for. */
+export type QueryDialect = string;
 
 /** The engine's query dialect and what the editor offers for it, or null where the engine declares no dialect. name: the dialect, under whose name the editor opens the engine's tabs. offersColumnProfiling: whether Profile is offered. offersCodeGeneration: whether the code generator is offered. offersCountQuery: whether Generate Count Query is offered. offersSqlExport: whether the result export menu offers SQL INSERT statements and CREATE TABLE DDL. historyMask: the flags whose values query history never keeps. */
 export type QueryDialectRow = {
@@ -789,27 +753,11 @@ export interface EditorLanguageFacts {
   readonly console: boolean;
 }
 
-/** A query language Studio's editor reads: SQL, JSON, PromQL, Cypher or InfluxQL. */
-export type QueryLanguage = "sql" | "json" | "promql" | "cypher" | "influxql";
+/** A query language Studio's editor reads: a lower-case letter, then up to 31 lower-case letters or digits; Studio admits only a query language it holds a tab type for. */
+export type QueryLanguage = string;
 
-/** A Monaco language Studio's query editor renders a tab in, each with Studio's own registration, completion and formatting code until Studio's browser catalog reads them. graph-cypher and not cypher, which Monaco's own bundle registers. */
-export type MonacoLanguageId =
-  | "sql"
-  | "json"
-  | "libredb"
-  | "redis"
-  | "promql"
-  | "etcd"
-  | "oxia"
-  | "s3"
-  | "kubectl"
-  | "firestore"
-  | "graph-cypher"
-  | "influxql"
-  | "milvus"
-  | "qdrant"
-  | "weaviate"
-  | "mtconnect";
+/** A Monaco language Studio's query editor renders a tab in: a lower-case letter, then lower-case letters, digits and single hyphens, at most 32 characters; Studio admits only a language it holds its own registration, completion and formatting code for, until Studio's browser catalog reads them. graph-cypher and not cypher, which Monaco's own bundle registers. */
+export type MonacoLanguageId = string;
 
 /** The border class an agent answer's statement block takes in the language, up to 32 characters: border-hue-, one hue of Studio's palette in lower-case letters that is none of the three status hues (amber, rose, emerald), optionally -alt, then /40. */
 export type EditorAccent = string;
@@ -964,8 +912,8 @@ export interface ConditionalForm {
   readonly when: SqlKeyword;
 }
 
-/** The sql-formatter language the editor's Format uses for the engine; postgresql where the engine declares none, the language every engine formatted with before an engine declared one. */
-export type FormatterLanguage = "postgresql" | "snowflake";
+/** The sql-formatter language the editor's Format uses for the engine: a lower-case letter, then up to 31 lower-case letters or digits; Studio admits only a formatter language its own engines state. postgresql where the engine declares none, the language every engine formatted with before an engine declared one. */
+export type FormatterLanguage = string;
 
 /** The keywords and functions the editor's completion offers on the engine beside the shared lists, a function inserted as a call; both lists empty where the engine adds none. A keyword is upper-case words separated by one space. */
 export interface CompletionWords {

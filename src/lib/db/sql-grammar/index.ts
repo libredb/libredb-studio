@@ -183,6 +183,15 @@ export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Objec
 );
 
 /**
+ * The sql-formatter languages Studio's own engines state, each engine's `grammar.formatterLanguage` in
+ * `BUNDLED_SQL_TEXT`, distinct, in ascending code-unit order and frozen: the names admission holds a package engine's
+ * formatter language to (src/lib/db/studio-held-names.ts).
+ */
+export const FORMATTER_LANGUAGES: readonly string[] = Object.freeze(
+  [...new Set(Object.values(BUNDLED_SQL_TEXT).map((entry) => entry.grammar.formatterLanguage))].sort(),
+);
+
+/**
  * The grammar facts of a type: `NO_CONNECTION_SQL_GRAMMAR` for `undefined`, and its row for a type id, read through
  * `typeIdRow`, so any other value, a `String` object such as `new String("mysql")` from a host calling in plain
  * JavaScript included, is refused by name and a prototype key never reaches an `Object.prototype` member.

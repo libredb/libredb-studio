@@ -1521,16 +1521,61 @@ describe("schema refusals", () => {
     expect(refusalsFor(many)).toEqual([refusal("too-many", "/engines/0/editor/fenceAliases")]);
   });
 
-  test("an explain format outside Studio's strategies is one refusal at the editor's explain format", () => {
-    const changed = manifest((m) => (editorOf(m).explainFormat = "oracle-xplan"));
+  test("an explain format, a query dialect, a query language, a Monaco language or a formatter language of its form is admitted whatever it names", () => {
+    for (const name of ["exampleql", "example-plan", "e", `e${"x".repeat(30)}`]) {
+      const named = manifest((m) => {
+        editorOf(m).explainFormat = name;
+        editorOf(m).dialect = { ...dialect(), name: name.replace("-", "") };
+        languageOf(m).queryLanguage = name.replace("-", "");
+        languageOf(m).monacoId = name;
+        grammarOf(m).formatterLanguage = name.replace("-", "");
+      });
 
-    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/editor/explainFormat")]);
+      expect(refusalsFor(named)).toEqual([]);
+    }
+    expect(refusalsFor(manifest((m) => (editorOf(m).explainFormat = null)))).toEqual([]);
   });
 
-  test("a dialect outside Studio's dialects is refused as value-not-allowed", () => {
-    const changed = manifest((m) => (editorOf(m).dialect = { ...dialect(), name: "graphql" }));
+  test("an explain format, a query dialect, a query language, a Monaco language or a formatter language not of its form is refused as pattern-mismatch at its own pointer", () => {
+    const cases: [(m: Json, name: string) => void, string, readonly string[]][] = [
+      [
+        (m, name) => (editorOf(m).explainFormat = name),
+        "/engines/0/editor/explainFormat",
+        ["Example", "-x", "example_plan", "x-", "a--b"],
+      ],
+      [
+        (m, name) => (editorOf(m).dialect = { ...dialect(), name }),
+        "/engines/0/editor/dialect/name",
+        ["Example", "-x", "example-ql", "1x"],
+      ],
+      [
+        (m, name) => (languageOf(m).queryLanguage = name),
+        `${LANGUAGE}/queryLanguage`,
+        ["Example", "-x", "example-ql", ""],
+      ],
+      [(m, name) => (languageOf(m).monacoId = name), `${LANGUAGE}/monacoId`, ["Example", "-x", "example_plan", "x-"]],
+      [
+        (m, name) => (grammarOf(m).formatterLanguage = name),
+        `${SQL_TEXT}/grammar/formatterLanguage`,
+        ["Example", "-x", "example_ql"],
+      ],
+    ];
+    for (const [change, pointer, names] of cases) {
+      for (const name of names) {
+        expect(refusalsFor(manifest((m) => change(m, name)))).toEqual([refusal("pattern-mismatch", pointer)]);
+      }
+    }
+    const long = `e${"x".repeat(32)}`;
 
-    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/editor/dialect/name")]);
+    expect(refusalsFor(manifest((m) => (editorOf(m).explainFormat = long)))).toEqual([
+      refusal("out-of-range", "/engines/0/editor/explainFormat"),
+    ]);
+    expect(refusalsFor(manifest((m) => (languageOf(m).monacoId = long)))).toEqual([
+      refusal("out-of-range", `${LANGUAGE}/monacoId`),
+    ]);
+    expect(refusalsFor(manifest((m) => (languageOf(m).queryLanguage = long)))).toEqual([
+      refusal("pattern-mismatch", `${LANGUAGE}/queryLanguage`),
+    ]);
   });
 
   test("a history mask with no flag is refused as too-few, and a flag that is not a long option as pattern-mismatch", () => {
@@ -1654,7 +1699,7 @@ describe("schema refusals", () => {
     }
   });
 
-  test("a grammar rule, a script separator or a formatter language outside its vocabulary is refused", () => {
+  test("a grammar rule or a script separator outside its vocabulary is refused", () => {
     const cases: [(m: Json) => void, string][] = [
       [(m) => (grammarOf(m).hash = "slash"), "/grammar/hash"],
       [(m) => (grammarOf(m).bracket = "array"), "/grammar/bracket"],
@@ -1662,7 +1707,6 @@ describe("schema refusals", () => {
       [(m) => (grammarOf(m).script.blocks = "plpgsql"), "/grammar/script/blocks"],
       [(m) => (grammarOf(m).script.separatorLine = "go"), "/grammar/script/separatorLine"],
       [(m) => (grammarOf(m).script.unit = "script"), "/grammar/script/unit"],
-      [(m) => (grammarOf(m).formatterLanguage = "mysql"), "/grammar/formatterLanguage"],
     ];
     for (const [change, pointer] of cases) {
       expect(refusalsFor(manifest(change))).toEqual([refusal("value-not-allowed", `${SQL_TEXT}${pointer}`)]);
@@ -2116,14 +2160,6 @@ describe("schema refusals", () => {
     expect(refusalsFor(consoleLanguage)).toEqual([]);
     expect(refusalsFor(alt)).toEqual([]);
     expect(refusalsFor(cypher)).toEqual([]);
-  });
-
-  test("a query language or a Monaco language outside Studio's is refused as value-not-allowed", () => {
-    const graphql = manifest((m) => (languageOf(m).queryLanguage = "graphql"));
-    const cypher = manifest((m) => (languageOf(m).monacoId = "cypher"));
-
-    expect(refusalsFor(graphql)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/queryLanguage`)]);
-    expect(refusalsFor(cypher)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/monacoId`)]);
   });
 
   test("an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch", () => {

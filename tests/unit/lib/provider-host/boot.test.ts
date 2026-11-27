@@ -177,6 +177,44 @@ describe("boot admission", () => {
     expect(admitted().map((entry) => entry.name)).not.toContain(tampered.name);
   });
 
+  test("boot hands admission Studio's held names: a package stating a query dialect Studio does not hold is refused and logged with its sentence", async () => {
+    const providers = freshProviders();
+    // A generated name of the dialect's form, so it is no engine id and no dialect Studio holds.
+    const dialect = `x${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const [unheld] = writePackages(providers, [
+      {
+        engine: (engine) => {
+          engine.editor.dialect = {
+            name: dialect,
+            offersColumnProfiling: false,
+            offersCodeGeneration: false,
+            offersCountQuery: false,
+            offersSqlExport: false,
+            historyMask: null,
+          };
+        },
+      },
+    ]) as [Written];
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    const logs = spyLogs();
+    try {
+      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(logs.warn.mock.calls.filter(([message]) => message.includes(unheld.name))).toEqual([
+        [
+          `${named("PROVIDER_SCHEMA_INVALID", unheld)}its manifest is not one the provider contract admits: value-not-allowed at /engines/0/editor/dialect/name`,
+          { route: "provider-boot" },
+        ],
+      ]);
+    } finally {
+      logs.restore();
+    }
+    expect<unknown>(serverEngine(unheld.id)).toEqual({
+      kind: "unavailable",
+      id: unheld.id,
+      codes: ["PROVIDER_SCHEMA_INVALID"],
+    });
+  });
+
   test("an unreadable lock exits 1 with a named line", async () => {
     const cases: [string, (providers: string) => void, string][] = [
       [
