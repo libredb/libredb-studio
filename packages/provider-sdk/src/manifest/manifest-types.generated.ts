@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "8e6bca2458d869e8f04a9996f6b0e8fc6810503292a8fee6affa67647ddd156b";
+export const MANIFEST_SCHEMA_SHA256 = "161446c03374dfbe47288d953d3a66d97b96300138bf63aa3812d36a6fe40f98";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -684,10 +684,11 @@ export type StatementLanguage = string | null;
 /** A statement language's name: a lower-case letter, then up to 31 lower-case letters or digits, the form of a fence tag. */
 export type StatementLanguageName = string;
 
-/** The statement language the engine speaks, as data, or null where the engine speaks SQL or no statement language. name: the language's name, equal to agent.statementLanguage where that is stated. confirmation: what the confirmation gate reads of a statement in the language. */
+/** The statement language the engine speaks, as data, or null where the engine speaks SQL or no statement language. name: the language's name, equal to agent.statementLanguage where that is stated. confirmation: what the confirmation gate reads of a statement in the language. agent: what agent mode reads of a statement in the language, or null where agent mode sends it none. */
 export type StatementLanguageData = {
   readonly name: StatementLanguageName;
   readonly confirmation: StatementConfirmation;
+  readonly agent: StatementLanguageAgent;
 } | null;
 
 /** What the confirmation gate reads of a statement in the language, as data only. operations: the operations that ask a confirmation. reader: the kind of core's reader that names the operations a statement runs. decidesAlone: true where the reader's answer is the gate's whole answer. safetyAnalysis: true where Studio may send the language's statements to the AI safety analysis. maxTextBytes: the most UTF-8 bytes a statement may hold, or null where the language bounds none. */
@@ -697,6 +698,114 @@ export interface StatementConfirmation {
   readonly decidesAlone: boolean;
   readonly safetyAnalysis: boolean;
   readonly maxTextBytes: number | null;
+}
+
+/** What agent mode reads of a statement in the language, as data only, or null where agent mode sends the language no statement. request: the form core admits a model-written request by before the provider reads it. The form is the agent's admission, never the boundary: the provider reads every request with its own reader before it sends anything, and the engine's structural boundary bounds what it sends. */
+export type StatementLanguageAgent = {
+  readonly request: AgentRequestForm;
+} | null;
+
+/** A request written as one JSON object, admitted in one fixed order, the first failing step answering its refusal: longer than maxCharacters UTF-16 code units; blank; no JSON object; a repeated key; a key outside keys; with a selector, no read whose value is the selector key's own value; each common check in order; each key the read refuses, present; each check of the read in order. No refusal quotes the request, and a default is never applied to the answer. */
+export interface AgentRequestForm {
+  /** The request's kind: json-object, the one kind this contract reads. */
+  readonly kind: "json-object";
+  /** The most UTF-16 code units a request may hold, as String.length counts them. */
+  readonly maxCharacters: number;
+  readonly refusals: AgentRequestRefusals;
+  /** The closed set of the keys a request may write. */
+  readonly keys: readonly AgentRequestKeyName[];
+  readonly selector: AgentRequestSelector;
+  /** The key checks every request meets, in order. */
+  readonly common: readonly AgentRequestKeyCheck[];
+  /** The reads the selector names, each with the keys it refuses and checks; empty where the form has no selector. */
+  readonly reads: readonly AgentRequestRead[];
+}
+
+/** The refusals of the steps every request meets: tooLong, a request longer than the bound; empty, a blank request; notAnObject, a request that is no JSON object; repeatedKey, a key written twice; unknownKey, a key outside the closed set. */
+export interface AgentRequestRefusals {
+  readonly tooLong: AgentRequestRefusal;
+  readonly empty: AgentRequestRefusal;
+  readonly notAnObject: AgentRequestRefusal;
+  readonly repeatedKey: AgentRequestRefusal;
+  readonly unknownKey: AgentRequestRefusal;
+}
+
+/** One refusal of a request, answered as written: code, lower-case words joined by single hyphens, up to 32 characters; sentence, what the model reads, up to 4096 characters with no control character. */
+export interface AgentRequestRefusal {
+  readonly code: string;
+  readonly sentence: string;
+}
+
+/** A key a request may write: a lower-case letter, then up to 63 letters, digits or underscores. */
+export type AgentRequestKeyName = string;
+
+/** The key whose string value names the read, and the refusal of a request whose value there is absent, no string or no read's value; null where the form names no read and its common checks are its whole rule. */
+export type AgentRequestSelector = {
+  readonly key: AgentRequestKeyName;
+  readonly refusal: AgentRequestRefusal;
+} | null;
+
+/** One read the selector names: value, the selector's value naming it; refuses, the keys it refuses when present, in order; checks, the key checks it meets after the common ones, in order. */
+export interface AgentRequestRead {
+  readonly value: string;
+  readonly refuses: readonly AgentRequestRefusedKey[];
+  readonly checks: readonly AgentRequestKeyCheck[];
+}
+
+/** A key a read refuses, and the refusal of a request that writes it. */
+export interface AgentRequestRefusedKey {
+  readonly key: AgentRequestKeyName;
+  readonly refusal: AgentRequestRefusal;
+}
+
+/** One key's check: key, the key; absent, the refusal of a request that does not write it, or null where it is optional; rule, the rule its value meets. */
+export interface AgentRequestKeyCheck {
+  readonly key: AgentRequestKeyName;
+  /** The refusal of a request that does not write the key, or null where the key is optional. */
+  readonly absent: AgentRequestRefusal | null;
+  readonly rule: AgentRequestRule;
+}
+
+/** The rule a key's value meets: one of a closed list of strings, an integer in a range, or a name of bounded length over ranges of characters. */
+export type AgentRequestRule = AgentRequestEnumeration | AgentRequestInteger | AgentRequestName;
+
+/** A value that is a string among values, else the refusal. */
+export interface AgentRequestEnumeration {
+  readonly kind: "enumeration";
+  readonly values: readonly string[];
+  readonly refusal: AgentRequestRefusal;
+}
+
+/** A value that is a JSON number holding an integer from minimum to maximum, else the refusal; a JSON null is refused, never read as the default. default: the value a read takes where the key is absent, or null where it takes none; it never changes the admission's answer. */
+export interface AgentRequestInteger {
+  readonly kind: "integer";
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly default: number | null;
+  readonly refusal: AgentRequestRefusal;
+}
+
+/** A value that is a well-formed string of minLength to maxLength code points, each within one of the character ranges, else the refusal, so a lone surrogate is refused whatever the ranges; then each refused group in order answers its refusal for a name it lists or a name opening with a prefix it lists. Ranges and a length, never a pattern, so reading a name takes time linear in its length. */
+export interface AgentRequestName {
+  readonly kind: "name";
+  readonly characters: readonly AgentRequestCharacterRange[];
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly refused: readonly AgentRequestRefusedNames[];
+  readonly refusal: AgentRequestRefusal;
+}
+
+/** The characters from one code point to another, both included, each written as that one character. */
+export interface AgentRequestCharacterRange {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** Names a name rule refuses although its characters and length admit them: names, the exact names; prefixes, the openings; refusal, the answer to either. */
+export interface AgentRequestRefusedNames {
+  readonly names: readonly string[];
+  readonly prefixes: readonly string[];
+  readonly refusal: AgentRequestRefusal;
 }
 
 /** An operation a statement runs: words separated by single spaces, each a letter, then letters, digits, underscores, dots, colons or hyphens. */

@@ -201,7 +201,7 @@ export function withLoosestClaims(engine: EditableEngine): void {
 
 /**
  * Statement language data a fixture package declares: `acmeql`, a request language whose statements name no operation,
- * whose reader's answer is the confirmation gate's whole answer.
+ * whose reader's answer is the confirmation gate's whole answer, and with no agent part.
  */
 export const ACME_LANGUAGE_DATA: NonNullable<StatementLanguageData> = Object.freeze({
   name: "acmeql",
@@ -212,6 +212,7 @@ export const ACME_LANGUAGE_DATA: NonNullable<StatementLanguageData> = Object.fre
     safetyAnalysis: false,
     maxTextBytes: 4096,
   }),
+  agent: null,
 });
 
 /** `engine` declaring the statement language data `data`, a copy of it, and nothing else changed. */

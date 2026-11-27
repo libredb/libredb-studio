@@ -470,11 +470,118 @@ function languageData(name: string): Json {
       safetyAnalysis: false,
       maxTextBytes: null,
     },
+    agent: null,
   };
 }
 
 /** The confirmation part of the fixture's one engine's statement language data. */
 const confirmationOf = (m: Json): Json => m.engines[0].statementLanguageData.confirmation;
+
+/** The pointer of the request form of the fixture's one engine's statement language data. */
+const REQUEST = `${LANGUAGE_DATA}/agent/request`;
+
+/** A refusal of a request form, its code `code` and a sentence naming it. */
+const requestRefusal = (code: string): Json => ({ code, sentence: `The request is refused as ${code}.` });
+
+/**
+ * A request form in every shape the vocabulary has: a selector naming two reads, a common integer check with a default,
+ * a read refusing a key, a required name with its refused names and prefixes, an optional name, an enumeration and an
+ * optional integer, so every key of every read is ruled exactly once.
+ */
+function requestForm(): Json {
+  return {
+    kind: "json-object",
+    maxCharacters: 4096,
+    refusals: {
+      tooLong: requestRefusal("too-long"),
+      empty: requestRefusal("empty"),
+      notAnObject: requestRefusal("not-an-object"),
+      repeatedKey: requestRefusal("repeated-key"),
+      unknownKey: requestRefusal("unknown-key"),
+    },
+    keys: ["read", "topic", "after", "limit", "mode"],
+    selector: { key: "read", refusal: requestRefusal("not-a-read") },
+    common: [
+      {
+        key: "limit",
+        absent: null,
+        rule: { kind: "integer", minimum: 1, maximum: 500, default: 50, refusal: requestRefusal("limit") },
+      },
+    ],
+    reads: [
+      {
+        value: "topics",
+        refuses: [{ key: "topic", refusal: requestRefusal("topic-not-taken") }],
+        checks: [
+          {
+            key: "after",
+            absent: null,
+            rule: {
+              kind: "name",
+              characters: [
+                { from: "a", to: "z" },
+                { from: ".", to: "." },
+              ],
+              minLength: 1,
+              maxLength: 249,
+              refused: [{ names: [".", ".."], prefixes: [], refusal: requestRefusal("cursor") }],
+              refusal: requestRefusal("cursor"),
+            },
+          },
+          {
+            key: "mode",
+            absent: null,
+            rule: { kind: "enumeration", values: ["fast", "slow"], refusal: requestRefusal("mode") },
+          },
+        ],
+      },
+      {
+        value: "offsets",
+        refuses: [{ key: "mode", refusal: requestRefusal("mode-not-taken") }],
+        checks: [
+          {
+            key: "topic",
+            absent: requestRefusal("topic-required"),
+            rule: {
+              kind: "name",
+              characters: [{ from: "a", to: "z" }],
+              minLength: 1,
+              maxLength: 249,
+              refused: [
+                { names: ["internal"], prefixes: [], refusal: requestRefusal("internal") },
+                { names: [], prefixes: ["_", "connect-"], refusal: requestRefusal("withheld") },
+              ],
+              refusal: requestRefusal("topic"),
+            },
+          },
+          {
+            key: "after",
+            absent: null,
+            rule: {
+              kind: "integer",
+              minimum: 0,
+              maximum: 2147483647,
+              default: null,
+              refusal: requestRefusal("cursor"),
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * The Kafka fixture speaking `acmeread`, whose statement language data states the request form of `requestForm`,
+ * changed by `change`.
+ */
+function requestManifest(change: (form: Json) => void = () => {}): Json {
+  const changed = kafkaManifest();
+  agentOf(changed).statementLanguage = "acmeread";
+  changed.engines[0].statementLanguageData = { ...languageData("acmeread"), agent: { request: requestForm() } };
+  change(changed.engines[0].statementLanguageData.agent.request);
+  return changed;
+}
 
 /**
  * An SQL dialect in every shape a shipped engine gives one: a catalog read with a schema fold, a retry, the command
@@ -2790,14 +2897,10 @@ describe("schema refusals", () => {
         refusal("unknown-key", CONFIRMATION, key),
       ]);
     }
-    const agentPart = manifest((m) => {
-      m.engines[0].statementLanguageData = { ...languageData("acmeql"), agent: null };
-    });
-    expect(refusalsFor(agentPart)).toEqual([refusal("unknown-key", LANGUAGE_DATA, "agent")]);
     for (const key of ["operations", "reader", "decidesAlone", "safetyAnalysis", "maxTextBytes"]) {
       expect(refusalsFor(stated((c) => delete c[key]))).toEqual([refusal("missing-key", CONFIRMATION, key)]);
     }
-    for (const key of ["name", "confirmation"]) {
+    for (const key of ["name", "confirmation", "agent"]) {
       const lacking = manifest((m) => {
         m.engines[0].statementLanguageData = languageData("acmeql");
         delete m.engines[0].statementLanguageData[key];
@@ -3916,6 +4019,265 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(manifest((m) => (m.engines[0].statementLanguageData = languageData("acmeql"))))).toEqual([]);
   });
 
+  test("a statement language's agent part states its request form as data: a bound in characters, the closed key set, each key's value rule, the keys each read requires or refuses, and each refusal's code and sentence, and names no function", () => {
+    const AGENT = `${LANGUAGE_DATA}/agent`;
+    const COMMON_RULE = `${REQUEST}/common/0/rule`;
+    const NAME_RULE = `${REQUEST}/reads/0/checks/0/rule`;
+    const ENUMERATION_RULE = `${REQUEST}/reads/0/checks/1/rule`;
+
+    for (const admitted of [
+      requestManifest(),
+      requestManifest((r) => (r.reads[1].checks[0].rule.characters = [{ from: "\u{1F600}", to: "\u{1F64F}" }])),
+      requestManifest((r) => Object.assign(r, { maxCharacters: 65536, selector: null, reads: [], keys: ["limit"] })),
+      requestManifest((r) => (r.common[0].rule.minimum = -9007199254740991)),
+      requestManifest((r) => (r.common[0].rule = { ...r.common[0].rule, minimum: 7, maximum: 7, default: 7 })),
+    ]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+
+    for (const key of ["kind", "maxCharacters", "refusals", "keys", "selector", "common", "reads"]) {
+      expect(refusalsFor(requestManifest((r) => delete r[key]))).toEqual([refusal("missing-key", REQUEST, key)]);
+    }
+    for (const key of ["tooLong", "empty", "notAnObject", "repeatedKey", "unknownKey"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.refusals[key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/refusals`, key),
+      ]);
+    }
+    for (const key of ["code", "sentence"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.refusals.empty[key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/refusals/empty`, key),
+      ]);
+    }
+    for (const key of ["key", "refusal"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.selector[key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/selector`, key),
+      ]);
+      expect(refusalsFor(requestManifest((r) => delete r.reads[0].refuses[0][key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/reads/0/refuses/0`, key),
+      ]);
+    }
+    for (const key of ["value", "refuses", "checks"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.reads[0][key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/reads/0`, key),
+      ]);
+    }
+    for (const key of ["key", "absent", "rule"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.common[0][key]))).toEqual([
+        refusal("missing-key", `${REQUEST}/common/0`, key),
+      ]);
+    }
+    const lackingRequest = requestManifest();
+    delete lackingRequest.engines[0].statementLanguageData.agent.request;
+    expect(refusalsFor(lackingRequest)).toEqual([refusal("missing-key", AGENT, "request")]);
+
+    // A value rule is one of three shapes, so a rule lacking a member, or holding a stray one, has none of them.
+    for (const key of ["kind", "minimum", "maximum", "default", "refusal"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.common[0].rule[key]))).toEqual([
+        refusal("no-variant", COMMON_RULE),
+      ]);
+    }
+    for (const key of ["characters", "minLength", "maxLength", "refused", "refusal"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.reads[0].checks[0].rule[key]))).toEqual([
+        refusal("no-variant", NAME_RULE),
+      ]);
+    }
+    for (const key of ["values", "refusal"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.reads[0].checks[1].rule[key]))).toEqual([
+        refusal("no-variant", ENUMERATION_RULE),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => delete r.reads[0].checks[0].rule.characters[0].to))).toEqual([
+      refusal("no-variant", NAME_RULE),
+    ]);
+    for (const key of ["names", "prefixes", "refusal"]) {
+      expect(refusalsFor(requestManifest((r) => delete r.reads[0].checks[0].rule.refused[0][key]))).toEqual([
+        refusal("no-variant", NAME_RULE),
+      ]);
+    }
+    for (const stray of ["pattern", "reader", "regex"]) {
+      expect(refusalsFor(requestManifest((r) => (r.reads[0].checks[0].rule[stray] = "^[a-z]+$")))).toEqual([
+        refusal("no-variant", NAME_RULE),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.common[0].rule.kind = "pattern")))).toEqual([
+      refusal("no-variant", COMMON_RULE),
+    ]);
+    for (const key of ["reader", "pattern", "read"]) {
+      expect(refusalsFor(requestManifest((r) => (r[key] = "readRequest")))).toEqual([
+        refusal("unknown-key", REQUEST, key),
+      ]);
+    }
+    const strayAgent = requestManifest();
+    strayAgent.engines[0].statementLanguageData.agent.reader = "readRequest";
+    expect(refusalsFor(strayAgent)).toEqual([refusal("unknown-key", AGENT, "reader")]);
+
+    expect(refusalsFor(requestManifest((r) => (r.kind = "command-line")))).toEqual([
+      refusal("value-not-allowed", `${REQUEST}/kind`),
+    ]);
+    for (const bound of [0, 65537]) {
+      expect(refusalsFor(requestManifest((r) => (r.maxCharacters = bound)))).toEqual([
+        refusal("out-of-range", `${REQUEST}/maxCharacters`),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.maxCharacters = 1.5)))).toEqual([
+      refusal("wrong-type", `${REQUEST}/maxCharacters`),
+    ]);
+    for (const code of ["Empty", "1empty", "empty-", "empty--key", "empty key"]) {
+      expect(refusalsFor(requestManifest((r) => (r.refusals.empty.code = code)))).toEqual([
+        refusal("pattern-mismatch", `${REQUEST}/refusals/empty/code`),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.refusals.empty.code = "e".repeat(33))))).toEqual([
+      refusal("out-of-range", `${REQUEST}/refusals/empty/code`),
+    ]);
+    for (const sentence of ["Two\nlines.", "A\ttab.", "A\u0000nul."]) {
+      expect(refusalsFor(requestManifest((r) => (r.refusals.empty.sentence = sentence)))).toEqual([
+        refusal("pattern-mismatch", `${REQUEST}/refusals/empty/sentence`),
+      ]);
+    }
+    for (const sentence of ["", "s".repeat(4097)]) {
+      expect(refusalsFor(requestManifest((r) => (r.refusals.empty.sentence = sentence)))).toEqual([
+        refusal("out-of-range", `${REQUEST}/refusals/empty/sentence`),
+      ]);
+    }
+    for (const key of ["__proto__", "constructor-", "Read", "1read", "re ad", `r${"e".repeat(64)}`]) {
+      expect(refusalsFor(requestManifest((r) => r.keys.push(key)))).toEqual([
+        refusal("pattern-mismatch", `${REQUEST}/keys/5`),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => r.keys.push("read")))).toEqual([
+      refusal("duplicate", `${REQUEST}/keys/5`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => (r.keys = [])))).toEqual([refusal("too-few", `${REQUEST}/keys`)]);
+    for (const value of ["", "v".repeat(65)]) {
+      expect(refusalsFor(requestManifest((r) => (r.reads[0].value = value)))).toEqual([
+        refusal("out-of-range", `${REQUEST}/reads/0/value`),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.common[0].absent = "required")))).toEqual([
+      refusal("no-variant", `${REQUEST}/common/0/absent`),
+    ]);
+  });
+
+  test("a request form that does not rule every key of every read exactly once is refused at the key or read that breaks it", () => {
+    const limitCheck = (key: string): Json => ({
+      key,
+      absent: null,
+      rule: { kind: "integer", minimum: 1, maximum: 9, default: null, refusal: requestRefusal("limit") },
+    });
+
+    expect(refusalsFor(requestManifest((r) => r.common.push(limitCheck("nope"))))).toEqual([
+      refusal("request-key-undeclared", `${REQUEST}/common/1/key`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => (r.reads[0].refuses[0].key = "nope")))).toEqual([
+      refusal("request-key-unruled", `${REQUEST}/reads/0`),
+      refusal("request-key-undeclared", `${REQUEST}/reads/0/refuses/0/key`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => r.reads[1].checks.push(limitCheck("nope"))))).toEqual([
+      refusal("request-key-undeclared", `${REQUEST}/reads/1/checks/2/key`),
+    ]);
+    expect(
+      refusalsFor(
+        requestManifest((r) =>
+          Object.assign(r, { keys: ["topic", "after", "limit", "mode"], selector: { ...r.selector, key: "nope" } }),
+        ),
+      ),
+    ).toEqual([refusal("request-key-undeclared", `${REQUEST}/selector/key`)]);
+
+    expect(refusalsFor(requestManifest((r) => r.reads[1].checks.pop()))).toEqual([
+      refusal("request-key-unruled", `${REQUEST}/reads/1`),
+    ]);
+    expect(
+      refusalsFor(requestManifest((r) => Object.assign(r, { keys: ["limit", "mode"], selector: null, reads: [] }))),
+    ).toEqual([refusal("request-key-unruled", `${REQUEST}/keys/1`)]);
+
+    expect(refusalsFor(requestManifest((r) => r.common.push(limitCheck("read"))))).toEqual([
+      refusal("request-key-ruled-twice", `${REQUEST}/common/1/key`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => r.common.push(limitCheck("limit"))))).toEqual([
+      refusal("request-key-ruled-twice", `${REQUEST}/common/1/key`),
+    ]);
+    expect(
+      refusalsFor(requestManifest((r) => r.reads[0].refuses.push({ key: "after", refusal: requestRefusal("a") }))),
+    ).toEqual([refusal("request-key-ruled-twice", `${REQUEST}/reads/0/checks/0/key`)]);
+    expect(refusalsFor(requestManifest((r) => r.reads[1].checks.push(limitCheck("after"))))).toEqual([
+      refusal("request-key-ruled-twice", `${REQUEST}/reads/1/checks/2/key`),
+    ]);
+    expect(
+      refusalsFor(requestManifest((r) => r.reads[1].refuses.push({ key: "read", refusal: requestRefusal("a") }))),
+    ).toEqual([refusal("request-key-ruled-twice", `${REQUEST}/reads/1/refuses/1/key`)]);
+
+    expect(refusalsFor(requestManifest((r) => (r.reads[1].value = "topics")))).toEqual([
+      refusal("request-read-duplicate", `${REQUEST}/reads/1/value`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => (r.reads = [])))).toEqual([
+      refusal("request-reads-without-selector", `${REQUEST}/reads`),
+    ]);
+    expect(refusalsFor(requestManifest((r) => (r.selector = null)))).toEqual([
+      refusal("request-key-unruled", `${REQUEST}/keys/0`),
+      refusal("request-key-unruled", `${REQUEST}/keys/1`),
+      refusal("request-key-unruled", `${REQUEST}/keys/2`),
+      refusal("request-key-unruled", `${REQUEST}/keys/4`),
+      refusal("request-reads-without-selector", `${REQUEST}/reads`),
+    ]);
+    expect(validator.validateEngine(requestManifest((r) => (r.reads[1].value = "topics")).engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("request-read-duplicate", "/statementLanguageData/agent/request/reads/1/value")],
+    });
+  });
+
+  test("an integer rule whose range is empty or whose default is outside it, and a name rule whose character range is reversed or not one character or whose length range is empty, is refused at its pointer", () => {
+    const INTEGER = `${REQUEST}/common/0/rule`;
+    const NAME = `${REQUEST}/reads/1/checks/0/rule`;
+
+    expect(refusalsFor(requestManifest((r) => (r.common[0].rule.minimum = 501)))).toEqual([
+      refusal("request-integer-default-outside", `${INTEGER}/default`),
+      refusal("request-integer-range-empty", `${INTEGER}/minimum`),
+    ]);
+    for (const outside of [0, 501]) {
+      expect(refusalsFor(requestManifest((r) => (r.common[0].rule.default = outside)))).toEqual([
+        refusal("request-integer-default-outside", `${INTEGER}/default`),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.common[0].rule.minimum = 10000000000000000)))).toEqual([
+      refusal("no-variant", INTEGER),
+    ]);
+
+    expect(
+      refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.characters[0] = { from: "z", to: "a" }))),
+    ).toEqual([refusal("request-name-range-reversed", `${NAME}/characters/0`)]);
+    for (const [from, to, pointer] of [
+      ["\ud800", "z", "from"],
+      ["a", "\udfff", "to"],
+    ] as const) {
+      expect(refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.characters[0] = { from, to })))).toEqual([
+        refusal("request-name-range-not-one-character", `${NAME}/characters/0/${pointer}`),
+      ]);
+    }
+    for (const two of ["ab", ""]) {
+      expect(refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.characters[0].from = two)))).toEqual([
+        refusal("no-variant", NAME),
+      ]);
+    }
+    expect(refusalsFor(requestManifest((r) => (r.reads[1].checks[0].rule.minLength = 250)))).toEqual([
+      refusal("request-name-length-empty", `${NAME}/minLength`),
+    ]);
+  });
+
+  test("an agent part on an engine whose agent mode sends no statement is refused at the agent part", () => {
+    const unspoken = manifest((m) => {
+      m.engines[0].statementLanguageData = { ...languageData("acmeread"), agent: { request: requestForm() } };
+    });
+
+    expect(refusalsFor(unspoken)).toEqual([refusal("statement-language-agent-unspoken", `${LANGUAGE_DATA}/agent`)]);
+    expect(validator.validateEngine(unspoken.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("statement-language-agent-unspoken", "/statementLanguageData/agent")],
+    });
+    expect(refusalsFor(manifest((m) => (m.engines[0].statementLanguageData = languageData("acmeread"))))).toEqual([]);
+  });
+
   test("the rules run only on a manifest the schema admits", () => {
     const changed = manifest((m) => {
       m.engines.push(structuredClone(m.engines[0]));
@@ -4572,6 +4934,49 @@ describe("refusals carry no value", () => {
     ]);
     for (const item of refusals) {
       for (const value of [requested, declared, operation]) {
+        expect(JSON.stringify(item)).not.toContain(value);
+        expect(refusalSentence(item)).not.toContain(value);
+      }
+    }
+
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const read = `r${randomUUID().replaceAll("-", "")}`;
+    const code = `c${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const sentence = `S${randomUUID()}.`;
+    const planted = { code, sentence };
+    const formed = requestManifest((r) => {
+      r.reads[0].value = read;
+      r.reads[1].value = read;
+      r.reads[0].refuses[0] = { key, refusal: planted };
+      r.common[0].rule = { kind: "integer", minimum: 9, maximum: 1, default: 5, refusal: planted };
+      r.reads[1].checks[0].rule.characters = [
+        { from: "\ud800", to: "z" },
+        { from: "z", to: "a" },
+      ];
+      r.reads[1].checks[0].rule.minLength = 300;
+      r.reads[1].checks.push({ key: "after", absent: planted, rule: r.common[0].rule });
+    });
+    formed.engines[0].statementLanguageData.name = declared;
+    Object.assign(agentOf(formed), { statementLanguage: null, overlay: null });
+
+    const formRefusals = refusalsFor(formed);
+
+    expect(new Set(formRefusals.map((item) => (item as SchemaRefusal).rule))).toEqual(
+      new Set<SchemaRefusalRule>([
+        "request-key-undeclared",
+        "request-key-unruled",
+        "request-key-ruled-twice",
+        "request-read-duplicate",
+        "request-integer-range-empty",
+        "request-integer-default-outside",
+        "request-name-range-reversed",
+        "request-name-range-not-one-character",
+        "request-name-length-empty",
+        "statement-language-agent-unspoken",
+      ]),
+    );
+    for (const item of formRefusals) {
+      for (const value of [key, read, code, sentence, declared]) {
         expect(JSON.stringify(item)).not.toContain(value);
         expect(refusalSentence(item)).not.toContain(value);
       }
