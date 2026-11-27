@@ -36,7 +36,7 @@ import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { admitDeclaredRequest, declaredRequestIdentity } from "@/lib/db/operations/declared-request-form";
 import { acmereadData, acmereadForm, acmereadMcp, acmereadText } from "../../../helpers/declared-agent-language";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
-import { shippedLanguageData } from "../../../helpers/declared-language-census";
+import { shippedStatementLanguages } from "../../../helpers/declared-language-census";
 
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
 const NOUN = Object.freeze({ singular: "topic", plural: "topics" });
@@ -434,7 +434,12 @@ describe("the composer of a data-declared language", () => {
 
   test("the declared statement languages are the projection's data, equal to the committed declarations', and hold kafkaread", () => {
     const projected = Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null);
-    expect(projected).toEqual(shippedLanguageData());
+    // The projection is built from the committed declarations alone, so a provider package's language is not in it.
+    expect(projected).toEqual(
+      shippedStatementLanguages()
+        .filter(({ source }) => source === "declaration")
+        .map(({ data }) => data),
+    );
     expect(projected.map(({ name }) => name)).toEqual(["kafkaread"]);
     // The registries compose exactly the projection's languages that state an agent part, in its order.
     expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toEqual(
