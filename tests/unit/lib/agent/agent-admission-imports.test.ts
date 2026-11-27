@@ -6,13 +6,16 @@
  * declared languages' data (src/lib/db/engine-catalog/statement-language.generated.ts) reach, by value import, no
  * module of any statement language and no provider module. A language's module is one under src/lib/languages/<language>/ or
  * src/lib/agent/languages/<language>/, or its admission src/lib/db/operations/<language>-admission.ts; the languages
- * are read from the tree, joined by every language a shipped declaration states data for and by a crafted one, so the
- * check names each of today's language modules and still holds once a language's modules are gone.
+ * are read from the tree, joined by every language a committed declaration or a provider package's manifest states
+ * data for (tests/helpers/declared-language-census.ts) and by a crafted one, so the check names each of today's
+ * language modules and still holds once a language's modules are gone or its engine has moved into a package.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { shippedLanguageData } from "../../../helpers/declared-language-census";
+import { ACME_LANGUAGE_DATA } from "../../../helpers/package-catalog";
+import { plantedRoot, removePlantedRoot } from "../../../helpers/planted-package";
 import { valueImportClosure } from "../../../helpers/value-import-closure";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -35,10 +38,10 @@ function subdirectories(directory: string): string[] {
 }
 
 /**
- * Every statement language with a module in the tree, every language a shipped declaration states data for, and the
- * crafted `acmeread`.
+ * Every statement language with a module in the tree, every language of `declared`, and the crafted `acmeread`.
+ * `declared` is by default every language a committed declaration or a provider package's manifest states data for.
  */
-function statementLanguages(): string[] {
+function statementLanguages(declared: readonly { name: string }[] = shippedLanguageData()): string[] {
   const admissions = readdirSync(path.join(ROOT, "src/lib/db/operations"))
     .filter((file) => file.endsWith("-admission.ts"))
     .map((file) => file.slice(0, -"-admission.ts".length));
@@ -47,7 +50,7 @@ function statementLanguages(): string[] {
       ...subdirectories("src/lib/languages"),
       ...subdirectories("src/lib/agent/languages"),
       ...admissions,
-      ...shippedLanguageData().map((data) => data.name),
+      ...declared.map((data) => data.name),
       "acmeread",
     ]),
   ].sort();
@@ -71,7 +74,7 @@ describe("the agent admission's imports", () => {
   test("the agent admission and the composer import no module of a statement language some engine declares as data", () => {
     const languages = statementLanguages();
     expect(languages).toContain("acmeread");
-    // Kafka's language is read from its shipped declaration's data alone: no module of it is left in the tree.
+    // Kafka's language is read from its committed declaration's data alone: no module of it is left in the tree.
     expect(shippedLanguageData().map((data) => data.name)).toContain("kafkaread");
     expect(subdirectories("src/lib/agent/languages")).not.toContain("kafkaread");
     expect(languages).toContain("kafkaread");
@@ -86,5 +89,32 @@ describe("the agent admission's imports", () => {
     expect(languageModulesReached("src/lib/db/operations/oxiacli-admission.ts", languages)).toContain(
       "src/lib/languages/oxiacli/agent-statement.ts",
     );
+  });
+
+  test("a language a planted provider package states is among the languages held", () => {
+    const planted = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "src/lib/db/engine-declarations/acme.json": JSON.stringify({ id: "acme", statementLanguageData: null }),
+        "packages/provider-sdk/package.json": JSON.stringify({ name: "@libredb/provider-sdk" }),
+        "packages/provider-alpha/package.json": JSON.stringify({ name: "@libredb/provider-alpha" }),
+        "packages/provider-alpha/libredb-provider.json": JSON.stringify({
+          engines: [{ id: "alpha", statementLanguageData: { ...ACME_LANGUAGE_DATA, name: "alpharead" } }],
+        }),
+      },
+    });
+    try {
+      const data = shippedLanguageData(planted);
+      expect(data.map(({ name }) => name)).toEqual(["alpharead"]);
+      const languages = statementLanguages(data);
+      expect(languages).toContain("alpharead");
+      expect(languages).toContain("acmeread");
+      // The planted root holds no Kafka declaration, so its language comes only from the repository's.
+      expect(languages).not.toContain("kafkaread");
+    } finally {
+      removePlantedRoot(planted);
+    }
   });
 });

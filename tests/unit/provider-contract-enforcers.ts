@@ -143,6 +143,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/package-imports.test.ts": [
         "the repository's packages import only what they declare",
         "core reaches no workspace package by path",
+        "a package source import of a name only Bun treats as a built-in fails as undeclared",
       ],
     },
   },
@@ -2102,6 +2103,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/confirmation-gate-imports.test.ts": [
         "the confirmation gate imports no module of a statement language some engine declares as data",
         "the check names a gate module of a crafted declared language",
+        "a statement language a provider package's manifest states is read as a declared language",
       ],
       "tests/unit/db/statement-language-row.test.ts": [
         "an engine's statement language row is its declared data where it declares some, Studio's code row for a legacy engine otherwise, and none for SQL",

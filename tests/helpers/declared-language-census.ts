@@ -7,15 +7,16 @@
  * request instead.
  *
  * `READER_ENROLLMENTS` names each language's reader and corpus by the language's name. A language enters it in the same
- * change that makes a shipped declaration state the language's agent part, and the declared language admission test
- * (tests/unit/lib/agent/declared-language-admission.test.ts) holds the two sets equal, so no shipped form goes
- * uncensused.
+ * change that makes a committed declaration or a provider package's manifest state the language's agent part, and the
+ * declared language admission test (tests/unit/lib/agent/declared-language-admission.test.ts) holds the two sets
+ * equal, so no shipped form goes uncensused.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentRequestForm, StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { admitDeclaredRequest, type DeclaredRequestRefusal } from "@/lib/db/operations/declared-request-form";
 import { readKafkaAgentStatement } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
+import { providerPackageDirectories } from "../../scripts/workspace-packages.mjs";
 
 /** What a provider's reader answers for one request: admitted, or refused with a code and a sentence. */
 export type ProviderReading =
@@ -104,27 +105,80 @@ function kafkaReader(text: string): ProviderReading {
   return reading.ok ? { ok: true } : { ok: false, code: reading.code, message: reading.message };
 }
 
-/** Each language a shipped declaration states an agent part for, by name: its reader and its corpus. */
+/**
+ * Each language a committed declaration or a provider package's manifest states an agent part for, by name: its reader
+ * and its corpus.
+ */
 export const READER_ENROLLMENTS: ReadonlyMap<string, ReaderEnrollment> = new Map([
   ["kafkaread", { reader: kafkaReader, corpus: kafkareadCorpus() }],
 ]);
 
-const DECLARATIONS = path.join(import.meta.dir, "../../src/lib/db/engine-declarations");
+const REPOSITORY_ROOT = path.resolve(import.meta.dir, "../..");
+/** Where the committed engine declarations live, relative to a repository root. */
+const DECLARATIONS = "src/lib/db/engine-declarations";
+/** The manifest's file name at a provider package's root. */
+const MANIFEST_FILE = "libredb-provider.json";
 
-/** The statement language data every shipped declaration states, the null ones left out, in file name order. */
-export function shippedLanguageData(): NonNullable<StatementLanguageData>[] {
-  return readdirSync(DECLARATIONS)
+/** An engine's declared statement language data, and where it is stated. */
+export interface ShippedStatementLanguage {
+  readonly engine: string;
+  /** A committed engine declaration, or a provider package's manifest. */
+  readonly source: "declaration" | "package";
+  /** The declarations' directory, or the provider package's directory, repository-relative. */
+  readonly directory: string;
+  readonly data: NonNullable<StatementLanguageData>;
+}
+
+/** The engines a JSON file states, each with its id and its statement language data, absent when the file omits it. */
+type StatedEngine = { id: string; statementLanguageData?: StatementLanguageData };
+
+/**
+ * The statement language data every engine under `root` states, the null ones left out: every committed declaration
+ * under `src/lib/db/engine-declarations/` in file name order, then every provider package
+ * (`providerPackageDirectories`) in directory order, each engine of its `libredb-provider.json` in the manifest's
+ * order. A language a package states is read the day the package lands, so the tests that read this hold it as they
+ * hold a declaration's.
+ *
+ * @throws {Error} Naming the directory, for a provider package without its manifest; naming the file, for a manifest
+ * whose `engines` is not an array; naming the file and the engine, for an engine that states no
+ * `statementLanguageData` member, since an engine with no statement language states it as null.
+ */
+export function shippedStatementLanguages(root: string = REPOSITORY_ROOT): ShippedStatementLanguage[] {
+  const declarations = readdirSync(path.join(root, DECLARATIONS))
     .filter((file) => file.endsWith(".json"))
     .sort()
-    .map(
-      (file) =>
-        (
-          JSON.parse(readFileSync(path.join(DECLARATIONS, file), "utf8")) as {
-            statementLanguageData: StatementLanguageData;
-          }
-        ).statementLanguageData,
-    )
-    .filter((data): data is NonNullable<StatementLanguageData> => data !== null);
+    .map((file) => ({
+      source: "declaration" as const,
+      directory: DECLARATIONS,
+      file: `${DECLARATIONS}/${file}`,
+      engines: [JSON.parse(readFileSync(path.join(root, DECLARATIONS, file), "utf8")) as StatedEngine],
+    }));
+  const packages = providerPackageDirectories(root).map((directory: string) => {
+    const file = `${directory}/${MANIFEST_FILE}`;
+    if (!existsSync(path.join(root, file))) {
+      throw new Error(
+        `The provider package ${directory} has no ${MANIFEST_FILE}: a provider package states its manifest at ${file}.`,
+      );
+    }
+    const { engines } = JSON.parse(readFileSync(path.join(root, file), "utf8")) as { engines: unknown };
+    if (!Array.isArray(engines)) throw new Error(`${file} has no engines array, so its engines cannot be read.`);
+    return { source: "package" as const, directory, file, engines: engines as StatedEngine[] };
+  });
+  return [...declarations, ...packages].flatMap(({ source, directory, file, engines }) =>
+    engines.flatMap(({ id, statementLanguageData: data }) => {
+      if (data === undefined) {
+        throw new Error(
+          `${file} states no statementLanguageData for the engine ${id}: an engine states its statement language data, null when it has none.`,
+        );
+      }
+      return data === null ? [] : [{ engine: id, source, directory, data }];
+    }),
+  );
+}
+
+/** The statement language data of {@link shippedStatementLanguages}, in its order. */
+export function shippedLanguageData(root: string = REPOSITORY_ROOT): NonNullable<StatementLanguageData>[] {
+  return shippedStatementLanguages(root).map(({ data }) => data);
 }
 
 /** One answer in words: admitted, or the code and the sentence it was refused with. */

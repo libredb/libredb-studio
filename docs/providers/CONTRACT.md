@@ -114,7 +114,7 @@ Both ends of a range are tested versions.
 
 ### M-17 (normative): A package imports only what it declares
 
-A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a Bun runtime module.
+A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a `bun:` module.
 No package imports a path into Studio's source, out of its own directory or into another provider package (C-42).
 Studio reaches a package only by its package name.
 

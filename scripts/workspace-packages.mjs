@@ -66,6 +66,21 @@ export function workspacePackageDirectories(root) {
   return directories.sort();
 }
 
+/** The provider SDK's directory, the one workspace package under `packages/provider-` that is not a provider package. */
+const PROVIDER_SDK_DIRECTORY = `${PACKAGES_DIRECTORY}/provider-sdk`;
+
+/**
+ * Every provider package under `root`: the workspace packages whose directory starts with `packages/provider-`, other
+ * than the SDK, as sorted repository-relative paths in the order of {@link workspacePackageDirectories}. The one
+ * definition of a provider package that the core import refusal (`tests/unit/package-imports.test.ts`) and the
+ * statement language readers (`tests/helpers/declared-language-census.ts`) read.
+ */
+export function providerPackageDirectories(root) {
+  return workspacePackageDirectories(root).filter(
+    (directory) => directory.startsWith(`${PACKAGES_DIRECTORY}/provider-`) && directory !== PROVIDER_SDK_DIRECTORY,
+  );
+}
+
 /**
  * Every workspace package under `root` with its parsed `package.json`, as `{ directory, manifest }`, in the order
  * of {@link workspacePackageDirectories}. The one reader of package manifests the other listings use.

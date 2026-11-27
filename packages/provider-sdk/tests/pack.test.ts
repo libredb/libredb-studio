@@ -23,7 +23,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
@@ -63,6 +62,28 @@ function nodeBinary(): string {
   const node = Bun.which("node");
   if (node === null) throw new Error("No node on PATH: the pack test imports the packed SDK under Node");
   return node;
+}
+
+/**
+ * The members of `specifiers` that Node.js treats as built-ins, answered by `isBuiltin` of `node:module` in a child
+ * under the node on PATH, never by this process: Bun also serves `bun`, `ws` and `undici` as built-ins, which Node.js
+ * does not. That node is the engines floor's major, which tests/unit/lib/provider-host/node-builtins.test.ts requires
+ * in every run of the suite, so its list is the one Studio commits. The six `_stream_*` names a later Node.js drops
+ * are still built-ins to this check, which admission refuses by its own list, and the SDK is never admitted as a
+ * provider package.
+ */
+async function nodeBuiltins(specifiers: readonly string[]): Promise<Set<string>> {
+  const script =
+    'const { isBuiltin } = require("node:module"); console.log(JSON.stringify(JSON.parse(process.argv[1]).filter((name) => isBuiltin(name))));';
+  const result = succeeded(
+    "the node built-in check",
+    await runChild([nodeBinary(), "--max-old-space-size=256", "-e", script, JSON.stringify(specifiers)], {
+      cwd: temp,
+      env,
+      timeoutMs: 30_000,
+    }),
+  );
+  return new Set(JSON.parse(result.stdout.trim().split("\n").at(-1) as string) as string[]);
 }
 
 /**
@@ -470,6 +491,7 @@ describe("the SDK tarball", () => {
       const files = filesUnder(dist).filter((file) => file.endsWith(".js") || file.endsWith(".d.ts"));
       const imported = new Set<string>();
       const failures: string[] = [];
+      const bare: { file: string; specifier: string }[] = [];
       for (const file of files) {
         const text = readFileSync(path.join(dist, file), "utf8");
         for (const { fileName: specifier } of ts.preProcessFile(text, true, true).importedFiles) {
@@ -477,14 +499,16 @@ describe("the SDK tarball", () => {
             const target = path.posix.join(path.posix.dirname(file), specifier);
             const onDisk = file.endsWith(".d.ts") ? target.replace(/\.js$/, ".d.ts") : target;
             if (!existsSync(path.join(dist, onDisk))) failures.push(`${file} imports ${specifier}, not in dist`);
-            continue;
-          }
-          if (isBuiltin(specifier)) continue;
-          const parts = specifier.split("/");
-          const name = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string);
-          if (declared.includes(name)) imported.add(name);
-          else failures.push(`${file} imports ${specifier}, which the packed package.json does not declare`);
+          } else bare.push({ file, specifier });
         }
+      }
+      const builtins = await nodeBuiltins([...new Set(bare.map(({ specifier }) => specifier))]);
+      for (const { file, specifier } of bare) {
+        if (builtins.has(specifier)) continue;
+        const parts = specifier.split("/");
+        const name = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string);
+        if (declared.includes(name)) imported.add(name);
+        else failures.push(`${file} imports ${specifier}, which the packed package.json does not declare`);
       }
 
       expect(files.length).toBeGreaterThan(MODULE_SUBPATHS.length * 2);
@@ -624,6 +648,17 @@ describe("the pack test's machinery", () => {
       "No node on PATH",
     );
   });
+
+  test(
+    "the dist's import check reads built-ins from Node.js, so a name only Bun serves is not one",
+    async () => {
+      expect([...(await nodeBuiltins(["ws", "undici", "bun", "node:fs", "fs", "left-pad"]))].sort()).toEqual([
+        "fs",
+        "node:fs",
+      ]);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   test("the children's environment drops Node's and npm's settings and points HOME at the given directory", () => {
     expect(

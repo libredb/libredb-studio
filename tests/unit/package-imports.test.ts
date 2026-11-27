@@ -3,22 +3,28 @@
  * (packages/README.md, "Imports"; docs/providers/CONTRACT.md, clauses M-17 and C-42).
  *
  * A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and
- * `@libredb/provider-sdk`; its tests may also import a Bun runtime module such as `bun:test`. Nothing in a package
+ * `@libredb/provider-sdk`; its tests may also import a `bun:` module such as `bun:test`. A built-in is a name of
+ * Node.js's list as Studio commits it (src/lib/provider-host/node-builtins.ts), never what the running runtime serves,
+ * so `bun`, `ws` and `undici`, which Bun serves as built-ins, are undeclared names. Nothing in a package
  * imports an `@/` path or climbs out of its directory, so a package never depends on another package's internals or on
  * Studio's, and moving it to a repository of its own changes no import. Core (`src/`, `bin/`, `scripts/`, `tests/`,
  * `e2e/` and `vscode-extension/src/`) never reaches into `packages/` by path, so what core sees of a package is what
- * its `exports` publish. No package but the kit depends on another provider package: the SDK alone, and the kit in a
- * package's tests and `devDependencies` only.
+ * its `exports` publish. Core never imports a provider package, by name or by path, so a provider's code reaches
+ * Studio only through admission; `@libredb/provider-sdk` and `@libredb/provider-loader` are the two
+ * `@libredb/provider-` names it imports. No package but the kit depends on another provider package: the SDK alone,
+ * and the kit in a package's tests and `devDependencies` only.
  *
  * Specifiers are read with the scanner of `tests/unit/lib/db/provider-imports/scan.ts` (the TypeScript compiler's
  * `preProcessFile`), so a path in a comment or a string is never one. Inward, only core files whose text contains
- * `packages/` are parsed: a relative specifier that reaches the directory names it.
+ * `packages/` are parsed: a relative, absolute or `file:` specifier that reaches the directory names it, written with
+ * forward slashes.
  */
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { isBuiltin } from "node:module";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { workspacePackageManifests } from "../../scripts/workspace-packages.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isNodeBuiltin } from "@/lib/provider-host/node-builtins";
+import { providerPackageDirectories, workspacePackageManifests } from "../../scripts/workspace-packages.mjs";
 import { plantedRoot, REPOSITORY_ROOT, removePlantedRoot } from "../helpers/planted-package";
 import { isSourcePath, moduleSpecifiers } from "./lib/db/provider-imports/scan";
 
@@ -63,8 +69,8 @@ function packageSpecifierFailure(
   if (specifier.startsWith("bun:")) {
     return isTest ? null : `${file} imports "${specifier}", a Bun runtime module, outside the package's tests`;
   }
-  // After the Bun check: under Bun, isBuiltin answers true for a bun: module too.
-  if (specifier.startsWith("node:") || isBuiltin(specifier)) return null;
+  // Node.js's list as Studio commits it, never this runtime's own check: Bun also serves `bun`, `ws` and `undici`.
+  if (isNodeBuiltin(specifier)) return null;
   const name = packageNameOf(specifier);
   if (name === SDK || declared.has(name)) return null;
   return `${file} imports "${specifier}", which ${directory}/package.json does not declare`;
@@ -132,17 +138,86 @@ function providerDependenceFailures(root: string): string[] {
   return failures.sort();
 }
 
-/** Every core file under `root` that reaches into `packages/` by path, sorted. */
+/**
+ * The repository-relative POSIX path a path specifier in core file `file` under `root` lands on, or null for a
+ * specifier that is not a path: a relative one is read from the file's directory, an absolute one and a `file:` URL
+ * from `root`, so each lands where the runtime would load it. An absolute path or URL outside `root` lands on a path
+ * starting `../`, which no package directory is.
+ */
+function pathTarget(root: string, file: string, specifier: string): string | null {
+  if (specifier.startsWith(".")) return path.posix.join(path.posix.dirname(file), specifier);
+  const absolute = specifier.startsWith("file:")
+    ? fileURLToPath(specifier)
+    : path.isAbsolute(specifier)
+      ? specifier
+      : null;
+  return absolute === null ? null : path.relative(root, absolute).split(path.sep).join("/");
+}
+
+/** Every core file under `root` that reaches into `packages/` by path, relative, absolute or a `file:` URL, sorted. */
 function inwardPathFailures(root: string): string[] {
   const failures: string[] = [];
   for (const file of CORE_ROOTS.flatMap((directory) => sourceFilesUnder(root, directory))) {
     const text = readFileSync(path.join(root, file), "utf8");
     if (!text.includes("packages/")) continue;
     for (const specifier of moduleSpecifiers(text)) {
-      if (!specifier.startsWith(".")) continue;
-      const target = path.posix.join(path.posix.dirname(file), specifier);
-      if (target === "packages" || target.startsWith("packages/")) {
+      const target = pathTarget(root, file, specifier);
+      if (target !== null && (target === "packages" || target.startsWith("packages/"))) {
         failures.push(`${file} imports "${specifier}", reaching a workspace package by path: import it by its name`);
+      }
+    }
+  }
+  return failures.sort();
+}
+
+/** The `@libredb/provider-` names core imports: the SDK, and Studio's own loader, neither of them a provider package. */
+const CORE_PROVIDER_NAMES: ReadonlySet<string> = new Set([SDK, "@libredb/provider-loader"]);
+
+/**
+ * Every core file under `root` that imports a provider package, by name or by path, in any form the scanner reads
+ * (static, `import type`, `export from`, `import()` and `require()`), sorted. A provider package is a directory of
+ * `providerPackageDirectories`; a name is one when it is such a package's `name`, or when it starts with
+ * `@libredb/provider-` and is neither the SDK nor the loader, so a provider package's conventional name is refused
+ * before the package exists. A path is one when it is relative, `@/` (read as `src/`), absolute or a `file:` URL
+ * ({@link pathTarget}) and lands on such a package's directory or under it. Only files whose text holds
+ * `@libredb/provider-`, `packages/` or a provider package's name are parsed: a specifier of the refused kinds holds
+ * one of them, a path or URL written with forward slashes.
+ *
+ * @throws {Error} Naming its package.json, for a provider package with no string `name`, since no import of it by
+ * name could then be refused.
+ */
+function providerPackageImportFailures(root: string): string[] {
+  const directories = providerPackageDirectories(root);
+  const names = new Set(
+    workspacePackageManifests(root)
+      .filter(({ directory }) => directories.includes(directory))
+      .map(({ directory, manifest }) => {
+        if (typeof manifest.name !== "string") {
+          throw new Error(
+            `${directory}/package.json has no string name, so core's imports of the provider package by name cannot be refused. Give it a "name".`,
+          );
+        }
+        return manifest.name;
+      }),
+  );
+  const markers = [PROVIDER_PACKAGE_PREFIX, "packages/", ...names];
+  const failures: string[] = [];
+  for (const file of CORE_ROOTS.flatMap((directory) => sourceFilesUnder(root, directory))) {
+    const text = readFileSync(path.join(root, file), "utf8");
+    if (!markers.some((marker) => text.includes(marker))) continue;
+    for (const specifier of moduleSpecifiers(text)) {
+      let refused: boolean;
+      const target = specifier.startsWith("@/")
+        ? path.posix.join("src", specifier.slice(2))
+        : pathTarget(root, file, specifier);
+      if (target !== null) {
+        refused = directories.some((directory) => target === directory || target.startsWith(`${directory}/`));
+      } else {
+        const name = packageNameOf(specifier);
+        refused = names.has(name) || (name.startsWith(PROVIDER_PACKAGE_PREFIX) && !CORE_PROVIDER_NAMES.has(name));
+      }
+      if (refused) {
+        failures.push(`${file} imports "${specifier}", a provider package: core imports none, by name or by path`);
       }
     }
   }
@@ -240,6 +315,10 @@ describe("the package import rule", () => {
           'import "node:fs";',
           'import "path";',
           'import "bun:sqlite";',
+          'import "ws";',
+          'import "undici";',
+          'import "bun";',
+          'import "node:nosuch";',
           `import "${SDK}/manifest";`,
           '// import "@/lib/in-a-comment";',
           "export const value = Ajv;",
@@ -261,8 +340,12 @@ describe("the package import rule", () => {
       expect(packageImportFailures(root)).toEqual([
         'packages/provider-planted/src/index.ts imports "../../provider-sdk/src/manifest/validate", a path out of packages/provider-planted',
         'packages/provider-planted/src/index.ts imports "@/lib/types", a path into Studio\'s own source',
+        'packages/provider-planted/src/index.ts imports "bun", which packages/provider-planted/package.json does not declare',
         'packages/provider-planted/src/index.ts imports "bun:sqlite", a Bun runtime module, outside the package\'s tests',
         'packages/provider-planted/src/index.ts imports "left-pad", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "node:nosuch", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "undici", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "ws", which packages/provider-planted/package.json does not declare',
         'packages/provider-planted/tests/a.test.ts imports "/opt/elsewhere/module.js", a path out of packages/provider-planted',
       ]);
       expect(inwardPathFailures(root)).toEqual([
@@ -329,6 +412,171 @@ describe("the package import rule", () => {
         `packages/provider-a/src/index.ts imports "${KIT}", the kit, which only a package's tests import`,
         `packages/provider-a/tests/a.test.ts imports "${B}/in-tests", another provider package`,
       ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a package source import of a name only Bun treats as a built-in fails as undeclared", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-planted/package.json": JSON.stringify({ name: "@libredb/provider-planted" }),
+        "packages/provider-planted/src/index.ts": [
+          'import "ws";',
+          'import "undici";',
+          'import "bun";',
+          'import "node:nosuch";',
+          'import "node:fs";',
+          'import "fs";',
+          'import "node:test";',
+        ].join("\n"),
+        "packages/provider-planted/tests/a.test.ts": ['import "bun:test";', 'import "ws";'].join("\n"),
+      },
+    });
+    try {
+      expect(packageImportFailures(root)).toEqual([
+        'packages/provider-planted/src/index.ts imports "bun", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "node:nosuch", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "undici", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/src/index.ts imports "ws", which packages/provider-planted/package.json does not declare',
+        'packages/provider-planted/tests/a.test.ts imports "ws", which packages/provider-planted/package.json does not declare',
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("core imports no provider package, by name or by path", () => {
+    expect(providerPackageImportFailures(REPOSITORY_ROOT)).toEqual([]);
+  });
+
+  test("a planted core file importing a provider package fails by file and specifier", () => {
+    const ALPHA = "@libredb/provider-alpha";
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({ name: ALPHA }),
+        "packages/provider-alpha/src/index.ts": "export const x = 1;\n",
+        "packages/provider-alpha/src/self.ts": `import { x } from "${ALPHA}";\nexport const y = x;\n`,
+        "packages/provider-sdk/package.json": JSON.stringify({ name: SDK }),
+        "src/lib/a.ts": `import { x } from "${ALPHA}";\nexport const a = x;\n`,
+        "tests/unit/b.test.ts": `import type { T } from "${ALPHA}/types";\nexport type B = T;\n`,
+        "bin/c.ts": `export const c = () => import("${ALPHA}");\n`,
+        "scripts/d.ts": 'import "../packages/provider-alpha/src/index";\n',
+        "e2e/e.ts": 'export const e = () => require("@libredb/provider-beta");\n',
+        "vscode-extension/src/f.ts": 'import "@/../packages/provider-alpha/src";\n',
+        "src/lib/controls.ts": [
+          `import { defineProvider } from "${SDK}/calls";`,
+          'import { load } from "@libredb/provider-loader";',
+          `// import "${ALPHA}";`,
+          `export const name = "${ALPHA}";`,
+          'export const where = "../packages/provider-alpha/src";',
+          "export const value = [defineProvider, load];",
+        ].join("\n"),
+      },
+    });
+    try {
+      expect(providerPackageImportFailures(root)).toEqual([
+        `bin/c.ts imports "${ALPHA}", a provider package: core imports none, by name or by path`,
+        'e2e/e.ts imports "@libredb/provider-beta", a provider package: core imports none, by name or by path',
+        'scripts/d.ts imports "../packages/provider-alpha/src/index", a provider package: core imports none, by name or by path',
+        `src/lib/a.ts imports "${ALPHA}", a provider package: core imports none, by name or by path`,
+        `tests/unit/b.test.ts imports "${ALPHA}/types", a provider package: core imports none, by name or by path`,
+        'vscode-extension/src/f.ts imports "@/../packages/provider-alpha/src", a provider package: core imports none, by name or by path',
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a planted core file reaching a provider package by an absolute path or a file: URL fails by file and specifier", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-alpha/package.json": JSON.stringify({ name: "@libredb/provider-alpha" }),
+        "packages/provider-alpha/src/index.ts": "export const x = 1;\n",
+        "packages/provider-sdk/package.json": JSON.stringify({ name: SDK }),
+      },
+    });
+    try {
+      // Forward slashes on every platform: a Windows absolute path is then `C:/...`, which path.isAbsolute and
+      // path.relative read as they read a POSIX one, and a file: URL is written with forward slashes on all three.
+      const absolute = (relative: string): string => path.join(root, relative).split(path.sep).join("/");
+      const url = (relative: string): string => pathToFileURL(path.join(root, relative)).href;
+      const planted: Record<string, string> = {
+        "src/lib/a.ts": `import ${JSON.stringify(absolute("packages/provider-alpha/src/index"))};\n`,
+        "bin/b.ts": `export const b = () => import(${JSON.stringify(url("packages/provider-alpha"))});\n`,
+        "tests/unit/c.test.ts": `import ${JSON.stringify(url("packages/provider-sdk/src/index.ts"))};\n`,
+        "scripts/d.ts": `import ${JSON.stringify(absolute("packages/provider-sdk"))};\n`,
+        "e2e/e.ts": 'import "/opt/elsewhere/packages/provider-alpha/index.js";\n',
+      };
+      for (const [file, text] of Object.entries(planted)) {
+        mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+        writeFileSync(path.join(root, file), text);
+      }
+      const refused = (file: string, specifier: string): string =>
+        `${file} imports "${specifier}", a provider package: core imports none, by name or by path`;
+      const inward = (file: string, specifier: string): string =>
+        `${file} imports "${specifier}", reaching a workspace package by path: import it by its name`;
+
+      expect(providerPackageImportFailures(root)).toEqual([
+        refused("bin/b.ts", url("packages/provider-alpha")),
+        refused("src/lib/a.ts", absolute("packages/provider-alpha/src/index")),
+      ]);
+      expect(inwardPathFailures(root)).toEqual([
+        inward("bin/b.ts", url("packages/provider-alpha")),
+        inward("scripts/d.ts", absolute("packages/provider-sdk")),
+        inward("src/lib/a.ts", absolute("packages/provider-alpha/src/index")),
+        inward("tests/unit/c.test.ts", url("packages/provider-sdk/src/index.ts")),
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a provider package is refused by its own name when the name lacks the provider prefix", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-gamma/package.json": JSON.stringify({ name: "gamma-engine" }),
+        "packages/provider-gamma/src/index.ts": "export const x = 1;\n",
+        "packages/tooling/package.json": JSON.stringify({ name: "gamma-tooling" }),
+        "src/lib/a.ts": 'import { x } from "gamma-engine/sub";\nexport const a = x;\n',
+        "src/lib/b.ts": 'import "gamma-tooling";\nimport "gamma-engine-other";\n',
+      },
+    });
+    try {
+      expect(providerPackageImportFailures(root)).toEqual([
+        'src/lib/a.ts imports "gamma-engine/sub", a provider package: core imports none, by name or by path',
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("a provider package with no name fails by its directory, before any core file is read", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-nameless/package.json": JSON.stringify({ version: "0.0.0" }),
+        "src/lib/a.ts": 'export const a = "undefined";\n',
+      },
+    });
+    try {
+      expect(() => providerPackageImportFailures(root)).toThrow(
+        "packages/provider-nameless/package.json has no string name",
+      );
     } finally {
       removePlantedRoot(root);
     }
