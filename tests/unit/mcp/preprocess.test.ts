@@ -8,7 +8,9 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { preprocessMcpPost, recordInvalidArguments } from "@/lib/mcp/preprocess";
+import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import { MCP_TEST_URL, testAuthInfo } from "../../helpers/mcp-harness";
+import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 
 const alice = testAuthInfo({ username: "alice", role: "admin" });
 const bob = testAuthInfo({ username: "bob", role: "user" });
@@ -322,6 +324,44 @@ describe("steps 1 to 8", () => {
     ["null arguments to a tool that needs none", { name: "list_connections", arguments: null }],
   ])("step 8 records nothing for %s", async (_name, params) => {
     expect((await dispatched(legacy({ id: 1, method: "tools/call", params }))).invalidArgumentsTool).toBeNull();
+  });
+});
+
+describe("step 8 after the catalog's install", () => {
+  beforeEach(() => {
+    process.env.RATE_LIMIT_QUERY_MAX = "0";
+  });
+
+  test("the argument check reads the tool schemas of the installed catalog", async () => {
+    // The MCP modules loaded above, with nothing installed: the bundled composition's schema.
+    const bundled = mcpStatementSurface().inputSchemas.run_read_query;
+    const call = () =>
+      legacy({
+        id: 1,
+        method: "tools/call",
+        params: { name: "run_read_query", arguments: { connection_id: "seed:shop", sql: "SELECT 1", max_rows: 999 } },
+      });
+    await withCatalog(craftedCatalog({ sqlite: { exposable: false } }), async () => {
+      const installed = mcpStatementSurface().inputSchemas.run_read_query;
+      expect(installed).not.toBe(bundled);
+      const readInstalled = spyOn(installed["~standard"], "validate");
+      const readBundled = spyOn(bundled["~standard"], "validate");
+      try {
+        expect((await dispatched(call())).invalidArgumentsTool).toBe("run_read_query");
+        expect([readInstalled.mock.calls.length, readBundled.mock.calls.length]).toEqual([1, 0]);
+      } finally {
+        readInstalled.mockRestore();
+        readBundled.mockRestore();
+      }
+    });
+    // Forgotten: the bundled composition's schema again.
+    const readBundled = spyOn(bundled["~standard"], "validate");
+    try {
+      expect((await dispatched(call())).invalidArgumentsTool).toBe("run_read_query");
+      expect(readBundled.mock.calls.length).toBe(1);
+    } finally {
+      readBundled.mockRestore();
+    }
   });
 });
 

@@ -24,7 +24,8 @@ const exposable = legacyRegisterTable("exposable");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
-const labelOf = (type: DatabaseType): string => getDBConfig(type).label;
+/** The label of engine `type`, an arm's engine id read as the published type, which every legacy engine's id is. */
+const labelOf = (type: string): string => getDBConfig(type as DatabaseType).label;
 
 /** The labels of every engine a statement tool this build registers serves: the set each per-engine list must cover. */
 const servedLabels = (): string[] => [...new Set(servingStatementArms().flatMap((arm) => arm.types))].map(labelOf);
@@ -78,11 +79,13 @@ const CLIENTS = ["Claude Code", "Codex", "Cursor", "VS Code", "Gemini CLI", "Ope
 describe("the docs say a language's MCP tool is a facet in its pack", () => {
   const docs = ["docs/AGENT.md", "docs/MCP.md", ...new Bun.Glob("docs/providers/*.md").scanSync(ROOT)];
 
-  test.each(docs)("%s sends no language to an arm of its own in MCP_STATEMENT_ARMS", (doc) => {
+  test.each(docs)("%s sends no language to an arm of its own in statement-arms.ts", (doc) => {
     expect(
       read(doc)
         .split("\n")
-        .filter((line) => /own arm in `MCP_STATEMENT_ARMS`/.test(line)),
+        .filter((line) =>
+          /own arm in `(?:MCP_STATEMENT_ARMS|mcpStatementSurface|src\/lib\/mcp\/tools\/statement-arms\.ts)`/.test(line),
+        ),
     ).toEqual([]);
   });
 });

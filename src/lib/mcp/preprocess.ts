@@ -12,7 +12,7 @@ import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { newMcpCorrelationId, recordMcpDecision } from "./audit";
 import { mcpCaller } from "./context";
-import { isMcpToolName, MCP_TOOL_INPUT_SCHEMAS, type McpToolName } from "./tools";
+import { isMcpToolName, mcpToolInputSchemas, type McpToolName } from "./tools";
 
 /**
  * What the route does with an authenticated POST before the SDK handler sees it (#246), in a fixed
@@ -133,7 +133,7 @@ async function invalidArgumentsTool(body: Record<string, unknown>): Promise<McpT
   const { name, arguments: args } = body.params;
   if (!isMcpToolName(name)) return null;
   if (args !== undefined && !isPlainObject(args)) return null;
-  const verdict = await MCP_TOOL_INPUT_SCHEMAS[name]["~standard"].validate(args ?? {});
+  const verdict = await mcpToolInputSchemas()[name]["~standard"].validate(args ?? {});
   return verdict.issues !== undefined && verdict.issues.length > 0 ? name : null;
 }
 

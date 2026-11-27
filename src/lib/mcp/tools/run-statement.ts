@@ -75,7 +75,7 @@ import {
 } from "./read-query-limits";
 import {
   listedStatementArms,
-  MCP_STATEMENT_ARMS,
+  mcpStatementSurface,
   mcpStatementToolFor,
   servingStatementArms,
   type McpStatementArm,
@@ -536,7 +536,7 @@ export async function runStatement(
   if (unavailable !== null) return refuse(resolved, "mcp_execution_failed", unavailable);
   // Ahead of the fence, so the answer names the engine rather than the statement, and of any
   // acquisition, so no provider is built or dialled for an engine this tool does not serve.
-  if (!arm.types.includes(connection.type)) {
+  if (!arm.types.some((id) => id === connection.type)) {
     return refuse(resolved, "mcp_execution_failed", notServedText(arm, connection.type));
   }
   const statement = arm.canonicalize(args[arm.argument]);
@@ -556,13 +556,16 @@ export async function runStatement(
 
 /**
  * Every statement tool whose arm serves an engine, in record order, or with `reach` only those that serve a reached
- * engine; an arm that serves none is never listed.
+ * engine; an arm that serves none is never listed. The arms are read when the tools register, from the composition of
+ * the installed catalog (`mcpStatementSurface`), since each request builds its own server.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
  */
 export function registerStatementTools(
   server: McpServer,
   context: McpConnectionContext,
   reach?: McpReach,
-  arms: Parameters<typeof servingStatementArms>[0] = MCP_STATEMENT_ARMS,
+  arms: Parameters<typeof servingStatementArms>[0] = mcpStatementSurface().arms,
 ): void {
   for (const arm of reach === undefined ? servingStatementArms(arms) : listedStatementArms(reach, arms)) {
     server.registerTool(

@@ -21,7 +21,12 @@ import {
   resultBytes,
   type ToolResult,
 } from "../output";
-import { MCP_STATEMENT_TOOLS, mcpStatementToolFor, mcpWithholdsDatabase } from "./statement-arms";
+import {
+  type McpStatementTool,
+  mcpStatementSurface,
+  mcpStatementToolFor,
+  mcpWithholdsDatabase,
+} from "./statement-arms";
 
 /**
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
@@ -49,25 +54,34 @@ export const ListConnectionsInputSchema = z.object({
   offset: z.number().int().min(0).default(0),
 });
 
-export const ListedConnectionSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  engine: z.string(),
-  database: z.string().optional(),
-  environment: z.string().optional(),
-  read_tool: z.enum(MCP_STATEMENT_TOOLS).nullable(),
-  unavailable: z.string().optional(),
-});
+/**
+ * One listed connection, whose `read_tool` is one of `tools`, the statement tools of the installed catalog's
+ * composition (`mcpStatementSurface`), read when the tool registers rather than when this module loads.
+ */
+export function listedConnectionSchema(tools: readonly McpStatementTool[]) {
+  return z.object({
+    id: z.string(),
+    name: z.string(),
+    engine: z.string(),
+    database: z.string().optional(),
+    environment: z.string().optional(),
+    read_tool: z.enum(tools).nullable(),
+    unavailable: z.string().optional(),
+  });
+}
 
-const ListConnectionsOutputSchema = z.object({
-  connections: z.array(ListedConnectionSchema),
-  total_connections: z.number().int(),
-  has_more: z.boolean(),
-  next_offset: z.number().int().nullable(),
-});
+/** list_connections' output, its rows' `read_tool` one of `tools`. */
+function listConnectionsOutputSchema(tools: readonly McpStatementTool[]) {
+  return z.object({
+    connections: z.array(listedConnectionSchema(tools)),
+    total_connections: z.number().int(),
+    has_more: z.boolean(),
+    next_offset: z.number().int().nullable(),
+  });
+}
 
 export type ListConnectionsInput = z.infer<typeof ListConnectionsInputSchema>;
-type ListedConnection = z.infer<typeof ListedConnectionSchema>;
+type ListedConnection = z.infer<ReturnType<typeof listedConnectionSchema>>;
 
 const LIST_CONNECTIONS_TITLE = "List connections";
 export const LIST_CONNECTIONS_DESCRIPTION =
@@ -149,6 +163,7 @@ async function listConnections(args: ListConnectionsInput, call: McpToolCall): P
   return recordOrRefuse(() => recordMcpDecision(record, result.isError ? "mcp_result_too_large" : undefined)) ?? result;
 }
 
+/** @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog. */
 export function registerListConnections(server: McpServer, context: McpConnectionContext): void {
   server.registerTool(
     "list_connections",
@@ -156,7 +171,7 @@ export function registerListConnections(server: McpServer, context: McpConnectio
       title: LIST_CONNECTIONS_TITLE,
       description: LIST_CONNECTIONS_DESCRIPTION,
       inputSchema: ListConnectionsInputSchema,
-      outputSchema: ListConnectionsOutputSchema,
+      outputSchema: listConnectionsOutputSchema(mcpStatementSurface().tools),
       annotations: MCP_READ_ONLY_ANNOTATIONS,
     },
     (args, ctx) => listConnections(args, { context, signal: ctx.mcpReq.signal }),

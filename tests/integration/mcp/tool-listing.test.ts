@@ -15,7 +15,8 @@ import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT, McpConnectionContext } from "@/lib/mcp/context";
-import { listedStatementArms, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { listedStatementArms, mcpStatementSurface, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { resetKubernetesDiscoveryCache } from "@/lib/seed/kubernetes-discovery-loader";
@@ -40,6 +41,7 @@ import {
   type ServeRequest,
 } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
+import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -393,7 +395,7 @@ describe.each(ERAS)("a token's tools/list (%s)", (era) => {
   test(`a call to a statement tool the list leaves out gets Studio's refusal and its decision event (${era})`, async () => {
     writeSeedFile(dir, [sqliteShop()]);
     const arm = servingStatementArms().find(
-      (serving) => !serving.types.includes("sqlite") && serving.argument === "statement",
+      (serving) => !serving.types.some((id) => id === "sqlite") && serving.argument === "statement",
     );
     if (arm === undefined) throw new Error("no serving statement tool that takes statement leaves SQLite out");
     const session = await connectClient(handlerServe(auth(alice)), { negotiation: era });
@@ -454,6 +456,60 @@ describe.each(ERAS)("a token's tools/list (%s)", (era) => {
     writeSeedFile(dir, [sqliteShop(), mongo()]);
     expect(await names(alice, era)).toEqual(listedMcpToolNames(reach("sqlite", "mongodb")));
   });
+});
+
+// The route module and every MCP module loaded at the top of this file, before the catalog below is installed: what
+// tools/list answers is composed from the catalog installed when it is answered, never from the one at module load.
+test("tools/list after the catalog's install lists the statement tools the installed catalog serves, whenever the MCP modules loaded", async () => {
+  const bundled = mcpStatementSurface();
+  // A statement tool whose served set holds one engine, and a second engine of run_read_query's, both read at run time.
+  const lone = servingStatementArms(bundled.arms).find(
+    (arm) => arm.types.length === 1 && arm.tool !== "run_read_query",
+  );
+  const sql = bundled.arms.sql;
+  if (lone === undefined || sql === null || sql.types.length < 2) throw new Error("no arm serves one engine alone");
+  const [loneEngine] = lone.types;
+  const [kept, dropped] = sql.types;
+  const seeds = servedEngineSeeds(dir).filter((seed) => [loneEngine, kept, dropped].some((id) => id === seed.type));
+  expect(seeds.map((seed) => seed.type).sort()).toEqual([loneEngine, kept, dropped].map(String).sort());
+  writeSeedFile(dir, seeds);
+  const droppedName = servedEngineRecord(dropped).displayName;
+  const keptName = servedEngineRecord(kept).displayName;
+
+  const listedTools = async () =>
+    (await listed(alice, "legacy")) as ReadonlyArray<ListedTool & { readonly description?: string }>;
+  const before = await listedTools();
+  expect(before.map((tool) => tool.name)).toContain(lone.tool);
+  expect(before.find((tool) => tool.name === "run_read_query")?.description).toContain(droppedName);
+
+  const catalog = craftedCatalog({ [loneEngine]: { statementRead: false }, [dropped]: { statementRead: false } });
+  await withCatalog(catalog, async () => {
+    // A token's tools/list.
+    const after = await listedTools();
+    expect(after.map((tool) => tool.name)).not.toContain(lone.tool);
+    const description = after.find((tool) => tool.name === "run_read_query")?.description;
+    expect(description).not.toContain(droppedName);
+    // Vacuity: the engine the catalog leaves as it is is still named.
+    expect(description).toContain(keptName);
+    // The full handler, which every other request reaches: the dropped tool is registered nowhere, so the SDK answers
+    // the call with its own unknown-tool error.
+    const session = await connectClient(handlerServe(auth(alice)), { negotiation: "legacy" });
+    let thrown: unknown;
+    try {
+      await session.client.callTool({
+        name: lone.tool,
+        arguments: { connection_id: `seed:served-${loneEngine}`, [lone.argument]: "x" },
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      await session.close();
+    }
+    expect((thrown as Error | undefined)?.message).toBe(`Tool ${lone.tool} not found`);
+  });
+
+  // Forgotten, as a new process would: the bundled set again.
+  expect((await listedTools()).map((tool) => tool.name)).toContain(lone.tool);
 });
 
 test("the 2026-07-28 answer to tools/list carries ttlMs 0 and cacheScope private", async () => {

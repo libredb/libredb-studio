@@ -1,39 +1,45 @@
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { EngineGrants } from "@/lib/db/claim-grants";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
-import type { DatabaseType } from "@/lib/types";
+import { type EngineId, type EngineRecord, servedEngines } from "@/lib/db/server-catalog";
 
 /**
  * The one served-engine resolver of the MCP statement tools. A tool's served set, its
  * description and its call-time gate all read this, so a tool cannot name an engine it refuses or run on one it does
  * not name, and no type-id table is read outside the engine records below.
  *
- * An engine is served when its engine record (`servedEngineRecord`) grants agent execution (Studio's review record of
- * the engines agent and MCP statements run on), grants `exposable`, which offers it to MCP, grants `statementRead`,
- * which opens statement reads on it, and grants the tool's statement language. The third grant is what keeps an engine
- * whose agent PR has merged closed to MCP until its own change opens it. The acquisition and the core read path read
- * the first grant again at run time, so an engine without it is refused by name there too.
+ * An engine is served when its engine record offers the execution profiles (`offers.executionProfiles`), which the
+ * statement tools acquire under, grants agent execution (Studio's review record of the engines agent and MCP statements
+ * run on), grants `exposable`, which offers it to MCP, grants `statementRead`, which opens statement reads on it, and
+ * grants the tool's statement language. The third grant is what keeps an engine whose agent PR has merged closed to MCP
+ * until its own change opens it. The acquisition and the core read path read the agent execution grant again at run
+ * time, so an engine without it is refused by name there too.
  *
- * Only the engines the legacy adapter serves are asked, in catalog order (`LEGACY_ENGINE_IDS`): every MCP open
- * refuses a package's engine before any grant is read, and `MCP_STATEMENT_ARMS` reads this set once, when its module
- * loads, so a set that held a package's engine would depend on whether boot had installed the catalog by then. Opening
- * MCP to package engines composes the set from the installed catalog (M5).
+ * A package engine's record offers no execution profile, since its session opens through its package and Studio opens
+ * no read-only statement session through a package yet, so no statement tool lists an engine it could only refuse.
+ *
+ * Every record the server serves is asked, in catalog order (`servedEngines`): the installed catalog's records, or the
+ * legacy records with nothing installed. The statement tools read this set through one accessor that composes it after
+ * boot, once per installed catalog (`mcpStatementSurface` in ./statement-arms), never when a module loads.
  */
 export type McpExposure = (
-  type: DatabaseType,
+  engine: EngineRecord,
 ) => Pick<EngineGrants, "agentExecution" | "exposable" | "statementRead" | "statementLanguage">;
 
 /**
- * The engines an MCP tool whose statements are in `language` serves, in catalog order, read when called; `exposure`,
- * the reader of an engine's grants, defaults to the engine record's and is injectable for the tests.
+ * The engines of `engines` an MCP tool whose statements are in `language` serves, in their order, read when called;
+ * `engines` defaults to the served records, and `exposure`, the reader of an engine's grants, to the engine record's,
+ * both injectable for the tests.
  */
 export function mcpStatementEngines(
   language: AgentStatementLanguageId,
-  exposure: McpExposure = (type) => servedEngineRecord(type).grants,
-): readonly DatabaseType[] {
-  return (LEGACY_ENGINE_IDS as readonly DatabaseType[]).filter((type) => {
-    const grants = exposure(type);
-    return grants.agentExecution && grants.exposable && grants.statementRead && grants.statementLanguage === language;
-  });
+  engines: ReadonlyMap<string, EngineRecord> = servedEngines(),
+  exposure: McpExposure = (engine) => engine.grants,
+): readonly EngineId[] {
+  return [...engines.values()]
+    .filter((engine) => {
+      if (!engine.offers.executionProfiles) return false;
+      const grants = exposure(engine);
+      return grants.agentExecution && grants.exposable && grants.statementRead && grants.statementLanguage === language;
+    })
+    .map((engine) => engine.id);
 }

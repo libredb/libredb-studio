@@ -17,6 +17,7 @@ import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
@@ -113,7 +114,9 @@ describe("the tool descriptions", () => {
 
   // The labels are read here from the display records, not from the arm's engines, which the description interpolates.
   test.each(STATEMENT_ARMS)("%s names the engines it serves by their labels", (_tool, arm) => {
-    expect(arm.description).toContain(`Runs on ${namedList(arm.types.map((type) => getDBConfig(type).label))}`);
+    expect(arm.description).toContain(
+      `Runs on ${namedList(arm.types.map((type) => getDBConfig(type as string as DatabaseType).label))}`,
+    );
   });
 
   test.each(STATEMENT_ARMS)("%s quotes database content, so it ends with the notice", (_tool, arm) => {

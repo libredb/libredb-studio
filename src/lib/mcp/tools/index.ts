@@ -4,7 +4,7 @@ import type { McpConnectionContext, McpReach } from "../context";
 import { InspectSchemaInputSchema, registerInspectSchema } from "./inspect-schema";
 import { ListConnectionsInputSchema, registerListConnections } from "./list-connections";
 import { registerStatementTools } from "./run-statement";
-import { MCP_STATEMENT_INPUT_SCHEMAS, type McpStatementTool } from "./statement-arms";
+import { type McpStatementSurface, type McpStatementTool, mcpStatementSurface } from "./statement-arms";
 
 /**
  * Every MCP tool's name: the metadata tools every engine shares, and each statement tool its language's MCP facet
@@ -12,29 +12,47 @@ import { MCP_STATEMENT_INPUT_SCHEMAS, type McpStatementTool } from "./statement-
  */
 export type McpToolName = "list_connections" | "inspect_schema" | McpStatementTool;
 
+/** Each statement surface's tool schema map, built once per surface. */
+const TOOL_INPUT_SCHEMAS = new WeakMap<McpStatementSurface, Readonly<Record<McpToolName, z.ZodObject>>>();
+
 /**
  * The one map from tool name to the zod object that tool registers (#246).
  *
  * The registration below and the route's argument check read the same objects, so the SDK's
  * own input validation and the route's record of it cannot disagree. Its key order is the
  * registration order, which is the order tools/list answers in. The statement tools' entries come from
- * their arms, in record order; a statement tool is registered only while its arm serves an engine
- * (`MCP_STATEMENT_ARMS`), so its entry here can outlive a listing, and on one token's tools/list only while it serves an
- * engine the token reaches.
+ * their arms, in record order, read through the accessor that composes them after boot from the installed catalog
+ * (`mcpStatementSurface`), one map per composition; a statement tool is registered only while its arm serves an engine,
+ * so its entry here can outlive a listing, and on one token's tools/list only while it serves an engine the token
+ * reaches.
  *
  * The map is annotated with `McpToolName` rather than read off its own keys, since a statement tool a language declares
  * as data is a branded string (`AgentDeclaredMcpTool`), and the keys of an object literal that spreads a record keyed
  * by a branded string leave the brand out; `statement-arms.test.ts` holds the name types equal.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
  */
-export const MCP_TOOL_INPUT_SCHEMAS: Readonly<Record<McpToolName, z.ZodObject>> = Object.freeze({
-  list_connections: ListConnectionsInputSchema,
-  inspect_schema: InspectSchemaInputSchema,
-  ...MCP_STATEMENT_INPUT_SCHEMAS,
-});
+export function mcpToolInputSchemas(): Readonly<Record<McpToolName, z.ZodObject>> {
+  const surface = mcpStatementSurface();
+  let schemas = TOOL_INPUT_SCHEMAS.get(surface);
+  if (schemas === undefined) {
+    schemas = Object.freeze({
+      list_connections: ListConnectionsInputSchema,
+      inspect_schema: InspectSchemaInputSchema,
+      ...surface.inputSchemas,
+    });
+    TOOL_INPUT_SCHEMAS.set(surface, schemas);
+  }
+  return schemas;
+}
 
-/** An own key of the map, so an inherited name such as toString never reaches a schema. */
+/**
+ * An own key of the map, so an inherited name such as toString never reaches a schema.
+ *
+ * @throws {McpCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ */
 export function isMcpToolName(name: unknown): name is McpToolName {
-  return typeof name === "string" && Object.hasOwn(MCP_TOOL_INPUT_SCHEMAS, name);
+  return typeof name === "string" && Object.hasOwn(mcpToolInputSchemas(), name);
 }
 
 /**

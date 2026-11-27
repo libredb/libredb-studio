@@ -159,7 +159,7 @@ import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { assertOpenable } from "@/lib/db/open-check";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord, servedEngines } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
@@ -4334,12 +4334,15 @@ describe("the census", () => {
     const exposable = declaredRecord((d) => d.mcp.exposable);
     const statementRead = declaredRecord((d) => d.mcp.statementRead);
     const statementLanguage = declaredRecord((d) => d.agent.statementLanguage);
-    const exposure: McpExposure = (type) => ({
-      agentExecution: executes.includes(type),
-      exposable: exposable[type],
-      statementRead: statementRead[type],
-      statementLanguage: statementLanguage[type] as ReturnType<McpExposure>["statementLanguage"],
-    });
+    const exposure: McpExposure = (engine) => {
+      const type = engine.id as string as DatabaseType;
+      return {
+        agentExecution: executes.includes(type),
+        exposable: exposable[type],
+        statementRead: statementRead[type],
+        statementLanguage: statementLanguage[type] as ReturnType<McpExposure>["statementLanguage"],
+      };
+    };
     // The languages the declarations request, each once: the schema names a form, not a list.
     const languages = [
       ...new Set(
@@ -4348,7 +4351,9 @@ describe("the census", () => {
         ),
       ),
     ];
-    const served = languages.map((language) => [language, mcpStatementEngines(language, exposure)] as const);
+    const served = languages.map(
+      (language) => [language, mcpStatementEngines(language, servedEngines(), exposure)] as const,
+    );
 
     expect(
       served.filter(([language, engines]) => !sameList(engines, mcpStatementEngines(language))).map(([l]) => l),

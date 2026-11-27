@@ -74,8 +74,8 @@ import { declaredKinds, findKind, relationKindIds } from "@/lib/db/object-kinds"
 import type { DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { keyScanShape } from "@/lib/db/types";
-import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools";
-import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
+import { mcpToolInputSchemas } from "@/lib/mcp/tools";
+import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
 import { legacyRegisterTable } from "../helpers/legacy-register";
@@ -823,7 +823,7 @@ const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets"]);
 const MCP_NAMES_COVERED_TOOLS: ReadonlySet<string> = new Set([
   "list_connections",
   "inspect_schema",
-  ...Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm.tool])),
+  ...mcpStatementSurface().tools,
 ]);
 
 /** What MCP offers an engine: whether it is exposable, and every tool the MCP server registers. */
@@ -834,7 +834,7 @@ interface McpOffer {
 
 const mcpOffer = (type: DatabaseType): McpOffer => ({
   exposable: exposable[type],
-  tools: Object.keys(MCP_TOOL_INPUT_SCHEMAS),
+  tools: Object.keys(mcpToolInputSchemas()),
 });
 
 /** The breaches of the preconditions above in one declaration, one sentence each. */
@@ -927,7 +927,7 @@ describe("the withheld-names declaration", () => {
   });
 
   test("the tools the MCP server registers are the ones the rule covers", () => {
-    expect(Object.keys(MCP_TOOL_INPUT_SCHEMAS).filter((tool) => !MCP_NAMES_COVERED_TOOLS.has(tool))).toEqual([]);
+    expect(Object.keys(mcpToolInputSchemas()).filter((tool) => !MCP_NAMES_COVERED_TOOLS.has(tool))).toEqual([]);
   });
 
   test("a withheld relation is refused by name", () => {

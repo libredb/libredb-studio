@@ -53,7 +53,7 @@ import {
   runReadQuery,
 } from "../../helpers/run-read-query";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
-import { MCP_STATEMENT_TOOLS, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementSurface, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { mcpConnectionUnavailable } from "@/lib/mcp/availability";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -836,7 +836,7 @@ describe("a connection no MCP open can serve for the caller", () => {
         (await new McpConnectionContext(caller).resolve("seed:shared")) as ManagedConnection,
       );
       expect(unavailable).toBeString();
-      const others = servingStatementArms().filter((arm) => !arm.types.includes("sqlite"));
+      const others = servingStatementArms().filter((arm) => !arm.types.some((id) => id === "sqlite"));
       expect(others.length).toBeGreaterThan(0);
       const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
       try {
@@ -849,7 +849,7 @@ describe("a connection no MCP open can serve for the caller", () => {
             signal: new AbortController().signal,
           });
           expect(answer).toEqual({ isError: true, content: [{ type: "text", text: unavailable as string }] });
-          for (const tool of MCP_STATEMENT_TOOLS) expect(answer.content[0].text).not.toContain(tool);
+          for (const tool of mcpStatementSurface().tools) expect(answer.content[0].text).not.toContain(tool);
           expect(mcpEvents()).toEqual(refusedDecision(arm.tool));
         }
         expect(acquisitions.calls).toBe(0);

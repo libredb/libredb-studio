@@ -16,10 +16,12 @@ import {
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
+import { namedList } from "@/lib/agent/engine-support";
+import { getDBConfig } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { forgetServerCatalog, installServerCatalog, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
@@ -27,14 +29,15 @@ import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpToolAction } from "@/lib/mcp/audit";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
-import { MCP_TOOL_INPUT_SCHEMAS, type McpToolName } from "@/lib/mcp/tools";
-import { ListedConnectionSchema, registerListConnections } from "@/lib/mcp/tools/list-connections";
+import { mcpToolInputSchemas, type McpToolName } from "@/lib/mcp/tools";
+import { listedConnectionSchema, registerListConnections } from "@/lib/mcp/tools/list-connections";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
-  MCP_STATEMENT_ARMS,
+  type McpStatementSurface,
+  mcpStatementSurface,
   type McpStatementTool,
   mcpStatementArm,
   mcpStatementToolFor,
@@ -52,7 +55,12 @@ import { shippedDeclaredLanguage, shippedDeclaredMcpTool } from "../../helpers/s
 const statementRead = legacyRegisterTable("statementRead");
 const statementLanguage = legacyStatementLanguageTable();
 
-const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
+/**
+ * The bundled set's arms: nothing is installed when this file loads, and every case that reads them runs with nothing
+ * installed, so they are the composition every read of the accessor answers here.
+ */
+const BUNDLED_ARMS = mcpStatementSurface().arms;
+const ARMS = Object.values(BUNDLED_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
@@ -87,10 +95,10 @@ type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : fals
 /** The tools every engine shares, which no language's facet declares. */
 const SHARED_TOOLS = ["list_connections", "inspect_schema"] as const;
 
-describe("MCP_STATEMENT_ARMS", () => {
+describe("the statement arms", () => {
   test("is total over the statement languages, and keyed by the language each arm reads", () => {
-    expect(Object.keys(MCP_STATEMENT_ARMS).sort()).toEqual(Object.keys(AGENT_LANGUAGE_COPY).sort());
-    for (const [language, arm] of Object.entries(MCP_STATEMENT_ARMS)) {
+    expect(Object.keys(BUNDLED_ARMS).sort()).toEqual(Object.keys(AGENT_LANGUAGE_COPY).sort());
+    for (const [language, arm] of Object.entries(BUNDLED_ARMS)) {
       if (arm !== null) expect(arm.language).toBe(language as (typeof arm)["language"]);
     }
   });
@@ -98,7 +106,7 @@ describe("MCP_STATEMENT_ARMS", () => {
   test("every declared facet has its arm, keyed by the facet's language and named by the facet's tool", () => {
     for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
       if (facet === null) continue;
-      const arm = MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS];
+      const arm = BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]];
       expect(arm?.tool).toBe(facet.tool);
       expect(arm?.language).toBe(language as never);
     }
@@ -117,16 +125,16 @@ describe("MCP_STATEMENT_ARMS", () => {
     const idle = Object.entries(AGENT_LANGUAGE_MCP_FACETS).filter(([, facet]) => facet === null);
     expect(idle).not.toEqual([]);
     for (const [language] of idle) {
-      expect(MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS]).toBeNull();
+      expect(BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]]).toBeNull();
       for (const type of SHIPPED_DATABASE_TYPES.filter((shipped) => statementLanguage[shipped] === language))
         expect(mcpStatementToolFor(type)).toBeNull();
     }
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
-    expect(Object.keys(MCP_STATEMENT_ARMS)).toEqual(Object.keys(AGENT_LANGUAGE_MCP_FACETS));
+    expect(Object.keys(BUNDLED_ARMS)).toEqual(Object.keys(AGENT_LANGUAGE_MCP_FACETS));
     for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
-      const arm = MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS];
+      const arm = BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]];
       expect(arm === null).toBe(facet === null);
       if (facet === null) continue;
       expect(arm?.tool).toBe(facet?.tool);
@@ -224,14 +232,14 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm.argument).toBe(AGENT_LANGUAGE_COPY[arm.language].argument);
       expect(arm.inputSchema.shape).toHaveProperty(arm.argument);
       expect(arm.types).toEqual(mcpStatementEngines(arm.language));
-      for (const type of arm.types) expect(statementLanguage[type]).toBe(arm.language);
+      for (const type of arm.types) expect(statementLanguage[type as string as DatabaseType]).toBe(arm.language);
     },
   );
 
   test.each(ARMS.map((arm) => [arm.tool, arm] as const))(
     "%s registers the schema the route validates against",
     (tool, arm) => {
-      expect(MCP_TOOL_INPUT_SCHEMAS[tool]).toBe(arm.inputSchema as never);
+      expect(mcpToolInputSchemas()[tool]).toBe(arm.inputSchema as never);
     },
   );
 
@@ -243,6 +251,33 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     },
   );
+});
+
+describe("the statement arms are composed after the MCP modules load", () => {
+  test("each served engine's name in a description is its record's display name, which for every legacy engine is the label the descriptions named before", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect([type, servedEngineRecord(type).displayName]).toEqual([type, getDBConfig(type).label]);
+    }
+    for (const arm of ARMS) {
+      expect(arm.engines).toBe(namedList(arm.types.map((id) => servedEngineRecord(id).displayName)));
+      expect(arm.engines).toBe(namedList(arm.types.map((id) => getDBConfig(id as string as DatabaseType).label)));
+    }
+  });
+
+  test("statement-arms.ts composes nothing when it loads: its only top-level exports are functions, types and the defect class", () => {
+    const source = readFileSync(join(import.meta.dir, "../../../src/lib/mcp/tools/statement-arms.ts"), "utf8");
+    const exported = [...source.matchAll(/^export\s+(?:declare\s+)?(\w+)\s+(\w+)/gm)].map(([, kind, name]) => [
+      kind,
+      name,
+    ]);
+    expect(exported.length).toBeGreaterThan(0);
+    expect(exported.filter(([kind]) => !["function", "interface", "type", "class"].includes(kind as string))).toEqual(
+      [],
+    );
+    expect(exported.filter(([kind]) => kind === "class")).toEqual([["class", "McpCompositionOrderError"]]);
+    // No re-export or default export carries a value composed elsewhere.
+    expect(source).not.toMatch(/^export\s+(?:default|\{|\*)/m);
+  });
 });
 
 /**
@@ -262,11 +297,13 @@ describe("the tool names MCP keeps are the arms' own", () => {
   });
 
   test("list_connections' read_tool takes exactly the arms' tools, in record order", () => {
-    expect(ListedConnectionSchema.shape.read_tool.unwrap().options).toEqual(ARMS.map((arm) => arm.tool));
+    expect(listedConnectionSchema(mcpStatementSurface().tools).shape.read_tool.unwrap().options).toEqual(
+      ARMS.map((arm) => arm.tool),
+    );
   });
 
   test("the route's schema map holds the shared tools, then exactly the arms' tools, in record order", () => {
-    expect(Object.keys(MCP_TOOL_INPUT_SCHEMAS)).toEqual([...SHARED_TOOLS, ...ARMS.map((arm) => arm.tool)]);
+    expect(Object.keys(mcpToolInputSchemas())).toEqual([...SHARED_TOOLS, ...ARMS.map((arm) => arm.tool)]);
   });
 });
 
@@ -274,7 +311,7 @@ describe("the SQL arm", () => {
   test("is run_read_query as SQL clients knew it: sql, offset paging, the SQL fence", () => {
     expect(RUN_READ_QUERY_ARM.argument).toBe("sql");
     expect(RUN_READ_QUERY_ARM.paging).toBe("offset");
-    expect(RUN_READ_QUERY_ARM.types).toBe(RUN_READ_QUERY_TYPES);
+    expect<readonly string[]>(RUN_READ_QUERY_ARM.types).toEqual(RUN_READ_QUERY_TYPES);
     expect(RUN_READ_QUERY_ARM.description).toBe(RUN_READ_QUERY_DESCRIPTION);
     expect(RUN_READ_QUERY_ARM.inputSchema.shape).toHaveProperty("offset");
     expect(RUN_READ_QUERY_ARM.canonicalize("SELECT 1")).toBe("SELECT 1");
@@ -421,7 +458,7 @@ describe("the kubectl arm", () => {
     expect(RUN_KUBECTL_READ_ARM.title).toBe("Run a read-only kubectl read");
     expect(RUN_KUBECTL_READ_ARM.argument).toBe("statement");
     expect(RUN_KUBECTL_READ_ARM.paging).toBe("none");
-    expect(RUN_KUBECTL_READ_ARM.types).toEqual(["kubernetes"]);
+    expect<readonly string[]>(RUN_KUBECTL_READ_ARM.types).toEqual(["kubernetes"]);
     expect(RUN_KUBECTL_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_KUBECTL_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "shop" }, { sql: "SELECT 1" }]) {
@@ -517,7 +554,7 @@ describe("the Weaviate arm", () => {
     expect(RUN_WEAVIATE_READ_ARM.title).toBe("Run a read-only Weaviate metadata read");
     expect(RUN_WEAVIATE_READ_ARM.argument).toBe("statement");
     expect(RUN_WEAVIATE_READ_ARM.paging).toBe("none");
-    expect(RUN_WEAVIATE_READ_ARM.types).toEqual(["weaviate"]);
+    expect<readonly string[]>(RUN_WEAVIATE_READ_ARM.types).toEqual(["weaviate"]);
     expect(RUN_WEAVIATE_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_WEAVIATE_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "Note" }, { sql: "SELECT 1" }]) {
@@ -611,7 +648,7 @@ describe("the qdrantapi arm", () => {
     expect(RUN_QDRANT_READ_ARM.title).toBe("Run a read-only Qdrant metadata read");
     expect(RUN_QDRANT_READ_ARM.argument).toBe("statement");
     expect(RUN_QDRANT_READ_ARM.paging).toBe("none");
-    expect(RUN_QDRANT_READ_ARM.types).toEqual(["qdrant"]);
+    expect<readonly string[]>(RUN_QDRANT_READ_ARM.types).toEqual(["qdrant"]);
     expect(RUN_QDRANT_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_QDRANT_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "plain" }, { sql: "SELECT 1" }]) {
@@ -720,7 +757,7 @@ describe("the etcdctl arm", () => {
     expect(RUN_ETCD_READ_ARM.title).toBe("Run a read-only etcd metadata read");
     expect(RUN_ETCD_READ_ARM.argument).toBe("statement");
     expect(RUN_ETCD_READ_ARM.paging).toBe("none");
-    expect(RUN_ETCD_READ_ARM.types).toEqual(["etcd"]);
+    expect<readonly string[]>(RUN_ETCD_READ_ARM.types).toEqual(["etcd"]);
     expect(RUN_ETCD_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_ETCD_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "app" }, { sql: "SELECT 1" }]) {
@@ -805,7 +842,7 @@ describe("the Kafka arm", () => {
     expect(RUN_KAFKA_READ_ARM.title).toBe("Run a read-only Kafka metadata read");
     expect(RUN_KAFKA_READ_ARM.argument).toBe("statement");
     expect(RUN_KAFKA_READ_ARM.paging).toBe("none");
-    expect(RUN_KAFKA_READ_ARM.types).toEqual(["kafka"]);
+    expect<readonly string[]>(RUN_KAFKA_READ_ARM.types).toEqual(["kafka"]);
     expect(RUN_KAFKA_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_KAFKA_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "shop" }, { sql: "SELECT 1" }]) {
@@ -900,7 +937,7 @@ describe("the Cypher arm", () => {
     expect(RUN_CYPHER_READ_ARM.title).toBe("Run a read-only Cypher statement");
     expect(RUN_CYPHER_READ_ARM.argument).toBe("statement");
     expect(RUN_CYPHER_READ_ARM.paging).toBe("none");
-    expect(RUN_CYPHER_READ_ARM.types).toEqual(["neo4j"]);
+    expect<readonly string[]>(RUN_CYPHER_READ_ARM.types).toEqual(["neo4j"]);
     expect(RUN_CYPHER_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_CYPHER_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "neo4j" }, { sql: "SELECT 1" }]) {
@@ -995,7 +1032,7 @@ describe("the Redis arm", () => {
     expect(RUN_REDIS_READ_ARM.title).toBe("Run a read-only Redis metadata read");
     expect(RUN_REDIS_READ_ARM.argument).toBe("statement");
     expect(RUN_REDIS_READ_ARM.paging).toBe("none");
-    expect(RUN_REDIS_READ_ARM.types).toEqual(["redis"]);
+    expect<readonly string[]>(RUN_REDIS_READ_ARM.types).toEqual(["redis"]);
     expect(RUN_REDIS_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_REDIS_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "1" }, { sql: "SELECT 1" }]) {
@@ -1102,7 +1139,7 @@ describe("the mtconnectread arm", () => {
     expect(RUN_MTCONNECT_READ_ARM.title).toBe("Run a read-only MTConnect read");
     expect(RUN_MTCONNECT_READ_ARM.argument).toBe("statement");
     expect(RUN_MTCONNECT_READ_ARM.paging).toBe("none");
-    expect(RUN_MTCONNECT_READ_ARM.types).toEqual(["mtconnect"]);
+    expect<readonly string[]>(RUN_MTCONNECT_READ_ARM.types).toEqual(["mtconnect"]);
     expect(RUN_MTCONNECT_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_MTCONNECT_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "LATHE" }, { sql: "SELECT 1" }]) {
@@ -1217,7 +1254,7 @@ describe("the s3api arm", () => {
     expect(RUN_S3_READ_ARM.title).toBe("Run a read-only S3 metadata read");
     expect(RUN_S3_READ_ARM.argument).toBe("statement");
     expect(RUN_S3_READ_ARM.paging).toBe("none");
-    expect(RUN_S3_READ_ARM.types).toEqual(["s3"]);
+    expect<readonly string[]>(RUN_S3_READ_ARM.types).toEqual(["s3"]);
     expect(RUN_S3_READ_ARM.withholdsDatabase).toBe(false);
     expect(RUN_S3_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_S3_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
@@ -1313,7 +1350,7 @@ describe("the Milvus arm", () => {
     expect(RUN_MILVUS_READ_ARM.title).toBe("Run a read-only Milvus metadata read");
     expect(RUN_MILVUS_READ_ARM.argument).toBe("statement");
     expect(RUN_MILVUS_READ_ARM.paging).toBe("none");
-    expect(RUN_MILVUS_READ_ARM.types).toEqual(["milvus"]);
+    expect<readonly string[]>(RUN_MILVUS_READ_ARM.types).toEqual(["milvus"]);
     expect(RUN_MILVUS_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_MILVUS_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "default" }, { sql: "SELECT 1" }]) {
@@ -1409,15 +1446,15 @@ describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
       const language = statementLanguage[type];
-      const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
-      expect(mcpStatementToolFor(type)).toBe(arm !== null && arm.types.includes(type) ? arm.tool : null);
+      const arm = language === null ? null : BUNDLED_ARMS[language];
+      expect(mcpStatementToolFor(type)).toBe(arm !== null && arm.types.some((id) => id === type) ? arm.tool : null);
     }
   });
 
   test("an engine of a served language whose own records keep it closed has no read tool", () => {
     const closed = SHIPPED_DATABASE_TYPES.filter((type) => {
       const language = statementLanguage[type];
-      return language !== null && MCP_STATEMENT_ARMS[language] !== null && !statementRead[type];
+      return language !== null && BUNDLED_ARMS[language] !== null && !statementRead[type];
     });
     expect(closed).not.toEqual([]);
     for (const type of closed) expect(mcpStatementToolFor(type)).toBeNull();
@@ -1430,10 +1467,10 @@ describe("the tool each engine is read with", () => {
   test("an arm that serves no engine is neither listed nor registered", () => {
     const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
     const arms = {
-      ...Object.fromEntries(Object.keys(MCP_STATEMENT_ARMS).map((language) => [language, null])),
+      ...Object.fromEntries(Object.keys(BUNDLED_ARMS).map((language) => [language, null])),
       sql: RUN_READ_QUERY_ARM,
       mongo: idle,
-    } as unknown as typeof MCP_STATEMENT_ARMS;
+    } as unknown as McpStatementSurface["arms"];
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock<(name: string) => undefined>(() => undefined);
     registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, undefined, arms);
@@ -1595,15 +1632,19 @@ describe("listedStatementArms", () => {
   test("never lists an arm that serves nothing, whatever the reach", () => {
     const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
     const arms = {
-      ...Object.fromEntries(Object.keys(MCP_STATEMENT_ARMS).map((language) => [language, null])),
+      ...Object.fromEntries(Object.keys(BUNDLED_ARMS).map((language) => [language, null])),
       sql: RUN_READ_QUERY_ARM,
       mongo: idle,
-    } as unknown as typeof MCP_STATEMENT_ARMS;
+    } as unknown as McpStatementSurface["arms"];
     expect(listedStatementArms(new Set(["mongodb", "sqlite"]), arms)).toEqual([RUN_READ_QUERY_ARM]);
   });
 
   test("lists every serving arm for a reach of every served engine", () => {
-    const served = new Set(servingStatementArms().flatMap((arm) => arm.types));
+    const served = new Set(
+      SHIPPED_DATABASE_TYPES.filter((type) =>
+        servingStatementArms().some((arm) => arm.types.some((id) => id === type)),
+      ),
+    );
     expect(listedStatementArms(served)).toEqual(servingStatementArms());
   });
 });
@@ -1615,7 +1656,7 @@ describe("the libredbkv arm", () => {
     expect(RUN_LIBREDB_READ_ARM.title).toBe("Run a read-only LibreDB command");
     expect(RUN_LIBREDB_READ_ARM.argument).toBe("statement");
     expect(RUN_LIBREDB_READ_ARM.paging).toBe("none");
-    expect(RUN_LIBREDB_READ_ARM.types).toEqual(["libredb"]);
+    expect<readonly string[]>(RUN_LIBREDB_READ_ARM.types).toEqual(["libredb"]);
     expect(RUN_LIBREDB_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     // A LibreDB connection's database is its file's path, which the seed names: a client never names another file.
     expect(RUN_LIBREDB_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
@@ -1718,7 +1759,7 @@ describe("the rabbitread arm", () => {
     expect(RUN_RABBITMQ_READ_ARM.title).toBe("Run a read-only RabbitMQ stream read");
     expect(RUN_RABBITMQ_READ_ARM.argument).toBe("statement");
     expect(RUN_RABBITMQ_READ_ARM.paging).toBe("none");
-    expect(RUN_RABBITMQ_READ_ARM.types).toEqual(["rabbitmq"]);
+    expect<readonly string[]>(RUN_RABBITMQ_READ_ARM.types).toEqual(["rabbitmq"]);
     expect(RUN_RABBITMQ_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(RUN_RABBITMQ_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
     for (const extra of [{ offset: 5 }, { database: "/" }, { sql: "SELECT 1" }]) {
@@ -1838,7 +1879,9 @@ describe("the arms whose engines hold no table", () => {
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
     "%s on %s declares what the provider's own relation kinds say",
     async (_tool, type, arm) => {
-      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      const capabilities = (
+        await createDatabaseProvider(CENSUS_CONNECTION[type as string as DatabaseType])
+      ).getCapabilities();
       expect(relationKindIds(capabilities).length === 0).toBe(arm.holdsNoTables);
     },
   );
@@ -1846,8 +1889,8 @@ describe("the arms whose engines hold no table", () => {
   test("names the statement tool of an engine whose arm holds no table, and null everywhere else", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
       const language = statementLanguage[type];
-      const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
-      const served = arm !== null && arm.types.includes(type);
+      const arm = language === null ? null : BUNDLED_ARMS[language];
+      const served = arm !== null && arm.types.some((id) => id === type);
       expect(mcpTablelessReadTool(type)).toBe(served && arm.holdsNoTables ? arm.tool : null);
     }
   });
