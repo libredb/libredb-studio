@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import path from "node:path";
-import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
+import { LOCK_ENTRY_CAP, LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
 import { boundedChild } from "../../helpers/bounded-node-child";
 import {
@@ -88,6 +88,12 @@ function runCommand(...args: string[]): { exitCode: number | null; stdout: strin
 
 const FOO: FixturePackage = { name: "acme-foo", version: "1.0.0", engines: ["acmefoob", "acmefooa"] };
 const BAR: FixturePackage = { name: "@acme/bar", version: "2.3.4-rc.1", engines: ["acmebar"], entry: "lib/bar.js" };
+
+/** The minimal package numbered `index`, one of many in a providers directory. */
+function numbered(index: number): FixturePackage {
+  const number = String(index).padStart(3, "0");
+  return { name: `acme-p${number}`, version: "1.0.0", engines: [`acmep${number}`] };
+}
 
 /**
  * A package of every import form the command records and of forms it does not: only a JavaScript module file, .js, .mjs
@@ -284,13 +290,81 @@ describe("the lock command", () => {
         `providers:lock: ${path.join("@acme", "loose.txt")}: neither a package nor the lock`,
         "providers:lock: Upper: neither a package nor the lock",
         "providers:lock: acme-foo: two versions of one package",
-        `providers:lock: ${path.join("acme-versionless", "latest")}: not a version of the package`,
+        `providers:lock: ${path.join("acme-versionless", "latest")}: not a version directory of the package`,
         "providers:lock: notes.txt: neither a package nor the lock",
         "providers:lock wrote nothing",
         "",
       ].join("\n"),
     );
     expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("a --dir that names a regular file is refused by name, exit 1, writing nothing", () => {
+    // A regular file reads alike on Linux, macOS and Windows; no FIFO case, since Windows has none.
+    const parent = freshProviders();
+    const file = path.join(parent, "providers.txt");
+    fs.writeFileSync(file, "not a directory\n");
+    const run = runCommand("--dir", file);
+    expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+      1,
+      "",
+      `providers:lock: ${file}: the providers directory is not a directory\nproviders:lock wrote nothing\n`,
+    ]);
+    expect(fs.readFileSync(file, "utf8")).toBe("not a directory\n");
+    expect(fs.readdirSync(parent)).toEqual(["providers.txt"]);
+  });
+
+  test("an empty scope directory is refused by name, exit 1, writing nothing", () => {
+    const providers = freshProviders();
+    writeArtifact(providers, FOO);
+    fs.mkdirSync(path.join(providers, "@empty"));
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+      1,
+      "",
+      "providers:lock: @empty: a scope directory holding no package\nproviders:lock wrote nothing\n",
+    ]);
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("an entry of a package directory that is not a version directory is refused by name, not as two versions", () => {
+    const providers = freshProviders();
+    writeArtifact(providers, FOO);
+    fs.writeFileSync(path.join(providers, "acme-foo", ".DS_Store"), "");
+    writeArtifact(providers, BAR);
+    fs.mkdirSync(path.join(providers, "@acme", "bar", "latest"));
+    writeArtifact(providers, { name: "acme-two", version: "1.0.0", engines: ["acmetwoa"] });
+    writeArtifact(providers, { name: "acme-two", version: "1.1.0", engines: ["acmetwob"] });
+    fs.writeFileSync(path.join(providers, "acme-two", "notes.txt"), "");
+    fs.writeFileSync(path.join(providers, "notes.txt"), "");
+
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout]).toEqual([1, ""]);
+    expect(run.stderr).toBe(
+      [
+        `providers:lock: ${path.join("@acme", "bar", "latest")}: not a version directory of the package`,
+        `providers:lock: ${path.join("acme-foo", ".DS_Store")}: not a version directory of the package`,
+        `providers:lock: ${path.join("acme-two", "notes.txt")}: not a version directory of the package`,
+        "providers:lock: acme-two: two versions of one package",
+        "providers:lock: notes.txt: neither a package nor the lock",
+        "providers:lock wrote nothing",
+        "",
+      ].join("\n"),
+    );
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("a directory of more packages than the lock reader admits is refused by name before any lock is written", () => {
+    const providers = freshProviders();
+    for (let index = 0; index <= LOCK_ENTRY_CAP; index += 1) writeArtifact(providers, numbered(index));
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout, run.stderr]).toEqual([
+      1,
+      "",
+      `providers:lock: the lock would hold ${LOCK_ENTRY_CAP + 1} entries, more than the 256 Studio reads\nproviders:lock wrote nothing\n`,
+    ]);
+    // Neither the lock nor a temporary file of it is left.
+    expect(fs.readdirSync(providers).filter((name) => name.includes(LOCK_FILE_NAME))).toEqual([]);
   });
 
   test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {

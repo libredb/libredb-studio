@@ -32,14 +32,20 @@
  * command never imports the lock reader, and never imports or runs a package's code. It does not judge engine id
  * collisions: Studio's read does, and the command records what the directory holds.
  *
- * It refuses, writing nothing and exiting 1 with every refusal on stderr: an entry of the directory that is neither a
- * package nor the lock, a package directory holding anything but one version directory, and every refusal an artifact
- * draws (a link, a special file, a name outside the portable set, the limits, a package.json or manifest it cannot
- * read, a package.json naming another package, an entry that is not a file of the package), a module file the parser
- * cannot read or that is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a
- * package, and a lock over the reader's byte cap. Otherwise it writes the
- * lock through a temporary file in the same directory and a rename, entries by name and engine ids in order, so the
- * same directory always gives the same bytes, and prints the lock's path and one line per package; exit 0.
+ * A `--dir` that names anything but a directory is refused alone. Otherwise it refuses, writing nothing and exiting 1
+ * with every refusal on stderr, each naming its entry: an entry of the directory that is neither a package nor the
+ * lock, a scope directory holding no package, an entry of a package directory that is not a version directory, a
+ * package directory holding no entry or two version directories or more, more packages than the lock reader admits
+ * (`LOCK_ENTRY_CAP`), and every refusal an artifact draws (a link, a special file, a name outside the portable set, the
+ * limits, a package.json or manifest it cannot read, more engine ids than an entry holds among them, a package.json
+ * naming another package, an entry that is not a file of the package), a module file the parser cannot read or that
+ * is not UTF-8, a specifier or module path outside the lock's forms, more than 4,096 imports in a package, and a lock
+ * over the reader's byte cap. None is passed over, so an operator removes a stray entry once, and the command never
+ * writes a lock the reader refuses for a cap. The directory's refusals come first, in walk order, then the entry cap,
+ * then each package's, by name: every package is read even past the entry cap, so one run prints every refusal.
+ * Otherwise it writes the lock through a temporary file in the same directory and a rename, entries by name and
+ * engine ids in order, so the same directory always gives the same bytes, and prints the lock's path and one line per
+ * package; exit 0.
  *
  * The directory must be absolute: `bun run` runs the script from the repository root, so a relative path would not
  * be the one typed. Any other argument prints the usage; exit 2.
@@ -65,6 +71,7 @@ import {
   IMPORT_SPECIFIER_FORM,
   LOCAL_SOURCE,
   LOCK_BYTE_CAP,
+  LOCK_ENTRY_CAP,
   LOCK_FILE_NAME,
   LOCK_IMPORT_CAP,
   type ImportKind,
@@ -231,19 +238,18 @@ function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]
   const refusals: string[] = [];
   const notAPackage = (relative: string) => refusals.push(`${PREFIX}: ${relative}: neither a package nor the lock`);
   const packageAt = (relative: string, name: string): void => {
-    const versions = sorted(fs.readdirSync(path.join(root, relative)));
-    if (versions.length !== 1) {
-      refusals.push(
-        `${PREFIX}: ${relative}: ${versions.length === 0 ? "no version of the package" : "two versions of one package"}`,
-      );
+    const entries = sorted(fs.readdirSync(path.join(root, relative)));
+    if (entries.length === 0) {
+      refusals.push(`${PREFIX}: ${relative}: no version of the package`);
       return;
     }
-    const version = versions[0] as string;
-    if (!inForm(version, PACKAGE_VERSION_FORM) || !isDirectory(path.join(root, relative, version))) {
-      refusals.push(`${PREFIX}: ${path.join(relative, version)}: not a version of the package`);
-      return;
+    const versions: string[] = [];
+    for (const entry of entries) {
+      if (inForm(entry, PACKAGE_VERSION_FORM) && isDirectory(path.join(root, relative, entry))) versions.push(entry);
+      else refusals.push(`${PREFIX}: ${path.join(relative, entry)}: not a version directory of the package`);
     }
-    packages.push({ name, version });
+    if (versions.length > 1) refusals.push(`${PREFIX}: ${relative}: two versions of one package`);
+    if (versions.length === 1) packages.push({ name, version: versions[0] as string });
   };
   for (const entry of sorted(fs.readdirSync(root))) {
     if (entry === LOCK_FILE_NAME) continue;
@@ -256,7 +262,9 @@ function enumerate(root: string): { packages: FoundPackage[]; refusals: string[]
       else notAPackage(entry);
       continue;
     }
-    for (const scoped of sorted(fs.readdirSync(path.join(root, entry)))) {
+    const scope = sorted(fs.readdirSync(path.join(root, entry)));
+    if (scope.length === 0) refusals.push(`${PREFIX}: ${entry}: a scope directory holding no package`);
+    for (const scoped of scope) {
       const relative = path.join(entry, scoped);
       const name = `${entry}/${scoped}`;
       if (inForm(name, PACKAGE_NAME_FORM) && isDirectory(path.join(root, relative))) packageAt(relative, name);
@@ -313,7 +321,17 @@ function writeLock(directory: string): number {
     console.error(`${PREFIX} wrote nothing`);
     return 1;
   }
+  if (!isDirectory(root)) {
+    console.error(`${PREFIX}: ${directory}: the providers directory is not a directory`);
+    console.error(`${PREFIX} wrote nothing`);
+    return 1;
+  }
   const { packages, refusals } = enumerate(root);
+  if (packages.length > LOCK_ENTRY_CAP) {
+    refusals.push(
+      `${PREFIX}: the lock would hold ${packages.length} entries, more than the ${LOCK_ENTRY_CAP} Studio reads`,
+    );
+  }
   const entries: LockEntry[] = [];
   for (const pkg of packages) {
     const entry = lockEntryOf(root, pkg);
