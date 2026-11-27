@@ -10,7 +10,7 @@ import { editorTarget } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, openWithinBudget, runEditorQuery } from "@/lib/api/editor-query";
-import { packageCallError } from "@/lib/api/package-errors";
+import { packageFailureAnswer } from "@/lib/api/package-errors";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import {
   type EngineConnection,
@@ -411,12 +411,11 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * How a failure of the editor's `call` on `engine` reaches the client, by how its record grants the engine's own words
- * (`grants.ownWords`), as Test Connection reads it: where they are `"scrubbed"`, every legacy engine's and a package
- * engine's whose register row grants them, the error as it is, answered in its words through the connection's scrub;
- * where they are `"code-only"`, a package engine's with no row granting them, as Studio's sentence naming its code,
- * logged once with its words through core's `scrub` (`packageCallError` in src/lib/api/package-errors.ts;
- * docs/providers/CONTRACT.md, clause C-112).
+ * How a failure of the editor's `call` on `engine` reaches the client: the one answer of a provider package's failure,
+ * as Test Connection reads it (`packageFailureAnswer` in src/lib/api/package-errors.ts; docs/providers/CONTRACT.md,
+ * clause C-112). A legacy engine's failure is answered as raised, through the connection's scrub; a package's open
+ * failure as a not-sent connection error; a refusal of what a package answered as the package's defect; and a
+ * package's own words only where its register row grants them, through core's `scrub`.
  */
 function answeredFailure(
   engine: EngineRecord,
@@ -424,6 +423,6 @@ function answeredFailure(
   scrub: ProviderTextScrub,
 ): (error: unknown) => never {
   return (error) => {
-    throw engine.grants.ownWords === "code-only" ? packageCallError(call, error, scrub, ROUTE) : error;
+    throw packageFailureAnswer(engine, call, error, scrub, ROUTE);
   };
 }

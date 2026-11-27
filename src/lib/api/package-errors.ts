@@ -1,27 +1,37 @@
 /**
  * A provider package's own errors and warnings as Studio answers them (docs/providers/CONTRACT.md, clause C-112).
  *
- * Where no register row grants an engine its own words (docs/providers/CONTRACT.md, clause M-84), the client never
- * receives them: a package's error is answered with Studio's sentence naming its code, and the error itself is logged
- * once under the route, its words through core's scrub of the connection. An engine whose row grants them, its record's
- * `grants.ownWords` `"scrubbed"`, is answered by its reader through core's scrub instead, as a legacy engine is. A package's error is any value one of its calls rejects with that is not Studio's own `DatabaseError`: the
- * SDK gives a package no error class to raise, and Studio's classes are outside a package's closure, so a package cannot
- * construct one. A value the host core builds about a package's answer it cannot read is answered the same way, since
- * it is the package's defect too, and its log line names the package as the author (`PACKAGE_DEFECT_PREFIX`), where
- * the accessor's message names Studio; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
- * defect, and is answered as Studio's own internal error. A package's warnings, where no row grants its own words,
- * reach the client only as Studio's sentence naming their count, each logged once through the same scrub, or as the
- * package's defect where it is not the contract's `Warning` (`packageWarnings`); warnings that are not a list are the
- * package's defect on either path (`packageWarningList`).
+ * One function, `packageFailureAnswer`, answers every failure of a provider package's call on every route, whatever its
+ * record grants. A package's error is any value one of its calls rejects with that is not Studio's own `DatabaseError`:
+ * the SDK gives a package no error class to raise, and Studio's classes are outside a package's closure, so a package
+ * cannot construct one. It is logged once under the route, its words through core's scrub of the connection, on both
+ * grants. An open that fails sent no statement, so it is answered as a `ConnectionError` marked not-sent: in Studio's
+ * sentence naming its code where no register row grants the engine its own words (docs/providers/CONTRACT.md, clause
+ * M-84), and in the error's own words through core's scrub where one does, its record's `grants.ownWords`
+ * `"scrubbed"`. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
+ * words, and as raised, through core's scrub, where one does.
+ *
+ * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
+ * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
+ * words under `PACKAGE_DEFECT_PREFIX`, naming each rule and pointer and none of the package's words, where the
+ * accessor's message names Studio. A `HostDefectError` whose refusals are each about Studio's own request is Studio's
+ * defect, and is answered as Studio's own internal error. A legacy record's provider is Studio's own code, so its
+ * failure is answered as raised.
+ *
+ * A package's warnings reach the route as the host core checked and rebuilt them (`checkExecuteAnswer`); where no row
+ * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through
+ * the same scrub (`packageWarnings`).
  */
-import { type CallRefusalRule, callRefusalSentence } from "@libredb/provider-sdk/calls";
+import { type CallRefusalRule, callRefusalSentence, type Warning } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
 import { ConnectionError, DatabaseError, markNotSent } from "@/lib/db/errors";
 import {
   type ProviderTextScrub,
+  scrubProviderText,
   scrubProviderWarnings,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { logger } from "@/lib/logger";
 import { HostDefectError } from "@/lib/provider-host/access";
 import type { QueryWarning } from "@/lib/types";
@@ -109,101 +119,56 @@ export function logPackageFailure(call: string, error: unknown, scrub: ProviderT
   logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
 }
 
-/** Studio's sentence for a warning a provider package answered that is not the contract's `Warning` (`packageWarning`). */
-export const PACKAGE_WARNING_DEFECT =
-  "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.";
-
-/** Studio's sentence for a provider package's warnings that are not a list, the contract's `readonly Warning[]`. */
-const PACKAGE_WARNINGS_DEFECT = "The provider package answered warnings that are not a list; this is its defect.";
-
 /**
- * `warnings`, the warnings a provider package answered, where they are a list (`Array.isArray`).
- *
- * @throws {Error} `PACKAGE_WARNINGS_DEFECT`, for warnings that are not a list: none of them is walked.
- */
-export function packageWarningList(warnings: unknown): readonly unknown[] {
-  if (!Array.isArray(warnings)) throw new Error(PACKAGE_WARNINGS_DEFECT);
-  return warnings;
-}
-
-/** The members a warning of the contract's `Warning` has: its message, and its optional code and severity. */
-const WARNING_MEMBERS: ReadonlySet<string> = new Set(["message", "code", "severity"]);
-
-/**
- * A warning a provider package answered, rebuilt from its own data members, or null where it is not the contract's
- * `Warning`: not an object, a member outside `WARNING_MEMBERS` or one read through a getter, a message that is not
- * text, a code that is neither text nor a number, or a severity that is not text. The host core passes a package's
- * warnings on as the package answered them, so only the members read here can reach the client or the server's log, and
- * no getter of the package runs while Studio builds its answer or its log line.
- */
-export function packageWarning(warning: unknown): QueryWarning | null {
-  if (typeof warning !== "object" || warning === null) return null;
-  const read: Record<string, unknown> = {};
-  for (const key of Reflect.ownKeys(warning)) {
-    const descriptor = Object.getOwnPropertyDescriptor(warning, key);
-    if (typeof key !== "string" || !WARNING_MEMBERS.has(key) || descriptor === undefined || !("value" in descriptor)) {
-      return null;
-    }
-    read[key] = descriptor.value;
-  }
-  const { message, code, severity } = read;
-  if (typeof message !== "string") return null;
-  if (code !== undefined && typeof code !== "string" && typeof code !== "number") return null;
-  if (severity !== undefined && typeof severity !== "string") return null;
-  return { message, ...(code !== undefined && { code }), ...(severity !== undefined && { severity }) };
-}
-
-/**
- * The warnings a client receives for `warnings`, the ones a provider package's `call` answered: none for none, and
- * otherwise Studio's one sentence naming their count, the number of warnings Studio walked, never a length the package
- * answers. Each warning is logged once under `route`: rebuilt from the contract's members by `packageWarning` and its
- * words through core's scrub of the connection, or, where it is not the contract's `Warning`, as the package's defect
- * in Studio's own words, none of its members read.
- *
- * @throws {Error} `PACKAGE_WARNINGS_DEFECT`, for warnings that are not a list (`packageWarningList`).
+ * The warnings a client receives for `warnings`, the ones a provider package's `call` answered, as the host core
+ * checked and rebuilt them: none for none, and otherwise Studio's one sentence naming their count. Each warning is
+ * logged once under `route`, its words through core's scrub of the connection.
  */
 export function packageWarnings(
   call: string,
-  warnings: unknown,
+  warnings: readonly Warning[],
   scrub: ProviderTextScrub,
   route: string,
 ): QueryWarning[] {
-  let walked = 0;
-  for (const answered of packageWarningList(warnings)) {
-    walked += 1;
-    const rebuilt = packageWarning(answered);
-    if (rebuilt === null) {
-      logger.warn(
-        `A provider package's ${call} returned a warning that is not a message with an optional code and severity; this is its defect.`,
-        { route },
-      );
-      continue;
-    }
-    const [warning] = scrubProviderWarnings(scrub, [rebuilt]);
+  for (const warning of scrubProviderWarnings(scrub, warnings)) {
     logger.warn(`A provider package's ${call} returned a warning`, { route, warning });
   }
-  if (walked === 0) return [];
-  const count = walked === 1 ? "1 warning" : `${walked} warnings`;
+  if (warnings.length === 0) return [];
+  const count = warnings.length === 1 ? "1 warning" : `${warnings.length} warnings`;
   return [{ message: `The provider package returned ${count}; the server's log holds their words.` }];
 }
 
 /**
- * The error a request answers for `error`, a failure of a provider package's `call` on its query route or Test
- * Connection: Studio's own failure (`isStudioFailure`) as itself, and any other value logged once as the package's
- * (`logPackageFailure`) and answered with Studio's sentence naming its code: a `ConnectionError` marked not-sent for the
- * open, since nothing was sent, and a plain `Error`, kind internal and outcome unknown, for the execute, since the
+ * The error a route answers for `error`, a failure of the `call` of `engine`'s session, the one answer of a provider
+ * package's failure on every route: a legacy record's failure (`offers.legacyProvider`) and Studio's own failure
+ * (`isStudioFailure`) as raised; a host defect with a refusal of what the package answered logged once and answered as
+ * `packageDefect`, on both grants; and any other value logged once as the package's (`logPackageError`), on both
+ * grants, then answered by the record's `grants.ownWords`. An open's is a `ConnectionError` marked not-sent, since an
+ * open sends no statement: its message the error's own through core's scrub where the words are `"scrubbed"`, and
+ * Studio's sentence naming its code where they are `"code-only"` or the value is no `Error` and has no words. An
+ * execute's is the error as raised where the words are `"scrubbed"`, answered through core's scrub by the route, and a
+ * plain `Error` with Studio's sentence, kind internal and outcome unknown, where they are `"code-only"`, since the
  * statement may have run.
  */
-export function packageCallError(
+export function packageFailureAnswer(
+  engine: EngineRecord,
   call: "open" | "execute",
   error: unknown,
   scrub: ProviderTextScrub,
   route: string,
 ): unknown {
-  if (isStudioFailure(error)) return error;
-  logPackageFailure(call, error, scrub, route);
-  if (call === "execute") return new Error(packageErrorSentence(call, error));
-  const failed = new ConnectionError(packageErrorSentence(call, error));
+  if (engine.offers.legacyProvider || isStudioFailure(error)) return error;
+  if (error instanceof HostDefectError) {
+    const defect = packageDefect(error);
+    logPackageError(call, defect, scrub, route);
+    return defect;
+  }
+  logPackageError(call, error, scrub, route);
+  const granted = engine.grants.ownWords === "scrubbed";
+  if (call === "execute") return granted ? error : new Error(packageErrorSentence(call, error));
+  const failed = new ConnectionError(
+    granted && error instanceof Error ? scrubProviderText(scrub, error.message) : packageErrorSentence(call, error),
+  );
   markNotSent(failed);
   return failed;
 }

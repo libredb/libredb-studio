@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { parseGrantRegister } from "@libredb/grant-register";
-import type { CallRefusal, ProviderImpl } from "@libredb/provider-sdk/calls";
+import { type CallRefusal, callRefusalSentence, type ProviderImpl } from "@libredb/provider-sdk/calls";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
@@ -303,16 +303,21 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
     }
   });
 
-  test("a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code", async () => {
+  test("a granted package's open failure answers a not-sent connection error with its scrubbed words, as a code-only one answers Studio's sentence", async () => {
     const secret = randomUUID();
     const words = `the server refused this client ${randomUUID()}`;
     const granted = { type: "acmetestwords", host: "db.local", password: secret };
     const error = spyOn(logger, "error").mockImplementation(() => undefined);
     try {
-      // The open's own words, through core's scrub.
+      // The open's own words, through core's scrub, as a connection error: an open sends no statement.
       hooks.open = () => Promise.reject(new Error(words));
       const open = await routeAnswer(granted);
-      expect([open.status, open.body.code, open.body.error]).toEqual([500, "INTERNAL_ERROR", words]);
+      expect([open.status, open.body.code, open.body.outcome, open.body.error]).toEqual([
+        503,
+        "CONNECTION_ERROR",
+        "not-sent",
+        words,
+      ]);
       // The health failure's own words, in the degraded success's sentence.
       hooks = { ...healthyHooks(), health: () => Promise.reject(new Error(words)) };
       const health = await routeAnswer(granted);
@@ -326,7 +331,7 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       const withheldOpen = await routeAnswer(granted);
       hooks = { ...healthyHooks(), health: () => Promise.reject(new Error(`${words} for ${secret}`)) };
       const withheldHealth = await routeAnswer(granted);
-      expect([withheldOpen.status, withheldHealth.status]).toEqual([500, 200]);
+      expect([withheldOpen.status, withheldOpen.body.outcome, withheldHealth.status]).toEqual([503, "not-sent", 200]);
       for (const answer of [withheldOpen.body, withheldHealth.body]) {
         expect(JSON.stringify(answer)).not.toContain(secret);
         expect(JSON.stringify(answer)).not.toContain(words);
@@ -433,18 +438,22 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       expect(attributed()).toEqual({ studio: 1, open: 0, health: 0 });
       expect(seen).toEqual(["open", "close"]);
 
-      // A refinement that widens what the package declared is what the package answered: the package's defect.
+      // A refinement that widens what the package declared is what the package answered: the package's defect,
+      // answered and logged in Studio's words naming the rule and the pointer.
       error.mockClear();
       openOverride = () => Promise.reject(hostDefect({ rule: "refinement-widens", pointer: "/console" }));
       const widened = await routeAnswer(VALID);
       expect([widened.status, widened.body.code, widened.body.error]).toEqual([
-        503,
-        "CONNECTION_ERROR",
-        "The provider package's open failed (INTERNAL_ERROR); the server's log holds its words.",
+        500,
+        "INTERNAL_ERROR",
+        `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence({ rule: "refinement-widens", pointer: "/console" })}`,
       ]);
-      expect(attributed()).toEqual({ studio: 0, open: 1, health: 0 });
-      const logged = error.mock.calls.find(([line]) => line === "A provider package's open failed")?.[1];
-      expect(String((logged as Error).message)).toStartWith(PACKAGE_DEFECT_PREFIX);
+      // The route's own line of its 500 answer carries the same words, which name the package as the author.
+      expect(attributed()).toEqual({ studio: 1, open: 1, health: 0 });
+      for (const line of ["A provider package's open failed", "Unhandled error"]) {
+        const logged = error.mock.calls.find(([text]) => text === line)?.[1];
+        expect(String((logged as Error).message)).toStartWith(PACKAGE_DEFECT_PREFIX);
+      }
 
       // A value the package's own open rejects with is the package's.
       error.mockClear();

@@ -341,7 +341,7 @@ describe("executeCall", () => {
       explainPlan: answer.explainPlan,
       release: expect.any(Function),
     });
-    expect((record as { readonly warnings: unknown }).warnings).toBe(answer.warnings);
+    expect((record as { readonly warnings: unknown }).warnings).not.toBe(answer.warnings);
     expect(first.seen).toEqual({ pulls: 1, closes: 1 });
     expect(second.seen).toEqual({ pulls: 0, closes: 1 });
 
@@ -361,6 +361,94 @@ describe("executeCall", () => {
       warnings: [],
       release: expect.any(Function),
     });
+  });
+
+  test("a malformed execution time, row count or warning list is refused at the core as the package's defect", async () => {
+    const { ports } = portsOf();
+    const refusedFor = async (over: Partial<Record<keyof ExecuteAnswer, unknown>>, rowCount?: unknown) => {
+      const first = counted([[1]]);
+      const second = counted([[2]]);
+      const source = (rowCount === undefined ? first.source : { ...first.source, rowCount }) as ResultSource;
+      const pumpLimits = mock<(answer: ExecuteAnswer) => PumpLimits>(() => LIMITS);
+      const record = await executeCall(
+        sessionOf(async () => ({ ...answerOf([source, second.source]), ...over }) as ExecuteAnswer).session,
+        requestOf(),
+        contextOf(),
+        pumpLimits,
+        ports,
+      );
+      expect([first.seen, second.seen]).toEqual([
+        { pulls: 0, closes: 1 },
+        { pulls: 0, closes: 1 },
+      ]);
+      expect(pumpLimits.mock.calls).toHaveLength(0);
+      return record;
+    };
+    const refused = (...pointers: string[]): ExecuteRecord => ({
+      kind: "refused",
+      called: true,
+      refusals: pointers.map((pointer) => ({ rule: "execute-answer-unreadable", pointer })),
+    });
+
+    expect(await refusedFor({ executionTimeMs: -1 })).toEqual(refused("/executionTimeMs"));
+    expect(await refusedFor({ executionTimeMs: Number.NaN })).toEqual(refused("/executionTimeMs"));
+    expect(await refusedFor({}, 1.5)).toEqual(refused("/results/0/rowCount"));
+    expect(await refusedFor({ warnings: marker() })).toEqual(refused("/warnings"));
+    expect(await refusedFor({ warnings: [{ message: 1 }] })).toEqual(refused("/warnings/0/message"));
+    expect(await refusedFor({ executionTimeMs: "1", warnings: null }, -1)).toEqual(
+      refused("/results/0/rowCount", "/executionTimeMs", "/warnings"),
+    );
+
+    // A result list that is not a list holds no source to close.
+    const notAList = await executeCall(
+      sessionOf(async () => ({ ...answerOf([]), results: marker() }) as unknown as ExecuteAnswer).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(notAList).toEqual(refused("/results"));
+  });
+
+  test("a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list", async () => {
+    const { ports } = portsOf();
+    const closeError = new Error(marker());
+    const failingClose: ResultSource = {
+      columns: [{ name: "v" }],
+      next: async () => ({ rows: [], done: true }),
+      close: () => {
+        throw closeError;
+      },
+    };
+    const other = counted([[1]]);
+    const failed = await failure(() =>
+      executeCall(
+        sessionOf(async () => answerOf([failingClose, other.source], { executionTimeMs: -1 })).session,
+        requestOf(),
+        contextOf(),
+        () => LIMITS,
+        ports,
+      ),
+    );
+    expect(failed).toBeInstanceOf(AggregateError);
+    expect((failed as AggregateError).errors).toEqual([closeError]);
+    expect(other.seen).toEqual({ pulls: 0, closes: 1 });
+
+    const warning = { message: marker(), code: 7, severity: marker() };
+    const answer = answerOf([counted([[1]], 1).source], { warnings: [warning], executionTimeMs: 2.5 });
+    const record = await executeCall(
+      sessionOf(async () => answer).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    if (record.kind !== "page") throw new Error(`The execute answered ${record.kind}, not a page.`);
+    record.release();
+    expect([record.executionTimeMs, record.rowCount, record.warnings]).toEqual([2.5, 1, [warning]]);
+    expect(record.warnings).not.toBe(answer.warnings);
+    expect(record.warnings[0]).not.toBe(warning);
+    expect(Object.isFrozen(record.warnings) && Object.isFrozen(record.warnings[0])).toBe(true);
   });
 
   test("a row no page can hold is refused as a record, and the source is closed once", async () => {

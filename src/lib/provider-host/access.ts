@@ -27,11 +27,13 @@
  * answered `not-sent`. A record holding such a refusal beside a rule no row reads is the host defect below, naming
  * every refusal it holds.
  *
- * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
- * legacy caller asks for and is sent a scope only where it offers `console.endScope`, so no provider can cause one: a
- * `HostDefectError` naming each refusal's sentence and carrying the refusals, answered 500. On a provider package's
- * session a refusal of what the package answered (a batch, a row, a refinement) is the package's defect instead, which
- * the query route reads from those refusals (`packageCallError` in src/lib/api/package-errors.ts).
+ * Every other refusal is a defect of Studio's own code: its bridge honours every request field, offers every facet a
+ * legacy caller asks for and is sent a scope only where it offers `console.endScope`, and a legacy provider whose
+ * execute answer the host core refuses (`checkExecuteAnswer`) is Studio's own provider. It is a `HostDefectError`
+ * naming each refusal's sentence and carrying the refusals, answered 500. On a provider package's
+ * session a refusal of what the package answered (an execute answer's member, a batch, a row, a refinement) is the
+ * package's defect instead, which every route reads from those refusals (`packageFailureAnswer` in
+ * src/lib/api/package-errors.ts).
  */
 import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import {
