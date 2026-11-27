@@ -1,8 +1,9 @@
 /**
  * The lock reader: the one module that decides which packages of the providers directory pass their lock
- * (docs/providers/CONTRACT.md, clauses C-43 and C-91 to C-96). Only modules under `src/lib/provider-host/` import it
- * (`tests/unit/lib/provider-host/providers-lock.test.ts` holds that); the lock command (`scripts/providers-lock.ts`)
- * writes a lock with the same artifact functions and never reads one through this module.
+ * (docs/providers/CONTRACT.md, clauses C-43 and C-91 to C-96). Only modules under `src/lib/provider-host/` import it,
+ * and the packed lock check (`scripts/check-lib-lock.ts`), which reads back in CI the lock the packed npm package's
+ * command wrote (`tests/unit/lib/provider-host/providers-lock.test.ts` holds that); the lock command
+ * (`scripts/providers-lock.ts`) writes a lock with the same artifact functions and never reads one through this module.
  *
  * `readProvidersLock(directory)` reads the providers directory's real path and its lock, `providers.lock.json`, under
  * the lock's closed, capped format (`./providers-lock-format`), and refuses the whole lock as `PROVIDER_LOCK_INVALID`

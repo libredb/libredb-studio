@@ -51,10 +51,17 @@
  * and a rename, entries by name and engine ids in order, so the same directory always gives the same bytes, and
  * prints the lock's path and one line per package; exit 0.
  *
- * The directory must be absolute: `bun run` runs the script from the repository root, so a relative path would not
- * be the one typed. Any other argument prints the usage; exit 2.
+ * The directory must be absolute on every channel: `bun run` runs the script from the repository root and an image
+ * runs it in a container whose working directory is not the operator's, so a relative path would not be the one
+ * typed. Any other argument prints the usage; exit 2.
  *
- * Run: bun run providers:lock -- --dir <absolute directory>
+ * The command ships on three channels, one source: the npm package's launcher (bin/studio.js) and each image's
+ * `libredb-studio` wrapper (docker/libredb-studio.mjs) import the Node.js module `build:lib` and the images' builder
+ * stage build from this file (scripts/build-lock-module.mjs) and run it through its exported `main`, never as a program
+ * of its own under Node.js; a checkout of Studio runs this file under Bun.
+ *
+ * Run: libredb-studio providers lock --dir <absolute directory> (npx @libredb/studio providers lock ... from npm, the
+ * `libredb-studio` command in an image), or bun run providers:lock -- --dir <absolute directory> in a checkout
  */
 import * as fs from "node:fs";
 import path from "node:path";
@@ -88,7 +95,11 @@ import {
   type StringForm,
 } from "../src/lib/provider-host/providers-lock-format";
 
-const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
+/** The usage every channel prints: the command an operator runs, and the form a checkout of Studio runs. */
+export const USAGE = [
+  "Usage: libredb-studio providers lock --dir <absolute directory>",
+  "       (in a checkout of Studio: bun run providers:lock -- --dir <absolute directory>)",
+].join("\n");
 const PREFIX = "providers:lock";
 
 /** The directory the arguments name, or null when they are not exactly one absolute `--dir`. */

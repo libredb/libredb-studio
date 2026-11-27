@@ -1411,3 +1411,128 @@ describe("launcher signal forwarding", () => {
     );
   }
 });
+
+/**
+ * The `providers lock` subcommand (docs/DISTRIBUTION.md, "Locking a providers directory"): the launcher hands it to the
+ * lock command's module in the package's dist before any download, cache or payload step.
+ *
+ * Each case runs the real launcher with the node on PATH from a planted package root: copies of bin/studio.js,
+ * bin/lib/launcher-utils.mjs and bin/package.json, a package.json with the repository's version, and a stub
+ * dist/providers-lock.mjs whose `main` prints its arguments as one JSON line and answers 1 when they hold a marker, 0
+ * otherwise. HOME and USERPROFILE (which Windows reads) point at an empty directory, which must still be empty after the
+ * run; PORT and LIBREDB_STUDIO_ARCHIVE are removed, since the launcher reads both. Lines are split on CRLF or LF.
+ */
+describe("launcher providers lock", () => {
+  const STUB_USAGE = "Usage: stub lock usage";
+  const MARKER = "--stub-fails";
+
+  function plantedLauncher() {
+    const root = path.resolve(import.meta.dir, "../..");
+    const planted = fs.mkdtempSync(path.join(tempDir, "providers-lock-"));
+    for (const file of ["bin/studio.js", "bin/lib/launcher-utils.mjs", "bin/package.json"]) {
+      fs.mkdirSync(path.dirname(path.join(planted, file)), { recursive: true });
+      fs.copyFileSync(path.join(root, file), path.join(planted, file));
+    }
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    fs.writeFileSync(path.join(planted, "package.json"), JSON.stringify({ name: "@libredb/studio", version }));
+    fs.mkdirSync(path.join(planted, "dist"));
+    fs.writeFileSync(
+      path.join(planted, "dist", "providers-lock.mjs"),
+      [
+        `export const USAGE = ${JSON.stringify(STUB_USAGE)};`,
+        "export function main(argv) {",
+        "  console.log(JSON.stringify(argv));",
+        `  return argv.includes(${JSON.stringify(MARKER)}) ? 1 : 0;`,
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const home = path.join(planted, "home");
+    fs.mkdirSync(home);
+    const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+    delete env.PORT;
+    delete env.LIBREDB_STUDIO_ARCHIVE;
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const runWith = (nodeArgs: string[], ...args: string[]) => {
+      const result = Bun.spawnSync([node!, ...nodeArgs, path.join(planted, "bin", "studio.js"), ...args], {
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60_000,
+      });
+      return {
+        code: result.exitCode,
+        out: result.stdout.toString().split(/\r?\n/).filter(Boolean),
+        err: result.stderr.toString().split(/\r?\n/).filter(Boolean),
+      };
+    };
+    const run = (...args: string[]) => runWith([], ...args);
+    return { planted, home, run, runWith };
+  }
+
+  test("the launcher dispatches providers lock before any download", () => {
+    const { planted, home, run } = plantedLauncher();
+    const directory = path.join(planted, "providers");
+
+    const locked = run("providers", "lock", "--dir", directory);
+    expect(locked).toEqual({ code: 0, out: [JSON.stringify(["--dir", directory])], err: [] });
+    const refused = run("providers", "lock", "--dir", directory, MARKER);
+    expect(refused).toEqual({ code: 1, out: [JSON.stringify(["--dir", directory, MARKER])], err: [] });
+
+    expect(fs.readdirSync(home)).toEqual([]);
+    for (const line of [...locked.out, ...refused.out]) {
+      expect(line).not.toMatch(/Downloading|Using cached|Using local archive|Starting LibreDB Studio/);
+    }
+  });
+
+  test("the launcher answers any other providers command with the lock command's usage, exit 2, and runs nothing", () => {
+    const { home, run } = plantedLauncher();
+    for (const args of [["providers"], ["providers", "key"], ["providers", "LOCK"], ["providers", "--help"]]) {
+      expect([args, run(...args)]).toEqual([args, { code: 2, out: [], err: [STUB_USAGE] }]);
+    }
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  /*
+    The preload sets process.versions.node to a version below the floor before bin/studio.js runs: on Node.js the
+    property is configurable (not writable), so Object.defineProperty replaces it on every platform. The planted module
+    prints a line when it is imported, so an empty stdout shows it never loaded.
+  */
+  test("the launcher refuses providers lock on a Node.js below its floor by name, before the module loads", () => {
+    const { planted, home, runWith } = plantedLauncher();
+    const lockModule = path.join(planted, "dist", "providers-lock.mjs");
+    fs.writeFileSync(lockModule, `console.log("module imported");\n${fs.readFileSync(lockModule, "utf8")}`);
+    const preload = path.join(planted, "old-node.mjs");
+    fs.writeFileSync(preload, 'Object.defineProperty(process.versions, "node", { value: "22.12.0" });\n');
+
+    const refused = runWith(["--import", pathToFileURL(preload).href], "providers", "lock", "--dir", planted);
+    expect(refused).toEqual({
+      code: 1,
+      out: [],
+      err: (assessNodeRuntime("22.12.0").message ?? "").split("\n"),
+    });
+    expect(refused.err[0]).toBe("LibreDB Studio requires Node.js 24.0 or newer; this is Node 22.12.0.");
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  test("the launcher's help lists providers lock beside its unchanged options", () => {
+    const { run } = plantedLauncher();
+    const help = run("--help");
+    expect(help.code).toBe(0);
+    const text = help.out.join("\n");
+    expect(text).toContain("Usage: npx @libredb/studio [options]");
+    expect(text).toContain("       npx @libredb/studio providers lock --dir <absolute directory>");
+    for (const option of [
+      "--port <n>",
+      "--host <addr>",
+      "--archive <path>",
+      "--archive-sha256 <hex>",
+      "--verify-cache",
+      "--help, -h",
+      "providers lock --dir <absolute directory>",
+    ]) {
+      expect([option, help.out.some((line) => line.trimStart().startsWith(option))]).toEqual([option, true]);
+    }
+  });
+});

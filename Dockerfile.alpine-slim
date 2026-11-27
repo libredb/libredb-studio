@@ -115,6 +115,11 @@ ENV USER_PASSWORD=$USER_PASSWORD_BUILD
 
 RUN node scripts/copy-monaco.mjs && npx next build
 
+# The lock command's module, dist/providers-lock.mjs, which the runner copies
+# for the image's `libredb-studio providers lock` (scripts/build-lock-module.mjs).
+# dist/ is not in the build context, so it is built here from source.
+RUN node scripts/build-lock-module.mjs
+
 # Prune BOTH module trees, and both for the same reason the -alpine file
 # explains at length: `next build` writes a second, traced copy of some packages
 # into `.next/standalone/node_modules`, the runner unpacks that onto /app, and a
@@ -260,6 +265,13 @@ COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
 # The Kubernetes discovery exporter's token reads the credential Secrets of the
 # opted-in namespaces, so it is copied WITHOUT --chown too.
 COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs
+# The lock command (docs/DISTRIBUTION.md, "Docker"): the module the builder
+# built and the wrapper that runs only `providers lock`, linked onto PATH as
+# `libredb-studio`. Copied WITHOUT --chown: no uid 1001 process may rewrite
+# what an operator runs.
+COPY --from=builder /usr/src/app/dist/providers-lock.mjs /usr/local/lib/libredb-studio/providers-lock.mjs
+COPY --chmod=755 docker/libredb-studio.mjs /usr/local/lib/libredb-studio/libredb-studio.mjs
+RUN ln -s /usr/local/lib/libredb-studio/libredb-studio.mjs /usr/local/bin/libredb-studio
 
 EXPOSE 3000/tcp
 ENV PORT=3000

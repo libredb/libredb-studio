@@ -212,8 +212,8 @@ own file for that reason:
 import "@libredb/studio/styles.css"; // required once, before any studio component renders
 ```
 
-`build:lib` is `tsup && node scripts/copy-theme.mjs`, and the order is load-bearing: tsup runs with
-`clean: true`, so anything staged into `dist/` before it is wiped. The copy has to come after.
+`build:lib` is `tsup && node scripts/copy-theme.mjs && node scripts/build-lock-module.mjs`, and the order is load-bearing: tsup runs with
+`clean: true`, so anything staged into `dist/` before it is wiped. The copy and the lock command's module ("The lock command module (`lib:lock`)") have to come after.
 
 `dist/styles.css` is the line `@import "@xyflow/react/dist/style.css";`, the ER diagram's base styles, followed by `src/styles/theme.css` unchanged.
 The published JavaScript imports no stylesheet: `tsup.config.ts` puts `/\.css$/` in `noExternal` and loads it with esbuild's `empty` loader (`loader: { ".css": "empty" }`), because Node cannot load a `.css` import, and before this a host's `import("@libredb/studio")` or `require("@libredb/studio")` under Node failed on the SchemaDiagram chunk's import of that sheet.
@@ -248,8 +248,34 @@ Measured with npm 11.19.1 and bun 1.4.4, neither `npm install` nor `bun add` rea
 
 Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s; the whole check takes about 4 s.
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
-- CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure` and `lib:load`, in that order (plus a Biome format check), so the package
+- CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure`, `lib:load` and `lib:lock`, in that order (plus a Biome format check), so the package
   surface is gated on every PR.
+
+### The lock command module (`lib:lock`)
+
+The lock command (`scripts/providers-lock.ts`, docs/providers/CONTRACT.md C-91) ships to operators in the npm package and in the three images, which run Node.js and no Bun, so `build:lib` and each Dockerfile's builder stage build it into one Node.js ES module, `dist/providers-lock.mjs`, with `scripts/build-lock-module.mjs`.
+The build is one esbuild call, not a second tsup config: tsup runs the builds of an array config side by side, and the library build's `clean: true` would empty `dist/` while the module is written.
+Its entry is esbuild's `stdin` entry `export { main, USAGE } from "./scripts/providers-lock.ts";`, because esbuild keeps an entry file's `#!` line, which would put the script's Bun hashbang at the top of a Node.js module; esbuild writes that entry's `sourcefile` name, `lock-module-entry.ts`, as a comment in the output.
+The module bundles acorn and every Studio module the command reaches, for `platform: "node"`, `format: "esm"` and `target: "node24"`, with no minification and no source map.
+After the build, the script reads esbuild's metafile and fails, naming each, on an input from a package other than acorn and on an import that is not a `node:` built-in, the same rule as the VS Code bundles' metafile checks ("Bundles and notices").
+The module begins with acorn's license text, read from `node_modules/acorn/LICENSE` at build time, so the notice travels with the one artifact that bundles acorn on every channel; the build fails naming that file when it is missing.
+The launcher and the images' wrapper import the module and run its `main`; it is never run as a program of its own under Node.js, since its self-run line, kept for `bun run`, tests `import.meta.main`, which Node.js 24.0.0 does not set.
+`tests/unit/scripts/build-lock-module.test.ts` builds the module into a temporary directory and holds the rules above: its imports, its inputs, no engine id by the isolation ratchet's naming rule (with a build of the type-id module as the control), the license comment, that importing it under Node.js runs nothing, and that its `main` writes the bytes `bun run providers:lock` writes.
+
+`bun run lib:lock` (`scripts/check-lib-lock.ts`), run after `build:lib` and `lib:load`, runs the command the way an operator does, from the package as it is published, with no checkout of Studio and no download:
+
+1. It fails by name when `dist/providers-lock.mjs` is missing, and refuses a temporary root with an ancestor directory holding `node_modules`, as `lib:load` does.
+2. It packs the repository with `bun pm pack` and extracts it as `lib:load` does (`packPackage`), and fails when the packed package lacks `bin/studio.js`, `bin/lib/launcher-utils.mjs`, `bin/package.json` or `dist/providers-lock.mjs`, or when the module does not begin with acorn's license notice.
+3. It writes a probe providers directory of two packages, one scoped, each importing a `node:` built-in and a relative module, with engine ids that name no engine.
+4. It runs `node <package>/bin/studio.js providers lock --dir <probe>` with a 512 MB heap and a 120 s timeout, without `NODE_PATH` and `NODE_OPTIONS` and with `HOME` and `USERPROFILE` set to an empty directory, and expects exit 0 and `Wrote <probe>/providers.lock.json` first.
+5. Studio's reader, `readProvidersLock`, reads the lock and verifies both packages.
+6. The home directory is still empty, so nothing was downloaded or cached.
+7. `bun scripts/providers-lock.ts --dir <probe>`, run from the repository, writes the same bytes.
+8. The packed command refuses a `--dir` naming a regular file with exit 1 and its sentence, and answers `providers` alone with the usage and exit 2.
+
+The temporary root is always removed.
+Measured cost: the module build adds under a second to `build:lib`, and the whole check takes about 2 s.
+`tests/unit/check-lib-lock.test.ts` runs the check over a planted package root whose module is built by the same build function, and over a planted module that writes no lock, which the check names.
 
 ### The published engine id type (`DatabaseType`)
 
@@ -282,7 +308,7 @@ from `@arethetypeswrong/cli`, and `typescript-eslint` is seen via the `eslint.co
 
 As implemented in `.github/workflows/ci.yml`, the "Lint, Typecheck and Build" job runs, in order: Biome format
 check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typecheck, knip, `next build`,
-`build:lib`, `attw`, `lib:closure`, then `lib:load`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
+`build:lib`, `attw`, `lib:closure`, `lib:load`, then `lib:lock`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 In every workflow, the type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
@@ -734,7 +760,7 @@ One run is exact, because the projections read only authored members, which the 
 All three run inside `bun run test`, so none needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
 
-Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load`, the SDK's pack test ("The SDK tarball (`sdk:pack`)") and the out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`) are the only paths through a built artifact.
+Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load`, `lib:lock` and the lock module's build test ("The lock command module (`lib:lock`)"), the SDK's pack test ("The SDK tarball (`sdk:pack`)") and the out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`) are the only paths through a built artifact.
 
 `tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
 The other rows are held by the tests of the script that implements them.

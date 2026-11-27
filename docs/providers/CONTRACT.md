@@ -1103,7 +1103,7 @@ An import that settles after its deadline is never answered as loaded: its succe
 
 ### C-91 (normative): A package is read from the providers directory only where its lock entry names it
 
-An operator names the providers directory with `LIBREDB_PROVIDERS_DIR`, holding the lock, `providers.lock.json`, written by Studio's command `bun run providers:lock -- --dir <absolute directory>` and never by a package, and each package as `<name>/<version>/`, or `@scope/<name>/<version>/`, the name an npm package name of at most 214 characters and the version an exact version of at most 64.
+An operator names the providers directory with `LIBREDB_PROVIDERS_DIR`, holding the lock, `providers.lock.json`, written by Studio's command `libredb-studio providers lock --dir <absolute directory>` and never by a package, and each package as `<name>/<version>/`, or `@scope/<name>/<version>/`, the name an npm package name of at most 214 characters and the version an exact version of at most 64.
 A package's directory is resolved by real path, a link that stays inside the providers directory followed, and a directory or manifest entry that resolves outside it, or an entry that is not a regular file of the directory, is refused as `PROVIDER_PATH_OUTSIDE`.
 No connection's database file or host path may name the providers directory, a path in it or its lock.
 

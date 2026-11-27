@@ -73,7 +73,7 @@ The build runs in a temporary directory and writes nothing into the repository.
 ## Planes
 
 Tests resolve source: a package's `exports`, `main`, `module` and `types` point under its `src/`, and no test under `tests/` or `packages/<name>/tests/` imports a `dist/` path, `@libredb/studio` by name or a package's `dist/` subpath.
-`bun run lib:load`, the SDK's pack test (`packages/provider-sdk/tests/pack.test.ts`), which builds the tarball it reads, and the out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`), which packs the tarball it installs, are the only paths through a built artifact.
+`bun run lib:load`, `bun run lib:lock` and the lock module's build test (`tests/unit/scripts/build-lock-module.test.ts`), which builds the module it runs, the SDK's pack test (`packages/provider-sdk/tests/pack.test.ts`), which builds the tarball it reads, and the out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`), which packs the tarball it installs, are the only paths through a built artifact.
 `tests/unit/source-plane.test.ts` holds both rules.
 
 ## Gates

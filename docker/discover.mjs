@@ -742,8 +742,8 @@ export async function main({ env, request, fs, now, stdout, stderr, signals } = 
 
 /**
  * Whether this module is the program being run, rather than an import. Copied from
- * docker/bind-address.mjs, not imported, so each file in /usr/local/lib/libredb-studio stands alone; the
- * reasons for realpath and pathToFileURL are in that file's docblock.
+ * docker/bind-address.mjs, not imported, so this file imports nothing beside it in
+ * /usr/local/lib/libredb-studio; the reasons for realpath and pathToFileURL are in that file's docblock.
  */
 export function isDirectExecution(argv1, moduleUrl) {
   if (!argv1) return false;
