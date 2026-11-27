@@ -52,12 +52,8 @@ import {
   readArtifactIdentity,
   readBoundedFile,
 } from "../src/lib/provider-host/provider-artifact";
-import {
-  artifactFaultReason,
-  contractRefusal,
-  type PackageName,
-  schemaRefusal,
-} from "../src/lib/provider-host/provider-refusals";
+import { artifactFaultReason } from "../src/lib/provider-host/lock-refusals";
+import { contractRefusal, type PackageName, schemaRefusal } from "../src/lib/provider-host/provider-refusals";
 import {
   PACKAGE_NAME_FORM,
   PACKAGE_VERSION_FORM,

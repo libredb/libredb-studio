@@ -85,6 +85,7 @@ import {
   PACKAGE_JSON_BYTE_CAP,
   readBoundedFile,
 } from "./provider-artifact";
+import { packageRefusal } from "./lock-refusals";
 import { closureOutside } from "./provider-closure";
 import {
   admissionRefusal,
@@ -94,7 +95,6 @@ import {
   definitionRefusal,
   type PackageName,
   type PackageRefusal,
-  packageRefusal,
   schemaRefusal,
 } from "./provider-refusals";
 import type { VerifiedPackage } from "./providers-lock";

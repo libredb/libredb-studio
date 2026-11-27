@@ -24,7 +24,6 @@ import {
   PROVIDER_REFUSAL_CODES,
   PROVIDER_REFUSAL_RULES,
 } from "@/lib/provider-host/provider-refusals";
-import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
 import { type ProvidersLockRead, readProvidersLock } from "@/lib/provider-host/providers-lock";
 import {
   DIGEST_FORM,
@@ -35,6 +34,7 @@ import {
   LOCK_BYTE_CAP,
   LOCK_ENGINE_CAP,
   LOCK_ENTRY_CAP,
+  LOCK_FILE_NAME,
   LOCK_IMPORT_CAP,
   type LockEntry,
   PACKAGE_NAME_FORM,

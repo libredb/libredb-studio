@@ -27,10 +27,13 @@ function moduleFileOf(specifier: string, from: string): string | undefined {
 
 const transpilers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }) };
 
-/** The value import specifiers of one `.ts` or `.tsx` file (an absolute path), by the rules `valueImportClosure` states. */
+/**
+ * The value import specifiers of one `.ts` or `.tsx` file (an absolute path), by the rules `valueImportClosure` states.
+ * A leading `#!` line is removed first: Bun runs a script's `#!` line, and its TypeScript loader refuses one.
+ */
 function valueSpecifiersOf(file: string): string[] {
   const transpiler = file.endsWith(".tsx") ? transpilers.tsx : transpilers.ts;
-  return transpiler.scanImports(readFileSync(file, "utf8")).map(({ path }) => path);
+  return transpiler.scanImports(readFileSync(file, "utf8").replace(/^#![^\n]*/, "")).map(({ path }) => path);
 }
 
 /**

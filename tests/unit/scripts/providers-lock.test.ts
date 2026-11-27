@@ -9,7 +9,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import path from "node:path";
-import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
+import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
 import {
   artifactDirectoryOf,

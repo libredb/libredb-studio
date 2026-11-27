@@ -8,13 +8,16 @@
  * package.json or its manifest, no engine id, no key the package chose. The rules of `PROVIDER_SCHEMA_INVALID` and
  * `PROVIDER_RECORD_INVALID` are the SDK's own lists, imported; an admission refusal names the first one, with the
  * manifest's JSON pointer for a schema rule (every object of the schema is closed but `vendor`, which no rule points
- * into, so a pointer holds only the schema's own names and list positions), and how many more there are. A lock's
- * refusal names the lock file, the rule and, for a rule of the lock's shape, the JSON pointer and the key, both read
- * from the operator's own lock. An errno code may be named.
+ * into, so a pointer holds only the schema's own names and list positions), and how many more there are.
+ *
+ * The lock's rules and sentences and the sentences of the artifact module's rules live in `./lock-refusals`, with
+ * `lockRefusal`, `packageRefusal` and `artifactFaultReason`: the lock command (scripts/providers-lock.ts) prints them and
+ * ships to operators, so it reaches neither the SDK this module imports nor Studio's engine catalog. This module keeps
+ * the types of every refusal and the sentences of the refusals only Studio's read and admission draw.
  */
 import { DEFINITION_REFUSAL_RULES } from "@libredb/provider-sdk/calls";
 import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
-import { quoteTypeId } from "@/lib/db/type-id";
+import { LOCK_FILE_RULES, LOCK_SHAPE_RULES } from "./lock-refusals";
 
 /**
  * The rules across the whole set of admitted packages and Studio's bundled catalog (`catalogConflicts` in
@@ -48,31 +51,6 @@ export const PROVIDER_REFUSAL_CODES = Object.freeze([
 ] as const);
 
 export type ProviderRefusalCode = (typeof PROVIDER_REFUSAL_CODES)[number];
-
-/** The rules of the lock's shape, in the vocabulary of the SDK's manifest validator. */
-const LOCK_SHAPE_RULES = [
-  "unknown-key",
-  "missing-key",
-  "wrong-type",
-  "value-not-allowed",
-  "pattern-mismatch",
-  "out-of-range",
-  "too-few",
-  "too-many",
-  "duplicate",
-] as const;
-
-/** The rules of the providers directory and its lock as a whole. */
-const LOCK_FILE_RULES = [
-  "directory-missing",
-  "directory-not-a-directory",
-  "directory-unreadable",
-  "lock-missing",
-  "lock-not-a-file",
-  "lock-unreadable",
-  "lock-over-cap",
-  "lock-not-json",
-] as const;
 
 /** The provider loader's refusal reasons (src/lib/provider-loader/index.d.cts, `LoadRefusalReason`), by value. */
 export const LOADER_REFUSAL_REASONS = Object.freeze([
@@ -182,25 +160,8 @@ export interface LockRefusal {
   readonly sentence: string;
 }
 
-/** Why a package is refused, by rule. */
+/** Why a package is refused for an engine id or a name it collides on, by rule. */
 const PACKAGE_SENTENCES: Readonly<Record<string, string>> = {
-  "directory-outside": "its directory resolves outside the providers directory",
-  "artifact-link": "its directory holds a symbolic link or junction, which is never followed",
-  "artifact-special-file":
-    "its directory holds an entry that is neither a regular file nor a directory, which is never opened",
-  "entry-not-a-file": "the entry its manifest names is not a regular file of its directory",
-  "artifact-missing": "its directory does not exist",
-  "artifact-unreadable": "its directory could not be read",
-  "artifact-name": "its directory holds a name outside letters, digits and . _ - @ + ~, or longer than 255 characters",
-  "artifact-over-limit": "its directory holds more files or more levels of directories than an artifact may",
-  "digest-differs": "its files differ from the digest its lock entry pins",
-  "package-json-unreadable": "its package.json is missing, over its byte limit, or not a JSON object",
-  name: "its package.json names another package name",
-  version: "its package.json names another version",
-  "manifest-unreadable":
-    "its libredb-provider.json is missing, over its byte limit, not a JSON object, or its engines or runtime.entry are not in their form",
-  engines: "its manifest serves other engine ids than its lock entry names",
-  entry: "its manifest names another entry than its lock entry",
   "bundled-engine": "it serves an engine id Studio's bundled catalog serves",
   "shared-engine": "it serves an engine id another entry of the lock serves too",
   "registered-engine": "it serves an engine id a package admitted earlier in this process serves",
@@ -235,50 +196,6 @@ const ADMISSION_SENTENCES: Readonly<Record<string, Readonly<Record<string, strin
     "manifest-differs": "its record's manifest differs from its libredb-provider.json",
   },
 };
-
-/** Why a lock is refused, by rule. */
-const LOCK_SENTENCES: Readonly<Record<LockRule, string>> = {
-  "directory-missing": "the providers directory does not exist",
-  "directory-not-a-directory": "the providers directory is not a directory",
-  "directory-unreadable": "the providers directory could not be read",
-  "lock-missing": "the lock does not exist",
-  "lock-not-a-file": "the lock is not a regular file",
-  "lock-unreadable": "the lock could not be read",
-  "lock-over-cap": "the lock is over its byte limit",
-  "lock-not-json": "the lock is not UTF-8 JSON without a byte order mark",
-  "unknown-key": "the key is not in the lock's format",
-  "missing-key": "the key is missing",
-  "wrong-type": "the value is not of its type",
-  "value-not-allowed": "the value is not one the format allows",
-  "pattern-mismatch": "the value is not in its form",
-  "out-of-range": "the value is longer than its form allows",
-  "too-few": "the list has fewer items than its form allows",
-  "too-many": "the list has more items than its form allows",
-  duplicate: "the value appears twice",
-};
-
-/** ` (<errno>)` when there is one. */
-function errnoSuffix(errno: string | undefined): string {
-  return errno === undefined ? "" : ` (${errno})`;
-}
-
-/** Why the artifact module refused a package, in the lock's words: its rule's sentence and its errno code, if any. */
-export function artifactFaultReason(fault: ArtifactFault): string {
-  return `${PACKAGE_SENTENCES[fault.rule]}${errnoSuffix(fault.errno)}`;
-}
-
-/** The refusal of a package the artifact module refused. */
-export function packageRefusal(pkg: PackageName, fault: ArtifactFault): PackageRefusal {
-  const sentence = `${fault.code}: ${pkg.name} ${pkg.version}: ${artifactFaultReason(fault)}`;
-  return Object.freeze({
-    code: fault.code,
-    rule: fault.rule,
-    name: pkg.name,
-    version: pkg.version,
-    ...(fault.errno === undefined ? {} : { errno: fault.errno }),
-    sentence,
-  });
-}
 
 /** The refusal of a package that serves an engine id the bundled catalog serves. */
 export function bundledEngineRefusal(pkg: PackageName): PackageRefusal {
@@ -419,17 +336,4 @@ export interface LockRefusalDetail {
   readonly pointer?: string;
   readonly key?: string;
   readonly errno?: string;
-}
-
-/** The refusal of the lock as a whole. */
-export function lockRefusal(lockFile: string, rule: LockRule, detail: LockRefusalDetail = {}): LockRefusal {
-  const at = detail.pointer === undefined ? "" : `${rule} at ${detail.pointer === "" ? "the top" : detail.pointer}: `;
-  const key = detail.key === undefined ? "" : ` (key ${quoteTypeId(detail.key)})`;
-  return Object.freeze({
-    code: "PROVIDER_LOCK_INVALID",
-    rule,
-    lockFile,
-    ...detail,
-    sentence: `PROVIDER_LOCK_INVALID: ${lockFile}: ${at}${LOCK_SENTENCES[rule]}${key}${errnoSuffix(detail.errno)}`,
-  });
 }

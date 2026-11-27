@@ -14,4 +14,11 @@ describe("valueImportClosure", () => {
     // Nothing the root package.json names is followed: its dependencies are no import of the walk.
     expect(closure.packages).not.toContain("next");
   });
+
+  test("a script whose first line is #! is walked from its second line", () => {
+    // scripts/providers-key.ts starts with `#!/usr/bin/env bun`, which Bun's TypeScript loader refuses.
+    const closure = valueImportClosure("scripts/providers-key.ts");
+    expect(closure.modules).toContain("scripts/providers-lock.ts");
+    expect(closure.unresolved).toEqual([]);
+  });
 });

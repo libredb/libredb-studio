@@ -23,7 +23,8 @@ import {
 import type { DatabaseConnection } from "@/lib/db/types";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
-import { forgetProvidersDirectory, LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
+import { forgetProvidersDirectory } from "@/lib/provider-host/providers-dir";
+import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import {
   ADMITTED_FILE,
   ADMITTED_HOST_PATHS,

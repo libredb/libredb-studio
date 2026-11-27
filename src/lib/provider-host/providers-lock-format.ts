@@ -24,9 +24,14 @@
  *   is keyed by name (C-90).
  *
  * This module is pure: it reads no file. The lock reader reads the bytes; the lock command writes the text
- * `serializeProvidersLock` gives, which is the same for the same entries in any order.
+ * `serializeProvidersLock` gives, which is the same for the same entries in any order, under the file name
+ * `LOCK_FILE_NAME` in the providers directory.
  */
-import { type LockRefusal, type LockShapeRule, lockRefusal } from "./provider-refusals";
+import { lockRefusal } from "./lock-refusals";
+import type { LockRefusal, LockShapeRule } from "./provider-refusals";
+
+/** The lock's file name in the providers directory. */
+export const LOCK_FILE_NAME = "providers.lock.json";
 
 /** The format's version. */
 const LOCK_VERSION = 1;

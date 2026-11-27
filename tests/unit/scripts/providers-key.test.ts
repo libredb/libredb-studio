@@ -18,7 +18,7 @@ import { build } from "esbuild";
 import { declaredLanguageDataRequest, declaredSqlTextRequest } from "@/lib/db/server-catalog-compose";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { contractRefusal, schemaRefusal } from "@/lib/provider-host/provider-refusals";
-import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
+import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import {
   ACME_LANGUAGE_DATA,
   type EditableEngine,
@@ -339,6 +339,7 @@ describe("the key command", () => {
       [
         "../src/lib/db/grammar-digest",
         "../src/lib/db/language-digest",
+        "../src/lib/provider-host/lock-refusals",
         "../src/lib/provider-host/provider-artifact",
         "../src/lib/provider-host/provider-refusals",
         "../src/lib/provider-host/providers-lock-format",

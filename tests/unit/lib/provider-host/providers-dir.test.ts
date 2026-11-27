@@ -10,10 +10,10 @@ import path from "node:path";
 import { logger } from "@/lib/logger";
 import {
   forgetProvidersDirectory,
-  LOCK_FILE_NAME,
   providersDirectory,
   providersDirectoryCheck,
 } from "@/lib/provider-host/providers-dir";
+import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
 import { removeScratch, scratchDirectory } from "../../../helpers/provider-artifacts";
 import { MISSING_POSIX_SPECIAL_FILES } from "../../../helpers/special-files";
 

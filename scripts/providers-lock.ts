@@ -48,13 +48,14 @@ import {
   resolveArtifactDirectory,
   walkArtifact,
 } from "../src/lib/provider-host/provider-artifact";
-import { type ArtifactFault, type PackageName, packageRefusal } from "../src/lib/provider-host/provider-refusals";
-import { LOCK_FILE_NAME } from "../src/lib/provider-host/providers-dir";
+import { packageRefusal } from "../src/lib/provider-host/lock-refusals";
+import type { ArtifactFault, PackageName } from "../src/lib/provider-host/provider-refusals";
 import {
   IMPORT_FROM_FORM,
   IMPORT_SPECIFIER_FORM,
   LOCAL_SOURCE,
   LOCK_BYTE_CAP,
+  LOCK_FILE_NAME,
   LOCK_IMPORT_CAP,
   type ImportKind,
   type LockEntry,
