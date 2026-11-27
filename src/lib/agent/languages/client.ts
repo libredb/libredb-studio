@@ -12,9 +12,15 @@
  * none left out, and composed from its data by `declared-client.ts`; the registries in `server.ts`,
  * `index.ts` and `mcp.ts` read the same declared languages from `DECLARED_AGENT_LANGUAGES` here. Its keys are declared
  * in the order the projections in `agent-manifest.ts` list them, the module languages first.
+ *
+ * It is also where an engine's granted statement language meets the packs: `grantedAgentStatementLanguage` reads
+ * Studio's grant (`GRANTED_AGENT_STATEMENT_LANGUAGE` of the client-safe `@/lib/db/claim-grants.ts`), so the manifest
+ * and the engine registry read the grant through it rather than importing the grant record themselves.
  */
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
+import type { DatabaseType } from "@/lib/types";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
@@ -144,6 +150,18 @@ export function agentLanguageOfGrant(engine: string, granted: string | null): Ag
   throw new Error(
     `${engine} is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
   );
+}
+
+/**
+ * The agent's statement language for `type`: Studio's grant for it (`GRANTED_AGENT_STATEMENT_LANGUAGE`) read as the
+ * agent's language (`agentLanguageOfGrant`), or null where the grant is null and for a name that is no own key of the
+ * grant (`toString`).
+ *
+ * @throws {Error} Naming the engine and the language, where agent mode holds no pack for the granted language.
+ */
+export function grantedAgentStatementLanguage(type: DatabaseType): AgentStatementLanguageId | null {
+  if (!Object.hasOwn(GRANTED_AGENT_STATEMENT_LANGUAGE, type)) return null;
+  return agentLanguageOfGrant(type, GRANTED_AGENT_STATEMENT_LANGUAGE[type]);
 }
 
 /**

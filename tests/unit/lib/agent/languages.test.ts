@@ -16,6 +16,7 @@ import {
   AGENT_PACK_SHORTFALL_SENTENCES,
   evidenceEventSpec,
   agentLanguageOfGrant,
+  grantedAgentStatementLanguage,
   isPackEvidenceEvent,
   languageClientPack,
   projectClientPacks,
@@ -39,6 +40,7 @@ import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-langu
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "@/lib/agent/workflow-tool-sets";
 import type { AgentArtifactReference, AgentReadingDenyCode, AgentRunEvent } from "@/lib/agent/types";
+import type { DatabaseType } from "@/lib/types";
 
 /**
  * The language packs (#1821): the shared tables the core and the packs build together.
@@ -624,6 +626,13 @@ describe("the client packs", () => {
         `acme is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
       );
     }
+  });
+
+  test("a type's granted agent statement language is its grant read as the agent's language, and null for a type granted none and for a name that is no own key", () => {
+    expect(grantedAgentStatementLanguage("mongodb")).toBe("mongo");
+    expect(grantedAgentStatementLanguage("kafka")).toBe(shippedDeclaredLanguage("kafkaread"));
+    expect(grantedAgentStatementLanguage("bigquery")).toBeNull();
+    expect(grantedAgentStatementLanguage("toString" as DatabaseType)).toBeNull();
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

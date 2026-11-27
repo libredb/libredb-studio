@@ -8,12 +8,11 @@
  * and like the server registry it copies only `dialect` out of each engine module.
  *
  * An engine whose granted language its declaration states as data (`DECLARED_AGENT_LANGUAGES`) has no row: its family
- * is its grant (`GRANTED_AGENT_STATEMENT_LANGUAGE`), and its client facet is the family's own object.
+ * is its grant (`grantedAgentStatementLanguage`), and its client facet is the family's own object.
  */
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
-import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "../client";
+import { DECLARED_AGENT_LANGUAGES, grantedAgentStatementLanguage, languageClientPack } from "../client";
 import { INFLUXDB_CLIENT_OVERLAY } from "../influxql/engines/client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
 import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
@@ -103,7 +102,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
  * for a name that is no own key (`toString`).
  */
 function declaredFamily(type: DatabaseType): AgentStatementLanguageId | null {
-  const granted = Object.hasOwn(GRANTED_AGENT_STATEMENT_LANGUAGE, type) ? GRANTED_AGENT_STATEMENT_LANGUAGE[type] : null;
+  const granted = grantedAgentStatementLanguage(type);
   return DECLARED_AGENT_LANGUAGES.find(({ id }) => id === granted)?.id ?? null;
 }
 

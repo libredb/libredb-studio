@@ -280,7 +280,7 @@ describe("the exit of M3", () => {
     const listedNames = new Set(CORE_GRANT_RECORDS.map((entry) => entry.name));
     const found = listedModuleInputs(modules).filter(({ name }) => listedNames.has(name));
     expect(found).toHaveLength(12);
-    expect(new Set(found.map(({ file }) => file)).size).toBe(9);
+    expect(new Set(found.map(({ file }) => file)).size).toBe(10);
     for (const entry of CORE_GRANT_RECORDS) {
       for (const reader of readersOf(entry)) {
         expect(found.some(({ file, name }) => file === reader && name === entry.name)).toBe(true);
