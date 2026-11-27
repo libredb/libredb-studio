@@ -1159,12 +1159,12 @@ describe("the out-of-tree acceptance's pack, lock and build output steps", () =>
         return file;
       };
       write(".next/server/chunks/core.js", "export const core = 1;\n");
-      write("node_modules/pg/index.js", "module.exports = {};\n");
-      write("node_modules/@duckdb/node-api/index.js", "module.exports = {};\n");
+      write("node_modules/gamma-driver/index.js", "module.exports = {};\n");
+      write("node_modules/@acme/epsilon-driver/index.js", "module.exports = {};\n");
       write("public/logo.txt", "a public file\n");
-      // Turbopack's hashed external aliases, as measured in main's payload.
-      link(".next/node_modules/pg-587764f78a6c7a9c", "../../node_modules/pg");
-      link(".next/node_modules/@duckdb/node-api-7f7f433da97dfb54", "../../../node_modules/@duckdb/node-api");
+      // The shapes mirror Turbopack's external aliases measured on Studio's payload: one unscoped, one scoped.
+      link(".next/node_modules/gamma-driver-3a7c19e0b5d2f468", "../../node_modules/gamma-driver");
+      link(".next/node_modules/@acme/epsilon-driver-c6d2e8a0f47b1359", "../../../node_modules/@acme/epsilon-driver");
       const relative = (files: string[]) =>
         files.map((file) => path.relative(standalone, file).split(path.sep).join("/"));
       expect(relative(acceptance.buildScanFiles(standalone))).toEqual([".next/server/chunks/core.js"]);

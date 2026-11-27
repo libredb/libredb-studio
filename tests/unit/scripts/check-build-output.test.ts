@@ -92,7 +92,7 @@ function repository(options: { beta?: boolean; extra?: Readonly<Record<string, s
 function standalone(files: Readonly<Record<string, string>> = {}): string {
   return planted("standalone", {
     ".next/server/chunks/core.js": "export const core = 1;\n",
-    "node_modules/pg/index.js": "module.exports = {};\n",
+    "node_modules/clean-dep/index.js": "module.exports = {};\n",
     ...files,
   });
 }
@@ -229,7 +229,7 @@ describe("the build output check", () => {
     expect(files.map((file) => path.relative(across, file).split(path.sep).join("/"))).toEqual([
       ".next/server/chunks/core.js",
       ".next/server/chunks/named.js",
-      "node_modules/pg/index.js",
+      "node_modules/clean-dep/index.js",
     ]);
     const labelled = new Map([
       [new Bun.CryptoHasher("sha256").update("module.exports = {};\n").digest("hex"), "a label"],
@@ -310,7 +310,7 @@ describe("the build output check", () => {
       err: [`${path.join(copied, ".next", "copy.js")} equals cli-provider's src/index.ts`],
     });
 
-    const noNext = planted("no-next", { "node_modules/pg/index.js": "module.exports = {};\n" });
+    const noNext = planted("no-next", { "node_modules/clean-dep/index.js": "module.exports = {};\n" });
     expect(spawn(["--standalone", noNext, named]).err).toEqual([
       `check-build-output: ${noNext} holds no .next directory`,
     ]);
@@ -341,17 +341,17 @@ describe("the build output check", () => {
   });
 
   test("a link in the payload whose target lies inside its .next and node_modules is accepted, its target still read where it lives", () => {
-    // Turbopack's hashed external aliases as measured in main's payload, one of them scoped.
+    // The shapes mirror Turbopack's external aliases measured on Studio's payload: two unscoped, one scoped.
     const payload = standalone({
-      "node_modules/ssh2/package.json": `${JSON.stringify({ name: "ssh2" })}\n`,
-      "node_modules/ssh2/lib/client.js": "module.exports = 'ssh2';\n",
-      "node_modules/mongodb/lib/index.js": "module.exports = 'mongodb';\n",
-      "node_modules/@duckdb/node-api/lib/index.js": "module.exports = 'duckdb';\n",
+      "node_modules/gamma-driver/package.json": `${JSON.stringify({ name: "gamma-driver" })}\n`,
+      "node_modules/gamma-driver/lib/client.js": "module.exports = 'gamma-driver';\n",
+      "node_modules/delta-driver/lib/index.js": "module.exports = 'delta-driver';\n",
+      "node_modules/@acme/epsilon-driver/lib/index.js": "module.exports = 'epsilon-driver';\n",
     });
     const aliases = [
-      [".next/node_modules/ssh2-f3b551c9be6f736f", "../../node_modules/ssh2"],
-      [".next/node_modules/mongodb-438b504308ffa4be", "../../node_modules/mongodb"],
-      [".next/node_modules/@duckdb/node-api-7f7f433da97dfb54", "../../../node_modules/@duckdb/node-api"],
+      [".next/node_modules/gamma-driver-3a7c19e0b5d2f468", "../../node_modules/gamma-driver"],
+      [".next/node_modules/delta-driver-9e41b07d2c5a8f13", "../../node_modules/delta-driver"],
+      [".next/node_modules/@acme/epsilon-driver-c6d2e8a0f47b1359", "../../../node_modules/@acme/epsilon-driver"],
     ] as const;
     for (const [alias, target] of aliases) plantLink(payload, alias, target);
 
@@ -362,9 +362,9 @@ describe("the build output check", () => {
     expect(passed.lines[0]).toContain(`none of 6 files under ${path.join(payload, ".next")} and node_modules`);
 
     // An accepted link is no hole: a provider package's file under its target fails by the target's path.
-    writeFile(payload, "node_modules/ssh2/lib/copied.js", SOURCE_TEXT);
+    writeFile(payload, "node_modules/gamma-driver/lib/copied.js", SOURCE_TEXT);
     expect(run(root, payload).problems).toEqual([
-      `${path.join(payload, "node_modules", "ssh2", "lib", "copied.js")} equals ${PACKAGE_NAME}'s src/index.ts`,
+      `${path.join(payload, "node_modules", "gamma-driver", "lib", "copied.js")} equals ${PACKAGE_NAME}'s src/index.ts`,
     ]);
   });
 
