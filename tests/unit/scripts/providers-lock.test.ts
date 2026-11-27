@@ -9,7 +9,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import path from "node:path";
-import { LOCK_ENTRY_CAP, LOCK_FILE_NAME } from "@/lib/provider-host/providers-lock-format";
+import * as lockFormat from "@/lib/provider-host/providers-lock-format";
+import {
+  LOCK_BYTE_CAP,
+  LOCK_ENGINE_CAP,
+  LOCK_ENTRY_CAP,
+  LOCK_FILE_NAME,
+  LOCK_IMPORT_CAP,
+} from "@/lib/provider-host/providers-lock-format";
 import { readProvidersLock } from "@/lib/provider-host/providers-lock";
 import { boundedChild } from "../../helpers/bounded-node-child";
 import {
@@ -366,6 +373,100 @@ describe("the lock command", () => {
     // Neither the lock nor a temporary file of it is left.
     expect(fs.readdirSync(providers).filter((name) => name.includes(LOCK_FILE_NAME))).toEqual([]);
   });
+
+  test("every lock the command writes is admitted by the reader, at each cap", () => {
+    // Each cap the format module exports has its case here; a new cap fails this until it gets one.
+    expect(
+      Object.keys(lockFormat)
+        .filter((name) => name.endsWith("_CAP"))
+        .sort(),
+    ).toEqual(["LOCK_BYTE_CAP", "LOCK_ENGINE_CAP", "LOCK_ENTRY_CAP", "LOCK_IMPORT_CAP"]);
+    /** Locks `providers` and answers the stderr and whether every package of the written lock is verified. */
+    const lockAndRead = (providers: string): { stderr: string; verified: number | null } => {
+      const run = runCommand("--dir", providers);
+      if (run.exitCode !== 0) return { stderr: run.stderr, verified: null };
+      const read = readProvidersLock(providers);
+      return { stderr: run.stderr, verified: read.read ? read.packages.filter((pkg) => pkg.verified).length : -1 };
+    };
+    const refusedWith = (sentence: string) => ({
+      stderr: `${sentence}\nproviders:lock wrote nothing\n`,
+      verified: null,
+    });
+
+    // Entries.
+    const entries = freshProviders();
+    for (let index = 0; index < LOCK_ENTRY_CAP; index += 1) writeArtifact(entries, numbered(index));
+    expect(lockAndRead(entries)).toEqual({ stderr: "", verified: LOCK_ENTRY_CAP });
+    fs.rmSync(path.join(entries, LOCK_FILE_NAME));
+    writeArtifact(entries, numbered(LOCK_ENTRY_CAP));
+    expect(lockAndRead(entries)).toEqual(
+      refusedWith(`providers:lock: the lock would hold ${LOCK_ENTRY_CAP + 1} entries, more than the 256 Studio reads`),
+    );
+
+    // Engine ids of one entry.
+    const engines = (count: number): FixturePackage => ({
+      name: "acme-engines",
+      version: "1.0.0",
+      engines: Array.from({ length: count }, (_, index) => `acmeengine${index}`),
+    });
+    const atEngineCap = freshProviders();
+    writeArtifact(atEngineCap, engines(LOCK_ENGINE_CAP));
+    expect(lockAndRead(atEngineCap)).toEqual({ stderr: "", verified: 1 });
+    const overEngineCap = freshProviders();
+    writeArtifact(overEngineCap, engines(LOCK_ENGINE_CAP + 1));
+    expect(lockAndRead(overEngineCap)).toEqual(
+      refusedWith(
+        "PROVIDER_IDENTITY_MISMATCH: acme-engines 1.0.0: its libredb-provider.json is missing, over its byte limit, not a JSON object, or its engines or runtime.entry are not in their form",
+      ),
+    );
+
+    // Imports of one entry.
+    const importing = (specifiers: readonly string[]): FixturePackage => ({
+      name: "acme-imports",
+      version: "1.0.0",
+      engines: ["acmeimports"],
+      files: { "dist/index.mjs": specifiers.map((specifier) => `import "${specifier}";\n`).join("") },
+    });
+    const short = (count: number) => Array.from({ length: count }, (_, index) => `./${index}.mjs`);
+    const atImportCap = freshProviders();
+    writeArtifact(atImportCap, importing(short(LOCK_IMPORT_CAP)));
+    expect(lockAndRead(atImportCap)).toEqual({ stderr: "", verified: 1 });
+    const overImportCap = freshProviders();
+    writeArtifact(overImportCap, importing(short(LOCK_IMPORT_CAP + 1)));
+    expect(lockAndRead(overImportCap)).toEqual(
+      refusedWith(`providers:lock: acme-imports 1.0.0: its module files hold more than ${LOCK_IMPORT_CAP} imports`),
+    );
+
+    // Bytes: the most imports of 1,000-character specifiers whose lock is within the byte cap, then one more.
+    const long = (count: number) =>
+      Array.from({ length: count }, (_, index) => `./${"a".repeat(990)}${String(index).padStart(4, "0")}.mjs`);
+    const bytesOf = (count: number) =>
+      Buffer.byteLength(
+        lockFormat.serializeProvidersLock([
+          {
+            name: "acme-imports",
+            version: "1.0.0",
+            engines: ["acmeimports"],
+            entry: "dist/index.mjs",
+            digest: `sha256:${"0".repeat(64)}`,
+            source: "local",
+            imports: long(count).map((specifier) => ({ from: "dist/index.mjs", specifier, kind: "import" })),
+          },
+        ]),
+      );
+    let most = 0;
+    while (bytesOf(most + 1) <= LOCK_BYTE_CAP) most += 1;
+    expect(most).toBeLessThan(LOCK_IMPORT_CAP);
+    const atByteCap = freshProviders();
+    writeArtifact(atByteCap, importing(long(most)));
+    expect(lockAndRead(atByteCap)).toEqual({ stderr: "", verified: 1 });
+    expect(fs.statSync(path.join(atByteCap, LOCK_FILE_NAME)).size).toBe(bytesOf(most));
+    const overByteCap = freshProviders();
+    writeArtifact(overByteCap, importing(long(most + 1)));
+    expect(lockAndRead(overByteCap)).toEqual(
+      refusedWith(`providers:lock: the lock would be over its byte limit of ${LOCK_BYTE_CAP} bytes`),
+    );
+  }, 120_000);
 
   test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {
     const providers = freshProviders();

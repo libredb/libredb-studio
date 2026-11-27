@@ -2919,6 +2919,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the command records every static import of each module file, sorted and once each, and Studio's read admits the lock",
         "the command refuses a module file its parser cannot read, a specifier outside its form, too many imports and a lock over its byte limit, writing nothing",
         "the scanner records the same imports under Node and under Bun",
+        "every lock the command writes is admitted by the reader, at each cap",
       ],
     },
   },
