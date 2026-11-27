@@ -909,23 +909,34 @@ function refusedNameRefusals(
   return refusals;
 }
 
+/** One text's list of the values Studio fills into it, frozen, with each name kept as its literal type. */
+function fills<const Names extends readonly string[]>(...names: Names): Readonly<Names> {
+  return Object.freeze(names);
+}
+
 /**
  * The values Studio fills into each text of a statement language's agent part, by the text's group and name under
  * `statementLanguageData.agent.text`: rows, the most rows a read answers; seconds, the most seconds a read runs; noun,
  * what the inventory calls one of its objects; allowed, the most rows a refused read may ask for. A text names only its
- * own values in a fill, which `agentTextRefusals` holds; core fills each text from this table.
+ * own values in a fill, which `agentTextRefusals` holds; core fills each text from this table. The table is frozen
+ * whole, each text's list of fills included.
  */
 export const AGENT_TEXT_FILLS = Object.freeze({
-  copy: Object.freeze({ subject: [], noun: [], writes: [], reached: [], defect: [] }),
-  investigation: Object.freeze({ classifierDescription: [], objective: [], toolDescription: [], toolRule: [] }),
-  posture: Object.freeze({
-    qualifier: ["rows", "seconds"],
-    title: ["rows", "seconds"],
-    body: ["rows", "seconds"],
-    handover: ["rows", "seconds"],
+  copy: Object.freeze({ subject: fills(), noun: fills(), writes: fills(), reached: fills(), defect: fills() }),
+  investigation: Object.freeze({
+    classifierDescription: fills(),
+    objective: fills(),
+    toolDescription: fills(),
+    toolRule: fills(),
   }),
-  grounding: Object.freeze({ omissionAdvice: [], ungrounded: ["noun"] }),
-  advice: Object.freeze({ rowCap: ["allowed"], shape: [] }),
+  posture: Object.freeze({
+    qualifier: fills("rows", "seconds"),
+    title: fills("rows", "seconds"),
+    body: fills("rows", "seconds"),
+    handover: fills("rows", "seconds"),
+  }),
+  grounding: Object.freeze({ omissionAdvice: fills(), ungrounded: fills("noun") }),
+  advice: Object.freeze({ rowCap: fills("allowed"), shape: fills() }),
 } as const satisfies {
   readonly [Group in keyof AgentLanguageText]: { readonly [Name in keyof AgentLanguageText[Group]]: readonly string[] };
 });

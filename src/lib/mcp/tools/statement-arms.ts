@@ -35,9 +35,10 @@ import { mcpStatementEngines } from "./served-engines";
  *
  * The record holds every statement language because the facet registry (`AGENT_LANGUAGE_MCP_FACETS` in
  * `src/lib/agent/languages/mcp.ts`) does, so a module language that joins agent mode does not compile until it decides
- * its MCP arm: a tool, or null while none exists; a language declared as data has the null arm, no MCP tool yet. This module names no language: the tool, its words and its input field come
- * from the language's own facet, and an arm's engines come from the one served-engine resolver (`served-engines.ts`),
- * so registration, the handler's gate, the description and `list_connections`' `read_tool` all read one list.
+ * its MCP arm: a tool, or null while none exists; a language declared as data has the null arm, no MCP tool yet. This
+ * module names no language: the tool, its words and its input field come from the language's own facet, and an arm's
+ * engines come from the one served-engine resolver (`served-engines.ts`), so registration, the handler's gate, the
+ * description and `list_connections`' `read_tool` all read one list.
  *
  * An arm whose facet pages with offset keeps `checkReadOnlyStatement` as its fence and the shared refusal texts, so a
  * SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and fences it with

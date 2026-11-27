@@ -4468,6 +4468,14 @@ describe("rules the schema cannot state", () => {
       grounding: { omissionAdvice: [], ungrounded: ["noun"] },
       advice: { rowCap: ["allowed"], shape: [] },
     });
+    // The exported table is frozen whole: the table, each group and each text's list of fills.
+    expect(Object.isFrozen(AGENT_TEXT_FILLS)).toBe(true);
+    for (const texts of Object.values(AGENT_TEXT_FILLS)) {
+      expect(Object.isFrozen(texts)).toBe(true);
+      for (const fills of Object.values(texts as Record<string, readonly string[]>)) {
+        expect(Object.isFrozen(fills)).toBe(true);
+      }
+    }
     // The table names every text of the schema, and no other.
     const definitions = JSON.parse(SCHEMA_BYTES.toString("utf8")).$defs;
     const groups = definitions.agentLanguageText.properties as Record<string, { $ref: string }>;
