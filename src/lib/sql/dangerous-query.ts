@@ -669,8 +669,10 @@ export interface StatementReading {
 }
 
 /**
- * The grants of the reading of no connection: its grammar is Studio's own no-connection grammar, which no register row
- * reviews and which declares no exempt form, so the text is read as SQL and no claim loosens the gate.
+ * The grants of the reading of no connection: its grammar is Studio's own no-connection grammar, not an engine's. A
+ * register row reviews what an engine declares, and with no connection there is no engine and nothing declared for a
+ * row to review, so this grammar is read as reviewed: Studio wrote it, as it writes the gate. It declares no exempt
+ * form, so the text is read as SQL and no claim loosens the gate.
  */
 const NO_CONNECTION_GRANTS: GateGrants = Object.freeze({
   reviewedGrammar: true,
@@ -735,8 +737,10 @@ function reviewedGrammarOf(reading: StatementReading): SqlGrammar {
  * The granted forms are a deduplicated subset of the declared ones (`grantSqlText` in `@/lib/db/claim-grants`), so
  * grants as long as the declaration are the same forms, and the grammar is returned as it is, which keeps the shipped
  * grammars on their own objects and on the caches keyed by them; otherwise the gate reads a copy, made per call, which
- * is a new key for those caches. Resolution itself is left alone, because every other reader of a grammar reads it as
- * declared.
+ * is a new key for those caches. The shortcut holds for a package engine's reading too: `grantSqlText` grants a
+ * deduplicated subset of the forms of the same declaration that `grammarFromFacts` (`@/lib/db/sql-grammar`) copies
+ * into the record's statement grammar, so there as well grants as long as the grammar's forms are every one of them.
+ * Resolution itself is left alone, because every other reader of a grammar reads it as declared.
  *
  * @throws {Error} `grantsWithoutGrammarDefect(reading.engine)`, a host defect, where the reading holds no grammar.
  */

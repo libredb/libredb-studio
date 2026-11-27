@@ -69,6 +69,8 @@ function repoRelative(file: string): string {
 /**
  * The members of `closure` that are a module of a language in `declared`: a file under the language's family
  * directory, or the `destructive.ts` of the engine's legacy provider where its code is a directory.
+ *
+ * @throws {Error} Naming the engine, where a declared engine's provider code is missing.
  */
 function declaredLanguageModules(closure: readonly string[], declared: readonly DeclaredLanguage[]): string[] {
   return closure.filter((member) =>
@@ -77,6 +79,11 @@ function declaredLanguageModules(closure: readonly string[], declared: readonly 
         return true;
       }
       const code = providerTriad(ROOT, engine as DatabaseType).code;
+      if (!existsSync(code)) {
+        throw new Error(
+          `The engine ${engine} declares its statement language ${name} as data, but its provider code ${repoRelative(code)} is missing, so this check cannot tell whether the gate imports that code's destructive.ts.`,
+        );
+      }
       return statSync(code).isDirectory() && member === repoRelative(path.join(code, "destructive.ts"));
     }),
   );
