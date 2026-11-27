@@ -1,12 +1,14 @@
 /**
  * The host core's tree call (src/lib/provider-host/core/objects.ts; docs/providers/CONTRACT.md, clause C-64): a tree
  * call is checked before it is made and refused as a record, runs on a context and request frozen in place, is waited
- * for until the call's signal, and answers the session's own answer by reference, as the console calls answer theirs.
+ * for until the call's signal, and reads its answer with `checkTreeAnswer` against its action's form: one that is not
+ * that form is refused as a record, and one that is is answered as the session's own answer, by reference, as the
+ * console calls answer theirs.
  *
  * Every session here is a fake whose `tree` the test drives through promises it settles itself; no assertion follows a
  * timer. `objects-bounds.test.ts` holds a tree call that never settles, with a real deadline, in a bounded Node child.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   type CallContext,
@@ -18,6 +20,8 @@ import {
 import type { Calls, ObjectModel } from "@libredb/provider-sdk/manifest";
 import type { HostCallPorts } from "@/lib/provider-host/core/console";
 import { type ObjectsSession, treeCall } from "@/lib/provider-host/core/objects";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { createMockProvider } from "../../../../helpers/mock-provider";
 
 const HOUR = 3_600_000;
 const marker = (): string => randomUUID();
@@ -370,5 +374,85 @@ describe("treeCall", () => {
     expect((defect as Error).message).toBe(
       "The session offers objects.tree and has no tree function, a defect of the host's session.",
     );
+  });
+
+  test("a malformed tree answer is refused at the core as the package's defect", async () => {
+    const { ports, late } = portsOf();
+    const extra = `k${marker()}`;
+    const planted = marker();
+    // Each answer is the package's, and not its request's action's form (clause C-62).
+    const cases: [TreeRequest, unknown, CallRefusal[]][] = [
+      [
+        { action: "list", container: [marker()], kind: "table" },
+        { containers: [] },
+        [
+          { rule: "tree-answer-unreadable", pointer: "/containers", name: "containers" },
+          { rule: "tree-answer-unreadable", pointer: "/objects" },
+        ],
+      ],
+      [
+        { action: "count", container: [marker()] },
+        { counts: { table: { count: -1 } }, [extra]: planted },
+        [
+          { rule: "tree-answer-unreadable", pointer: "/counts/table/count" },
+          { rule: "tree-answer-unreadable", pointer: `/${extra}`, name: extra },
+        ],
+      ],
+      [
+        { action: "containers", parent: [marker()] },
+        { containers: [], needsConfiguration: planted },
+        [{ rule: "tree-answer-unreadable", pointer: "/needsConfiguration" }],
+      ],
+      [
+        { action: "describe", path: [marker()], kind: "view" },
+        planted,
+        [{ rule: "tree-answer-unreadable", pointer: "" }],
+      ],
+    ];
+
+    for (const [request, answer, refusals] of cases) {
+      const fx = sessionOf(async () => answer as TreeAnswer);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each record is its own call's.
+      const record = await treeCall(fx.session, request, contextOf(), ports);
+      expect(record).toEqual({ kind: "refused", called: true, refusals });
+      expect(fx.reads).toHaveLength(1);
+      expect(JSON.stringify(record)).not.toContain(planted);
+    }
+    expect(late).toEqual([]);
+  });
+
+  test("a bridged session's tree answer is held to the same form, and a well-formed one is answered by reference", async () => {
+    const { ports } = portsOf();
+    const objects = [{ path: ["app", marker()], name: marker(), kind: "table" }];
+    const provider = createMockProvider({
+      capabilities: {
+        containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+        objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+      },
+      objects,
+    });
+    const { session } = bridgedConsole(provider, {});
+
+    const listed = await treeCall(session, { action: "list", container: ["app"], kind: "table" }, contextOf(), ports);
+    if (listed.kind !== "answered") throw new Error(`An answer was expected, not ${listed.kind}.`);
+    expect(listed.answer.objects).toBe(objects);
+
+    // The legacy provider's own answer, which the bridge passes by reference, held to its action's form.
+    provider.listObjects = mock(async () => [{ path: ["app"], name: 1, kind: "table" }]) as never;
+    provider.describeObjects = mock(async () => ({ details: [] }) as never);
+    const refused = await treeCall(session, { action: "list", container: ["app"], kind: "table" }, contextOf(), ports);
+    const batch = await treeCall(
+      session,
+      { action: "describeMany", container: ["app"], kind: "table", limit: 1 },
+      contextOf(),
+      ports,
+    );
+
+    expect(refused).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "tree-answer-unreadable", pointer: "/objects/0/name" }],
+    });
+    expect(batch).toEqual({ kind: "answered", answer: { details: [] } });
   });
 });

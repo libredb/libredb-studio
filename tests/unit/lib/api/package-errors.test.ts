@@ -6,8 +6,8 @@
  * its log line naming each pointer and the closes that failed, and its answer each pointer only where a row grants the
  * package's words;
  * any other value is the package's own error, logged once through core's scrub on both grants and answered by its
- * record's grant: an open's as a not-sent `ConnectionError`, an execute's as Studio's sentence naming its code or as
- * raised. A package's warnings reach the client only as Studio's sentence naming their count. The refused records are
+ * record's grant: an open's as a not-sent `ConnectionError`, an execute's and a tree read's as Studio's sentence naming
+ * its code or as raised. A package's warnings reach the client only as Studio's sentence naming their count. The refused records are
  * built by hand and read by the real accessor (`refusalError`).
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -208,6 +208,97 @@ describe("packageFailureAnswer", () => {
       } finally {
         error.mockRestore();
       }
+    }
+  });
+
+  test("a tree answer the core refused is the package's defect on both grants, and a package's tree error is answered by its grant", () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const malformed = refused([{ rule: "tree-answer-unreadable", pointer: `/objects/0/${key}`, name: key }]);
+    const sentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(malformed.refusals[0] as CallRefusal)}`;
+
+    // A tree read sends no statement that changes anything, and may still have run: answered as an execute's is.
+    for (const [engine, client] of [
+      [CODE_ONLY, codeOnlyDefectSentence("tree-answer-unreadable")],
+      [GRANTED, sentence],
+    ] as const) {
+      let answered: unknown;
+      let logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        answered = packageFailureAnswer(engine, "tree read", malformed, scrub, ROUTE);
+        logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+      } finally {
+        error.mockRestore();
+      }
+      expect(answered).not.toBeInstanceOf(HostDefectError);
+      expect(answered).not.toBeInstanceOf(ConnectionError);
+      expect([(answered as Error).message, errorOutcome(answered)]).toEqual([client, "unknown"]);
+      expect(logged).toEqual([["A provider package's tree read failed", sentence]]);
+    }
+
+    // A package's own tree error: Studio's sentence where no row grants its words, as raised where one does, logged
+    // once through core's scrub on both.
+    const thrown = new Error(`refused as ${secret}`);
+    for (const [engine, expected] of [
+      [CODE_ONLY, "The provider package's tree read failed (INTERNAL_ERROR); the server's log holds its words."],
+      [GRANTED, thrown.message],
+    ] as const) {
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        const answered = packageFailureAnswer(engine, "tree read", thrown, scrub, ROUTE);
+        expect((answered as Error).message).toBe(expected);
+        expect(errorOutcome(answered)).toBe("unknown");
+        expect(error.mock.calls.map(([line]) => line)).toEqual(["A provider package's tree read failed"]);
+        expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+      } finally {
+        error.mockRestore();
+      }
+    }
+
+    // A legacy record's refused tree answer is Studio's own provider's: as raised, nothing logged here.
+    expect(
+      errorLines(() => expect(packageFailureAnswer(LEGACY, "tree read", malformed, scrub, ROUTE)).toBe(malformed)),
+    ).toEqual([]);
+  });
+
+  test("a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read", () => {
+    // A password holding a slash and a tilde, which a JSON Pointer writes as ~1 and ~0, so it is found as written there too.
+    const slashed = `${randomUUID()}/~${randomUUID()}`;
+    const slashedScrub = providerTextScrub(
+      { id: "conn-2", name: "Keys", type: "postgres", host: "kv.local", password: slashed } as DatabaseConnection,
+      "any",
+    );
+    const escaped = slashed.replaceAll("~", "~0").replaceAll("/", "~1");
+    const clean: CallRefusal = { rule: "tree-answer-unreadable", pointer: "/objects/0/name" };
+    for (const [call, refusals, connectionScrub, password] of [
+      [
+        "execute",
+        [{ rule: "execute-answer-unreadable", pointer: `/warnings/0/${secret}`, name: secret }],
+        scrub,
+        secret,
+      ],
+      ["tree read", [{ rule: "tree-answer-unreadable", pointer: `/objects/0/${secret}`, name: secret }], scrub, secret],
+      [
+        "tree read",
+        [clean, { rule: "tree-answer-unreadable", pointer: `/counts/${escaped}/count` }],
+        slashedScrub,
+        slashed,
+      ],
+    ] as const) {
+      const malformed = refused([...refusals]);
+      const expected = `${PACKAGE_DEFECT_PREFIX} ${refusals.length === 2 ? `${callRefusalSentence(clean)} ` : ""}${PROVIDER_TEXT_WITHHELD}`;
+      let answered: unknown;
+      let logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        answered = packageFailureAnswer(GRANTED, call, malformed, connectionScrub, ROUTE);
+        logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+      } finally {
+        error.mockRestore();
+      }
+      expect((answered as Error).message).toBe(expected);
+      expect(logged).toEqual([[`A provider package's ${call} failed`, expected]]);
+      expect(JSON.stringify([(answered as Error).message, logged])).not.toContain(password.slice(0, 36));
     }
   });
 

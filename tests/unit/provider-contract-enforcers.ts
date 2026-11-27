@@ -2053,6 +2053,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources",
         "a close that fails beside a refused answer is thrown with the refusal first",
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
+        "a served tree answer outside its action's form is refused on the host side with the core's refusals",
       ],
     },
   },
@@ -2578,6 +2579,44 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
     schema: ["/$defs/calls/properties/objects", "/$defs/objectsCalls/properties/tree"],
+  },
+  "C-62": {
+    tests: {
+      "packages/provider-sdk/tests/calls/answers.test.ts": [
+        "a tree answer outside its action's form is refused as tree-answer-unreadable at its pointer, a key it cannot have named and no value carried",
+        "needsConfiguration under a parent or beside a container, and more details than the request's limit, are refused as tree-answer-unreadable",
+        "a getter in a tree answer is refused and never called, and an optional member present with no value reads as absent",
+        "a well-formed answer of each action passes, an inherited key name included, without throwing",
+        "a tree answer the check reads is answered as itself, by reference, and a refused one as its refusals alone",
+        "a member of another arm of a union present with no value reads as absent, so the arm its defined keys name is read",
+        "a tree answer whose reading throws is refused at the pointer being read, and the check never throws",
+        "an answer list with an own key that is neither an index nor its length is refused at that key, by name",
+        "each member of a tree answer is read once, so a trap that answers anew on a later reading never makes the check throw",
+        "a tree answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it",
+      ],
+      "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
+        "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
+      ],
+      "packages/provider-sdk/tests/testing/serve.test.ts": [
+        "a served tree answer outside its action's form is refused on the host side with the core's refusals",
+      ],
+      "tests/unit/lib/provider-host/core/objects.test.ts": [
+        "a malformed tree answer is refused at the core as the package's defect",
+        "a bridged session's tree answer is held to the same form, and a well-formed one is answered by reference",
+      ],
+      "tests/unit/lib/api/object-tree.test.ts": [
+        "a tree answer the core refuses as tree-answer-unreadable is answered as a host defect naming the rule, with no check of the facade's own",
+      ],
+      "tests/api/db-objects.test.ts": [
+        "a member of another arm of a count present with no value reads as absent, so the client gets the arm its values name",
+      ],
+      "tests/unit/db/object-kinds.test.ts": [
+        "isCountUnavailable, isCountSampled and isIndexesUnavailable read an arm by its member's value, never by its presence",
+      ],
+      "tests/unit/lib/query-generators.test.ts": [
+        "a piece's member of another arm present with no value reads as absent, so the arm its values name is written",
+      ],
+    },
   },
   "C-66": {
     tests: {
@@ -3184,6 +3223,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/calls/answers.test.ts": [
         "an execute answer's result list, first row count, execution time, warning list or warning outside the SDK's types is refused as execute-answer-unreadable at its pointer, a getter never called",
         "an execute answer's refusal sentence names the pointer and the key, never a value",
+        "an optional execute answer member present with no value reads as absent, as it does in a tree answer",
+        "an execute answer whose reading throws is refused at the pointer being read, and the check never throws",
+        "an execute answer list longer than its bound is refused at the list before any item is read, and its first hole is refused once and ends it",
+      ],
+      "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
+        "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
@@ -3192,6 +3237,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a malformed execution time, row count or warning list is refused at the core as the package's defect",
         "a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list",
         "closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed",
+      ],
+      "tests/unit/lib/provider-host/core/objects.test.ts": [
+        "a malformed tree answer is refused at the core as the package's defect",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
@@ -3216,8 +3264,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",
+        "a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
+        "a tree answer the core refused is the package's defect on both grants, and a package's tree error is answered by its grant",
       ],
     },
   },

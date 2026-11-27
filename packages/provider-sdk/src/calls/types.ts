@@ -656,6 +656,18 @@ export type TreeAnswer =
   | ObjectDetailBatch;
 
 /**
+ * The form a request of action `A` answers: the one `checkTreeAnswer` holds the answer to, so a reader past that check
+ * reads its action's member as typed.
+ */
+export type TreeAnswerOf<A extends TreeAction> = {
+  readonly containers: TreeContainersAnswer;
+  readonly count: TreeCountAnswer;
+  readonly list: TreeListAnswer;
+  readonly describe: TreeDescribeAnswer;
+  readonly describeMany: ObjectDetailBatch;
+}[A];
+
+/**
  * The object facets. Each is implemented exactly when the manifest's `calls.objects` offers it. Written as methods so
  * an implementation over its own handle type is a `ProviderImpl<unknown>` too.
  */

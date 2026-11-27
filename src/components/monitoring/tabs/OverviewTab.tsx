@@ -102,9 +102,9 @@ export function OverviewTab({ offer, data, loading, history = [] }: OverviewTabP
   // A floor, and not the whole count, when the provider names what it counted from: etcd counts
   // only the ranges a user who is not root may read. The mark is `+` in the number's own text and
   // the sentence is the tree's floor-badge wording (`formatCount` in object-tree/flatten.ts), its
-  // `en-US` digit grouping included, so one floor reads one way on both surfaces. PRESENCE decides,
-  // as `isCountSampled` does: a provider that set the field has said the number is not the whole
-  // count. Without it the card renders exactly as it always has.
+  // `en-US` digit grouping included, so one floor reads one way on both surfaces. The field's value
+  // decides, as it does in `isCountSampled`: a provider that set it has said the number is not the
+  // whole count. Without it the card renders exactly as it always has.
   const tableCount = overview?.tableCount ?? 0;
   const tableCountSampledFrom = overview?.tableCountSampledFrom;
   const tableFloor = tableCount.toLocaleString("en-US");

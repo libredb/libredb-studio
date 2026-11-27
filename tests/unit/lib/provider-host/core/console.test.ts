@@ -527,7 +527,7 @@ describe("executeCall", () => {
 
     // The walk ends at the first hole, as every loop over a provider's array does, so its length bounds no work.
     const holed: unknown[] = [];
-    holed.length = 2 ** 32 - 1;
+    holed.length = 1000;
     holed[1] = later.source;
     const sparse = await executeCall(
       sessionOf(async () => answerOf(holed as ResultSource[])).session,
@@ -540,6 +540,22 @@ describe("executeCall", () => {
       kind: "refused",
       called: true,
       refusals: [{ rule: "execute-answer-unreadable", pointer: "/results/0/columns" }],
+    });
+    expect(later.seen).toEqual({ pulls: 0, closes: 2 });
+
+    // A result list longer than its bound is refused at the list, which then holds no source the run closes.
+    holed.length = 2 ** 32 - 1;
+    const longest = await executeCall(
+      sessionOf(async () => answerOf(holed as ResultSource[])).session,
+      requestOf(),
+      contextOf(),
+      () => LIMITS,
+      ports,
+    );
+    expect(longest).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "execute-answer-unreadable", pointer: "/results" }],
     });
     expect(later.seen).toEqual({ pulls: 0, closes: 2 });
   });

@@ -40,6 +40,7 @@ import {
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
+import { isCountSampled, isCountUnavailable, isIndexesUnavailable } from "@/lib/db/object-kinds";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
 import type {
@@ -139,7 +140,9 @@ export function withScrubbedWarnings(scrub: ProviderTextScrub, result: QueryResu
 
 /**
  * The counts of an object count read with each `unavailable` and `sampledFrom` sentence scrubbed: a provider writes
- * them in its own words. Every count is kept, and the value given is not changed.
+ * them in its own words. Every count is kept, and the value given is not changed. Each count's arm is read by its
+ * member's value (`isCountUnavailable`, `isCountSampled`): a member present with no value reads as absent
+ * (docs/providers/CONTRACT.md, clause C-62).
  */
 export function scrubKindCounts(
   scrub: ProviderTextScrub,
@@ -147,8 +150,8 @@ export function scrubKindCounts(
 ): Record<string, KindCount> {
   return Object.fromEntries(
     Object.entries(counts).map(([kind, count]): [string, KindCount] => {
-      if ("unavailable" in count) return [kind, { unavailable: scrubProviderText(scrub, count.unavailable) }];
-      if ("sampledFrom" in count) {
+      if (isCountUnavailable(count)) return [kind, { unavailable: scrubProviderText(scrub, count.unavailable) }];
+      if (isCountSampled(count)) {
         return [kind, { count: count.count, sampledFrom: scrubProviderText(scrub, count.sampledFrom) }];
       }
       return [kind, count];
@@ -161,7 +164,7 @@ export function scrubKindCounts(
  * whose indexes are a list is answered as given. Columns, keys and the path are database content, never scrubbed.
  */
 export function scrubObjectDetail(scrub: ProviderTextScrub, detail: ObjectDetail): ObjectDetail {
-  if (!("unavailable" in detail.indexes)) return detail;
+  if (!isIndexesUnavailable(detail.indexes)) return detail;
   return { ...detail, indexes: { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) } };
 }
 

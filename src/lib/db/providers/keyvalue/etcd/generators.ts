@@ -63,11 +63,25 @@ function etcdRequest(
 /** A word of a txn request: bare when it is safe text, else Go-quoted (lexer.ts `quoteTxnWord`). */
 const etcdTxnWord = (word: string): string => quoteTxnWord(encodeKey(word));
 
-/** A piece of a group's range as a get names it: its keys, and `--prefix` for a prefix (#1089 4.7). */
+/**
+ * A piece of a group's range as a get names it: its keys, and `--prefix` for a prefix (#1089 4.7). The piece's arm is
+ * read by its member's value, never by the member's presence: a member of another arm present with no value reads as
+ * absent (docs/providers/CONTRACT.md, clause C-62), so `{ key: undefined, prefix }` is a prefix.
+ */
 function etcdPieceGet(piece: ObjectReadRange): { readonly keys: readonly string[]; readonly flags: readonly string[] } {
-  if ("key" in piece) return { keys: [piece.key], flags: [] };
-  if ("prefix" in piece) return { keys: [piece.prefix], flags: ["--prefix"] };
+  if (isKeyPiece(piece)) return { keys: [piece.key], flags: [] };
+  if (isPrefixPiece(piece)) return { keys: [piece.prefix], flags: ["--prefix"] };
   return { keys: [piece.start, piece.end], flags: [] };
+}
+
+/** Whether `piece` is one key: its `key` holds a value. */
+function isKeyPiece(piece: ObjectReadRange): piece is { readonly key: string } {
+  return "key" in piece && piece.key !== undefined;
+}
+
+/** Whether `piece` is every key under a prefix: its `prefix` holds a value. */
+function isPrefixPiece(piece: ObjectReadRange): piece is { readonly prefix: string } {
+  return "prefix" in piece && piece.prefix !== undefined;
 }
 
 /**

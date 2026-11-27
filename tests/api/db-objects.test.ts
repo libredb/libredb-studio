@@ -507,6 +507,35 @@ describe("POST /api/db/objects/counts", () => {
     expect(countObjects).toHaveBeenCalledWith(["app"]);
   });
 
+  test("a member of another arm of a count present with no value reads as absent, so the client gets the arm its values name", async () => {
+    const sentence = `refused ${randomUUID()}`;
+    // Each shape the tree answer check admits: a count beside an unavailable with no value, a sampled count's twin
+    // with no sentence, and an unavailable beside a count and a sentence with no value.
+    const counts = {
+      table: { count: 5, unavailable: undefined },
+      view: { count: 2, sampledFrom: undefined },
+      index: { unavailable: sentence, count: undefined, sampledFrom: undefined },
+    } as unknown as Record<string, KindCount>;
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND, VIEW_KIND, { id: "index", role: "relation", label: "Index", labelPlural: "Indexes" }],
+      countObjects: mock(async () => counts),
+    });
+
+    const response = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["app"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON<Record<string, KindCount>>(response)).toEqual({
+      table: { count: 5 },
+      view: { count: 2 },
+      index: { unavailable: sentence },
+    });
+  });
+
   test("refuses a container path deeper than the engine declares", async () => {
     const countObjects = mock(async () => ({}));
     activeProvider = objectProvider({ countObjects });
@@ -1564,7 +1593,7 @@ describe("POST /api/db/objects/inventory", () => {
   });
 
   test("includeColumns reads the whole folder once, bounded by the objects it is handing over", async () => {
-    const describeObjects = mock(async (container: readonly string[], kind: string, limit?: number) => ({
+    const describeObjects = mock(async (container: readonly string[], _kind: string, _limit?: number) => ({
       details: [
         {
           path: [...container, "orders"],
@@ -1573,7 +1602,6 @@ describe("POST /api/db/objects/inventory", () => {
           foreignKeys: [],
         },
       ],
-      calledWith: { container, kind, limit },
     }));
     activeProvider = objectProvider({
       objectKinds: [TABLE_KIND],

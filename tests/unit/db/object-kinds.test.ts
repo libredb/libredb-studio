@@ -1,6 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import type { ContainerLevelSpec, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  ContainerLevelSpec,
+  KindCount,
+  ObjectKindSpec,
+  ObjectSourcePart,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import {
   acceptedContainerShapes,
   assertContainerPathShape,
@@ -287,6 +293,19 @@ describe("isCountUnavailable", () => {
     // refusal (no number at all) or treating a refusal as a floor. Both predicates are
     // asked about both shapes here so neither can start answering the other's question.
     expect(isCountUnavailable({ count: 4, sampledFrom: "one 1,000-key SCAN walk" })).toBe(false);
+  });
+});
+
+describe("a union member present with no value reads as absent (docs/providers/CONTRACT.md, clause C-62)", () => {
+  test("isCountUnavailable, isCountSampled and isIndexesUnavailable read an arm by its member's value, never by its presence", () => {
+    // The tree answer check admits each of these shapes; the type of a count that crossed it does not state them.
+    const shapes = (value: object): KindCount => value as KindCount;
+    expect(isCountUnavailable(shapes({ count: 5, unavailable: undefined }))).toBe(false);
+    expect(isCountSampled(shapes({ count: 5, unavailable: undefined }))).toBe(false);
+    expect(isCountSampled(shapes({ count: 2, sampledFrom: undefined }))).toBe(false);
+    expect(isCountUnavailable(shapes({ unavailable: "refused", count: undefined, sampledFrom: undefined }))).toBe(true);
+    expect(isCountSampled(shapes({ unavailable: "refused", count: undefined, sampledFrom: undefined }))).toBe(false);
+    expect(isIndexesUnavailable({ unavailable: undefined } as unknown as { readonly unavailable: string })).toBe(false);
   });
 });
 

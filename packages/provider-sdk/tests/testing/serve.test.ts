@@ -20,6 +20,7 @@ import {
   CallRefusalError,
   CLEANUP_DEADLINE_MS,
   checkProviderModule,
+  checkTreeAnswer,
   deadlineSignal,
   defineProvider,
   encodedRowBytes,
@@ -963,6 +964,49 @@ describe("serve", () => {
       "to-provider objects.tree",
       "to-host objects.tree",
     ]);
+  });
+
+  test("a served tree answer outside its action's form is refused on the host side with the core's refusals", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const container = [marker()];
+    const detail = { path: [...container, marker()], columns: [], indexes: [], foreignKeys: [] };
+    // Each answer is one of the five forms a frame admits, and not the one its request's action answers.
+    const cases: [TreeRequest, TreeAnswer, CallRefusal[]][] = [
+      [
+        { action: "list", container, kind: "table" },
+        { containers: [] },
+        [
+          { rule: "tree-answer-unreadable", pointer: "/containers", name: "containers" },
+          { rule: "tree-answer-unreadable", pointer: "/objects" },
+        ],
+      ],
+      [
+        { action: "containers", parent: container },
+        { containers: [], needsConfiguration: marker() },
+        [{ rule: "tree-answer-unreadable", pointer: "/needsConfiguration" }],
+      ],
+      [
+        { action: "describeMany", container, kind: "table", limit: 1 },
+        { details: [detail, detail] },
+        [{ rule: "tree-answer-unreadable", pointer: "/details" }],
+      ],
+    ];
+
+    for (const [request, answer, refusals] of cases) {
+      fx.answers.tree = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each refusal is its own call's.
+      const refused = await failure(async () => impl.objects?.tree?.(opened.handle, request, callContext()));
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual(refusals);
+      expect(checkTreeAnswer(request, answer)).toEqual({ kind: "refused", refusals });
+    }
+    // Each answer crossed whole before the host's side read it.
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      cases.flatMap(() => ["to-provider objects.tree", "to-host objects.tree"]),
+    );
   });
 
   test("a served tree call naming a level or a kind its engine's object model does not state is refused before any frame", async () => {

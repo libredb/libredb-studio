@@ -402,7 +402,8 @@ async function runExecute(
   pumpLimits: (answer: ExecuteAnswer) => PumpLimits,
 ): Promise<ExecuteRecord> {
   const answer = await session.execute(request, ctx);
-  const answerRefusals = checkExecuteAnswer(answer);
+  const check = checkExecuteAnswer(answer);
+  const answerRefusals = check.kind === "refused" ? check.refusals : [];
   // A result list the check refused holds no source the run can close.
   const sources = answerRefusals.some((refusal) => refusal.pointer === "/results") ? [] : answer.results;
   // A statement sent inside a transaction answers the session state after it, read before anything else of the run.
