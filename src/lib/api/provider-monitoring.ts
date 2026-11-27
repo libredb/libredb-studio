@@ -20,6 +20,7 @@ import {
   budgetRefusalError,
   budgetStopError,
   type CallerView,
+  HostDefectError,
   refusalError,
   stopError,
 } from "@/lib/provider-host/access";
@@ -200,8 +201,9 @@ export function providerMonitoring(
  * Test Connection's health read of `provider`, the provider the test holds: one host core health call on the bridged
  * session, its context's deadline `deadline` and its signal `signal` itself, the test's own wait
  * (docs/providers/CONTRACT.md, clauses C-56 and C-75). The promise answers the provider's health by reference, or
- * `ended` when the wait ended before the call or while it was pending; a failure after the wait ended is logged under
- * `route` by kind and code.
+ * `ended` when the wait ended before the call or while it was pending; a health answer the host core refused
+ * (`checkHealthAnswer`, clause C-112) rejects as the `HostDefectError` naming its refusals, whose author the caller reads
+ * (`packageFailureAnswer` in ./package-errors); a failure after the wait ended is logged under `route` by kind and code.
  *
  * The host core is read and the session built before the call starts, synchronously, so a read made before the core
  * is installed throws `HostCoreBootOrderError` at once rather than as the promise's rejection: the caller starts the
@@ -235,9 +237,12 @@ export function readSessionHealthWithin(
   ctx: CallContext,
   route: string,
 ): Promise<HealthWithin> {
-  return core
-    .healthCall(session, ctx, { late: monitoringLate(route, "health") })
-    .then((record) => (record.kind === "answered" ? { kind: "answered", health: record.answer } : { kind: "ended" }));
+  return core.healthCall(session, ctx, { late: monitoringLate(route, "health") }).then((record): HealthWithin => {
+    if (record.kind === "answered") return { kind: "answered", health: record.answer };
+    // A health call refused once the session was called refused its answer (`checkHealthAnswer`): no wait ended.
+    if (record.kind === "refused" && record.called) throw new HostDefectError(record.refusals);
+    return { kind: "ended" };
+  });
 }
 
 /**

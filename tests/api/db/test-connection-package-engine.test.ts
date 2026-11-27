@@ -253,6 +253,38 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
     }
   });
 
+  test("a refused health answer reads as a degraded test naming the package's defect, logged once", async () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const value = randomUUID();
+    const refusal: CallRefusal = { rule: "health-answer-unreadable", pointer: `/${key}`, name: key };
+    const defect = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(refusal)}`;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const [connection, words] of [
+        [VALID, `${PACKAGE_DEFECT_PREFIX} it broke the rule health-answer-unreadable; the server's log names where.`],
+        [{ type: "acmetestwords", host: "db.local" }, defect],
+      ] as const) {
+        error.mockClear();
+        seen.length = 0;
+        hooks = { ...healthyHooks(), health: () => Promise.resolve({ ...HEALTH, [key]: value }) };
+        // oxlint-disable-next-line no-await-in-loop -- one test at a time, so each log line is its own test's.
+        const { status, body } = await routeAnswer(connection);
+        expect(status).toBe(200);
+        expect(body).toEqual({
+          success: true,
+          degraded: true,
+          message: `Connected, but this server answered no health data: ${words}`,
+        });
+        expect(JSON.stringify(body)).not.toContain(value);
+        expect(seen).toEqual(["open", "health", "close"]);
+        const lines = error.mock.calls.filter(([line]) => line === "A provider package's health failed");
+        expect(lines.map(([, logged]) => (logged as Error).message)).toEqual([defect]);
+      }
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   test("an open past the engine's connect budget answers ConnectionError naming the budget, and the late session is closed once it settles", async () => {
     let answer!: (value: unknown) => void;
     let closed!: () => void;

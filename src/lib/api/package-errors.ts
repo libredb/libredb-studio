@@ -9,13 +9,15 @@
  * sentence naming its code where no register row grants the engine its own words (docs/providers/CONTRACT.md, clause
  * M-84), in the error's own words through core's scrub where one does, its record's `grants.ownWords` `"scrubbed"`,
  * and in the package-defect words below for a refusal of what the package's open answered. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
- * words, and as raised, through core's scrub, where one does; a tree read that fails is answered as an execute is.
+ * words, and as raised, through core's scrub, where one does; a tree read, a health read, a panel read, a pool
+ * statistics read, a maintenance run and a maintenance preview that fail are answered as an execute is.
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
  * words under `PACKAGE_DEFECT_PREFIX`, where the accessor's message names Studio, as a not-sent `ConnectionError` for
- * an open and a plain `Error` for an execute or a tree read, a tree answer the core refused (`checkTreeAnswer`)
- * included. Its one log line names each rule and pointer, and the words of each close
+ * an open and a plain `Error` for any other call, a tree, panel, pool statistics, health, maintenance run or
+ * maintenance preview answer the core refused (`checkTreeAnswer`, `checkPanelAnswer`, `checkPoolStatsAnswer`,
+ * `checkHealthAnswer`, `checkMaintenanceRunAnswer`, `checkMaintenancePreviewAnswer`) included. Its one log line names each rule and pointer, and the words of each close
  * that failed after the refused answer, through core's scrub (`loggedDefect`). The client is answered each rule and
  * pointer where a register row grants the package's words, each refusal's sentence through core's scrub, since its
  * pointer and the key it names may hold a key the package chose, and each rule alone where none does
@@ -151,7 +153,7 @@ function packageDefectAnswer(engine: EngineRecord, error: HostDefectError, scrub
 }
 
 /** Studio's sentence for a provider package's error of `call`, which names its code; its words go to the log only. */
-export function packageErrorSentence(call: string, error: unknown): string {
+function packageErrorSentence(call: string, error: unknown): string {
   return `The provider package's ${call} failed (${errorCode(error)}); the server's log holds its words.`;
 }
 
@@ -167,15 +169,6 @@ function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub,
  */
 export function isStudioFailure(error: unknown): boolean {
   return error instanceof DatabaseError || isStudioDefect(error);
-}
-
-/**
- * Logs `error`, a failure of a provider package's `call` that is not Studio's own (`isStudioFailure`), once as the
- * package's (`logPackageError`): a host defect with a refusal of what the package answered as `loggedDefect`, so the
- * log names the package as its author.
- */
-export function logPackageFailure(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
-  logPackageError(call, error instanceof HostDefectError ? loggedDefect(error, scrub) : error, scrub, route);
 }
 
 /**
@@ -216,11 +209,21 @@ export function packageWarnings(
  * Studio's sentence naming its code where they are `"code-only"` or the value is no `Error` and has no words. An
  * execute's is the error as raised where the words are `"scrubbed"`, answered through core's scrub by the route, and a
  * plain `Error` with Studio's sentence, kind internal and outcome unknown, where they are `"code-only"`, since the
- * statement may have run. A tree read's is answered as an execute's.
+ * statement may have run. A tree read's, a health read's, a panel read's, a pool statistics read's, a maintenance
+ * run's and a maintenance preview's are answered as an execute's. `call` is the noun Studio's sentence and the log
+ * line name the call by.
  */
 export function packageFailureAnswer(
   engine: EngineRecord,
-  call: "open" | "execute" | "tree read",
+  call:
+    | "open"
+    | "execute"
+    | "tree read"
+    | "health"
+    | "panel read"
+    | "pool statistics read"
+    | "maintenance run"
+    | "maintenance preview",
   error: unknown,
   scrub: ProviderTextScrub,
   route: string,
