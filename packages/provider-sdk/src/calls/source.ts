@@ -52,11 +52,28 @@ export function applySourceBound(
 }
 
 /**
- * `part` with its text cut at `SOURCE_CHARACTER_LIMIT` (`applySourceBound`) and marked with that bound, where it is a
- * readable part whose text is past the bound: a mark the provider already set keeps its sentence, the bound's sentence
- * joined to it after "; ". Every other part is answered by reference.
+ * `part` as `checkSourceAnswer` read it: the part itself where every own member holds a value, and otherwise a new part
+ * of only its members that do. The check reads an own member whose value is `undefined` as absent, whether it is an
+ * optional member of the part's form or a member of another form (an in-process answer keeps such members, where a
+ * codec drops them), so after this a part is its sentence form exactly where it has `unavailable`, as the check chose.
  */
-function boundPart(part: ObjectSourcePart): ObjectSourcePart {
+function definedPart(part: ObjectSourcePart): ObjectSourcePart {
+  const keys = Object.getOwnPropertyNames(part);
+  const record = part as unknown as Readonly<Record<string, unknown>>;
+  if (keys.every((key) => record[key] !== undefined)) return part;
+  return Object.fromEntries(
+    keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]),
+  ) as unknown as ObjectSourcePart;
+}
+
+/**
+ * `part` as the check read it (`definedPart`), with its text cut at `SOURCE_CHARACTER_LIMIT` (`applySourceBound`) and
+ * marked with that bound, where it is a readable part whose text is past the bound: a mark the provider already set
+ * keeps its sentence, the bound's sentence joined to it after "; ". Every other part whose every member holds a value
+ * is answered by reference.
+ */
+function boundPart(answered: ObjectSourcePart): ObjectSourcePart {
+  const part = definedPart(answered);
   if ("unavailable" in part || part.text.length <= SOURCE_CHARACTER_LIMIT) return part;
   const reason = sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT);
   return {
@@ -71,10 +88,10 @@ function boundPart(part: ObjectSourcePart): ObjectSourcePart {
 
 /**
  * `document`, an answer `checkSourceAnswer` read, cut where clause C-115 cuts it: a new document whose readable parts
- * past `SOURCE_CHARACTER_LIMIT` are cut and marked (`boundPart`), and whose other parts, its path and its kind are the
- * answer's own, by reference. Only a text is cut: a document of more parts than `SOURCE_PART_LIMIT`, or with a sentence
- * past the character bound, is refused by the answer check, since no mark can state those cuts. The answer is never
- * mutated.
+ * past `SOURCE_CHARACTER_LIMIT` are cut and marked (`boundPart`), each part without the members it holds with no value
+ * (`definedPart`), and whose other parts, its path and its kind are the answer's own, by reference. Only a text is
+ * cut: a document of more parts than `SOURCE_PART_LIMIT`, or with a sentence past the character bound, is refused by
+ * the answer check, since no mark can state those cuts. The answer is never mutated.
  */
 export function boundSourceAnswer(document: ObjectSourceDocument): ObjectSourceDocument {
   const [first, ...rest] = document.parts;

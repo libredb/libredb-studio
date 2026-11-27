@@ -3334,6 +3334,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a source document holds at most eight parts, and a part's text or a sentence at most a million UTF-16 code units",
         "applySourceBound cuts a text at the bound, drops a surrogate pair whole and marks only a text it cut",
         "boundSourceAnswer cuts each readable part past the character bound and joins a provider's own reason, and leaves every other part as answered",
+        "boundSourceAnswer reads a part's form as checkSourceAnswer does and drops each member it holds with no value, so a readable part with an own undefined sentence is cut",
       ],
       "packages/provider-sdk/tests/testing/frames.test.ts": [
         "a source request and a source answer cross as their closed shapes, each part one of its three forms",

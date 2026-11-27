@@ -1,7 +1,8 @@
 /**
  * The SDK's source bounds and its bound helper (docs/providers/CONTRACT.md, clause C-115): `applySourceBound` cuts one
  * text at a character bound and marks only a text it cut, and `boundSourceAnswer` cuts each readable part of a source
- * document whose text is past `SOURCE_CHARACTER_LIMIT`, leaving every other part as answered.
+ * document whose text is past `SOURCE_CHARACTER_LIMIT`, reading each part's form as `checkSourceAnswer` does, without
+ * the members it holds with no value, and leaving every other part as answered.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -102,5 +103,49 @@ describe("boundSourceAnswer", () => {
     const same = boundSourceAnswer(within);
     expect(same.parts[0]).toBe(fitting);
     expect(same.parts[1]).toBe(refused);
+  });
+
+  test("boundSourceAnswer reads a part's form as checkSourceAnswer does and drops each member it holds with no value, so a readable part with an own undefined sentence is cut", () => {
+    const over = "x".repeat(SOURCE_CHARACTER_LIMIT + 5);
+    const id = marker();
+    const label = marker();
+    const sentence = marker();
+    // An in-process answer keeps an own member whose value is undefined; the check reads it as absent.
+    const readable = {
+      id,
+      label,
+      text: over,
+      language: "sql",
+      form: "complete",
+      origin: "stored",
+      truncated: undefined,
+      edit: undefined,
+      unavailable: undefined,
+      statement: undefined,
+    } as unknown as ObjectSourcePart;
+    const refused = {
+      id: marker(),
+      label,
+      unavailable: sentence,
+      statement: undefined,
+      text: undefined,
+    } as unknown as ObjectSourcePart;
+    const bound = boundSourceAnswer({ path: [marker()], kind: "routine", parts: [readable, refused] });
+
+    expect(bound.parts[0]).toEqual({
+      id,
+      label,
+      text: "x".repeat(SOURCE_CHARACTER_LIMIT),
+      language: "sql",
+      form: "complete",
+      origin: "stored",
+      truncated: { limit: SOURCE_CHARACTER_LIMIT, reason: sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT) },
+    });
+    expect(Object.keys(bound.parts[0])).toEqual(["id", "label", "text", "language", "form", "origin", "truncated"]);
+    expect(Object.keys(bound.parts[1])).toEqual(["id", "label", "unavailable"]);
+    expect(bound.parts[1]).toEqual({ id: refused.id, label, unavailable: sentence });
+    // The answer is never mutated.
+    expect(Object.hasOwn(readable, "unavailable")).toBe(true);
+    expect((readable as { text: string }).text).toBe(over);
   });
 });
