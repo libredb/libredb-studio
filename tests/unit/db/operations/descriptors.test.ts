@@ -1,4 +1,8 @@
 import { describe, test, expect } from "bun:test";
+import { randomUUID } from "node:crypto";
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
+import { declaredLanguageReadDescriptor } from "@/lib/db/operations/declared-language-read";
+import { OperationRegistry } from "@/lib/db/operations/registry";
 import {
   clusterUsageReadDescriptor,
   clusterWorkloadsReadDescriptor,
@@ -16,6 +20,38 @@ import {
   sqlQueryReadDescriptor,
   sqlTableProfileDescriptor,
 } from "@/lib/db/operations/descriptors";
+
+/** Statement language data named `acmeread` whose agent part admits `{"read": "topics"}` alone, by a generated sentence. */
+function acmereadData(): NonNullable<StatementLanguageData> {
+  const refusal = (code: string) => ({ code, sentence: `Refused (${code}): ${randomUUID()}.` });
+  return {
+    name: "acmeread",
+    confirmation: {
+      operations: [],
+      reader: "names-no-operation",
+      decidesAlone: true,
+      safetyAnalysis: false,
+      maxTextBytes: null,
+    },
+    agent: {
+      request: {
+        kind: "json-object",
+        maxCharacters: 64,
+        refusals: {
+          tooLong: refusal("too-long"),
+          empty: refusal("empty"),
+          notAnObject: refusal("not-an-object"),
+          repeatedKey: refusal("repeated-key"),
+          unknownKey: refusal("unknown-key"),
+        },
+        keys: ["read"],
+        selector: { key: "read", refusal: refusal("not-a-read") },
+        common: [],
+        reads: [{ value: "topics", refuses: [], checks: [] }],
+      },
+    },
+  };
+}
 
 /**
  * The descriptors whose input IS a statement. Kept apart from the registry's full
@@ -503,5 +539,67 @@ describe("the R1 boundary contract", () => {
       expect(boundary.trim().length).toBeGreaterThan(0);
       expect(boundary).not.toMatch(/\bparser (is|bounds)\b/i);
     }
+    const declared = declaredLanguageReadDescriptor(acmereadData());
+    if (declared.riskClass !== 1) throw new Error(`expected ${declared.id} at R1, got R${declared.riskClass}`);
+    expect(declared.verification.boundary.trim().length).toBeGreaterThan(0);
+    expect(declared.verification.boundary).not.toMatch(/\bparser (is|bounds)\b/i);
+  });
+});
+
+describe("a data-declared language's read operation", () => {
+  test("a data-declared language's read operation keeps the id <language>.query.read", () => {
+    const data = acmereadData();
+    const descriptor = declaredLanguageReadDescriptor(data);
+
+    expect(descriptor).toMatchObject({
+      id: "acmeread.query.read",
+      riskClass: 1,
+      accessLevel: "data-read",
+      requiredCapabilities: [],
+      resourceCost: "heavy",
+      supportsDryRun: false,
+      requiresApproval: false,
+      modelStatement: true,
+    });
+    if (descriptor.riskClass !== 1) throw new Error("expected an R1 descriptor");
+    expect(descriptor.verification.reviewedBy).toContain("#2585");
+    expect(descriptor.verification.verifiedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(descriptor.verification.boundary).toContain("its own reader");
+    expect(descriptor.verification.boundary).not.toContain("acmeread");
+
+    const registry = new OperationRegistry();
+    registry.register(descriptor);
+    const resolution = registry.resolve("acmeread.query.read");
+    if (resolution.kind !== "resolved")
+      throw new Error(`expected acmeread.query.read resolved, got ${resolution.kind}`);
+    expect(resolution.descriptor.id).toBe("acmeread.query.read");
+
+    const { inputSchema } = descriptor;
+    expect(inputSchema.safeParse({ statement: '{"read": "topics"}' }).success).toBe(true);
+    const refused = inputSchema.safeParse({ statement: '{"read": "brokers"}' });
+    expect(refused.success).toBe(false);
+    const notARead = data.agent?.request.selector?.refusal.sentence;
+    if (notARead === undefined) throw new Error("expected acmeread's selector refusal");
+    expect(refused.error?.issues.map(({ path, message }) => ({ path, message }))).toEqual([
+      { path: ["statement"], message: notARead },
+    ]);
+    expect(refused.error?.issues.map(({ message }) => message).join(" ")).not.toContain("brokers");
+    for (const input of [
+      { statement: '{"read": "topics"}', sql: "SELECT 1" },
+      { statement: "" },
+      { statement: `{"read": "topics"}${" ".repeat(64)}` },
+      { sql: '{"read": "topics"}' },
+    ]) {
+      expect(inputSchema.safeParse(input).success).toBe(false);
+    }
+
+    // The canonical registry is unchanged: a declared language's read is registered by the composer that reads it.
+    expect(createCanonicalOperationRegistry().resolve("acmeread.query.read").kind).toBe("denied");
+  });
+
+  test("language data that sends agent mode no statement has no read operation, and the builder says which", () => {
+    expect(() => declaredLanguageReadDescriptor({ ...acmereadData(), agent: null })).toThrow(
+      "The statement language acmeread states no agent part, so agent mode sends it no statement to read.",
+    );
   });
 });
