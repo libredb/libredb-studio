@@ -445,6 +445,24 @@ A grant to an admitted package's engine is a row of Studio's register, keyed by 
 A row grants claims as M-54 reads them, and may also grant the engine its own words through core's scrub (C-112), never by default.
 A row is LibreDB's review, kept in Studio's repository until the providers move to repositories of their own, and no manifest member, lock entry or admission step writes one.
 
+### M-85 (informative): An engine's statement language is data of its declaration
+
+An engine that speaks a statement language of its own, not SQL, states that language as data in its declaration, and states null there where it speaks SQL or no statement language.
+The data names the language and states its confirmation part (M-86), the request form agent mode admits and the text agent mode shows, every member required as M-8 says, with the manifest schema as its vocabulary.
+Not every part of the data is in the schema yet, so nothing checks this.
+
+### M-86 (informative): The confirmation part of a statement language
+
+The confirmation part states the operations whose statements ask a confirmation, which of core's reader kinds names the operations a statement runs, and whether that reading is the confirmation's whole answer or the shared dangerous keywords are also read in the statement.
+It also states whether Studio may send the language's statements to the AI safety analysis, and the most UTF-8 bytes a statement may hold, past which Studio refuses the statement before it is sent, or null for no bound.
+It names no function of the package, and the schema has no such member yet, so nothing checks this.
+
+### M-87 (informative): A register row reviews an engine's statement language data
+
+For an engine that states statement language data, a register row grants its statement language, the claim that its confirmation reading is the whole answer, and `readsSqlText: false` only for the data whose digest the row states, so a changed byte of that data grants none of them until LibreDB reviews it again.
+A provider package's engine that states no statement language data is never granted `readsSqlText: false`, so its statements are read as S-8 says.
+No register row states such a digest yet, so nothing checks this.
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -629,8 +647,8 @@ Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 ### S-16 (informative): Where an SQL writing function runs
 
 Studio runs the SQL writing functions in the browser and on its server.
-A package that fills a slot is admitted with its names read for their form only (C-99), and its engine gets SQL writing only where its register row grants it (M-84), which no row does yet.
-How a package's SQL writing functions are called is decided in a later milestone.
+A package that fills a slot is admitted with its names read for their form only (C-99), and its engine gets no SQL writing in this contract.
+How a package's SQL writing functions are called and granted is decided in provider isolation milestone M7, where the browser reads the engine catalog at run time.
 
 ### S-17 (normative): The migration DDL segment
 
@@ -909,10 +927,11 @@ Inside those 15 s each provider is also cut by C-45's own deadlines.
 The loader's import deadline is a timer in Studio's own thread, so a synchronous loop at import or in a call blocks Studio as it blocks every request.
 Only a watchdog outside the process detects a hung process, and the kit's import-time measurement is the check at a package's build.
 
-### C-38 (normative): Classification is core's, and its verdict is a closed set
+### C-38 (informative): Classification is core's, and its verdict is a closed set
 
-Whether a statement needs a confirmation is decided by core's readers over facts core holds, never by a call into a provider.
+Core decides whether a statement needs a confirmation, never by a call into a provider, and decides it for a provider package's engine by one check over what its declaration states of its statements, its statement language data (M-85) or its SQL text (S-3), read as its register row grants them (M-87, S-8).
 The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
+No declaration states statement language data yet, so nothing checks the check over it.
 
 ### C-39 (normative): A protected read path is a precondition of agent and MCP statements
 
