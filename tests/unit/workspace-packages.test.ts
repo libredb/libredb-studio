@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   isPackageSourcePath,
   isPackageTestPath,
+  providerPackageDirectories,
   workspacePackageDirectories,
   workspacePackageManifests,
   workspacePackageNames,
@@ -74,6 +75,24 @@ describe("workspacePackageDirectories", () => {
 
   test("the repository lists its workspace packages: the provider SDK and the grant register", () => {
     expect(workspacePackageDirectories(repositoryRoot)).toEqual(["packages/grant-register", "packages/provider-sdk"]);
+  });
+});
+
+describe("providerPackageDirectories", () => {
+  test("lists every workspace package under packages/provider- but the SDK, sorted", () => {
+    const scratch = root({
+      "packages/provider-zeta/package.json": "{}",
+      "packages/provider-alpha/package.json": "{}",
+      "packages/provider-sdk/package.json": "{}",
+      "packages/grant-register/package.json": "{}",
+      "packages/providers/package.json": "{}",
+    });
+
+    expect(providerPackageDirectories(scratch)).toEqual(["packages/provider-alpha", "packages/provider-zeta"]);
+  });
+
+  test("the repository holds no provider package yet", () => {
+    expect(providerPackageDirectories(repositoryRoot)).toEqual([]);
   });
 });
 
