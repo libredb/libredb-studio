@@ -328,8 +328,8 @@ The claim's form decides what "more restrictive" means:
 - a claim restrictive when true is true where the request or the grant is, and one restrictive when false is true only where both are;
 - a set a gate admits, refuses or keeps apart, `connection.hostPathFields`, is the union of request and grant, and a set a gate offers, `facets.agentReadings`, their intersection;
 - `connection.serverLevelWithoutDatabase` is granted per gate, as restrictive when true where a gate refuses on true and as restrictive when false where a gate honours only on true;
-- a claim whose values are not ordered, such as a statement language, an agent credential form, a redaction other than `none` or a single-writer file, is its grant where the request equals it and its restrictive value otherwise, and an unequal single-writer request leaves the engine refused by name at every open;
-- a SQL text claim, `sqlText.readsSqlText`, `sqlText.redaction` or an exempt form of `sqlText.grammar.confirmExemptForms`, is granted only for the grammar its register row reviewed, `grammarSha256`, and is read at its restrictive value under any other grammar;
+- a claim whose values are not ordered, such as a statement language, an agent credential form, a redaction other than `none` or a single-writer file, is its grant where the request equals it and its restrictive value otherwise, a statement language only under M-87, and an unequal single-writer request leaves the engine refused by name at every open;
+- a SQL text claim, `sqlText.readsSqlText`, `sqlText.redaction` or an exempt form of `sqlText.grammar.confirmExemptForms`, is granted only for the grammar its register row reviewed, `grammarSha256`, `readsSqlText: false` also only under M-87, and is read at its restrictive value under any other grammar;
 - a requested refusal, of denied file access or of an SSH tunnel, keeps its own sentence, one offered against a refusing grant takes the grant's sentence, and one offered where no grant exists takes the host's own.
 
 ### M-55 (normative): The rules of an engine's claims
@@ -457,10 +457,10 @@ The confirmation part states the operations whose statements ask a confirmation,
 It also states whether Studio may send the language's statements to the AI safety analysis, and the most UTF-8 bytes a statement may hold, past which Studio refuses the statement before it is sent, or null for no bound.
 It names no function of the package, and no confirmation check reads it yet (C-38).
 
-### M-87 (informative): A register row reviews an engine's statement language data
+### M-87 (normative): A register row reviews an engine's statement language data
 
-For an engine that states statement language data, a register row grants its statement language, the claim that its confirmation reading is the whole answer, and `readsSqlText: false` only for the data whose digest the row states, so a changed byte of that data grants none of them until LibreDB reviews it again.
-No register row states such a digest yet, so nothing checks this.
+A register row states the digest of the statement language data it reviewed, `languageSha256`, or null for an engine that states none, and grants the engine's statement language, the claim that its confirmation reading is the whole answer and `readsSqlText: false` only where that is the digest of the data the engine states, so a changed byte of that data grants none of them until LibreDB reviews it again.
+A package row that grants either confirmation claim with a null digest is refused, so a package engine that states no statement language data is never granted them.
 
 ## Values
 
