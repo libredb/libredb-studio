@@ -262,9 +262,14 @@ function errnoSuffix(errno: string | undefined): string {
   return errno === undefined ? "" : ` (${errno})`;
 }
 
+/** Why the artifact module refused a package, in the lock's words: its rule's sentence and its errno code, if any. */
+export function artifactFaultReason(fault: ArtifactFault): string {
+  return `${PACKAGE_SENTENCES[fault.rule]}${errnoSuffix(fault.errno)}`;
+}
+
 /** The refusal of a package the artifact module refused. */
 export function packageRefusal(pkg: PackageName, fault: ArtifactFault): PackageRefusal {
-  const sentence = `${fault.code}: ${pkg.name} ${pkg.version}: ${PACKAGE_SENTENCES[fault.rule]}${errnoSuffix(fault.errno)}`;
+  const sentence = `${fault.code}: ${pkg.name} ${pkg.version}: ${artifactFaultReason(fault)}`;
   return Object.freeze({
     code: fault.code,
     rule: fault.rule,
