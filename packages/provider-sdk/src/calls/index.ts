@@ -12,7 +12,8 @@
  * `checkMonitoringPanelRequest`, which refuses a panel the session's engine does not offer, `checkTreeRequest`, which
  * refuses a tree request naming a level or a kind the session's object model does not state, `checkTransactionAnswer`
  * and `checkTransactionStatement`, which refuse a session state a transaction call or a statement inside the
- * transaction answered that the host cannot read, `checkRefinement` and `sessionCalls`, which narrow a session's calls
+ * transaction answered that the host cannot read, `checkExecuteAnswer`, which refuses a member of an execute answer the
+ * host reads that is not of the SDK's type there, `checkRefinement` and `sessionCalls`, which narrow a session's calls
  * by the refinement `open` answers, `sessionMaintenance`, which narrows a session's maintenance by the placements its
  * server accepts, and `freezeContext` and `freezeData`, which deep-freeze the contexts and requests the host passes;
  * and the byte budgets of a result, `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES`, with `encodedRowBytes`, the row measure,
@@ -42,6 +43,7 @@ export {
   deadlineSignal,
   type LateOutcome,
 } from "./deadline";
+export { checkExecuteAnswer } from "./answers";
 export { type EnvReader, envReader, UndeclaredEnvironmentError } from "./env";
 export { freezeContext, freezeData } from "./freeze";
 export {
