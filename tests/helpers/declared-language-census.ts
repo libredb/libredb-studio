@@ -129,8 +129,8 @@ export interface ShippedStatementLanguage {
   readonly data: NonNullable<StatementLanguageData>;
 }
 
-/** The engines a JSON file states, each with its id and its statement language data. */
-type StatedEngine = { id: string; statementLanguageData: StatementLanguageData };
+/** The engines a JSON file states, each with its id and its statement language data, absent when the file omits it. */
+type StatedEngine = { id: string; statementLanguageData?: StatementLanguageData };
 
 /**
  * The statement language data every engine under `root` states, the null ones left out: every committed declaration
@@ -140,7 +140,8 @@ type StatedEngine = { id: string; statementLanguageData: StatementLanguageData }
  * hold a declaration's.
  *
  * @throws {Error} Naming the directory, for a provider package without its manifest; naming the file, for a manifest
- * whose `engines` is not an array.
+ * whose `engines` is not an array; naming the file and the engine, for an engine that states no
+ * `statementLanguageData` member, since an engine with no statement language states it as null.
  */
 export function shippedStatementLanguages(root: string = REPOSITORY_ROOT): ShippedStatementLanguage[] {
   const declarations = readdirSync(path.join(root, DECLARATIONS))
@@ -149,6 +150,7 @@ export function shippedStatementLanguages(root: string = REPOSITORY_ROOT): Shipp
     .map((file) => ({
       source: "declaration" as const,
       directory: DECLARATIONS,
+      file: `${DECLARATIONS}/${file}`,
       engines: [JSON.parse(readFileSync(path.join(root, DECLARATIONS, file), "utf8")) as StatedEngine],
     }));
   const packages = providerPackageDirectories(root).map((directory: string) => {
@@ -160,12 +162,17 @@ export function shippedStatementLanguages(root: string = REPOSITORY_ROOT): Shipp
     }
     const { engines } = JSON.parse(readFileSync(path.join(root, file), "utf8")) as { engines: unknown };
     if (!Array.isArray(engines)) throw new Error(`${file} has no engines array, so its engines cannot be read.`);
-    return { source: "package" as const, directory, engines: engines as StatedEngine[] };
+    return { source: "package" as const, directory, file, engines: engines as StatedEngine[] };
   });
-  return [...declarations, ...packages].flatMap(({ source, directory, engines }) =>
-    engines.flatMap(({ id, statementLanguageData: data }) =>
-      data === null ? [] : [{ engine: id, source, directory, data }],
-    ),
+  return [...declarations, ...packages].flatMap(({ source, directory, file, engines }) =>
+    engines.flatMap(({ id, statementLanguageData: data }) => {
+      if (data === undefined) {
+        throw new Error(
+          `${file} states no statementLanguageData for the engine ${id}: an engine states its statement language data, null when it has none.`,
+        );
+      }
+      return data === null ? [] : [{ engine: id, source, directory, data }];
+    }),
   );
 }
 

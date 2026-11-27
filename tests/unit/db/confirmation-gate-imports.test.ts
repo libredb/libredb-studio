@@ -8,9 +8,12 @@
  * from every provider package's manifest (tests/helpers/declared-language-census.ts), so a language a package states
  * is held the day the package lands. A language's modules are every file under `src/lib/languages/<name>/` and
  * `src/lib/db/graph/<name>/` (Cypher's family module), and the `destructive.ts` beside the engine's legacy provider or,
- * for a package's engine, every file under the package's directory. Kafka's declaration states its language,
- * kafkaread, as data, so the check runs on a real declaration; the controls below plant other engines' languages to
- * show it names a gate module of each kind.
+ * for a package's engine, every file under the package's directory. That package branch matches a closure member by
+ * its path, so it sees a package module the gate reaches by a path; a gate module importing the package by its name is
+ * refused by tests/unit/package-imports.test.ts ("core imports no provider package, by name or by path"), and the two
+ * tests hold the package case together. Kafka's declaration states its language, kafkaread, as data, so the check
+ * runs on a real declaration; the controls below plant other engines' languages to show it names a gate module of
+ * each kind.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -166,6 +169,13 @@ describe("the confirmation gate's imports", () => {
       );
       expect(() => declaredLanguages(planted)).toThrow(
         "packages/provider-alpha/libredb-provider.json has no engines array",
+      );
+      writeFileSync(
+        path.join(planted, "packages/provider-alpha/libredb-provider.json"),
+        JSON.stringify({ engines: [{ id: "alpha" }] }),
+      );
+      expect(() => declaredLanguages(planted)).toThrow(
+        "packages/provider-alpha/libredb-provider.json states no statementLanguageData for the engine alpha",
       );
     } finally {
       removePlantedRoot(planted);
