@@ -3,8 +3,9 @@
  * against @libredb/provider-sdk alone, as a developer outside the repository writes one.
  *
  * It is a template: the acceptance copies this directory outside the repository, installs the packed SDK there and
- * bundles this file with esbuild. Nothing in the repository imports it; the root type check reads it, so an SDK change
- * that breaks a provider written against the published surface fails that check.
+ * packs it with Studio's pack step, which runs the fixture's own build (build.mjs) to bundle this file. Nothing in the
+ * repository imports it; the root type check reads it, so an SDK change that breaks a provider written against the
+ * published surface fails that check.
  *
  * Statements: `list` answers every row, `get <name>` the row of that name or none; anything else is refused.
  */

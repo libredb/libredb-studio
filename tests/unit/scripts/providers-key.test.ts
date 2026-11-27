@@ -164,8 +164,9 @@ describe("the key command", () => {
   });
 
   test("a null sqlText or statementLanguageData prints null for its digest", async () => {
-    // The out-of-tree fixture, built as the acceptance's step 3 builds it, against the workspace's SDK rather than a
-    // packed one, and placed as its step 4 places it: its sqlText and statementLanguageData are both null.
+    // The out-of-tree fixture, built with the options of its own build (tests/fixtures/out-of-tree-provider/build.mjs),
+    // against the workspace's SDK rather than a packed one, and placed as the pack step places it: its sqlText and
+    // statementLanguageData are both null.
     const fixture = readFixture(FIXTURE, (file) => fs.readFileSync(file, "utf8"));
     const providers = freshProviders();
     const artifact = artifactDirectoryOf(providers, fixture);

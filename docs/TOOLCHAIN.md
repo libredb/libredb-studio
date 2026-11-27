@@ -822,6 +822,7 @@ The output directory must exist and lie outside the repository, as must the temp
 That destination, its existing part resolved through any link, must lie outside the repository too, since `--out` may be an ancestor of the repository or hold a link into it.
 The command prints `<name> <version> <digest>` per package placed, the digest the lock command writes for it, and exits 0 when nothing was refused, 1 when anything was, 2 on any other command line.
 Nothing is written into the repository.
+The out-of-tree acceptance (`scripts/out-of-tree-acceptance.ts`) packs its fixture with this step, running the script with a PATH it states, since `bun run` puts the repository's `node_modules/.bin` on the build's PATH.
 
 `tests/unit/scripts/providers-pack.test.ts` packs planted packages in a planted root under the system's temporary directory, never under the repository's `packages/`, where the isolation ratchet would count one as an engine: a bundled package with a CommonJS dependency, locked by the lock command and admitted; every refusal; two packs giving one digest; the repository's listing unchanged; the build's working directory, arguments and environment; and each runtime-load form with its controls.
 

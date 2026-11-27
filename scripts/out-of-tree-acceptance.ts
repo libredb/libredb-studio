@@ -16,13 +16,22 @@
  *    at run time), or take an existing one with `--standalone <dir>`; assert its server.js and .next and print its
  *    BUILD_ID.
  * 2. Pack the SDK with `bun run sdk:pack -- --out <tmp>/sdk`; assert the one absolute .tgz path it printed.
- * 3. Copy the fixture to <tmp>/provider, install the SDK tarball there with npm, and bundle the fixture's entry with
- *    esbuild into the manifest's `runtime.entry`; assert that the installed SDK is the packed one (a directory of its
- *    own whose calls entry points under dist/, at the repository SDK's version), and from esbuild's metafile that
- *    every input lies inside the build directory, that the SDK came from its packed dist/, and that the bundle imports
- *    only `node:` built-ins.
- * 4. Place package.json, the manifest and the bundle as <tmp>/providers/<name>/<version>/ and run
- *    `bun run providers:lock -- --dir <tmp>/providers`; assert the lock line of the one package.
+ * 3. Copy the fixture to <tmp>/provider and install the SDK tarball there with npm; assert that the installed SDK is
+ *    the packed one (a directory of its own whose calls entry points under dist/, at the repository SDK's version).
+ *    Run the fixture's own build once for evidence, `bun run --shell=bun build -- --outdir <tmp>/evidence --metafile
+ *    <tmp>/bundle-meta.json`, and assert from the metafile that the build read the entry's source acceptance.json
+ *    names, that every input lies inside the package's directory, that the SDK came from its packed dist/, and that
+ *    the bundle imports only `node:` built-ins. Then run Studio's pack step over <tmp>/provider, `bun
+ *    scripts/providers-pack.ts --out <tmp>/providers <tmp>/provider`, which runs the same build and places the
+ *    artifact as <tmp>/providers/<name>/<version>/; assert its one line and digest, that the artifact holds exactly
+ *    package.json, the manifest and the bundle, and that the bundle equals the evidence build's byte for byte, so the
+ *    metafile describes what the pack placed. The metafile stays outside the artifact: written into `--outdir` it
+ *    would carry the pack's temporary directory name and change the artifact's digest on every pack.
+ * 4. Build the lock command's Node.js module as `build:lib` and each image's builder build it (`buildLockModule` in
+ *    scripts/build-lock-module.mjs) into <tmp>/lock, copy the image's `libredb-studio` wrapper
+ *    (docker/libredb-studio.mjs) beside it, and run `node <tmp>/lock/libredb-studio.mjs providers lock --dir
+ *    <tmp>/providers` under the Node.js on PATH; assert the lock line of the one package, with the digest the pack
+ *    step printed.
  * 5. Start the standalone server with LIBREDB_PROVIDERS_DIR set, sign in through the API, save a connection of the
  *    fixture engine (`POST /api/db/test-connection`, what the connection dialog's Save posts), run each statement of
  *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, each answer marked unconfirmed, and that an
@@ -36,8 +45,10 @@
  *    PROVIDER_UNAVAILABLE for the save and the statement.
  * 7. Assert `git status --porcelain` is empty and that no engine id of the fixture appears, in any letter case, in a
  *    file under src, bin, scripts or vscode-extension/src (the isolation ratchet's core roots) or packages.
- * 8. Assert that no file under the standalone's .next, the server's build output, equals a fixture file or holds the
- *    package name, an engine id as a quoted literal or an engine's display name.
+ * 8. Run the build output check (scripts/check-build-output.ts) over the standalone and <tmp>/provider, the package
+ *    the pack step packed: no file under the standalone's .next or node_modules equals a file of the package's source
+ *    or of a driver it declares, or holds its name. Then assert that no file under .next, the server's build output,
+ *    equals a fixture file or holds the package name, an engine id as a quoted literal or an engine's display name.
  *
  * The SDK installs offline. `npm install <sdk tarball>` alone would fetch the SDK's dependency, ajv, from a registry;
  * the run instead packs the closure of the SDK's declared `dependencies` from the repository's own install, found as
@@ -51,12 +62,18 @@
  * before the build. The temporary root, created under the system temporary directory, must lie outside the
  * repository with no node_modules above it, so nothing resolves from Studio's install. Its layout: sdk/ (the SDK
  * tarball), deps/ (the closure's tarballs), npm/ (npm's cache, configs and HOME), provider/ (the copied fixture and
- * its build), providers/ (the installed package and its lock), server/ (each server's HOME and data directory).
+ * its install), evidence/ (the evidence build's output, beside bundle-meta.json, its metafile), pack/ (the pack
+ * step's temporary directories), providers/ (the packed package and its lock), lock/ (the built lock module and the
+ * wrapper), server/ (each server's HOME and data directory).
  *
  * Every child gets an explicit environment, never the caller's: PATH, HOME and what its step names, never
- * NODE_OPTIONS, NODE_PATH or an npm_config variable. Each runs as the leader of its own process group, under a
- * timeout (CHILD_TIMEOUTS_MS) that sends SIGTERM to the group and SIGKILL five seconds later; an interrupted run
- * kills every group it started, and only those. The server binds 127.0.0.1 on a port the system just handed out and
+ * NODE_OPTIONS, NODE_PATH or an npm_config variable. The fixture's build takes esbuild from PATH, so the evidence
+ * build and the pack step get the caller's PATH with one directory before it, the directory of the repository's
+ * esbuild launcher, which must hold the launcher alone. The pack step runs as its script file, never as `bun run
+ * providers:pack`, which would put the repository's node_modules/.bin, every tool of Studio's install, on the build's
+ * PATH unseen. Every child runs as the leader of its own process group, under a timeout (CHILD_TIMEOUTS_MS) that
+ * sends SIGTERM to the group and SIGKILL five seconds later; an interrupted run kills every group it started, and only
+ * those. The server binds 127.0.0.1 on a port the system just handed out and
  * takes a JWT secret and passwords drawn at run time. The run stops children by process group, so it is POSIX only
  * and refuses Windows by name.
  *
@@ -80,6 +97,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -91,8 +109,8 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { version as esbuildVersion } from "esbuild";
 import { SESSION_COOKIE } from "../src/lib/auth-cookies";
+import { buildLockModule } from "./build-lock-module.mjs";
 import { regularFiles, scanProblems } from "./check-build-output";
 import { ancestorNodeModules } from "./check-lib-load.mjs";
 
@@ -103,13 +121,16 @@ const SDK_DIRECTORY = path.join(REPO_ROOT, "packages", "provider-sdk");
 const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone <dir>]";
 
 /**
- * Studio's side of the run, every interface the run relies on in one place: the lock command and its file, the
- * manifest file a package carries, the providers directory's variable, the refusal and answer codes, the session
+ * Studio's side of the run, every interface the run relies on in one place: the pack step, the lock command's wrapper
+ * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's variable, the refusal and answer codes, the session
  * cookie, the admin's sign-in and the routes. The predicates beside it (`refusalLines`, `unavailableProblems`,
  * `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`) read the answers.
  */
 export const STUDIO = Object.freeze({
-  lockScript: "providers:lock",
+  packScript: "scripts/providers-pack.ts",
+  lockWrapper: "docker/libredb-studio.mjs",
+  lockModule: "providers-lock.mjs",
+  buildCheckScript: "scripts/check-build-output.ts",
   lockFile: "providers.lock.json",
   manifestFile: "libredb-provider.json",
   providersDirVariable: "LIBREDB_PROVIDERS_DIR",
@@ -133,8 +154,10 @@ export const CHILD_TIMEOUTS_MS = Object.freeze({
   sdkPack: 3 * 60_000,
   npmPack: 2 * 60_000,
   npmInstall: 3 * 60_000,
-  esbuild: 2 * 60_000,
+  providerBuild: 2 * 60_000,
+  pack: 3 * 60_000,
   lock: 2 * 60_000,
+  buildCheck: 5 * 60_000,
   git: 60_000,
   serverLifetime: 5 * 60_000,
   serverReady: 90_000,
@@ -193,8 +216,8 @@ export function platformProblem(platform: string): string | null {
 export const STEP_TITLES = Object.freeze([
   "build Studio's standalone output",
   "pack the SDK",
-  "build the fixture provider outside the repository against the packed SDK",
-  "place and lock the provider package",
+  "pack the fixture provider outside the repository against the packed SDK",
+  "lock the provider package with the Node.js lock module",
   "query the fixture engine through Studio's API",
   "refuse the tampered package at the next boot",
   "the repository is unchanged and names no fixture engine",
@@ -321,7 +344,7 @@ export interface Fixture {
   /** The manifest's `runtime.entry`, where the bundle is written. */
   readonly entry: string;
   readonly acceptance: {
-    /** The entry's source, which esbuild bundles. */
+    /** The entry's source, which the fixture's build bundles; step 3 asserts the build read it. */
     readonly entrySource: string;
     /** The connection's own fields, beside the id and the engine's type the run adds. */
     readonly connection: Readonly<Record<string, unknown>>;
@@ -571,15 +594,19 @@ export function installedSdkProblems(installed: InstalledSdk): string[] {
 const PACKED_SDK_INPUT = "node_modules/@libredb/provider-sdk/dist/";
 
 /**
- * The problems with a bundle, from esbuild's metafile: an input outside the build directory, no input from the packed
- * SDK's dist/, or an import of the output other than a `node:` built-in.
+ * The problems with a bundle, from esbuild's metafile, whose paths are relative to the package's directory: an input
+ * outside that directory, no input from the packed SDK's dist/, no read of `entrySource`, or an import of the output
+ * `outfile` other than a `node:` built-in.
  */
-export function bundleProblems(metafile: unknown, outfile: string): string[] {
+export function bundleProblems(metafile: unknown, outfile: string, entrySource: string): string[] {
   const meta = isRecord(metafile) ? metafile : {};
   const inputs = Object.keys(isRecord(meta.inputs) ? meta.inputs : {});
   const problems = inputs
     .filter((input) => path.isAbsolute(input) || input.split(/[\\/]/)[0] === "..")
     .map((input) => `the bundle read ${input}, outside the build directory`);
+  if (!inputs.includes(entrySource)) {
+    problems.push(`the bundle did not read ${entrySource}, the entry's source acceptance.json names`);
+  }
   if (!inputs.some((input) => input.startsWith(PACKED_SDK_INPUT))) {
     problems.push(`the bundle read nothing from the packed SDK (${PACKED_SDK_INPUT})`);
   }
@@ -598,19 +625,50 @@ export function bundleProblems(metafile: unknown, outfile: string): string[] {
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The problems with the lock command's output: it must name the lock file, then the one package and its digest. */
-export function lockOutputProblems(stdout: string, lockFile: string, name: string, version: string): string[] {
-  const lines = stdout
+/** The non-empty lines of a child's standard output, each with its line end trimmed. */
+const outputLines = (stdout: string): string[] =>
+  stdout
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => line !== "");
+
+/** The line a lock or pack prints for package `name` `version`: the two, then `sha256:` and 64 hex digits. */
+const packageLine = (name: string, version: string): RegExp =>
+  new RegExp(`^${escapeRegExp(name)} ${escapeRegExp(version)} sha256:[0-9a-f]{64}$`);
+
+/**
+ * The problems with the lock command's output: it must name the lock file, then the one package and its digest, which
+ * must be `digest`, the one the pack step printed.
+ */
+export function lockOutputProblems(
+  stdout: string,
+  lockFile: string,
+  name: string,
+  version: string,
+  digest: string,
+): string[] {
+  const lines = outputLines(stdout);
   const problems: string[] = [];
   if (lines[0] !== `Wrote ${lockFile}`) problems.push(`the lock command's first line is not "Wrote ${lockFile}"`);
-  const entry = new RegExp(`^${escapeRegExp(name)} ${escapeRegExp(version)} sha256:[0-9a-f]{64}$`);
-  if (lines.length !== 2 || !entry.test(lines[1] as string)) {
+  const line = lines[1] as string;
+  if (lines.length !== 2 || !packageLine(name, version).test(line)) {
     problems.push(`the lock command did not print exactly one line "${name} ${version} sha256:<64 hex digits>"`);
+  } else if (line !== `${name} ${version} ${digest}`) {
+    problems.push(
+      `the lock command locked ${name} ${version} as ${line.split(" ").at(-1)}, not as ${digest}, the digest the pack step printed`,
+    );
   }
   return problems.length === 0 ? [] : [...problems, `it printed: ${JSON.stringify(lines)}`];
+}
+
+/** The problems with the pack step's output: exactly one line, the package and its digest. */
+export function packOutputProblems(stdout: string, name: string, version: string): string[] {
+  const lines = outputLines(stdout);
+  return lines.length === 1 && packageLine(name, version).test(lines[0] as string)
+    ? []
+    : [
+        `the pack step did not print exactly one line "${name} ${version} sha256:<64 hex digits>"; it printed: ${JSON.stringify(lines)}`,
+      ];
 }
 
 /** The problems with an artifact's files (paths relative to it, `/`-separated): exactly package.json, the manifest and the bundle. */
@@ -828,6 +886,116 @@ export function childSpec(
 /** A child as the run prints it: its command, directory and timeout, never an environment value. */
 export function describeChild(spec: ChildSpec): string {
   return `${spec.label}: ${spec.command.join(" ")} (in ${spec.cwd}, timeout ${Math.round(spec.timeoutMs / 1000)} s)`;
+}
+
+/**
+ * The directory of the repository's esbuild launcher, `launcher`, which the fixture's build finds on PATH; refused
+ * when the directory holds anything but the launcher, so the build's PATH gains exactly one tool.
+ */
+export function esbuildLauncherDirectory(
+  launcher: string,
+  list: (directory: string) => readonly string[] = (directory) => readdirSync(directory),
+): string {
+  const directory = path.dirname(launcher);
+  const entries = [...list(directory)].sort();
+  if (entries.length !== 1 || entries[0] !== path.basename(launcher)) {
+    throw new Error(`${directory} holds ${entries.join(", ")}, not ${path.basename(launcher)} alone`);
+  }
+  return directory;
+}
+
+/** What the fixture's build and the pack step are given: the launcher's directory before the caller's PATH, and HOME. */
+interface ToolInput {
+  readonly launcherDirectory: string;
+  readonly callerPath: string;
+  readonly home: string;
+}
+
+/** The caller's PATH with the launcher's directory before it. */
+const toolPath = (input: ToolInput): string => `${input.launcherDirectory}${path.delimiter}${input.callerPath}`;
+
+/** Step 3's evidence build: the fixture's own build in `provider`, writing into `evidence` and its metafile. */
+export function evidenceBuildSpec(
+  input: ToolInput & { readonly provider: string; readonly evidence: string; readonly metafile: string },
+): ChildSpec {
+  return childSpec(
+    "the fixture's build",
+    [process.execPath, "run", "--shell=bun", "build", "--", "--outdir", input.evidence, "--metafile", input.metafile],
+    input.provider,
+    { PATH: toolPath(input), HOME: input.home },
+    CHILD_TIMEOUTS_MS.providerBuild,
+  );
+}
+
+/**
+ * Step 3's pack: Studio's pack step run as its script file over `provider` into `providers`, its temporary
+ * directories under `packTemporary` (TMPDIR, which it takes as its temporary root).
+ */
+export function packSpec(
+  input: ToolInput & { readonly provider: string; readonly providers: string; readonly packTemporary: string },
+): ChildSpec {
+  return childSpec(
+    "the pack step",
+    [process.execPath, path.join(REPO_ROOT, STUDIO.packScript), "--out", input.providers, input.provider],
+    REPO_ROOT,
+    { PATH: toolPath(input), HOME: input.home, TMPDIR: input.packTemporary },
+    CHILD_TIMEOUTS_MS.pack,
+  );
+}
+
+/** What `placeLockModule` placed. */
+export interface PlacedLockModule {
+  readonly wrapper: string;
+  readonly module: string;
+  readonly inputs: number;
+  readonly bytes: number;
+}
+
+/**
+ * Builds the lock command's Node.js module into `lockDirectory` with `buildLockModule`, the function `build:lib` and
+ * each image's builder run, and copies the image's wrapper beside it, the image's layout: the wrapper imports
+ * `./providers-lock.mjs`. Nothing is written into the repository.
+ */
+export async function placeLockModule(lockDirectory: string): Promise<PlacedLockModule> {
+  mkdirSync(lockDirectory, { recursive: true });
+  const built = await buildLockModule({ outfile: path.join(lockDirectory, STUDIO.lockModule) });
+  const wrapper = path.join(lockDirectory, path.basename(STUDIO.lockWrapper));
+  copyFileSync(path.join(REPO_ROOT, STUDIO.lockWrapper), wrapper);
+  return { wrapper, module: built.outfile, inputs: built.inputs.length, bytes: statSync(built.outfile).size };
+}
+
+/** Step 4's lock: the wrapper beside the built module, run by `node` over `providers`. */
+export function lockSpec(input: {
+  readonly node: string;
+  readonly lockDirectory: string;
+  readonly providers: string;
+  readonly callerPath: string;
+  readonly home: string;
+}): ChildSpec {
+  const wrapper = path.join(input.lockDirectory, path.basename(STUDIO.lockWrapper));
+  return childSpec(
+    "the lock module",
+    [input.node, "--max-old-space-size=512", wrapper, "providers", "lock", "--dir", input.providers],
+    input.lockDirectory,
+    { PATH: input.callerPath, HOME: input.home },
+    CHILD_TIMEOUTS_MS.lock,
+  );
+}
+
+/** Step 8's build output check over `standalone` and `provider`, the package the pack step packed. */
+export function buildCheckSpec(input: {
+  readonly standalone: string;
+  readonly provider: string;
+  readonly callerPath: string;
+  readonly home: string;
+}): ChildSpec {
+  return childSpec(
+    "the build output check",
+    [process.execPath, path.join(REPO_ROOT, STUDIO.buildCheckScript), "--standalone", input.standalone, input.provider],
+    REPO_ROOT,
+    { PATH: input.callerPath, HOME: input.home },
+    CHILD_TIMEOUTS_MS.buildCheck,
+  );
 }
 
 /** What the server is given. */
@@ -1159,6 +1327,7 @@ interface Context {
   tarball?: string;
   artifact?: string;
   providers?: string;
+  digest?: string;
 }
 
 /** A value an earlier step left, refused by name when it did not. */
@@ -1169,7 +1338,7 @@ function earlier<T>(value: T | undefined, what: string): T {
 
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
-/** An empty directory npm, esbuild and the server use as HOME, so no user configuration reaches them. */
+/** An empty directory npm, the fixture's build, the pack step and the lock module use as HOME, so no user configuration reaches them. */
 const emptyHome = (ctx: Context): string => path.join(ctx.temp, "npm", "home");
 
 async function buildStandalone(ctx: Context): Promise<string> {
@@ -1227,7 +1396,7 @@ function npmCommand(ctx: Context): string {
   return npm;
 }
 
-async function buildProvider(ctx: Context): Promise<string> {
+async function packProvider(ctx: Context): Promise<string> {
   const tarball = earlier(ctx.tarball, "the SDK tarball");
   const npmDirectory = path.join(ctx.temp, "npm");
   const deps = path.join(ctx.temp, "deps");
@@ -1285,62 +1454,62 @@ async function buildProvider(ctx: Context): Promise<string> {
     }),
   );
 
-  const metafile = path.join(ctx.temp, "bundle-meta.json");
-  const esbuild = createRequire(import.meta.url).resolve("esbuild/bin/esbuild");
-  const bundle = await runOk(
-    childSpec(
-      "esbuild",
-      [
-        esbuild,
-        ctx.fixture.acceptance.entrySource,
-        "--bundle",
-        "--format=esm",
-        "--platform=node",
-        "--target=node24",
-        `--outfile=${ctx.fixture.entry}`,
-        `--metafile=${metafile}`,
-        "--log-level=warning",
-      ],
-      provider,
-      env,
-      CHILD_TIMEOUTS_MS.esbuild,
-    ),
-  );
-  const meta = JSON.parse(readFileSync(metafile, "utf8")) as unknown;
-  assertNone(bundleProblems(meta, ctx.fixture.entry), bundle.output);
-  const inputs = Object.keys((meta as { inputs: object }).inputs).length;
-  const size = statSync(path.join(provider, ctx.fixture.entry)).size;
-  const packed = closureTarballs.map((file) => path.basename(file, ".tgz")).join(", ");
-  return `SDK ${sdkManifest.version} installed offline with ${packed}; esbuild ${esbuildVersion} bundled ${inputs} inputs into ${ctx.fixture.entry}, ${size} bytes, importing only node: built-ins`;
-}
-
-async function placeAndLock(ctx: Context): Promise<string> {
   const { fixture } = ctx;
-  const provider = path.join(ctx.temp, "provider");
+  const tools = {
+    launcherDirectory: esbuildLauncherDirectory(createRequire(import.meta.url).resolve("esbuild/bin/esbuild")),
+    callerPath: ctx.callerPath,
+    home: emptyHome(ctx),
+  };
+  const evidence = path.join(ctx.temp, "evidence");
+  const metafile = path.join(ctx.temp, "bundle-meta.json");
+  const built = await runOk(evidenceBuildSpec({ ...tools, provider, evidence, metafile }));
+  const meta = JSON.parse(readFileSync(metafile, "utf8")) as unknown;
+  const outputKey = path.relative(provider, path.join(evidence, fixture.entry)).split(path.sep).join("/");
+  assertNone(bundleProblems(meta, outputKey, fixture.acceptance.entrySource), built.output);
+  const inputs = Object.keys((meta as { inputs: object }).inputs).length;
+
   const providers = path.join(ctx.temp, "providers");
+  const packTemporary = path.join(ctx.temp, "pack");
+  mkdirSync(providers);
+  mkdirSync(packTemporary);
+  const packed = await runOk(packSpec({ ...tools, provider, providers, packTemporary }));
+  assertNone(packOutputProblems(packed.stdout, fixture.name, fixture.version), packed.output);
+  const digest = outputLines(packed.stdout)[0]?.split(" ").at(-1) as string;
   const artifact = path.join(providers, ...fixture.name.split("/"), fixture.version);
-  for (const file of ["package.json", STUDIO.manifestFile, fixture.entry]) {
-    mkdirSync(path.dirname(path.join(artifact, file)), { recursive: true });
-    copyFileSync(path.join(provider, file), path.join(artifact, file));
-  }
   const files = regularFiles(artifact).map((file) => path.relative(artifact, file).split(path.sep).join("/"));
   assertNone(artifactProblems(files, fixture.entry));
-
-  const lockFile = path.join(providers, STUDIO.lockFile);
-  const lock = await runOk(
-    childSpec(
-      `bun run ${STUDIO.lockScript}`,
-      [process.execPath, "run", STUDIO.lockScript, "--", "--dir", providers],
-      REPO_ROOT,
-      { PATH: ctx.callerPath, HOME: emptyHome(ctx) },
-      CHILD_TIMEOUTS_MS.lock,
-    ),
-  );
-  assertNone(lockOutputProblems(lock.stdout, lockFile, fixture.name, fixture.version), lock.output);
-  if (!statSync(lockFile).isFile()) throw new Error(`${lockFile} is not a regular file`);
+  const bundle = readFileSync(path.join(artifact, fixture.entry));
+  if (!bundle.equals(readFileSync(path.join(evidence, fixture.entry)))) {
+    throw new Error(
+      `the packed ${fixture.entry} differs from the evidence build's, so the metafile does not describe it`,
+    );
+  }
   ctx.artifact = artifact;
   ctx.providers = providers;
-  return `${path.relative(ctx.temp, artifact)} locked: ${lock.stdout.trim().split("\n").at(-1)}`;
+  ctx.digest = digest;
+  const closureNames = closureTarballs.map((file) => path.basename(file, ".tgz")).join(", ");
+  return `SDK ${sdkManifest.version} installed offline with ${closureNames}; the fixture's build read ${inputs} inputs, the SDK from its packed dist/, into a bundle importing only node: built-ins; the pack step placed ${path.relative(ctx.temp, artifact)} as ${digest}, its ${fixture.entry} of ${bundle.length} bytes equal to the evidence build's`;
+}
+
+async function lockProvider(ctx: Context): Promise<string> {
+  const { fixture } = ctx;
+  const providers = earlier(ctx.providers, "the providers directory");
+  const digest = earlier(ctx.digest, "the pack step's digest");
+  const lockDirectory = path.join(ctx.temp, "lock");
+  const placed = await placeLockModule(lockDirectory);
+  const node = Bun.which("node", { PATH: ctx.callerPath });
+  if (node === null) throw new Error("no node on PATH: step 4 runs the lock module under Node.js");
+  const env = { PATH: ctx.callerPath, HOME: emptyHome(ctx) };
+  const version = await runOk(
+    childSpec("node --version", [node, "--version"], lockDirectory, env, CHILD_TIMEOUTS_MS.lock),
+  );
+  const lock = await runOk(
+    lockSpec({ node, lockDirectory, providers, callerPath: ctx.callerPath, home: emptyHome(ctx) }),
+  );
+  const lockFile = path.join(providers, STUDIO.lockFile);
+  assertNone(lockOutputProblems(lock.stdout, lockFile, fixture.name, fixture.version, digest), lock.output);
+  if (!lstatSync(lockFile).isFile()) throw new Error(`${lockFile} is not a regular file`);
+  return `Node.js ${version.stdout.trim()} ran ${path.basename(placed.wrapper)} beside ${path.relative(ctx.temp, placed.module)} (${placed.bytes} bytes from ${placed.inputs} inputs): ${outputLines(lock.stdout).at(-1)}`;
 }
 
 /** The server's environment for one boot of this run, with its own data directory. */
@@ -1459,7 +1628,16 @@ async function repositoryUnchanged(ctx: Context): Promise<string> {
 }
 
 async function buildHoldsNoFixture(ctx: Context): Promise<string> {
-  const build = path.join(earlier(ctx.standalone, "a standalone build"), ".next");
+  const standalone = earlier(ctx.standalone, "a standalone build");
+  const checked = await runOk(
+    buildCheckSpec({
+      standalone,
+      provider: path.join(ctx.temp, "provider"),
+      callerPath: ctx.callerPath,
+      home: emptyHome(ctx),
+    }),
+  );
+  const build = path.join(standalone, ".next");
   const needles = buildNeedles(ctx.fixture);
   const digests = new Map(
     regularFiles(FIXTURE_DIRECTORY).map((file) => [
@@ -1469,7 +1647,7 @@ async function buildHoldsNoFixture(ctx: Context): Promise<string> {
   );
   const files = regularFiles(build);
   assertNone(scanProblems(files, needles, digests));
-  return `none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
+  return `${outputLines(checked.stdout).join("; ")}; and none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
 }
 
 /** The issue's eight steps over `ctx`. */
@@ -1477,8 +1655,8 @@ function buildSteps(ctx: Context): Step[] {
   const runs = [
     buildStandalone,
     packSdk,
-    buildProvider,
-    placeAndLock,
+    packProvider,
+    lockProvider,
     queryEngine,
     refuseTampered,
     repositoryUnchanged,
