@@ -77,14 +77,18 @@ function gate(extra: Files, lists: Lists = {}, base: Files = BASE): Baseline["co
   return measureFiles(extra, lists, base).baseline.counters;
 }
 
-/** A legacy row of the grant register, keyed as the register keys it. */
+/** A legacy row of the grant register, keyed as the register keys it, granting no statement language. */
 function legacyRow(engine: string): Record<string, unknown> {
-  return { legacy: "@libredb/studio", engine };
+  return { legacy: "@libredb/studio", engine, grants: { statementLanguage: null } };
 }
 
-/** A package row of the grant register. */
+/** A package row of the grant register, granting no statement language. */
 function packageRow(engine: string): Record<string, unknown> {
-  return { package: { name: `@libredb/provider-${engine}`, version: "1.0.0", digest: "sha256-x" }, engine };
+  return {
+    package: { name: `@libredb/provider-${engine}`, version: "1.0.0", digest: "sha256-x" },
+    engine,
+    grants: { statementLanguage: null },
+  };
 }
 
 /** The grant register file holding `rows`. */
@@ -529,7 +533,9 @@ describe("the grant register", () => {
     expect(at("{")).toStartWith(`${GRANT_REGISTER_FILE} is not JSON: `);
     expect(at("{}\n")).toBe(`${GRANT_REGISTER_FILE} is not a JSON array of rows`);
     expect(at("[1]\n")).toBe(`${GRANT_REGISTER_FILE}: row 0 is not an object with a string engine`);
-    expect(at('[{"engine":"kafka"},{}]\n')).toBe(`${GRANT_REGISTER_FILE}: row 1 is not an object with a string engine`);
+    expect(at('[{"engine":"kafka","grants":{"statementLanguage":null}},{}]\n')).toBe(
+      `${GRANT_REGISTER_FILE}: row 1 is not an object with a string engine`,
+    );
     expect(at('[{"engine":"kafka","reasons":[]}]\n')).toBe(
       `${GRANT_REGISTER_FILE}: row 0 (kafka) has reasons that are not an object`,
     );
@@ -547,6 +553,37 @@ describe("the grant register", () => {
     expect(none.report["grantRegister.lines"]).toBe(0);
     expect(none.report["grantRegister.bytes"]).toBe(0);
     expect(none.report["grantRegister.reviewNotes"]).toBe(0);
+  });
+
+  /** The message measure refuses a register holding `rows` with. */
+  const rowRefusal = (rows: readonly unknown[]) => {
+    try {
+      measureFiles(register(rows));
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error("measure accepted the register");
+  };
+
+  test("a register row whose grants is not an object is refused by name, never read as granting no language", () => {
+    const unreadable = (index: number, engine: string) =>
+      `${GRANT_REGISTER_FILE}: row ${index} (${engine}) has grants that are not an object`;
+
+    expect(rowRefusal([legacyRow("kafka"), { ...legacyRow("postgres"), grants: "sql" }])).toBe(
+      unreadable(1, "postgres"),
+    );
+    expect(rowRefusal([{ ...packageRow("mqtt"), grants: [] }])).toBe(unreadable(0, "mqtt"));
+    expect(rowRefusal([{ legacy: "@libredb/studio", engine: "kafka" }])).toBe(unreadable(0, "kafka"));
+  });
+
+  test("a register row whose statement language is neither a string nor null is refused by name, never read as granting no language", () => {
+    const unreadable = (index: number, engine: string) =>
+      `${GRANT_REGISTER_FILE}: row ${index} (${engine}) has a grants.statementLanguage that is neither a string nor null`;
+
+    expect(rowRefusal([legacyRow("kafka"), { ...legacyRow("postgres"), grants: { statementLanguage: 7 } }])).toBe(
+      unreadable(1, "postgres"),
+    );
+    expect(rowRefusal([{ ...legacyRow("kafka"), grants: {} }])).toBe(unreadable(0, "kafka"));
   });
 
   test("a packages/ directory that is neither an engine package, a non-engine package nor the register is refused by name", () => {

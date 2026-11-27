@@ -45,8 +45,10 @@
  *   (`GRANT_REGISTER_DIRECTORY`), except those under its `tests/`. No exception applies to them.
  * - Grant register rows: when the tree holds any grant register file, the rows of `GRANT_REGISTER_FILE`, read as JSON.
  *   A missing file, text that is not JSON, a value that is not an array, a row that is not an object with a string
- *   `engine`, or a row whose `reasons` is present and not an object is refused by name: a register the ratchet cannot
- *   read never counts as zero rows. A tree with no grant register file has no rows.
+ *   `engine`, a row whose `reasons` is present and not an object, a row whose `grants` is not an object, or a row whose
+ *   `grants.statementLanguage` is neither a string nor null is refused by name: a register the ratchet cannot read
+ *   never counts as zero rows, and a row it cannot read never counts as granting no language. A tree with no grant
+ *   register file has no rows.
  *   A legacy row holds an own `legacy` member, whatever its value; a review note is a member of a row's `reasons`, legacy
  *   or package row alike.
  * - Single-engine statement languages: the string `grants.statementLanguage` values of the register's rows, each kept
@@ -568,12 +570,20 @@ function readRegisterRows(tree: Tree, files: readonly string[]): CountedRow[] {
     if (row.reasons !== undefined && !isObject(row.reasons)) {
       throw new Error(`${GRANT_REGISTER_FILE}: row ${index} (${row.engine}) has reasons that are not an object`);
     }
-    const language = isObject(row.grants) ? row.grants.statementLanguage : null;
+    if (!isObject(row.grants)) {
+      throw new Error(`${GRANT_REGISTER_FILE}: row ${index} (${row.engine}) has grants that are not an object`);
+    }
+    const language = row.grants.statementLanguage;
+    if (typeof language !== "string" && language !== null) {
+      throw new Error(
+        `${GRANT_REGISTER_FILE}: row ${index} (${row.engine}) has a grants.statementLanguage that is neither a string nor null`,
+      );
+    }
     return {
       engine: row.engine,
       legacy: Object.hasOwn(row, "legacy"),
       reviewNotes: row.reasons === undefined ? 0 : Object.keys(row.reasons).length,
-      statementLanguage: typeof language === "string" ? language : null,
+      statementLanguage: language,
     };
   });
 }
