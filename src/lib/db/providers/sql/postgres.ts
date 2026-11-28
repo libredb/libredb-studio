@@ -5921,9 +5921,9 @@ export class PostgresProvider extends SQLBaseProvider {
         const res = await client.query(SLOW_QUERIES_SQL, [this.monitoredDatabase(), limit]);
 
         // pg_stat_statements answers `queryid` NULL for another role's statement to a role without
-        // pg_read_all_stats, and an id nobody published is absent, not a NULL.
+        // pg_read_all_stats, and an id nobody published is left undefined, which reads as absent, never a NULL.
         return res.rows.map((r) => ({
-          ...(r.query_id === null ? {} : { queryId: r.query_id }),
+          queryId: r.query_id ?? undefined,
           query: r.query || "",
           calls: parseInt(r.calls || "0"),
           totalTime: parseFloat(r.total_time || "0"),

@@ -3635,12 +3635,12 @@ describe("PostgresProvider", () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       // pg_stat_statements.calls is a bigint, which pg answers as text unless a type parser says otherwise.
-      mockQueryFn = async (sql: string, params?: unknown[]) => {
+      mockQueryFn = async (sql: string) => {
         const normalized = sql.trim().toLowerCase();
         if (normalized.includes("pg_stat_statements") && normalized.includes("left(query, 100)")) {
           return { rows: [{ query: "SELECT 1", calls: "100", avgtime: "12.50ms" }], fields: [], rowCount: 1 };
         }
-        return defaultMockQuery(sql, params);
+        return defaultMockQuery(sql);
       };
 
       const health = await readGrantedHealth(provider, grant());
@@ -3651,7 +3651,7 @@ describe("PostgresProvider", () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       // pg_stat_statements shows queryid as NULL for another role's statement to a role without pg_read_all_stats.
-      mockQueryFn = async (sql: string, params?: unknown[]) => {
+      mockQueryFn = async (sql: string) => {
         const normalized = sql.trim().toLowerCase();
         if (normalized.includes("pg_stat_statements") && normalized.includes("queryid::text")) {
           return {
@@ -3673,14 +3673,14 @@ describe("PostgresProvider", () => {
             rowCount: 1,
           };
         }
-        return defaultMockQuery(sql, params);
+        return defaultMockQuery(sql);
       };
 
       const read = await readGrantedPanel(provider, { panel: "slowQueries", limit: 5 }, grant());
       expect(read.kind).toBe("answered");
       const [entry] = read.kind === "answered" ? read.member : [];
       expect(entry).toBeDefined();
-      expect(Object.hasOwn(entry ?? {}, "queryId")).toBe(false);
+      expect(entry?.queryId).toBeUndefined();
       expect(entry?.calls).toBe(3);
     });
   });
