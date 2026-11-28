@@ -11,6 +11,8 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
+import { providerMaintenanceTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { QueryCancelledError } from "@/lib/db/errors";
 import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 import { clientAddress } from "@/lib/api/client-address";
@@ -190,7 +192,13 @@ export async function POST(request: Request) {
       connection,
       editorExecutionContext(guard.session, connection),
     );
-    const maintenance = providerMaintenance(provider, declared, request.signal, "POST /api/db/maintenance");
+    const maintenance = providerMaintenance(
+      providerMaintenanceTarget(provider, declared),
+      servedEngineRecord(connection.type),
+      scrub,
+      request.signal,
+      "POST /api/db/maintenance",
+    );
 
     // The engine principal this connection acts as, for a provider that can name one (spec 3.11): a user name, never
     // any part of a secret, so it is recorded beside the Studio user on every row below.

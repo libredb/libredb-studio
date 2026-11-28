@@ -40,7 +40,7 @@ import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
-import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { providerMaintenanceTarget, providerMonitoringTarget } from "@/lib/api/session-target";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import {
@@ -246,10 +246,13 @@ async function heldEditorKill(
   const execution = editorExecutionContext(session, connection);
   const { capabilities: declared } = await readProviderDeclarations(connection, execution);
   const started = performance.now();
-  const outcome = await providerMaintenance(metadata, declared, new AbortController().signal, "live").run(
-    "kill",
-    String(target),
-  );
+  const outcome = await providerMaintenance(
+    providerMaintenanceTarget(metadata, declared),
+    servedEngineRecord(connection.type),
+    providerTextScrub(connection, "any"),
+    new AbortController().signal,
+    "live",
+  ).run("kill", String(target));
   const ms = Math.round(performance.now() - started);
   const ends = await Promise.all(holders);
 

@@ -12,16 +12,21 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type {
-  CallContext,
-  MaintenancePreview,
-  MaintenancePreviewRequest,
-  MaintenanceRunRequest,
+import {
+  type CallContext,
+  CallRefusalError,
+  type MaintenancePreview,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunRequest,
 } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
+import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
-import { errorOutcome } from "@/lib/db/error-record";
+import { type MaintenanceTarget, providerMaintenanceTarget } from "@/lib/api/session-target";
+import { errorCode, errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, MaintenanceDeclaration, MaintenanceResult } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
@@ -67,6 +72,27 @@ function providerOf(queryTimeout?: number, previews = true): DatabaseProvider {
   return Object.assign(provider, {
     previewMaintenance: mock(async (): Promise<MaintenancePreview> => ({ summary: marker(), facts: [] })),
   });
+}
+
+/**
+ * The maintenance facade of `provider` on `declared` as a legacy route builds it: its bridged target, its engine's legacy
+ * record and core's scrub of its connection.
+ */
+function maintenanceOf(
+  provider: DatabaseProvider,
+  declared: MaintenanceDeclaration,
+  caller: AbortSignal,
+  route: string,
+  clock?: () => number,
+) {
+  return providerMaintenance(
+    providerMaintenanceTarget(provider, declared),
+    servedEngineRecord(provider.type),
+    providerTextScrub(provider.config, "any"),
+    caller,
+    route,
+    clock,
+  );
 }
 
 /** The mock behind a provider's member, for its recorded calls and its implementation. */
@@ -133,7 +159,7 @@ describe("providerMaintenance", () => {
         },
       }),
       async () => {
-        const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE, steppedClock);
+        const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE, steppedClock);
         await maintenance.run("vacuum", "users", "app");
         await maintenance.run("vacuum");
         await maintenance.run("kill", "4711");
@@ -178,7 +204,7 @@ describe("providerMaintenance", () => {
     const preview: MaintenancePreview = { summary: marker(), facts: [{ label: marker(), value: marker() }] };
     mockOf(provider.runMaintenance).mockImplementation(async () => result);
     mockOf(provider.previewMaintenance).mockImplementation(async () => preview);
-    const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+    const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
 
     const ran = await maintenance.run("vacuum");
     const previewed = await maintenance.preview("release", ["app", "orders"]);
@@ -187,7 +213,7 @@ describe("providerMaintenance", () => {
     expect(ran.result).toBe(result);
     expect(previewed).toBe(preview);
     expect(maintenance.previewOffered).toBe(true);
-    expect(providerMaintenance(providerOf(undefined, false), DECLARED, new AbortController().signal, ROUTE)).toEqual(
+    expect(maintenanceOf(providerOf(undefined, false), DECLARED, new AbortController().signal, ROUTE)).toEqual(
       expect.objectContaining({ previewOffered: false }),
     );
   });
@@ -202,7 +228,7 @@ describe("providerMaintenance", () => {
     mockOf(provider.previewMaintenance).mockImplementation(async () => {
       throw previewThrown;
     });
-    const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+    const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
 
     expect(await failure(() => maintenance.run("vacuum", "users"))).toBe(ranThrown);
     expect(await failure(() => maintenance.preview("release", ["orders"]))).toBe(previewThrown);
@@ -225,7 +251,7 @@ describe("providerMaintenance", () => {
           return pending.promise;
         });
         const caller = new AbortController();
-        const maintenance = providerMaintenance(provider, DECLARED, caller.signal, ROUTE);
+        const maintenance = maintenanceOf(provider, DECLARED, caller.signal, ROUTE);
         const calling =
           facet === "run"
             ? maintenance.run("vacuum").then((outcome) => errorOf(outcome, "stopped"))
@@ -271,7 +297,7 @@ describe("providerMaintenance", () => {
         return pending.promise;
       });
       const caller = new AbortController();
-      const maintenance = providerMaintenance(provider, DECLARED, caller.signal, ROUTE);
+      const maintenance = maintenanceOf(provider, DECLARED, caller.signal, ROUTE);
       const calling = maintenance.run("vacuum").then((outcome) => errorOf(outcome, "stopped"));
       await reached.promise;
       caller.abort(new DOMException("The request went away.", "AbortError"));
@@ -295,7 +321,7 @@ describe("providerMaintenance", () => {
     const provider = providerOf();
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
-    const maintenance = providerMaintenance(provider, DECLARED, caller.signal, ROUTE);
+    const maintenance = maintenanceOf(provider, DECLARED, caller.signal, ROUTE);
 
     const ran = errorOf(await maintenance.run("vacuum"), "not-sent");
     const previewed = await failure(() => maintenance.preview("release", ["orders"]));
@@ -312,7 +338,7 @@ describe("providerMaintenance", () => {
     const queryTimeout = 2_000;
     const provider = providerOf(queryTimeout);
     const behind = () => Date.now() - queryTimeout - EXECUTE_SLACK_MS - 1_000;
-    const late = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE, behind);
+    const late = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE, behind);
     const refusedRun = errorOf(await late.run("vacuum"), "not-sent");
     const refusedPreview = await failure(() => late.preview("release", ["orders"]));
     const stopped = await withCore(
@@ -330,7 +356,7 @@ describe("providerMaintenance", () => {
         }),
       }),
       async () => {
-        const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+        const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
         return [
           errorOf(await maintenance.run("vacuum"), "stopped"),
           await failure(() => maintenance.preview("release", ["orders"])),
@@ -369,7 +395,7 @@ describe("providerMaintenance", () => {
         }),
       }),
       async () => {
-        const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+        const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
         return [
           errorOf(await maintenance.run("vacuum"), "not-sent"),
           await failure(() => maintenance.preview("release", ["orders"])),
@@ -398,7 +424,7 @@ describe("providerMaintenance", () => {
       [key]: 1,
     }));
     mockOf(provider.previewMaintenance).mockImplementation(async () => ({ summary: marker() }));
-    const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+    const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
 
     const ran = await failure(() => maintenance.run("vacuum"));
     const previewed = await failure(() => maintenance.preview("release", ["orders"]));
@@ -418,7 +444,7 @@ describe("providerMaintenance", () => {
     let caught: unknown[];
     let ran: MaintenanceRunOutcome;
     try {
-      const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+      const maintenance = maintenanceOf(provider, DECLARED, new AbortController().signal, ROUTE);
       ran = await maintenance.run("vacuum");
       caught = [await failure(() => maintenance.preview("release", ["orders"]))];
     } finally {
@@ -431,5 +457,297 @@ describe("providerMaintenance", () => {
     for (const error of caught) expect(error).toBeInstanceOf(HostCoreBootOrderError);
     expect(mockOf(provider.runMaintenance)).not.toHaveBeenCalled();
     expect(mockOf(provider.previewMaintenance)).not.toHaveBeenCalled();
+  });
+});
+
+/** An engine record holding only what `packageFailureAnswer` reads: whether it offers a legacy provider, and its grant. */
+function engineOf(legacyProvider: boolean, ownWords: "scrubbed" | "code-only"): EngineRecord {
+  return { id: randomUUID(), offers: { legacyProvider }, grants: { ownWords } } as unknown as EngineRecord;
+}
+
+/** Core's scrub of a package connection's providers. */
+const packageScrub = () => providerTextScrub(connectionWith({ id: "c2", host: "pkg.internal" }), "any");
+
+/** A session's calls with both maintenance facets offered and every other call not. */
+function maintenanceCalls() {
+  return {
+    console: {
+      execute: { honours: [] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "not-offered",
+    },
+    objects: { tree: "not-offered" },
+    maintenance: { run: "offered", preview: "offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  } as unknown as MaintenanceTarget["session"]["calls"];
+}
+
+/**
+ * A target of a session of the package form: a run and a preview function recording each call's facet and context and
+ * answering an answer of its form, `DECLARED`'s maintenance read through `maintenance()` and counted, an environment of
+ * its own and run marks counted.
+ */
+function packageMaintenanceTarget(timeout = 2_000) {
+  const calls: { facet: string; ctx: CallContext }[] = [];
+  const marks: string[] = [];
+  const reads: unknown[] = [];
+  const env = { get: () => undefined } as unknown as MaintenanceTarget["env"];
+  const declared = providerMaintenanceTarget(providerOf(), DECLARED);
+  const target: MaintenanceTarget = {
+    session: {
+      calls: maintenanceCalls(),
+      run: async (_request, ctx) => {
+        calls.push({ facet: "run", ctx });
+        return { success: true, executionTime: 1, message: marker() };
+      },
+      preview: async (_request, ctx) => {
+        calls.push({ facet: "preview", ctx });
+        return { summary: marker(), facts: [] };
+      },
+    },
+    maintenance: () => {
+      const read = declared.maintenance();
+      reads.push(read);
+      return read;
+    },
+    env,
+    timeout: () => timeout,
+    started: () => {
+      marks.push("started");
+    },
+    ended: (record) => {
+      marks.push(`ended ${record?.kind}`);
+    },
+  };
+  return { target, calls, marks, reads, env };
+}
+
+/** The errors logged while `body` runs, `logger.error` restored afterwards. */
+async function errorsOf(body: () => Promise<void>): Promise<unknown[][]> {
+  const logged: unknown[][] = [];
+  const error = spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+    logged.push(args);
+  });
+  try {
+    await body();
+  } finally {
+    error.mockRestore();
+  }
+  return logged;
+}
+
+describe("the maintenance facade on a session target", () => {
+  test("the maintenance facade reads any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each call on the entry, its maintenance read when the call is made", async () => {
+    const { target, calls, marks, reads, env } = packageMaintenanceTarget(2_000);
+    const start = Date.now();
+    const sessions: unknown[] = [];
+    await withCore(
+      (real) => ({
+        ...real,
+        maintenanceRunCall: (session, request, ctx, ports) => {
+          sessions.push(session);
+          return real.maintenanceRunCall(session, request, ctx, ports);
+        },
+        maintenancePreviewCall: (session, request, ctx, ports) => {
+          sessions.push(session);
+          return real.maintenancePreviewCall(session, request, ctx, ports);
+        },
+      }),
+      async () => {
+        const maintenance = providerMaintenance(
+          target,
+          engineOf(false, "code-only"),
+          packageScrub(),
+          new AbortController().signal,
+          ROUTE,
+          () => start,
+        );
+        expect(maintenance.previewOffered).toBe(true);
+        expect(reads).toEqual([]);
+        expect((await maintenance.run("vacuum", "users")).kind).toBe("answered");
+        await maintenance.preview("release", ["app", "orders"]);
+      },
+    );
+    expect(calls.map(({ facet }) => facet)).toEqual(["run", "preview"]);
+    for (const { ctx } of calls) {
+      expect(ctx.env).toBe(env);
+      expect(ctx.deadline).toBe(start + 2_000 + EXECUTE_SLACK_MS);
+    }
+    expect(marks).toEqual(["started", "ended answered", "started", "ended answered"]);
+    expect(reads).toHaveLength(2);
+    expect(sessions.map((session) => (session as { maintenance: unknown }).maintenance)).toEqual(reads);
+    expect((sessions[0] as { maintenance: unknown }).maintenance).toBe(reads[0]);
+
+    // A call the session rejects ends its mark too, a legacy record's failure passed as the same object.
+    const failed = packageMaintenanceTarget();
+    const thrown = new Error(marker());
+    Object.assign(failed.target.session, { run: () => Promise.reject(thrown) });
+    const legacy = providerMaintenance(
+      failed.target,
+      engineOf(true, "code-only"),
+      packageScrub(),
+      new AbortController().signal,
+      ROUTE,
+    );
+    expect(await failure(() => legacy.run("vacuum"))).toBe(thrown);
+    expect(failed.marks).toEqual(["started", "ended undefined"]);
+
+    // The bridge's session of a legacy provider is read the same way, under the provider's own statement timeout.
+    const provider = providerOf(4_000);
+    const bridged = providerMaintenanceTarget(provider, DECLARED);
+    expect(bridged.timeout()).toBe(4_000);
+    const onBridge = providerMaintenance(
+      bridged,
+      servedEngineRecord("postgres"),
+      providerTextScrub(provider.config, "any"),
+      new AbortController().signal,
+      ROUTE,
+    );
+    expect((await onBridge.run("vacuum")).kind).toBe("answered");
+    await onBridge.preview("release", ["orders"]);
+    expect(mockOf(provider.runMaintenance)).toHaveBeenCalledTimes(1);
+    expect(mockOf(provider.previewMaintenance)).toHaveBeenCalledTimes(1);
+  });
+
+  test("a package's failure of a maintenance run or preview reaches the caller as packageFailureAnswer answers it, a run whose answer the core refused thrown as the package's defect, and a legacy record's failure as the same object", async () => {
+    const codeOnly = engineOf(false, "code-only");
+    const thrown = new Error(marker());
+    const sentence = (call: string) =>
+      `The provider package's ${call} failed (${errorCode(thrown)}); the server's log holds its words.`;
+    const defect = (rule: string) =>
+      `${PACKAGE_DEFECT_PREFIX} it broke the rule ${rule}; the server's log names where.`;
+    const failing = packageMaintenanceTarget();
+    Object.assign(failing.target.session, {
+      run: () => Promise.reject(thrown),
+      preview: () => Promise.reject(thrown),
+    });
+    const unreadable = packageMaintenanceTarget();
+    Object.assign(unreadable.target.session, {
+      run: async () => ({ success: true, executionTime: 1, message: "", [marker()]: 1 }),
+      preview: async () => ({ summary: marker() }),
+    });
+    const caught: unknown[] = [];
+    const logged = await errorsOf(async () => {
+      const failingFacade = providerMaintenance(
+        failing.target,
+        codeOnly,
+        packageScrub(),
+        new AbortController().signal,
+        ROUTE,
+      );
+      caught.push(
+        await failure(() => failingFacade.run("vacuum")),
+        await failure(() => failingFacade.preview("release", ["orders"])),
+      );
+      const unreadableFacade = providerMaintenance(
+        unreadable.target,
+        codeOnly,
+        packageScrub(),
+        new AbortController().signal,
+        ROUTE,
+      );
+      caught.push(
+        await failure(() => unreadableFacade.run("vacuum")),
+        await failure(() => unreadableFacade.preview("release", ["orders"])),
+      );
+    });
+    expect(caught.map((error) => (error as Error).message)).toEqual([
+      sentence("maintenance run"),
+      sentence("maintenance preview"),
+      defect("maintenance-run-answer-unreadable"),
+      defect("maintenance-preview-answer-unreadable"),
+    ]);
+    expect(logged.map(([message]) => message)).toEqual([
+      "A provider package's maintenance run failed",
+      "A provider package's maintenance preview failed",
+      "A provider package's maintenance run failed",
+      "A provider package's maintenance preview failed",
+    ]);
+
+    // A granted record's failure is answered as raised, logged once.
+    let raised: unknown;
+    const grantedLogged = await errorsOf(async () => {
+      raised = await failure(() =>
+        providerMaintenance(
+          failing.target,
+          engineOf(false, "scrubbed"),
+          packageScrub(),
+          new AbortController().signal,
+          ROUTE,
+        ).run("vacuum"),
+      );
+    });
+    expect(raised).toBe(thrown);
+    expect(grantedLogged).toHaveLength(1);
+
+    // A refusal before the call, a stop and a boot-order error stay Studio's on a package record, logged nowhere.
+    const gone = new AbortController();
+    gone.abort(new DOMException("The request went away.", "AbortError"));
+    const refusal = new CallRefusalError([{ rule: "refinement-widens", pointer: "/maintenance" }]);
+    const unnarrowed = packageMaintenanceTarget();
+    Object.assign(unnarrowed.target, {
+      maintenance: () => {
+        throw refusal;
+      },
+    });
+    const studio: unknown[] = [];
+    const studioLogged = await errorsOf(async () => {
+      const left = providerMaintenance(packageMaintenanceTarget().target, codeOnly, packageScrub(), gone.signal, ROUTE);
+      studio.push(errorOf(await left.run("vacuum"), "not-sent"), await failure(() => left.preview("release", ["a"])));
+      const refused = providerMaintenance(
+        unnarrowed.target,
+        codeOnly,
+        packageScrub(),
+        new AbortController().signal,
+        ROUTE,
+      );
+      studio.push(errorOf(await refused.run("vacuum"), "not-sent"));
+      const stopped = await withCore(
+        (real) => ({
+          ...real,
+          maintenanceRunCall: async (): Promise<MaintenanceRunRecord> => ({
+            kind: "stopped",
+            reason: TIMEOUT_REASON(),
+            settled: Promise.resolve(),
+          }),
+        }),
+        async () =>
+          errorOf(
+            await providerMaintenance(
+              packageMaintenanceTarget().target,
+              codeOnly,
+              packageScrub(),
+              new AbortController().signal,
+              ROUTE,
+            ).run("vacuum"),
+            "stopped",
+          ),
+      );
+      studio.push(stopped);
+      const real = hostCore();
+      forgetHostCore();
+      try {
+        const unbooted = providerMaintenance(
+          packageMaintenanceTarget().target,
+          codeOnly,
+          packageScrub(),
+          new AbortController().signal,
+          ROUTE,
+        );
+        studio.push(errorOf(await unbooted.run("vacuum"), "not-sent"));
+        studio.push(await failure(() => unbooted.preview("release", ["a"])));
+      } finally {
+        installHostCore(real, "test");
+      }
+    });
+    expect(studio[0]).toBeInstanceOf(QueryCancelledError);
+    expect(studio[1]).toBeInstanceOf(QueryCancelledError);
+    expect(studio[2]).toBe(refusal);
+    expect(unnarrowed.calls).toEqual([]);
+    expect(studio[3]).toBeInstanceOf(StudioTimeoutRefusal);
+    expect(studio[4]).toBeInstanceOf(HostCoreBootOrderError);
+    expect(studio[5]).toBeInstanceOf(HostCoreBootOrderError);
+    expect(studioLogged).toEqual([]);
   });
 });
