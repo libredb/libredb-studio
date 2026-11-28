@@ -149,9 +149,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   resolveConnection: {
     "src/app/api/db/multi-query/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
@@ -169,7 +166,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/maintenance/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/monitoring/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/pool-stats/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, edit and key scan requests' connection here before it builds",
@@ -239,9 +239,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   readProviderDeclarations: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
-    "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/editor-provider.ts":
       "editorMaintenanceOpening and metadataMaintenanceOpening read a legacy provider's declarations for the connection their caller hands them, and every caller is a route listed under them here, which resolved it through resolveServedConnection first",
@@ -293,7 +293,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   editorProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
   },
   editorTarget: {
@@ -1414,9 +1414,10 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    // Ten files import resolveConnection: the cancel, disconnect, maintenance, preview and fleet health routes moved to
-    // the served resolve, so the floor sits at the count the census finds today.
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(10);
+    // Seven files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
+    // metadata and statement analysis routes moved to the served resolve, so the floor sits at the count the census
+    // finds today.
+    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(7);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

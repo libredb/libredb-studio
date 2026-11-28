@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { assertOpenable } from "@/lib/db/open-check";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { declaredSessionModel, legacyConnection, legacyProviderType } from "@/lib/db/server-catalog";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 
@@ -12,6 +14,15 @@ export const dynamic = "force-dynamic";
  * Return provider capabilities/labels without opening a live DB connection.
  * Metadata methods are sync and type-driven; connecting would needlessly contend
  * for exclusive file locks (SQLite / LibreDB) and network pools.
+ *
+ * The connection resolves for any engine the server serves (`resolveServedConnection`). A record that offers
+ * connection declarations (`EngineOffers.connectionDeclarations`), a legacy engine's, answers its provider's
+ * capabilities and labels. Any other, a provider package's engine, answers its record's body instead,
+ * `{ engine: { id, displayName }, objectModel }`: the object model its declared session states, null where it states
+ * none (`declaredSessionModel`), with no capabilities, labels or cancel offer, which only an opened session states
+ * (docs/providers/CONTRACT.md, clause C-107). That body is read without opening a session, after core's open check
+ * refuses by name, not-sent, a connection it could never open. The browser reads a package's engine from the server's
+ * catalog route (M7), not from this body.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of body parsing: an unauthenticated caller no longer gets a body parsed on its
@@ -34,15 +45,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty request body" }, { status: 400 });
     }
 
-    const connection = await resolveConnection(
+    // The resolve refuses a connection that names no type, or none the server serves, before anything is read.
+    const { connection: named, engine } = await resolveServedConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
     );
-    scrub = providerTextScrub(connection, "any");
+    scrub = connectionTextScrub(named, legacyProviderType(engine), "any");
 
-    if (!connection.type) {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
+    if (!engine.offers.connectionDeclarations) {
+      // Core's checks of any open, to their declarations step: a connection core could never open is refused by name
+      // before anything of the engine is answered, as a legacy record's declarations read refuses it.
+      assertOpenable(engine, named, editorExecutionContext(guard.session, named), "declarations");
+      return NextResponse.json({
+        engine: { id: engine.id, displayName: engine.displayName },
+        objectModel: declaredSessionModel(engine),
+      });
     }
+    const connection = legacyConnection(engine, named);
 
     // No `withOneShotTunnel` here, unlike test-connection and schema-snapshot (#457): this route never connects.
     // Capabilities and labels are type-driven and read by `readProviderDeclarations` without a socket and without

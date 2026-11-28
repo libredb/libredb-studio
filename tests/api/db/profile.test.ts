@@ -12,6 +12,7 @@ import type { QueryEventInput } from "@/lib/query-events/types";
 import type { QueryEventSinkState } from "@/lib/query-events/sink";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { QueryResult } from "@/lib/types";
@@ -111,11 +112,12 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
-      return body.connection;
+      const connection = body.connection as { type: string };
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -1668,7 +1670,7 @@ describe("POST /api/db/profile under governance", () => {
     GOVERNANCE_INSTANCE_ID: "libredb-studio",
   };
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
-  /** A governed connection as `resolveConnection` hands it to the route: a seed id and the grant's level. */
+  /** A governed connection as `resolveServedConnection` hands it to the route: a seed id and the grant's level. */
   const governedConnection = { ...validConnection, id: "seed:orders", name: "Orders", grantLevel: "read" };
   const governedMongo = { ...mongoConnection, id: "seed:catalog", name: "Catalog", grantLevel: "write" };
   let saved: Record<string, string | undefined> = {};

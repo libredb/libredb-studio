@@ -3168,6 +3168,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "cancel runs on a package engine's session through the console's cancel",
         "disconnect removes every cache entry of a package engine's record, and no other record's",
         "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
+        "the profile route and the statement analysis refuse a package engine by the record's offer, by name",
+        "provider-meta answers a package engine from its record",
+        "provider-meta refuses a package engine's connection that core's open check refuses, by name, before anything is answered",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
@@ -3182,7 +3185,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview and fleet health routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [

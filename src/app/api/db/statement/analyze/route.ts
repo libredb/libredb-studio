@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, isJsonObject, readJsonObject } from "@/lib/api/json-object-body";
 import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import { type EngineRecord, legacyConnection, legacyProviderType } from "@/lib/db/server-catalog";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { analyzeStatement, type StatementAnalysis } from "@/lib/editor/statement-analysis";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { readingOfRecord } from "@/lib/sql/dangerous-query";
 import { type RunTargetRange, RunTargetRangeError } from "@/lib/sql/run-target";
 
@@ -65,6 +66,28 @@ function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
 }
 
 /**
+ * Refuses `engine` when its record cannot be analysed, before anything is read of a provider: an engine that states no
+ * SQL text has no statement to find, and the analysis reads the statement terminator and the editor language from a
+ * provider Studio builds without connecting (`EngineOffers.connectionDeclarations`), which a provider package's engine
+ * does not offer, since its declaration states no terminator. Each refusal is `FacetNotOfferedError` of the console
+ * facet, outcome not-sent (docs/providers/CONTRACT.md, clause C-107).
+ *
+ * @throws {FacetNotOfferedError} Not-sent, when the record states no SQL text or offers no connection declarations.
+ */
+function assertAnalysable(engine: EngineRecord): void {
+  const sentence =
+    engine.statementGrammar === null
+      ? "This connection's engine states no SQL text, so Studio has no statement to analyse and analysed nothing."
+      : engine.offers.connectionDeclarations
+        ? null
+        : "Statement analysis reads the engine's statement terminator and editor language from a provider Studio builds without connecting, which this connection's engine does not offer in this LibreDB Studio, so Studio analysed nothing.";
+  if (sentence === null) return;
+  const refusal = new FacetNotOfferedError(sentence, legacyProviderType(engine), "console", "statementAnalysis");
+  markNotSent(refusal);
+  throw refusal;
+}
+
+/**
  * What Run would do with the editor's text, decided as the web editor decides it (#2204): the statement to send,
  * where it sits, whether the connection type refuses it, whether to ask before it runs and what to type, and which
  * route it takes. The answer is `analyzeStatement`'s, whole, so the web editor and a client outside the browser read
@@ -83,9 +106,11 @@ function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
  * THE ORDER IS THE SECURITY CENSUSES': the session, the body, the connection, then the fields. A connection the caller
  * may not resolve, refused with 403, 404 or 503, answers that refusal whatever the body holds, which
  * tests/security/custom-connections.test.ts, governance-grants.test.ts and kubernetes-access-review.test.ts send every
- * connection route, and which `POST /api/db/query` answers the same way. A type the server cannot build, a provider
- * `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` the provider does not enforce, is the
- * factory's refusal, so it comes after the field checks.
+ * connection route, and which `POST /api/db/query` answers the same way. The connection resolves for any engine the
+ * server serves (`resolveServedConnection`), and after the field checks a record this route cannot analyse, a provider
+ * package's engine, is refused by name, outcome not-sent (`assertAnalysable`). A type the server cannot build, a
+ * provider `LIBREDB_ENABLED_PROVIDERS` leaves out or a `readOnly` the provider does not enforce, is the factory's
+ * refusal, so it comes after them.
  *
  * Metered on the `query` bucket, one slot per request: the analysis is CPU on the event loop, and the provider is
  * built as on `POST /api/db/provider-meta`, which that bucket meters too.
@@ -105,17 +130,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
-    // `resolveConnection` refuses an inline record whose type is missing or no string, or whose name is present and no
-    // string, so the connection names a provider, and a name the analysis can read as the text a typed confirmation
-    // expects.
-    const connection = await resolveConnection(body, guard.session);
-    scrub = providerTextScrub(connection, "any");
+    // `resolveServedConnection` refuses an inline record whose type is missing or no string or names no engine the
+    // server serves, or whose name is present and no string, so the connection names an engine, and a name the
+    // analysis can read as the text a typed confirmation expects.
+    const { connection: named, engine } = await resolveServedConnection(body, guard.session);
+    scrub = connectionTextScrub(named, legacyProviderType(engine), "any");
 
     // Before any provider is built: a request this route cannot read costs no provider.
     const fields = readAnalysisFields(body);
     if (!fields.ok) {
       return NextResponse.json({ error: fields.error }, { status: fields.status });
     }
+    assertAnalysable(engine);
+    const connection = legacyConnection(engine, named);
 
     // The execution context, as every route that builds a provider passes it, although this one opens no handle: the
     // factory refuses with it a connection the caller's posture could never open (SQLite under a denied one). The
@@ -132,7 +159,7 @@ export async function POST(req: NextRequest) {
         selection: fields.selection,
         cursor: fields.cursor,
         // The reading of the engine's record, never of the connection's type.
-        reading: readingOfRecord(servedEngineRecord(connection.type)),
+        reading: readingOfRecord(engine),
         capabilities,
         connectionName: connection.name,
         connectionEnvironment: connection.environment,

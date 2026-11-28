@@ -98,12 +98,12 @@ export const PROVIDER_ROUTES = ALL_ROUTES.filter(([key]) => !(key in ROUTES_WITH
 /**
  * The provider routes that pass the request body to `resolveConnection`, directly, through `resolveServedConnection`
  * (its body with the engine's record, which Test Connection, the query route, the cancel and disconnect routes, the
- * monitoring, health and pool statistics routes, the maintenance and preview routes, fleet health and
- * `handleObjectRequest` call) or through `handleObjectRequest` in src/lib/api/object-route.ts, each with a minimal
- * well-formed body: the fields the route reads beside the connection. A test adds a `connectionId` or an inline
- * `connection` to it, so every route that turns a request into a connection is sent both, and the inventory test in
- * tests/security/governance-grants.test.ts fails until a new provider route is classified here or in
- * `PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY`.
+ * monitoring, health and pool statistics routes, the maintenance and preview routes, fleet health, the provider
+ * metadata, column profile and statement analysis routes and `handleObjectRequest` call) or through
+ * `handleObjectRequest` in src/lib/api/object-route.ts, each with a minimal well-formed body: the fields the route
+ * reads beside the connection. A test adds a `connectionId` or an inline `connection` to it, so every route that turns
+ * a request into a connection is sent both, and the inventory test in tests/security/governance-grants.test.ts fails
+ * until a new provider route is classified here or in `PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY`.
  */
 export const CONNECTION_ROUTES: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   "db/cancel": { queryId: "governance-probe" },

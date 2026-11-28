@@ -20,6 +20,7 @@ import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const { createDatabaseProvider, readProviderDeclarations: realReadProviderDeclarations } = await import(
   "@/lib/db/factory"
@@ -64,11 +65,12 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
-      return body.connection;
+      const connection = body.connection as { type: string };
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -282,10 +284,15 @@ describe("POST /api/db/provider-meta", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
+    // The resolve's refusal of a connection that names no type, before anything is read.
     expect(res.status).toBe(400);
-    expect(data.error).toContain("required");
+    expect([data.code, data.error]).toEqual([
+      "PROVIDER_UNKNOWN",
+      "This connection names no type, so no provider in this LibreDB Studio can open it.",
+    ]);
+    expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
   });
 
   test("returns 503 for ConnectionError", async () => {
