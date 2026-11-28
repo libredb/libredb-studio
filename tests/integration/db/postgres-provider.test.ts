@@ -3647,6 +3647,33 @@ describe("PostgresProvider", () => {
       expect(health.slowQueries).toEqual([{ query: "SELECT 1", calls: 100, avgTime: "12.50ms" }]);
     });
 
+    test("a health slow query whose text pg answers as NULL, its text store unreadable, is read as the sentence saying so", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // pg_stat_statements answers query NULL when the server cannot read its query text file (measured on
+      // postgres:18.6 with the file made unreadable); another role's statement answers "<insufficient privilege>".
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_statements") && normalized.includes("left(query, 100)")) {
+          return {
+            rows: [
+              { query: null, calls: "7", avgtime: "3.00ms" },
+              { query: "SELECT 1", calls: "2", avgtime: "1.00ms" },
+            ],
+            fields: [],
+            rowCount: 2,
+          };
+        }
+        return defaultMockQuery(sql);
+      };
+
+      const health = await readGrantedHealth(provider, grant());
+      expect(health.slowQueries).toEqual([
+        { query: "The server did not answer this statement's text.", calls: 7, avgTime: "3.00ms" },
+        { query: "SELECT 1", calls: 2, avgTime: "1.00ms" },
+      ]);
+    });
+
     test("a slow query whose query id pg answers as NULL, another role's statement, is read without one", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
