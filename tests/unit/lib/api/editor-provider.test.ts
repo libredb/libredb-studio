@@ -36,9 +36,6 @@ mock.module("@/lib/db", () => ({
 
 /** The writable cache by key, as `findCachedProvider` reads it. */
 const cachedByKey = new Map<string, DatabaseProvider>();
-/** Every open of a metadata session, as `getOrCreateMetadataProvider` receives it. */
-const openedMetadata: { connection: DatabaseConnection; options: unknown; context: unknown; rest: unknown[] }[] = [];
-let metadataSession: DatabaseProvider;
 /** Every open of an editor session, as `getOrCreateEditorSession` receives it, and the entry the case sets it to answer. */
 const openedEditor: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
 let editorEntry: CachedSession;
@@ -70,15 +67,6 @@ mock.module("@/lib/db/factory", () => ({
     openedEditor.push({ connection, engine, context, rest });
     return editorEntry;
   },
-  getOrCreateMetadataProvider: async (
-    connection: DatabaseConnection,
-    options: unknown,
-    context: unknown,
-    ...rest: unknown[]
-  ) => {
-    openedMetadata.push({ connection, options, context, rest });
-    return metadataSession;
-  },
 }));
 
 const {
@@ -89,7 +77,6 @@ const {
   editorTarget,
   metadataMaintenanceOpening,
   metadataMonitoringTarget,
-  metadataProvider,
   metadataTreeTarget,
 } = await import("@/lib/api/editor-provider");
 const { providerTreeTarget } = await import("@/lib/api/session-target");
@@ -213,38 +200,50 @@ describe("editorTarget", () => {
 });
 
 /** The connection's metadata session, under the editor's posture, as the maintenance route runs a kill on it (C-66). */
-describe("metadataProvider", () => {
+describe("metadataMaintenanceOpening", () => {
+  const legacyEngine = {
+    id: connection.type,
+    offers: { legacyProvider: true, catalog: true },
+  } as unknown as EngineRecord;
+
   test("opens the connection's metadata session with the editor's connection and posture, and without a catalog runs on it", async () => {
-    metadataSession = providerOf({});
+    const metadata = providerOf({ supportsMaintenance: true, maintenanceOperations: ["kill"] });
+    metadataEntry = { opened: { form: "provider", provider: metadata } } as unknown as CachedSession;
     connected = providerOf({});
-    openedMetadata.length = 0;
+    openedMetadataSessions.length = 0;
     opened.length = 0;
 
-    expect(await metadataProvider(session("admin"), connection, undefined)).toBe(metadataSession);
-    expect(await metadataProvider(session("user"), connection, undefined)).toBe(metadataSession);
+    const admin = await metadataMaintenanceOpening(session("admin"), connection, legacyEngine, undefined);
+    const user = await metadataMaintenanceOpening(session("user"), connection, legacyEngine, undefined);
+    expect([admin.accepted(), user.accepted()]).toEqual([metadata.getCapabilities(), metadata.getCapabilities()]);
     await editorProvider(session("admin"), connection, undefined);
     await editorProvider(session("user"), connection, undefined);
 
-    expect(openedMetadata.map((open) => open.context)).toEqual([
+    expect(openedMetadataSessions.map((open) => open.context)).toEqual([
       { allowExternalFileAccess: true },
       { allowExternalFileAccess: false },
     ]);
     // Each the context editorProvider hands the editor's open for the same session.
-    expect(openedMetadata.map((open) => open.context)).toEqual(opened.map((open) => open.context));
-    expect(openedMetadata.map((open) => open.options)).toEqual([{}, {}]);
-    expect(openedMetadata.map((open) => open.rest)).toEqual([[], []]);
-    expect(openedMetadata[0].connection).toBe(connection);
+    expect(openedMetadataSessions.map((open) => open.context)).toEqual(opened.map((open) => open.context));
+    expect(openedMetadataSessions.map((open) => [open.engine, open.rest])).toEqual([
+      [legacyEngine, []],
+      [legacyEngine, []],
+    ]);
+    expect(openedMetadataSessions[0]?.connection).toBe(connection);
   });
 
   test("a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one", async () => {
-    const shop = providerOf({});
-    const editorShop = providerOf({});
-    connected = providerOf({ catalogSessions: true }, { shop: editorShop });
-    metadataSession = providerOf({ catalogSessions: true }, { shop });
-    expect(await metadataProvider(session("admin"), connection, "shop")).toBe(shop);
+    const shop = providerOf({ supportsMaintenance: true, maintenanceOperations: ["kill"] });
+    metadataEntry = {
+      opened: { form: "provider", provider: providerOf({ catalogSessions: true }, { shop }) },
+    } as unknown as CachedSession;
+    const scoped = await metadataMaintenanceOpening(session("admin"), connection, legacyEngine, "shop");
+    expect(scoped.accepted()).toBe(shop.getCapabilities() as never);
 
-    metadataSession = providerOf({});
-    await expect(metadataProvider(session("admin"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
+    metadataEntry = { opened: { form: "provider", provider: providerOf({}) } } as unknown as CachedSession;
+    await expect(metadataMaintenanceOpening(session("admin"), connection, legacyEngine, "shop")).rejects.toThrow(
+      DatabaseConfigError,
+    );
   });
 });
 

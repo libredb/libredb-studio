@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
-import { type MaintenanceOperation, readProviderDeclarations } from "@/lib/db";
+import type { MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub, scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, type ProviderTextScrub, scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
-import { editorExecutionContext } from "@/lib/api/execution-context";
-import { packageAnswers } from "@/lib/api/package-errors";
+import { editorMaintenanceOpening, metadataMaintenanceOpening } from "@/lib/api/editor-provider";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
-import { providerMaintenanceTarget } from "@/lib/api/session-target";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineConnection, legacyProviderType } from "@/lib/db/server-catalog";
 import { QueryCancelledError } from "@/lib/db/errors";
 import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 import { clientAddress } from "@/lib/api/client-address";
@@ -24,26 +22,32 @@ import { admitQueryExecution } from "@/lib/query-events/admission";
 import { queryEventStart } from "@/lib/query-events/build";
 import { recordQueryEvent } from "@/lib/query-events/sink";
 import type { QueryEventInput, QueryEventStatus } from "@/lib/query-events/types";
-import type { DatabaseConnection } from "@/lib/types";
 import { logger } from "@/lib/logger";
 
+const ROUTE = "POST /api/db/maintenance";
+
 /**
- * Runs one maintenance operation, for an admin. The request is checked in this order, and nothing is run or recorded
- * for a request refused on the way: the guard and the admin check; a JSON object body; the connection; `type`
- * present and text; `container` and `target` text or absent; the operation listed in the `maintenance` of the
- * engine's `ENGINE_FACETS` row, before any provider is built (`400 FACET_NOT_OFFERED`); then, on the connected
- * provider, the operation the server accepts (the same code) and the placement its spec declares.
+ * Runs one maintenance operation, for an admin, on any engine the server serves: a legacy provider's bridged session or
+ * a provider package's own (docs/providers/CONTRACT.md, clause C-107). The request is checked in this order, and
+ * nothing is run or recorded for a request refused on the way: the guard and the admin check; a JSON object body; the
+ * connection and the record of its engine (`resolveServedConnection`); `type` present and text; `container` and
+ * `target` text or absent; the operation listed in the record's maintenance, before any session opens
+ * (`400 FACET_NOT_OFFERED`); a catalog the record does not offer, refused by name before any open (clause C-111); then,
+ * on the opened session, the operation its server accepts (the same code) and the placement its spec declares.
  *
- * The run goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route reads the
- * provider's declarations, as the query route reads them, and runs the operation through `providerMaintenance` on the
- * session's maintenance, the declaration narrowed by what the connected provider accepts, until the statement timeout
- * plus ten seconds and until the request leaves. A run the host refused before the call, or failed before it by an
- * error the host raised, reached no provider and writes no audit row; a run Studio stopped waiting for is audited as
- * an unknown outcome, since the engine may still complete it, and answers 499 or 504 with outcome unknown.
+ * The run goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route builds the
+ * opening's target, which for a legacy provider reads its declarations as the query route reads them, and runs the
+ * operation through `providerMaintenance` on the session's maintenance, a legacy provider's declaration narrowed by
+ * what the connected provider accepts or a package's narrowed maintenance, until the statement timeout plus ten
+ * seconds and until the request leaves. A run the host refused before the call, or failed before it by an error the
+ * host raised, reached no provider and writes no audit row; a run Studio stopped waiting for is audited as an unknown
+ * outcome, since the engine may still complete it, and answers 499 or 504 with outcome unknown. Each row names the
+ * engine user the session acts as, where it names one (clause C-67).
  *
- * A kill runs on the connection's metadata session (clause C-66), in the request's catalog, opened under the same
- * editor posture and checks, so it never waits behind the editor's statements; every other operation runs on the
- * editor's provider.
+ * A kill runs on the record's metadata session (clause C-66), in the request's catalog, opened under the same editor
+ * posture and checks, so it never waits behind the editor's statements; every other operation runs on the editor's
+ * session. A package's failure, of its open or of the run, is answered and logged once through the request's
+ * `PackageAnswers` (clause C-112), and the run's sentence reaches the client under the record's grant of its words.
  */
 export async function POST(request: Request) {
   // Session, rate limit and denial audit share the same door as every other provider-reaching
@@ -52,17 +56,18 @@ export async function POST(request: Request) {
   // Authentication now yields 401 (was folded into a blanket 403 before); role is checked
   // separately below so "no session" and "wrong role" stay distinguishable, matching every
   // other guarded route's contract.
-  const guard = await guardRoute({ route: "POST /api/db/maintenance", bucket: "query", request });
+  const guard = await guardRoute({ route: ROUTE, bucket: "query", request });
   if ("response" in guard) return guard.response;
 
   if (guard.session.role !== "admin") {
-    auditRoleDenial({ route: "POST /api/db/maintenance", user: guard.session.username, request });
+    auditRoleDenial({ route: ROUTE, user: guard.session.username, request });
     return adminRequiredResponse();
   }
 
-  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
-  // provider ran.
+  // Core's scrub of the resolved connection and the request's record of a package's failures, held out here for the
+  // `catch` below: before the connection resolves no provider ran.
   let scrub: ProviderTextScrub | undefined;
+  let answers: PackageAnswers | undefined;
   try {
     // A body that is not JSON, or JSON that is not an object (`null`, an array, a number), is the caller's mistake and
     // answers 400 in a fixed sentence, rather than reaching the destructuring below as a raw runtime error.
@@ -72,8 +77,10 @@ export async function POST(request: Request) {
     }
     const { type, target, container } = body;
 
-    const connection = await resolveConnection(body, guard.session);
-    scrub = providerTextScrub(connection, "any");
+    const { connection, engine } = await resolveServedConnection(body, guard.session);
+    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    answers = packageAnswers(engine, scrub, ROUTE);
+    const opening = answers;
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
@@ -117,22 +124,26 @@ export async function POST(request: Request) {
     // The same reading for `target`: an empty one is the whole-database form, so no provider is sent empty text.
     const requestedTarget: string | undefined = target || undefined;
 
-    // The engine facets row (FND-4), read before any provider is built: an operation the engine does not offer is
+    // The record's maintenance list (FND-4), read before any session opens: an operation the engine does not offer is
     // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
-    assertMaintenanceOffered(servedEngineRecord(connection.type), type);
+    assertMaintenanceOffered(engine, type);
 
-    // A kill runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so it never waits for
-    // a connection the editor's statements hold; every other operation runs on the editor's provider.
+    // A kill runs on the record's metadata session (docs/providers/CONTRACT.md, clause C-66), so it never waits for a
+    // connection the editor's statements hold; every other operation runs on the editor's session. A failure of the
+    // open is the package's open's.
     const catalog = requestCatalog(body);
-    const provider =
-      type === "kill"
-        ? await metadataProvider(guard.session, connection, catalog)
-        : await editorProvider(guard.session, connection, catalog);
-    const capabilities = provider.getCapabilities();
+    const opened = await (type === "kill"
+      ? metadataMaintenanceOpening(guard.session, connection, engine, catalog)
+      : editorMaintenanceOpening(guard.session, connection, engine, catalog)
+    ).catch((error: unknown) => {
+      throw opening.answer("open", error);
+    });
+    const capabilities = opened.accepted();
 
-    // The connected server may accept fewer operations than its engine's row (PostgreSQL and MySQL narrow at
-    // connect), so the provider's own declaration is read again, and a refusal answers the same code.
-    assertMaintenanceAccepted(servedEngineRecord(connection.type), type, capabilities);
+    // The opened session's server may accept fewer operations than the record lists (PostgreSQL and MySQL narrow at
+    // connect, a package's open may refine its maintenance), so what it accepts is read, and a refusal answers the same
+    // code.
+    assertMaintenanceAccepted(engine, type, capabilities);
 
     // `maintenanceOperations` above says only that the operation EXISTS here. What KIND of
     // target it takes is a separate declaration - `maintenanceOperationSpecs` - and until
@@ -187,21 +198,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error }, { status: 400 });
     }
 
-    // The provider's maintenance as declared before it connects, read as the query route reads it, under the session's
-    // editor posture: the session's maintenance is this declaration narrowed by what the connected provider accepts.
-    const { capabilities: declared } = await readProviderDeclarations(
-      connection,
-      editorExecutionContext(guard.session, connection),
-    );
-    const maintenance = providerMaintenance(
-      providerMaintenanceTarget(provider, declared),
-      packageAnswers(servedEngineRecord(connection.type), scrub, "POST /api/db/maintenance"),
-      request.signal,
-    );
+    // The target the run is made on, built only now the checks above passed: a legacy provider's reads its
+    // maintenance as declared before it connects, as the query route reads it, under the session's editor posture.
+    const runTarget = await opened.target();
+    const maintenance = providerMaintenance(runTarget, answers, request.signal);
 
-    // The engine principal this connection acts as, for a provider that can name one (spec 3.11): a user name, never
-    // any part of a secret, so it is recorded beside the Studio user on every row below.
-    const engineUser = provider.engineUser?.();
+    // The engine principal the session acts as, where it names one (spec 3.11, clause C-67): a user name, never any part
+    // of a secret, so it is recorded beside the Studio user on every row below.
+    const engineUser = runTarget.engineUser();
 
     // The fields every row of this run shares, built once so the completed row and the thrown row
     // cannot disagree about which operation was run against what.
@@ -217,7 +221,7 @@ export async function POST(request: Request) {
       container: requestedContainer,
       connectionName: connection.name || connection.database || "unknown",
       user: guard.session.username || "admin",
-      // Omitted, not undefined, for a provider that names no engine principal, so its rows keep their shape.
+      // Omitted, not undefined, for a session that names no engine principal, so its rows keep their shape.
       ...(engineUser === undefined ? {} : { engineUser }),
     } as const;
 
@@ -254,14 +258,16 @@ export async function POST(request: Request) {
           duration: Date.now() - startTime,
         });
       } catch (auditError) {
-        logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+        logger.error("Failed to record maintenance audit event", auditError, { route: ROUTE });
       }
       // The driver's error, typed (#1387). A provider hands the engine's refusal on as the driver
       // raised it, and the outer catch read every untyped error as Studio's own failure: an engine
       // that refuses the statement (CockroachDB's `VACUUM` syntax error, TiDB's `CHECK TABLE`)
       // answered 500 INTERNAL_ERROR. Mapped here, a refusal the driver codes as the statement's
-      // own fault answers 400 with the engine's sentence, and anything else keeps a 5xx.
-      throw mapDatabaseError(error, connection.type);
+      // own fault answers 400 with the engine's sentence, and anything else keeps a 5xx. A provider
+      // package's failure is already the request's answer of it (`PackageAnswers`), never mapped.
+      const legacyType = legacyProviderType(engine);
+      throw legacyType === undefined ? error : mapDatabaseError(error, legacyType);
     }
     // A run that ended without the provider's answer is Studio's own error, answered as the accessor built it and
     // never mapped as the engine's: a caller that left is `cancelled`, every other end an `error`.
@@ -282,7 +288,7 @@ export async function POST(request: Request) {
           duration: Date.now() - startTime,
         });
       } catch (auditError) {
-        logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+        logger.error("Failed to record maintenance audit event", auditError, { route: ROUTE });
       }
       throw outcome.error;
     }
@@ -309,14 +315,15 @@ export async function POST(request: Request) {
         duration,
       });
     } catch (auditError) {
-      logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+      logger.error("Failed to record maintenance audit event", auditError, { route: ROUTE });
     }
 
-    // The message is the provider's sentence, answered through the connection's scrub; the verdict above reads
-    // `success`, which the scrub keeps.
-    return NextResponse.json(scrubMaintenanceResult(scrub, result));
+    // The message is the engine's sentence, answered under the record's grant of its words: through the connection's
+    // scrub, or Studio's sentence where no register row grants a package its words; the verdict above reads
+    // `success`, which neither changes.
+    return NextResponse.json(scrubMaintenanceResult({ scrub, ownWords: engine.grants.ownWords, route: ROUTE }, result));
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/maintenance", scrub });
+    return createErrorResponse(error, { route: "api/db/maintenance", scrub, logged: answers?.logged(error) === true });
   }
 }
 
@@ -327,7 +334,7 @@ export async function POST(request: Request) {
  */
 function maintenanceEvent(
   session: UserPayload,
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   request: Request,
   started: QueryEventInput["started"],
   status: QueryEventStatus,

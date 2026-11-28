@@ -97,7 +97,8 @@ export interface MaintenanceTarget extends SessionTarget<Omit<MaintenanceSession
   /**
    * The session's maintenance, read when a call is made: a legacy provider's is its declaration narrowed by what the
    * connected provider accepts (`bridgedMaintenance`), which the SDK refuses as `CallRefusalError` for a narrowing its
-   * declaration cannot have, so a run answers that refusal as not sent, after the route admitted it.
+   * declaration cannot have, so a run answers that refusal as not sent, after the route admitted it; a provider
+   * package's is the maintenance its open narrowed, which its open already checked.
    */
   maintenance(): EngineMaintenance;
   /**

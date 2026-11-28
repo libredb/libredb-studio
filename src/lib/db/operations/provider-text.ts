@@ -255,23 +255,26 @@ export function scrubMonitoringData(scrub: ProviderTextScrub, data: MonitoringDa
 }
 
 /**
- * A maintenance answer with its `message` scrubbed; its verdict, time, `rows` and `fields` are kept as given. It takes
- * the run answer's readonly lists, so the answer the maintenance facade passes by reference reaches it as it is.
+ * A maintenance answer with its `message`, the engine's sentence, read under `words` (`providerSentence`): through
+ * core's scrub where the record grants its words, Studio's sentence where it does not, logged once. Its verdict, time,
+ * `rows` and `fields` are kept as given. It takes the run answer's readonly lists, so the answer the maintenance facade
+ * passes by reference reaches it as it is.
  */
-export function scrubMaintenanceResult(scrub: ProviderTextScrub, result: MaintenanceRunAnswer): MaintenanceRunAnswer {
-  return { ...result, message: scrubProviderText(scrub, result.message) };
+export function scrubMaintenanceResult(words: ProviderWords, result: MaintenanceRunAnswer): MaintenanceRunAnswer {
+  return { ...result, message: providerSentence(words, result.message) };
 }
 
 /**
- * A maintenance preview with its `summary`, and its `refusal` and `note` when present, scrubbed; its `facts` are
- * field names and figures, kept as given.
+ * A maintenance preview with its `summary`, and its `refusal` and `note` when present, the engine's sentences, each
+ * read under `words` (`providerSentence`): through core's scrub where the record grants its words, Studio's sentence
+ * where it does not, logged once. Its `facts` are field names and figures, kept as given.
  */
-export function scrubMaintenancePreview(scrub: ProviderTextScrub, preview: MaintenancePreview): MaintenancePreview {
+export function scrubMaintenancePreview(words: ProviderWords, preview: MaintenancePreview): MaintenancePreview {
   return {
     ...preview,
-    summary: scrubProviderText(scrub, preview.summary),
-    ...(preview.refusal === undefined ? {} : { refusal: scrubProviderText(scrub, preview.refusal) }),
-    ...(preview.note === undefined ? {} : { note: scrubProviderText(scrub, preview.note) }),
+    summary: providerSentence(words, preview.summary),
+    ...(preview.refusal === undefined ? {} : { refusal: providerSentence(words, preview.refusal) }),
+    ...(preview.note === undefined ? {} : { note: providerSentence(words, preview.note) }),
   };
 }
 

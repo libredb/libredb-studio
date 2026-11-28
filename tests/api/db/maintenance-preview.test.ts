@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, spyOn } 
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import type { MaintenanceOperation, MaintenancePreview } from "@/lib/db/types";
+import type { DatabaseProvider, MaintenanceOperation, MaintenancePreview } from "@/lib/db/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import {
   QueryError,
   DatabaseError,
@@ -83,13 +85,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
+    // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });
@@ -130,12 +139,35 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
+/**
+ * The editor's session the preview is read on, opened through `getOrCreateEditorSession`, whose stand-in answers the
+ * entry a legacy record's open answers for the provider the barrel's `getOrCreateProvider` stand-in answers with the
+ * same arguments, recorded as the last one built, so the declarations read agrees.
+ */
+mock.module("@/lib/db/factory", () => ({
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
+  findCachedProvider: mock(() => null),
+  getOrCreateEditorSession: async (connection: unknown, _engine: unknown, execution: unknown) => {
+    const provider = (await (mockGetOrCreateProvider as (...given: unknown[]) => Promise<unknown>)(
+      connection,
+      {},
+      execution,
+    )) as DatabaseProvider;
+    lastBuilt = provider;
+    return editorEntryOf(provider);
+  },
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; a preview opens no metadata session.
+  getOrCreateMetadataSession: mock(async () => {
+    throw new Error("getOrCreateMetadataSession is not read by this route");
+  }),
+}));
+
 const { POST } = await import("@/app/api/db/maintenance/preview/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 /**
- * An etcd connection: the route reads the engine facets row of the connection's type before the factory, so the
- * type is one whose row offers the synthetic declaration's `compact`, `defragment` and `disarm`. Its `analyze` is
+ * An etcd connection: the route reads the record's maintenance list, the engine facets row of the connection's type,
+ * before the factory, so the type is one whose row offers the synthetic declaration's `compact`, `defragment` and `disarm`. Its `analyze` is
  * offered by PostgreSQL's row, and the test that posts it says so.
  */
 const validConnection = {

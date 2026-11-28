@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
@@ -30,8 +31,9 @@ const mockGetOrCreateProvider = mock(async () => mockProvider);
 /**
  * The metadata session each row's health and overview are read on (docs/providers/CONTRACT.md, clause C-66), answered
  * by default with the same `mockProvider`, so a title written against the provider the route opens passes unchanged.
- * The route imports it from the barrel, so it is mocked there beside the editor's stand-in, which the route never
- * calls.
+ * The route opens it through `getOrCreateMetadataSession`, whose stand-in in the factory's mock below answers the
+ * entry a legacy record's open answers for the provider this stand-in answers with the same arguments; the editor's
+ * stand-in in the barrel's mock is never called.
  */
 const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<DatabaseProvider>>(
   async () => mockProvider,
@@ -85,6 +87,18 @@ mock.module("@/lib/db", () => ({
   isAuthenticationError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
+}));
+
+// ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+mock.module("@/lib/db/factory", () => ({
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
+  findCachedProvider: mock(() => null),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
+  getOrCreateEditorSession: mock(async () => {
+    throw new Error("getOrCreateEditorSession is not read by this route");
+  }),
+  getOrCreateMetadataSession: async (connection: unknown, _engine: unknown, execution: unknown) =>
+    editorEntryOf(await mockGetOrCreateMetadataProvider(connection, {}, execution)),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -931,8 +945,9 @@ describe("fleet health on the metadata session", () => {
       const id = (connection as { id: string }).id;
       const declarationsRead = mockReadProviderDeclarations.mock.calls.find(([read]) => read.id === id);
       expect([id, options]).toEqual([id, {}]);
-      // The very execution object the row's declarations read received, so the two reads keep one posture.
-      expect(execution).toBe((declarationsRead as unknown[] | undefined)?.[1]);
+      // The execution context the row's declarations read received, built for the same session and connection, so the
+      // two reads keep one posture.
+      expect(execution).toEqual((declarationsRead as unknown[] | undefined)?.[1]);
       expect(execution).toEqual({ allowExternalFileAccess: true });
       expect(metadata.has(id)).toBe(true);
       const provider = metadata.get(id) as DatabaseProvider;

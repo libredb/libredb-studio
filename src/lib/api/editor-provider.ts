@@ -6,7 +6,6 @@ import {
   type CachedSession,
   findCachedProvider,
   getOrCreateEditorSession,
-  getOrCreateMetadataProvider,
   getOrCreateMetadataSession,
 } from "@/lib/db/factory";
 import { type DeclaredFacet, FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
@@ -41,11 +40,12 @@ import type { DatabaseConnection } from "@/lib/types";
  *
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
- * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
- * same way, for the maintenance kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
- * the object tree's session of any record and `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring
- * reads' sessions of any record. The cancel, which acts on the whole connection rather than in one database and finds
- * a statement in whichever session runs it, opens through `editorConsoleTarget` below, with no catalog.
+ * `POST /api/db/query` opens every engine, as `metadataTreeTarget` decides the object tree's session of any record,
+ * `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring reads' sessions of any record, and
+ * `editorMaintenanceOpening` and `metadataMaintenanceOpening` the maintenance requests' sessions of any record, the
+ * metadata session for the kill that must not wait for the editor's statements. The cancel, which acts on the whole
+ * connection rather than in one database and finds a statement in whichever session runs it, opens through
+ * `editorConsoleTarget` below, with no catalog.
  *
  * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
  * `getOrCreateProvider` as it is; a catalog session opens after it, on the same connection.
@@ -123,23 +123,6 @@ export async function editorConsoleTarget(
 ): Promise<ConsoleTarget> {
   const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait);
   return entryConsoleTarget(entry, connection);
-}
-
-/**
- * The connection's metadata session (docs/providers/CONTRACT.md, clause C-66), opened under the session's editor
- * posture as `editorProvider` opens the editor's provider: the same connection, credentials, grant and owner, through
- * the same checks, and in `catalog` through the same `scopeToCatalog`. On a connection that serves one session it is
- * the editor's own provider. The maintenance route runs a kill on it, so a kill never waits for a connection the
- * editor's statements hold; the monitoring and health routes read any record's metadata session through
- * `metadataMonitoringTarget`.
- */
-export async function metadataProvider(
-  session: { role: string; idpSubject?: string },
-  connection: DatabaseConnection,
-  catalog: string | undefined,
-): Promise<DatabaseProvider> {
-  const connected = await getOrCreateMetadataProvider(connection, {}, editorExecutionContext(session, connection));
-  return scopeToCatalog(connected, catalog);
 }
 
 /**

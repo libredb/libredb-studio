@@ -360,9 +360,10 @@ export interface AuditEvent {
    */
   container?: string;
   /**
-   * The engine principal a maintenance run acted as, when its provider names one through the optional
-   * `DatabaseProvider.engineUser()` (spec 3.11): a user name, never any part of a secret. Set by the maintenance route
-   * only, and omitted by `toAuditLine` when unset, as `container` is.
+   * The engine principal a maintenance run acted as, when its session names one: a legacy provider through the optional
+   * `DatabaseProvider.engineUser()` (spec 3.11), a provider package through its open's answer (docs/providers/CONTRACT.md,
+   * clause C-67); a user name, never any part of a secret. Set by the maintenance route only, and omitted by
+   * `toAuditLine` when unset, as `container` is.
    */
   engineUser?: string;
   connectionName?: string;

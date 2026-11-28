@@ -81,13 +81,15 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => body.connection);
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
-    // The cancel route serves every engine the catalog serves: it reads the connection with its engine's record.
-    resolveServedConnection: mock(async (body: Record<string, unknown>) => ({
-      connection: body.connection,
-      engine: servedEngineRecord((body.connection as DatabaseConnection).type),
-    })),
+    resolveConnection,
+    // The served resolve the cancel and maintenance routes read: the same resolution, with the record of the resolved
+    // type's engine, a legacy engine's, as the server catalog holds it, and its refusal of a type it does not serve.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });
@@ -135,6 +137,14 @@ mock.module("@/lib/db", () => ({
   isTimeoutError,
   isAuthenticationError,
   mapDatabaseError,
+}));
+
+// The maintenance routes open the editor's session, or the metadata session for a kill, through the factory; both are
+// the entry a legacy record's open answers for the provider under test.
+mock.module("@/lib/db/factory", () => ({
+  findCachedProvider: mock(() => null),
+  getOrCreateEditorSession: async () => editorEntryOf(provider),
+  getOrCreateMetadataSession: async () => editorEntryOf(provider),
 }));
 
 const maintenance = (await import("@/app/api/db/maintenance/route")).POST;

@@ -24,8 +24,9 @@ import { hostCore } from "@/lib/provider-host/instance";
  * target the route hands it (`MaintenanceTarget` in src/lib/api/session-target.ts), a legacy provider's bridged session
  * (`providerMaintenanceTarget`) or a provider package's, under the target's environment, counted on the target's entry
  * while it runs (`markedCall`), with the session's maintenance the target reads when the call is made: for a legacy
- * provider `bridgedMaintenance`'s answer, the declaration the route read before the provider connected narrowed by
- * what the connected provider still accepts (clause C-68). The core is the one the process's composition root
+ * provider `bridgedMaintenance`'s answer, the declaration its maintenance opening read before the provider connected
+ * narrowed by what the connected provider still accepts (clause C-68), and for a provider package the maintenance its
+ * open narrowed. The core is the one the process's composition root
  * installed, read before anything else, so a call made before the install fails by name and reaches no provider. It
  * builds a fresh request for each call, `target` and `container` present only when given and a copy of the path, so
  * the core freezes nothing a caller holds.

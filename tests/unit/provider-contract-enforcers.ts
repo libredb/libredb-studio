@@ -2630,7 +2630,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   "C-66": {
     tests: {
       "tests/api/db/monitoring-package-engine.test.ts": [
-        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+        "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
         "a package engine's metadata session opens once per key through its package, beside its editor session",
@@ -3164,7 +3164,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
-        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+        "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
@@ -3174,7 +3174,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel and disconnect routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview and fleet health routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
