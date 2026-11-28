@@ -99,7 +99,7 @@ import {
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
-import { BUNDLED_CLIENT_PACKS, isAgentStatementLanguage } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
@@ -4560,7 +4560,7 @@ describe("the vocabularies", () => {
     const granted = Object.entries(legacyRegisterTable("statementLanguage")).filter(
       ([, language]) => language !== null,
     );
-    expect(granted.filter(([, language]) => !isAgentStatementLanguage(language as string))).toEqual([]);
+    expect(granted.filter(([, language]) => !Object.hasOwn(BUNDLED_CLIENT_PACKS, language as string))).toEqual([]);
     expect(granted.length).toBeGreaterThan(0);
   });
 

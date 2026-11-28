@@ -81,7 +81,7 @@ const {
   AGENT_PACK_REQUIREMENTS,
   BUNDLED_CLIENT_PACKS,
   agentLanguageOfGrant,
-  isAgentStatementLanguage,
+  DECLARED_AGENT_LANGUAGES,
   languageClientPack,
 } = await import("@/lib/agent/languages/client");
 const { LANGUAGE_BASE_DEFINITIONS, languageServer, languageServerPack, workflowToolRules } = await import(
@@ -124,9 +124,8 @@ afterAll(() => {
   forgetHostCore();
 });
 
-const NAME = "acmeread";
-if (!isAgentStatementLanguage(NAME)) throw new Error("the substituted list does not reach the language registries");
-const ACME = NAME;
+const ACME = DECLARED_AGENT_LANGUAGES.find(({ id }) => id === "acmeread")?.id;
+if (ACME === undefined) throw new Error("the substituted list does not reach the language registries");
 const BOUNDS = Object.freeze({ maxResultRows: 7, statementTimeoutMs: 2500 });
 /** The result limits every statement tool shares, which Studio fills into a declared description as `limits`. */
 const SHARED_LIMITS =
@@ -134,8 +133,8 @@ const SHARED_LIMITS =
 
 describe("a data-declared language in the language registries", () => {
   test("the language registries hold a data-declared language beside the module languages, and refuse one whose name a module or another declared language holds", () => {
-    expect(isAgentStatementLanguage("acmeread")).toBe(true);
-    expect(isAgentStatementLanguage("acmeplain")).toBe(false);
+    expect(Object.hasOwn(BUNDLED_CLIENT_PACKS, "acmeread")).toBe(true);
+    expect(Object.hasOwn(BUNDLED_CLIENT_PACKS, "acmeplain")).toBe(false);
     expect<string | null>(agentLanguageOfGrant("mqtt", "acmeread", BUNDLED_CLIENT_PACKS)).toBe("acmeread");
     expect(() => agentLanguageOfGrant("mqtt", "acmeplain", BUNDLED_CLIENT_PACKS)).toThrow(
       'mqtt is granted the statement language "acmeplain", for which agent mode holds no pack',

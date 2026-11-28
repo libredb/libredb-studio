@@ -7,7 +7,7 @@ import {
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import { type AgentGoalVerifierId, hasGoalRule, RETIRED_GOAL_VERIFIERS } from "@/lib/agent/goal-verifier";
-import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS, RETIRED_STATEMENT_LANGUAGES } from "@/lib/agent/languages/client";
 import {
   type AgentRunHeaderRefusal,
   type AgentRunHeaderVocabulary,
@@ -452,7 +452,7 @@ describe("the ids a run header can carry", () => {
 
   test("every persisted statement language is live or retired", () => {
     const lost = PERSISTED_STATEMENT_LANGUAGES.filter(
-      (id) => !isAgentStatementLanguage(id) && !RETIRED_STATEMENT_LANGUAGES.has(id),
+      (id) => !Object.hasOwn(BUNDLED_CLIENT_PACKS, id) && !RETIRED_STATEMENT_LANGUAGES.has(id),
     );
     // A language whose pack is removed keeps its id in RETIRED_STATEMENT_LANGUAGES, so its ledgers are named as retired.
     expect(lost).toEqual([]);
@@ -496,7 +496,7 @@ describe("the ids a run header can carry", () => {
   });
 
   test("no id is both live and retired", () => {
-    expect([...RETIRED_STATEMENT_LANGUAGES].filter((id) => isAgentStatementLanguage(id))).toEqual([]);
+    expect([...RETIRED_STATEMENT_LANGUAGES].filter((id) => Object.hasOwn(BUNDLED_CLIENT_PACKS, id))).toEqual([]);
     expect([...RETIRED_GOAL_VERIFIERS].filter((id) => hasGoalRule(id))).toEqual([]);
   });
 
@@ -505,9 +505,8 @@ describe("the ids a run header can carry", () => {
     expect(RETIRED_STATEMENT_LANGUAGES.size).toBe(0);
   });
 
-  test("the live checks hold no prototype key", () => {
+  test("the verifier rule check holds no prototype key", () => {
     for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
-      expect(isAgentStatementLanguage(id)).toBe(false);
       expect(hasGoalRule(id)).toBe(false);
     }
   });

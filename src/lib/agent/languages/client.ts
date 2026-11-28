@@ -193,16 +193,6 @@ export const BUNDLED_CLIENT_PACKS: AgentClientPacks = Object.freeze({
   ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map((language) => [language.id, declaredClientPack(language)])),
 });
 
-const LIVE_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(Object.keys(BUNDLED_CLIENT_PACKS));
-
-/**
- * Whether `value` is exactly one of the statement languages the browser's composition holds a pack for, a module
- * language or one the bundled declarations state as data. A prototype key is not one.
- */
-export function isAgentStatementLanguage(value: string): value is AgentStatementLanguageId {
-  return LIVE_STATEMENT_LANGUAGES.has(value);
-}
-
 /**
  * The agent's statement language for `engine`'s granted statement language `granted`: `granted` itself where it is
  * null or a language `packs` holds, a module language or one the registry composed from data. A grant reads a language

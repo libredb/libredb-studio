@@ -295,7 +295,6 @@ describe("the server's client facts of a statement language", () => {
       "src/lib/agent/languages/client": new Set([
         "BUNDLED_CLIENT_PACKS",
         "DECLARED_AGENT_LANGUAGES",
-        "isAgentStatementLanguage",
         "languageClientPack",
         "projectClientPacks",
       ]),
