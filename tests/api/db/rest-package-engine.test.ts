@@ -22,13 +22,14 @@ import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { consoleTextOverLimit } from "@/lib/db/statement-language-row";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
 import { parseResponseJSON } from "../../helpers/mock-next";
 import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
-import { withStatementLanguageData } from "../../helpers/package-catalog";
+import { ACME_LANGUAGE_DATA, withStatementLanguageData } from "../../helpers/package-catalog";
 import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../helpers/governance/granted-snapshot";
 
 /** The session every request is read as: an admin, or a governed user a governance case sets. */
@@ -66,6 +67,8 @@ const GOVERNED = "acmerestgoverned";
 /** A package whose engine states no SQL text, and one whose engine declares an object model. */
 const NOSQL = "acmerestnosql";
 const MODELLED = "acmerestmodelled";
+/** A package whose engine states no SQL text and a console text bound, as NOSQL's does, offering no transaction. */
+const BOUNDED = "acmerestbounded";
 const providers = scratchDirectory("studio-package-engine-rest-");
 
 /** A tree with one container level and one kind of objects with columns: names no engine of Studio's. */
@@ -114,6 +117,17 @@ beforeAll(async () => {
         name: "acme-rest-nosql",
         engine: NOSQL,
         offered: ["console.transaction"],
+        edit: (engine) => {
+          withStatementLanguageData(engine);
+          const members = engine as Record<string, unknown>;
+          members.sqlText = null;
+          members.sqlWriting = null;
+          members.migrationDdl = null;
+        },
+      },
+      {
+        name: "acme-rest-bounded",
+        engine: BOUNDED,
         edit: (engine) => {
           withStatementLanguageData(engine);
           const members = engine as Record<string, unknown>;
@@ -653,6 +667,42 @@ describe("the transaction route on a provider package's engine", () => {
       status: 200,
       body: { inTransaction: false },
     });
+  });
+
+  test("the transaction route holds a package engine's query action to its record's console text bound after the facet check, 413 before any call on its session", async () => {
+    const connection = connectionOf(NOSQL);
+    const seen = hooksFor(NOSQL);
+    expect((await post("transaction", { connection, action: "begin" })).status).toBe(200);
+    const before = seen.calls.length;
+
+    // One byte over the record's bound: 413 in the bound's sentence, after the open and before any call.
+    const bound = ACME_LANGUAGE_DATA.confirmation.maxTextBytes;
+    if (bound === null) throw new Error("the fixture's statement language data states no text bound");
+    const oversize = "a".repeat(bound + 1);
+    expect(await post("transaction", { connection, action: "query", sql: oversize })).toEqual({
+      status: 413,
+      body: { error: consoleTextOverLimit(oversize, bound) },
+    });
+    expect(seen.calls.slice(before)).toEqual([]);
+
+    // A text within the bound runs inside the transaction.
+    const within = "a".repeat(bound);
+    expect(await post("transaction", { connection, action: "query", sql: within })).toMatchObject({
+      status: 200,
+      body: { inTransaction: true },
+    });
+    expect(callsNamed(seen, "execute").map(({ args }) => (args[1] as { statement: string }).statement)).toEqual([
+      within,
+    ]);
+    expect((await post("transaction", { connection, action: "rollback" })).status).toBe(200);
+
+    // A session that does not offer console.transaction answers the facet's 400 first, whatever the text's size.
+    const bounded = hooksFor(BOUNDED);
+    expect(await post("transaction", { connection: connectionOf(BOUNDED), action: "query", sql: oversize })).toEqual({
+      status: 400,
+      body: NOT_SUPPORTED,
+    });
+    expect(names(bounded)).toEqual(["open"]);
   });
 });
 

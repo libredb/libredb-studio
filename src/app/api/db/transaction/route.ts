@@ -20,6 +20,7 @@ import { errorOutcome } from "@/lib/db/error-record";
 import { openWithinBudget, queryTimeoutError } from "@/lib/api/editor-query";
 import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
+import { consoleTextOverLimit, rowTextByteLimit } from "@/lib/db/statement-language-row";
 import { openTransactionScript, type TransactionScript } from "@/lib/api/editor-script";
 import {
   beginInTransaction,
@@ -555,6 +556,15 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    // A query action's text is held to the console text bound the engine's record states, where it states one, as the
+    // query route holds it (`checkEditorQuery` in src/lib/api/editor-query.ts): answered 413, naming the size and the
+    // bound and never the text, before any call on the session. A session that does not offer the transaction answers
+    // the refusal above first.
+    const textLimit = rowTextByteLimit(engine.statementLanguageRow);
+    const overLimit =
+      query === undefined || textLimit === undefined ? undefined : consoleTextOverLimit(query.sql, textLimit);
+    if (overLimit !== undefined) return NextResponse.json({ error: overLimit }, { status: 413 });
 
     // The session holds ONE transaction, and without governance every Studio user who reaches it
     // drives it, so the caller's right to act on it is decided here, before any action runs. See
