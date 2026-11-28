@@ -51,13 +51,14 @@ import {
 import { logger } from "@/lib/logger";
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
-import { workflowAvailability } from "./agent-manifest";
+import { languageNoLongerGrantedSentence, workflowAvailability } from "./agent-manifest";
 import { AgentRunDeadline } from "./deadline";
 import { agentEngineDeclarations } from "./engine-view";
 import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentInvestigationResult, runInvestigation } from "./investigation";
 import { createAgentModel } from "./model-adapter";
+import { statementFamilyOf } from "./languages/client";
 import { servedAvailabilityTables } from "./languages/server";
 import { startRefusalSentence } from "./posture";
 import { AgentRepairLedger } from "./repair-ledger";
@@ -241,7 +242,9 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
     // a package's grants and offers can change between the start and the drive (its package removed, its row changed),
     // where a legacy record's are compiled in and were read at the start. A closed answer is refused by name, in the
     // start route's sentence, before its first model turn and before anything opens; only a run recorded before the
-    // change reaches it. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
+    // change reaches it. An open answer in a language other than the one the run was recorded in (absent reads as sql)
+    // is refused by name the same way, since the run's statements are written in the language it was recorded in and
+    // the package now speaks another. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
     if (
       report.record.mode === "agent" &&
       AGENT_WORKFLOW_SENDS_STATEMENTS[report.record.workflowType] &&
@@ -257,6 +260,15 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
         throw new StudioProfileRefusal(
           startRefusalSentence(availability, engine),
           availability.cause === "not-reviewed" ? "PROFILE_ENGINE_NOT_REVIEWED" : "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+      }
+      const recorded = statementFamilyOf(report.record.statementLanguage);
+      if (availability.statementLanguage !== recorded) {
+        throw new StudioProfileRefusal(
+          // Non-null: an open answer holds a null language only in plan mode and the operations workflow, neither of
+          // which reaches this arm (`AgentWorkflowAvailability`).
+          languageNoLongerGrantedSentence(engine.displayName, recorded, availability.statementLanguage!),
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
         );
       }
     }

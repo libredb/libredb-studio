@@ -2,11 +2,12 @@
  * An agent run on an engine an admitted provider package serves, driven from its ledger by the composition root
  * (`driveAgentRunOutcome` in src/lib/agent/runtime.ts): the drive resolves the run's connection through the served
  * resolve under the run's persisted actor, grounds a plan-mode run through the package's metadata session, refuses by
- * name before its first model turn an agent-mode run whose workflow sends statements where availability closes it, and
- * a run recorded with a database its engine offers no catalog session for, grounds and sends the statements of an
- * agent-mode run in the package's own declared language through the package's read-only statement session, a failure
- * of its statement repairable as a legacy engine's, and reads the operations workflow's granted readings on the
- * package's metadata session, a reading's failure answered by the engine's record and logged once.
+ * name before its first model turn an agent-mode run whose workflow sends statements where availability closes it or
+ * where its record now grants another language than the run was recorded in, and a run recorded with a database its
+ * engine offers no catalog session for, grounds and sends the statements of an agent-mode run in the package's own
+ * declared language through the package's read-only statement session, a failure of its statement repairable as a
+ * legacy engine's, and reads the operations workflow's granted readings on the package's metadata session, a reading's
+ * failure answered by the engine's record and logged once.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts), each function calling the hook a case sets; the ledger is a local world in
@@ -23,7 +24,11 @@ import path from "node:path";
 import type { CallContext, ExecuteRequest, OpenContext, TreeRequest } from "@libredb/provider-sdk/calls";
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { createLocalWorld } from "@workflow/world-local";
-import { noStatementSessionSentence, notReviewedSentence } from "@/lib/agent/agent-manifest";
+import {
+  languageNoLongerGrantedSentence,
+  noStatementSessionSentence,
+  notReviewedSentence,
+} from "@/lib/agent/agent-manifest";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { noAdapterSentence } from "@/lib/agent/posture";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
@@ -472,6 +477,26 @@ describe("an agent run's drive on a provider package's engine", () => {
     expect(error).toBeInstanceOf(StudioProfileRefusal);
     expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
     expect((error as Error).message).toBe(notReviewedSentence(servedEngineRecord(UNREVIEWED).displayName, false));
+    expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "engine-unsupported" });
+    expect(createAgentModel).not.toHaveBeenCalled();
+    expect(run.turns).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(acquired).not.toHaveBeenCalled();
+  });
+
+  test("an agent-mode run recorded in a statement language its package engine's record no longer grants is refused by name before its first model turn, and its package never opens", async () => {
+    // A run recorded with no language, sql, as it was where the row granted sql when it started; the row now grants the
+    // crafted language, and availability is open on it.
+    const seen = hooksFor(LANG);
+    const run = await drive(connectionOf(LANG), "agent", "investigation", [answersProse("No report.")]);
+
+    expect(run.outcome?.kind).toBe("failed");
+    const error = run.outcome?.kind === "failed" ? run.outcome.error : undefined;
+    expect(error).toBeInstanceOf(StudioProfileRefusal);
+    expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((error as Error).message).toBe(
+      languageNoLongerGrantedSentence(servedEngineRecord(LANG).displayName, "sql", LANGUAGE_DATA.name),
+    );
     expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "engine-unsupported" });
     expect(createAgentModel).not.toHaveBeenCalled();
     expect(run.turns).toEqual([]);

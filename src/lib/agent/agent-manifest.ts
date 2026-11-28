@@ -437,6 +437,15 @@ export function notReviewedSentence(engineLabel: string, operationsOpens: boolea
 }
 
 /**
+ * Why the drive sends no statement for an agent-mode run recorded in the language `recorded` on a provider package's
+ * engine whose record now grants `granted`, naming the engine: its register row changed between the run's start and
+ * its drive. Read by the drive (`driveAgentRunOutcome` in runtime.ts).
+ */
+export function languageNoLongerGrantedSentence(engineLabel: string, recorded: string, granted: string): string {
+  return `This run was started to send its statements in the ${recorded} language, and ${engineLabel} now speaks ${granted} in this LibreDB Studio, so the run sends none. A new run opens in ${granted}.`;
+}
+
+/**
  * Why agent mode sends no statement to an engine whose record grants agent execution and whose provider package takes
  * no read-only execute (`no-statement-session`), naming the engine. Read by `noStatementSessionSentence`.
  */
