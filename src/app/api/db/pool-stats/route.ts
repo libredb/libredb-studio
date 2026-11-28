@@ -6,6 +6,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
 import { providerMonitoringTarget } from "@/lib/api/session-target";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -39,10 +40,8 @@ export async function POST(request: NextRequest) {
 
     const monitoring = providerMonitoring(
       providerMonitoringTarget(provider),
-      servedEngineRecord(connection.type),
-      scrub,
+      packageAnswers(servedEngineRecord(connection.type), scrub, "api/db/pool-stats"),
       request.signal,
-      "api/db/pool-stats",
     );
     if (monitoring.poolStatsOffered) {
       return NextResponse.json(await monitoring.readPoolStats());

@@ -23,7 +23,7 @@ import {
   type MonitoringPanelRequest,
 } from "@libredb/provider-sdk/calls";
 import { contextOn, EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
-import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
+import { PACKAGE_DEFECT_PREFIX, packageAnswers } from "@/lib/api/package-errors";
 import {
   type GrantedRead,
   monitoringOptionsRefusal,
@@ -82,10 +82,8 @@ function providerOf(queryTimeout?: number, extra: Record<string, unknown> = {}):
 function monitoringOf(provider: DatabaseProvider, caller: AbortSignal, route: string, clock?: () => number) {
   return providerMonitoring(
     providerMonitoringTarget(provider),
-    servedEngineRecord(provider.type),
-    providerTextScrub(provider.config, "any"),
+    packageAnswers(servedEngineRecord(provider.type), providerTextScrub(provider.config, "any"), route),
     caller,
-    route,
     clock,
   );
 }
@@ -1085,10 +1083,8 @@ describe("the monitoring facades on a session target", () => {
     const engine = engineOf(false, "code-only");
     const monitoring = providerMonitoring(
       target,
-      engine,
-      packageScrub(),
+      packageAnswers(engine, packageScrub(), ROUTE),
       new AbortController().signal,
-      ROUTE,
       () => start,
     );
     expect(monitoring.poolStatsOffered).toBe(true);
@@ -1137,10 +1133,8 @@ describe("the monitoring facades on a session target", () => {
     expect(bridged.timeout()).toBe(4_000);
     const legacy = providerMonitoring(
       bridged,
-      servedEngineRecord("postgres"),
-      providerTextScrub(provider.config, "any"),
+      packageAnswers(servedEngineRecord("postgres"), providerTextScrub(provider.config, "any"), ROUTE),
       new AbortController().signal,
-      ROUTE,
     );
     await legacy.readDashboard({});
     await legacy.readPoolStats();
@@ -1168,10 +1162,8 @@ describe("the monitoring facades on a session target", () => {
     const logged = await errorsOf(async () => {
       const monitoring = providerMonitoring(
         failing.target,
-        codeOnly,
-        packageScrub(),
+        packageAnswers(codeOnly, packageScrub(), ROUTE),
         new AbortController().signal,
-        ROUTE,
       );
       const dashboard = await monitoring.readDashboard({});
       expect(dashboard.errors).toEqual({ tables: sentence("panel read") });
@@ -1193,10 +1185,8 @@ describe("the monitoring facades on a session target", () => {
       defect = await failure(() =>
         providerMonitoring(
           unreadable.target,
-          codeOnly,
-          packageScrub(),
+          packageAnswers(codeOnly, packageScrub(), ROUTE),
           new AbortController().signal,
-          ROUTE,
         ).readHealth(),
       );
     });
@@ -1220,10 +1210,8 @@ describe("the monitoring facades on a session target", () => {
     const grantedLogged = await errorsOf(async () => {
       const monitoring = providerMonitoring(
         several.target,
-        scrubbed,
-        packageScrub(),
+        packageAnswers(scrubbed, packageScrub(), ROUTE),
         new AbortController().signal,
-        ROUTE,
       );
       joined = await failure(() => monitoring.readDashboard({}));
       raised = await failure(() => monitoring.readHealth());
@@ -1246,15 +1234,17 @@ describe("the monitoring facades on a session target", () => {
         await failure(() =>
           providerMonitoring(
             legacy.target,
-            legacyRecord,
-            packageScrub(),
+            packageAnswers(legacyRecord, packageScrub(), ROUTE),
             new AbortController().signal,
-            ROUTE,
           ).readHealth(),
         ),
       ).toBe(thrown);
       left = await failure(() =>
-        providerMonitoring(packageMonitoringTarget().target, codeOnly, packageScrub(), gone.signal, ROUTE).readHealth(),
+        providerMonitoring(
+          packageMonitoringTarget().target,
+          packageAnswers(codeOnly, packageScrub(), ROUTE),
+          gone.signal,
+        ).readHealth(),
       );
       const real = hostCore();
       forgetHostCore();
@@ -1262,10 +1252,8 @@ describe("the monitoring facades on a session target", () => {
         unbooted = await failure(() =>
           providerMonitoring(
             packageMonitoringTarget().target,
-            codeOnly,
-            packageScrub(),
+            packageAnswers(codeOnly, packageScrub(), ROUTE),
             new AbortController().signal,
-            ROUTE,
           ).readPoolStats(),
         );
       } finally {
@@ -1278,14 +1266,59 @@ describe("the monitoring facades on a session target", () => {
     expect(studioLogged).toEqual([]);
   });
 
+  test("an overview answer of another panel's form is answered through the request's package answers, the package's panel read failure for a package record and memberOf's error for a legacy one", async () => {
+    const formSentence =
+      "The overview panel read answered a form other than the overview panel's, which is a defect of the session that answered it.";
+    const otherForm = (real: HostCore): HostCore => ({
+      ...real,
+      panelCall: async (): Promise<PanelRecord> => ({
+        kind: "answered",
+        answer: { performance: { marker: marker() } } as never,
+      }),
+    });
+    let packaged: unknown;
+    let legacy: unknown;
+    const logged = await errorsOf(async () => {
+      packaged = await withCore(otherForm, () =>
+        failure(() =>
+          providerMonitoring(
+            packageMonitoringTarget().target,
+            packageAnswers(engineOf(false, "code-only"), packageScrub(), ROUTE),
+            new AbortController().signal,
+          ).readOverview(),
+        ),
+      );
+    });
+    // The form check is inside the answered span: Studio's code-only sentence, logged once as the package's panel read.
+    expect((packaged as Error).message).toBe(
+      `The provider package's panel read failed (${errorCode(new Error(formSentence))}); the server's log holds its words.`,
+    );
+    expect(logged.map(([message, error]) => [message, (error as Error).message])).toEqual([
+      ["A provider package's panel read failed", formSentence],
+    ]);
+
+    // A legacy record answers memberOf's own error, logged nowhere here.
+    const legacyLogged = await errorsOf(async () => {
+      legacy = await withCore(otherForm, () =>
+        failure(() =>
+          providerMonitoring(
+            packageMonitoringTarget().target,
+            packageAnswers(engineOf(true, "scrubbed"), packageScrub(), ROUTE),
+            new AbortController().signal,
+          ).readOverview(),
+        ),
+      );
+    });
+    expect([(legacy as Error).constructor, (legacy as Error).message]).toEqual([Error, formSentence]);
+    expect(legacyLogged).toEqual([]);
+  });
+
   test("a target whose session does not offer monitoring.panel is refused the dashboard by name before any call, not-sent, while its health is still read", async () => {
     const { target, calls, marks } = packageMonitoringTarget("not-offered");
     const monitoring = providerMonitoring(
       target,
-      engineOf(false, "code-only"),
-      packageScrub(),
+      packageAnswers(engineOf(false, "code-only"), packageScrub(), ROUTE),
       new AbortController().signal,
-      ROUTE,
     );
 
     const refused = await failure(() => monitoring.readDashboard({}));

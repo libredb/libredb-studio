@@ -17,6 +17,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import {
   isPackageFailure,
   PACKAGE_DEFECT_PREFIX,
+  packageAnswers,
   packageFailureAnswer,
   packageWarnings,
 } from "@/lib/api/package-errors";
@@ -420,6 +421,55 @@ describe("packageFailureAnswer", () => {
     expect(answered).not.toBe(posing);
     expect((answered as Error).message).not.toContain("the package wrote this");
     expect(lines).toEqual(["A provider package's execute failed"]);
+  });
+});
+
+describe("packageAnswers", () => {
+  test("packageAnswers answers each failure as packageFailureAnswer answers it, and names logged exactly the answers it gave for a package's failure it logged", () => {
+    const legacyFailure = new Error(`legacy ${randomUUID()}`);
+    const studioRefusal = new StudioOffsetRefusal(randomUUID());
+    const malformed = refused([{ rule: "health-answer-unreadable", pointer: "/databaseSize" }]);
+    const own = new Error(`own ${randomUUID()}`);
+    const thrownText = `thrown ${randomUUID()}`;
+
+    // The record of a legacy engine answers as raised and logs nothing, so nothing it answered is logged.
+    const legacy = packageAnswers(LEGACY, scrub, ROUTE);
+    expect([legacy.engine, legacy.route]).toEqual([LEGACY, ROUTE]);
+    const legacyLines = errorLines(() => {
+      expect(legacy.answer("health", legacyFailure)).toBe(legacyFailure);
+    });
+    expect([legacyLines, legacy.logged(legacyFailure)]).toEqual([[], false]);
+
+    for (const engine of [CODE_ONLY, GRANTED]) {
+      const answers = packageAnswers(engine, scrub, ROUTE);
+      const given: unknown[] = [];
+      const lines = errorLines(() => {
+        for (const [call, error] of [
+          ["open", own],
+          ["health", own],
+          ["panel read", malformed],
+          ["pool statistics read", thrownText],
+          ["execute", studioRefusal],
+        ] as const) {
+          const answer = answers.answer(call, error);
+          // The same answer `packageFailureAnswer` gives, read with the logger silenced by the same spy.
+          expect(answer).toEqual(packageFailureAnswer(engine, call, error, scrub, ROUTE));
+          given.push(answer);
+        }
+      });
+      // Each package failure was logged once by the record and once by the comparison call above; Studio's not at all.
+      expect(lines.length).toBe(8);
+      expect(given.map((answer) => answers.logged(answer))).toEqual([true, true, true, true, false]);
+      // A granted package's raised value is answered as raised, a primitive among them, and remembered as logged.
+      if (engine === GRANTED) expect([given[1], given[3]]).toEqual([own, thrownText]);
+      expect([answers.logged(studioRefusal), answers.logged(new Error("another")), answers.logged(undefined)]).toEqual([
+        false,
+        false,
+        false,
+      ]);
+      // A record is one request's: another record of the same engine remembers nothing of this one's answers.
+      expect(packageAnswers(engine, scrub, ROUTE).logged(given[0])).toBe(false);
+    }
   });
 });
 

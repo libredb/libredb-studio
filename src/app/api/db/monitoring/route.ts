@@ -8,6 +8,7 @@ import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/re
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { metadataProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
 import { providerMonitoringTarget } from "@/lib/api/session-target";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -81,10 +82,8 @@ export async function POST(req: NextRequest) {
     const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
     const monitoringData = await providerMonitoring(
       providerMonitoringTarget(provider),
-      servedEngineRecord(connection.type),
-      scrub,
+      packageAnswers(servedEngineRecord(connection.type), scrub, "api/db/monitoring"),
       req.signal,
-      "api/db/monitoring",
     ).readDashboard(options ?? {});
     // The maintenance this connected server accepts (#1387). Read here, off the provider the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer

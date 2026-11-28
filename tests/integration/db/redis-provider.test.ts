@@ -19,6 +19,7 @@ import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { ObjectEditOutcome } from "@/lib/db/types";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { packageAnswers } from "@/lib/api/package-errors";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -3057,10 +3058,8 @@ describe("RedisProvider", () => {
     test("a server with more clients than the dashboard's default session limit answers that many", async () => {
       const data = await providerMonitoring(
         providerMonitoringTarget(provider),
-        servedEngineRecord("redis"),
-        providerTextScrub(provider.config, "any"),
+        packageAnswers(servedEngineRecord("redis"), providerTextScrub(provider.config, "any"), "test"),
         new AbortController().signal,
-        "test",
       ).readDashboard({});
       expect(data.errors?.activeSessions).toBeUndefined();
       expect(data.activeSessions).toHaveLength(50);

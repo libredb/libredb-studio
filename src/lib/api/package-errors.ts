@@ -27,7 +27,9 @@
  *
  * Every failure `packageFailureAnswer` answers as the package's (`isPackageFailure`) it logs, once; the query route and
  * the Test Connection route (through `testConnection`'s `failure`, src/lib/api/test-connection.ts), which render the
- * answer, pass `logged` to `createErrorResponse` (src/lib/api/errors.ts), so they write no second line.
+ * answer, pass `logged` to `createErrorResponse` (src/lib/api/errors.ts), so they write no second line. A request whose
+ * facades answer its failures inside (`providerMonitoring`, `providerMaintenance`) holds one `packageAnswers` record,
+ * which answers each failure through `packageFailureAnswer` and tells its route which errors it already logged.
  *
  * A package's warnings reach the route as the host core checked and rebuilt them (`checkExecuteAnswer`); where no row
  * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through
@@ -199,6 +201,17 @@ export function packageWarnings(
   return [{ message: `The provider package returned ${count}; the server's log holds their words.` }];
 }
 
+/** The call a provider package's failure is answered for: the noun Studio's sentence and the log line name it by. */
+export type PackageCall =
+  | "open"
+  | "execute"
+  | "tree read"
+  | "health"
+  | "panel read"
+  | "pool statistics read"
+  | "maintenance run"
+  | "maintenance preview";
+
 /**
  * The error a route answers for `error`, a failure of the `call` of `engine`'s session, the one answer of a provider
  * package's failure on every route: a legacy record's failure (`offers.legacyProvider`) and Studio's own failure
@@ -216,15 +229,7 @@ export function packageWarnings(
  */
 export function packageFailureAnswer(
   engine: EngineRecord,
-  call:
-    | "open"
-    | "execute"
-    | "tree read"
-    | "health"
-    | "panel read"
-    | "pool statistics read"
-    | "maintenance run"
-    | "maintenance preview",
+  call: PackageCall,
   error: unknown,
   scrub: ProviderTextScrub,
   route: string,
@@ -241,6 +246,42 @@ export function packageFailureAnswer(
   return notSentConnectionError(
     granted && error instanceof Error ? scrubProviderText(scrub, error.message) : packageErrorSentence(call, error),
   );
+}
+
+/**
+ * What one request answers of `engine`'s failures: each through `packageFailureAnswer` under core's scrub of the
+ * connection and the request's route, and which answers it gave for a failure it logged as the package's, so the route
+ * answers each with no second log line (`logged` of `createErrorResponse` in src/lib/api/errors.ts). The facades of a
+ * request (`providerMonitoring`, `providerMaintenance`) and its route share one, so a route reads by identity which
+ * error was already logged, never by the error's class: a plain `Error` Studio raised outside the answered calls, such
+ * as a read before the host core's install, is logged by the route as Studio's own.
+ */
+export interface PackageAnswers {
+  readonly engine: EngineRecord;
+  readonly route: string;
+  /** `packageFailureAnswer(engine, call, error, scrub, route)`, remembered when it logged `error` as the package's. */
+  answer(call: PackageCall, error: unknown): unknown;
+  /** Whether `error` is an answer `answer` gave for a failure it logged as the package's (`isPackageFailure`). */
+  logged(error: unknown): boolean;
+}
+
+/**
+ * The record of one request's answers of `engine`'s failures, under core's scrub `scrub` and `route`. Its remembered
+ * answers are a `Set`, not a `WeakSet`, since a granted package's failure is answered as the value it raised, which may
+ * be a primitive; it lives as long as the request that holds it.
+ */
+export function packageAnswers(engine: EngineRecord, scrub: ProviderTextScrub, route: string): PackageAnswers {
+  const logged = new Set<unknown>();
+  return {
+    engine,
+    route,
+    answer: (call, error) => {
+      const answer = packageFailureAnswer(engine, call, error, scrub, route);
+      if (isPackageFailure(engine, error)) logged.add(answer);
+      return answer;
+    },
+    logged: (error) => logged.has(error),
+  };
 }
 
 /** A `ConnectionError` of `message` marked not-sent: the answer of a failed open, which sends no statement. */

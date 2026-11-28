@@ -6,6 +6,7 @@
  * tests/integration/db/neo4j-provider.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMonitoring, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { providerMonitoringTarget } from "@/lib/api/session-target";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
@@ -366,10 +367,8 @@ describe("the sessions panel read through the bridge and the host core", () => {
     const provider = await holding(60);
     const data = await providerMonitoring(
       providerMonitoringTarget(provider),
-      servedEngineRecord("neo4j"),
-      providerTextScrub(provider.config, "any"),
+      packageAnswers(servedEngineRecord("neo4j"), providerTextScrub(provider.config, "any"), "test"),
       new AbortController().signal,
-      "test",
     ).readDashboard({});
     expect(data.errors?.activeSessions).toBeUndefined();
     expect(data.activeSessions).toHaveLength(50);

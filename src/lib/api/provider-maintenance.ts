@@ -5,12 +5,10 @@ import type {
   MaintenanceRunRequest,
 } from "@libredb/provider-sdk/calls";
 import { callContext, EXECUTE_SLACK_MS, executeDeadlineFor } from "@/lib/api/editor-query";
-import { packageFailureAnswer } from "@/lib/api/package-errors";
+import type { PackageAnswers } from "@/lib/api/package-errors";
 import { type MaintenanceTarget, markedCall } from "@/lib/api/session-target";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { type QueryCancelledError, type StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
-import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
-import type { EngineRecord } from "@/lib/db/server-catalog";
 import type { MaintenanceOperation } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
@@ -47,10 +45,11 @@ import { hostCore } from "@/lib/provider-host/instance";
  * Studio's bridge, as a provider's error is, and the route audits it as a run that failed. A preview answers the
  * provider's own preview by reference, read with `checkMaintenancePreviewAnswer`, and throws every refusal and stop as
  * the accessor's error, as a tree read does. A run's failure after the call and a preview's every failure pass through
- * `packageFailureAnswer` (./package-errors, clause C-112) for the engine record the route handed it: a legacy record's
- * provider error and Studio's own error pass as the same object, by run and by preview, so each route keeps its own
- * mapping of it, and a provider package's failure is logged once and answered by the record's grant, a run whose answer
- * the core refused as the package's defect. A call's failure after its wait ended is logged by route, facet, kind and
+ * the request's `PackageAnswers` (./package-errors, clause C-112), the record of the engine's failures the route handed
+ * it, which answers each as `packageFailureAnswer` does: a legacy record's provider error and Studio's own error pass
+ * as the same object, by run and by preview, so each route keeps its own mapping of it, and a provider package's
+ * failure is logged once and answered by the record's grant, a run whose answer the core refused as the package's
+ * defect. A call's failure after its wait ended is logged by route, facet, kind and
  * code, never its text, and a run that answers after its wait ended, which the route audited as an unknown outcome, is
  * logged by route and facet, never its answer.
  */
@@ -108,20 +107,19 @@ function maintenanceLate(route: string, facet: Facet): MaintenanceLate {
 }
 
 /**
- * The maintenance of `target`'s session, `engine`'s, each run and preview a host core maintenance call under its own
- * deadline, taken from `clock` at its start and the target's timeout, the target's environment and `caller`, on the
- * session's maintenance as the target reads it when the call is made (`maintenance()`), counted on the target's entry
- * while it runs; a failure of each answered through `packageFailureAnswer` under core's scrub `scrub`, and its failures
- * after the caller left logged under `route`.
+ * The maintenance of `target`'s session, the engine's of `answers`, each run and preview a host core maintenance call
+ * under its own deadline, taken from `clock` at its start and the target's timeout, the target's environment and
+ * `caller`, on the session's maintenance as the target reads it when the call is made (`maintenance()`), counted on the
+ * target's entry while it runs; a failure of each answered through the request's `answers`, and its failures after the
+ * caller left logged under its route.
  */
 export function providerMaintenance(
   target: MaintenanceTarget,
-  engine: EngineRecord,
-  scrub: ProviderTextScrub,
+  answers: PackageAnswers,
   caller: AbortSignal,
-  route: string,
   clock: () => number = Date.now,
 ): ProviderMaintenance {
+  const { route } = answers;
   /** The session with its maintenance read for this call, and the caller's view under the call's deadline. */
   function callOf(facet: Facet) {
     const session: MaintenanceSession = Object.freeze({ ...target.session, maintenance: target.maintenance() });
@@ -160,13 +158,13 @@ export function providerMaintenance(
       try {
         record = await markedCall(target, () => core.maintenanceRunCall(session, request, ctx, { late: after.late }));
       } catch (error) {
-        throw packageFailureAnswer(engine, "maintenance run", error, scrub, route);
+        throw answers.answer("maintenance run", error);
       }
       if (record.kind === "refused") {
         const error = refusalError(record, view);
         // Refused after the call: the session ran, and the core refused its answer (`checkMaintenanceRunAnswer`), so it
         // is thrown as the run's failure, which the route audits as a run, never answered as one not sent.
-        if (record.called) throw packageFailureAnswer(engine, "maintenance run", error, scrub, route);
+        if (record.called) throw answers.answer("maintenance run", error);
         return { kind: "not-sent", error };
       }
       if (record.kind === "stopped") {
@@ -188,7 +186,7 @@ export function providerMaintenance(
         if (record.kind === "stopped") throw stopError(record.reason, view);
         return record.answer;
       } catch (error) {
-        throw packageFailureAnswer(engine, "maintenance preview", error, scrub, route);
+        throw answers.answer("maintenance preview", error);
       }
     },
   };
