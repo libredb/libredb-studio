@@ -1233,7 +1233,7 @@ An answer with no handle is the package's defect, a widening refinement (C-10) i
 
 A session of a package's engine has a member exactly for each call it offers after its refinement, and each member calls the package's function with the session's handle first.
 Core never calls a package for a call its session does not offer, nor with a request field it does not honour, bound params or a non-zero offset among them: each is refused before the call, outcome not-sent.
-The host core's execute, cancel on a stop, end of a scope, tree, maintenance, monitoring and health calls run on such a session as on any other.
+The host core's execute, cancel on a stop, end of a scope, tree, source, maintenance, monitoring and health calls run on such a session as on any other.
 
 ### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 
@@ -1250,6 +1250,7 @@ The lock command refuses a package one of whose modules does any of these, namin
 ### C-115 (normative): The objects source facet
 
 `objects.source` is one object facet that answers the source document of one object of a kind whose model states it has source (M-89), in parts of at most the SDK's part and character bounds.
+Core calls it only for a kind whose model states source and with a path of at least one segment, no deeper, for a kind it lists under its container levels, than the deepest container path plus the object's name and, for an attached kind, its parent's.
 A part the engine cannot read is answered as unavailable with the engine's sentence, never as an empty part.
 
 ## Not yet in this contract

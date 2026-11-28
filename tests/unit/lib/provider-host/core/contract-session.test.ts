@@ -24,6 +24,7 @@ import {
   BATCH_MAX_BYTES,
   type ProviderImpl,
   rowsSource,
+  type SourceRequest,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import type { Calls, MonitoringPanels, ObjectModel } from "@libredb/provider-sdk/manifest";
@@ -133,9 +134,12 @@ function implOf(
         const { action } = args[1] as TreeRequest;
         return Promise.resolve(action === "containers" ? { containers: [] } : { objects: [] });
       } as never,
+      // The request's own path and kind with one readable part, the closed document the host core holds it to (C-115).
       source: function (this: unknown, ...args: unknown[]) {
         log.push({ name: "source", self: this === impl.objects, args });
-        return Promise.resolve({ path: [], kind: "item", parts: [] });
+        const { path, kind } = args[1] as SourceRequest;
+        const part = { id: "body", label: "Body", text: "body", language: "sql", form: "complete", origin: "stored" };
+        return Promise.resolve({ path, kind, parts: [part] });
       } as never,
     },
     maintenance: {
@@ -440,18 +444,36 @@ describe("a session opened on a provider package", () => {
     expect(getter).toMatchObject({ kind: "refused", called: true, refusals: [{ rule: "refinement-unreadable" }] });
   });
 
-  test("the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged", async () => {
+  test("the host core's execute, cancel, endScope, tree, source, panel, pool statistics and health run on the session unchanged", async () => {
     const core = createHostCore();
     const log: Recorded[] = [];
     let started!: () => void;
     const running = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const all = ["console.cancel", "console.endScope", "objects.tree", "monitoring.panel", "monitoring.poolStats"];
-    const session = await sessionOf(
+    const all = [
+      "console.cancel",
+      "console.endScope",
+      "objects.tree",
+      "objects.source",
+      "monitoring.panel",
+      "monitoring.poolStats",
+    ];
+    // The one kind states its source here, so the host core admits a source call for it (clause C-115).
+    const sourced: ObjectModel = {
+      ...MODEL,
+      objectKinds: [
+        { ...MODEL.objectKinds[0], hasSource: true, sourceLanguage: "sql" } as ObjectModel["objectKinds"][number],
+      ],
+    };
+    const opened = await openContractSession(
       implOf(async () => ({ handle: 1 }), log),
-      callsOf(all),
+      contextOf(),
+      { ...declared(callsOf(all)), objectModel: sourced },
+      onLate,
     );
+    if (opened.kind !== "opened") throw new Error(`the open answered ${opened.kind}`);
+    const { session } = opened;
     const ports = { late: onLate, cancelFailed: onLate };
     const limits = () => ({ maxRows: 2, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES });
 
@@ -477,6 +499,10 @@ describe("a session opened on a provider package", () => {
     expect((await core.treeCall(session, { action: "containers" } as never, callContext(), ports)).kind).toBe(
       "answered",
     );
+    const path = [randomUUID(), randomUUID()];
+    const source = await core.sourceCall(session, { path, kind: "item" }, callContext(), ports);
+    expect(source.kind === "answered" && source.answer.path).toEqual(path);
+    expect(log.filter(({ name }) => name === "source").map(({ args }) => args[0])).toEqual([1]);
     const panel = await core.panelCall(session, { panel: "overview" }, callContext(), ports);
     expect(panel.kind === "answered" && panel.answer).toBe(OVERVIEW);
     expect((await core.poolStatsCall(session, callContext(), ports)).kind).toBe("answered");

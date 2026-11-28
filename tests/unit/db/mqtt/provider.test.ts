@@ -10,6 +10,7 @@
  * connection is its first test.
  */
 import { afterAll, describe, expect, test } from "bun:test";
+import { envReader } from "@libredb/provider-sdk/calls";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import path from "node:path";
@@ -32,6 +33,8 @@ import {
   type MqttTransportFactory,
 } from "@/lib/db/providers/keyvalue/mqtt/session";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
@@ -407,10 +410,61 @@ describe("a read, and everything that reads from it", () => {
     expect(String(facts.lifetimeNote)).toMatch(/nothing is computed from it/);
   });
 
-  test("an empty payload renders as empty text rather than as the string 'undefined'", () => {
-    const row: MqttTopicRow = { retained: true, payloadBytes: 0 };
-    const part = mqttSourceDocument(["a"], "topic", row).parts[0] as Record<string, unknown>;
-    expect(part.text).toBe("");
+  /**
+   * A broker delivers a live publish of 0 bytes as a message (a retained one of 0 bytes clears the retained message
+   * instead), and a payload may be only whitespace. Neither is a text to show: the source facet never answers an empty
+   * part (docs/providers/CONTRACT.md, clause C-115), so the payload part is the engine's statement of what it read.
+   */
+  test("an empty or blank payload is answered as the engine's statement, never an empty part, and its document passes the host core's source call", async () => {
+    const core = createHostCore();
+    const topic = "plant/line1/empty";
+    const cases: [string, string][] = [
+      ["", `The last message on "${topic}" carried an empty payload (0 bytes).`],
+      [" \n\t", `The last message on "${topic}" carried only blank characters (3 bytes).`],
+    ];
+    for (const [payload, sentence] of cases) {
+      const provider = openProvider({}, [CONNACK, SUBACK, publish(topic, payload, false)]);
+      // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each record is its own payload's.
+      await provider.connect();
+      const ctx = {
+        deadline: Date.now() + 60_000,
+        signal: new AbortController().signal,
+        env: envReader([], () => undefined),
+      };
+      // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each record is its own payload's.
+      const record = await core.sourceCall(
+        bridgedConsole(provider, {}).session,
+        { path: [topic], kind: "topic" },
+        ctx,
+        {
+          late: () => {},
+        },
+      );
+
+      if (record.kind !== "answered") throw new Error(`An answer was expected, not ${JSON.stringify(record)}.`);
+      expect(record.answer.parts[0]).toEqual({
+        id: "payload",
+        label: "Payload",
+        unavailable: sentence,
+        statement: true,
+      });
+      expect(record.answer.parts[1]).toMatchObject({ id: "metadata", label: "Metadata", language: "json" });
+    }
+    // The document builder answers a row of 0 bytes, and one whose payload the read did not keep, the same way.
+    const empty: MqttTopicRow = { retained: true, payloadBytes: 0 };
+    const unkept: MqttTopicRow = { retained: false, payloadBytes: 3 };
+    expect(mqttSourceDocument(["a"], "topic", empty).parts[0]).toEqual({
+      id: "payload",
+      label: "Payload",
+      unavailable: 'The last message on "a" carried an empty payload (0 bytes).',
+      statement: true,
+    });
+    expect(mqttSourceDocument(["a"], "topic", unkept).parts[0]).toEqual({
+      id: "payload",
+      label: "Payload",
+      unavailable: 'The last message on "a" carried a payload this read did not keep (3 bytes).',
+      statement: true,
+    });
   });
 });
 
