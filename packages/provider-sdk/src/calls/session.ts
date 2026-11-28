@@ -15,10 +15,10 @@
  * the session's maintenance with `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is
  * never sent an operation or a placement its session's maintenance does not offer, and every monitoring panel request
  * to the panels the session's engine offers with `checkMonitoringPanelRequest`, so a package is never asked for a panel
- * its engine does not offer, every tree request to the session's object model with `checkTreeRequest`, so a package
- * is never asked for a level or a kind its engine's model does not state, and every source request to it with
- * `checkSourceRequest`, so a package is never asked for the source of a kind its model states without source, or at a
- * path deeper than its model admits for the kind.
+ * its engine does not offer or for a list under a limit outside its bound, every tree request to the session's object
+ * model with `checkTreeRequest`, so a package is never asked for a level or a kind its engine's model does not state,
+ * and every source request to it with `checkSourceRequest`, so a package is never asked for the source of a kind its
+ * model states without source, or at a path deeper than its model admits for the kind.
  */
 import type {
   Calls,
@@ -29,6 +29,7 @@ import type {
   MonitoringPanels,
   ObjectModel,
 } from "../manifest/manifest-types.generated";
+import { ANSWER_LIST_MAX } from "./answers";
 import { isPlainRecord, pointerTo, readOwn, valueOf } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
 import {
@@ -141,19 +142,30 @@ export function checkMonitoringFacet(calls: Calls, facet: MonitoringFacet): read
 }
 
 /**
- * The refusal of a panel request `panels`, the monitoring panels of the session's engine, does not offer: one
- * `request-panel-not-offered` at `/panel` unless the request's `panel` is text naming an own data property of `panels`
- * whose value is `offered`, each read by its descriptor, so a panel the engine declares not-offered, an absent `panel`,
- * one that is no text and one an object inherits, such as `__proto__`, are refused and nothing throws; none otherwise.
- * The refusal names the pointer, never a value of the request.
+ * The refusal of a panel request `panels`, the monitoring panels of the session's engine, does not offer, or whose
+ * limit bounds no list: one `request-panel-not-offered` at `/panel` unless the request's `panel` is text naming an own
+ * data property of `panels` whose value is `offered`, each read by its descriptor, so a panel the engine declares
+ * not-offered, an absent `panel`, one that is no text and one an object inherits, such as `__proto__`, are refused and
+ * nothing throws. For an offered slow queries or active sessions panel, whose answer's list is at most the request's
+ * `limit` long, one `request-limit-out-of-range` at `/limit`, named `limit`, unless the limit, read by its descriptor,
+ * is a whole number from 1 to that list's `ANSWER_LIST_MAX` bound, so an absent limit, an accessor, `NaN`, an infinity
+ * and a limit past the bound, which would bound no list or one past every answer's, are refused. None otherwise; no
+ * other panel's limit is read. A refusal names the pointer, never a value of the request.
  */
 export function checkMonitoringPanelRequest(
   panels: MonitoringPanels,
   request: MonitoringPanelRequest,
 ): readonly CallRefusal[] {
   const panel = valueOf(readOwn(request, "panel"));
-  if (typeof panel === "string" && valueOf(readOwn(panels, panel)) === "offered") return [];
-  return [{ rule: "request-panel-not-offered", pointer: "/panel" }];
+  if (typeof panel !== "string" || valueOf(readOwn(panels, panel)) !== "offered") {
+    return [{ rule: "request-panel-not-offered", pointer: "/panel" }];
+  }
+  if (panel !== "slowQueries" && panel !== "activeSessions") return [];
+  const limit = valueOf(readOwn(request, "limit"));
+  if (typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 1 && limit <= ANSWER_LIST_MAX[panel]) {
+    return [];
+  }
+  return [{ rule: "request-limit-out-of-range", pointer: "/limit", name: "limit" }];
 }
 
 /**

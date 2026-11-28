@@ -64,6 +64,7 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "request-placement-not-offered": "studio",
   "request-preview-not-offered": "studio",
   "request-panel-not-offered": "studio",
+  "request-limit-out-of-range": "studio",
   "request-level-not-stated": "studio",
   "request-kind-not-stated": "studio",
   "request-source-not-stated": "studio",

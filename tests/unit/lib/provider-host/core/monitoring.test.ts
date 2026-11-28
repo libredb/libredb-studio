@@ -12,6 +12,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
+  ANSWER_LIST_MAX,
   type CallContext,
   envReader,
   type HealthInfo,
@@ -221,6 +222,25 @@ describe("panelCall and poolStatsCall", () => {
         kind: "refused",
         called: false,
         refusals: [{ rule: "request-panel-not-offered", pointer: "/panel" }],
+      });
+    }
+    expect(fx.reads).toEqual([]);
+  });
+
+  test("a slow queries request whose limit is outside its list's bound is refused as a record before the call, by name", async () => {
+    const fx = answering(async () => {
+      throw new Error("never called");
+    });
+    const { ports } = portsOf();
+
+    for (const limit of [0, Number.NaN, ANSWER_LIST_MAX.slowQueries + 1]) {
+      // oxlint-disable-next-line no-await-in-loop -- one limit at a time, so each record is its own call's.
+      const record = await panelCall(fx.session, { panel: "slowQueries", limit }, contextOf(), ports);
+
+      expect(record).toEqual({
+        kind: "refused",
+        called: false,
+        refusals: [{ rule: "request-limit-out-of-range", pointer: "/limit", name: "limit" }],
       });
     }
     expect(fx.reads).toEqual([]);

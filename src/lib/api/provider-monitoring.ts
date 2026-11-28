@@ -1,4 +1,5 @@
 import {
+  ANSWER_LIST_MAX,
   type CallContext,
   type DatabaseOverview,
   deadlineSignal,
@@ -359,21 +360,27 @@ export function readGrantedHealth(provider: DatabaseProvider, grant: GrantedRead
   return core.healthCall(session, grantedContext(grant), { late }).then((record) => grantedAnswer(record, grant));
 }
 
-/** Whether `value`, a present limit, is a whole number of at least 1 that JavaScript holds exactly. */
-function isLimit(value: unknown): boolean {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+/** The list each monitoring limit option bounds, whose `ANSWER_LIST_MAX` bound is the most that limit may be. */
+const LIMITED_LIST = Object.freeze({ slowQueryLimit: "slowQueries", sessionLimit: "activeSessions" } as const);
+
+/** Whether `value`, a present limit, is a whole number from 1 to `bound`. */
+function isLimit(value: unknown, bound: number): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= bound;
 }
 
 /**
  * The sentence refusing the monitoring `options` a caller sent, or `undefined` when they are taken: a present
- * `slowQueryLimit` or `sessionLimit` that is not a whole number of at least 1, then a present `schemaFilter` that is
- * not text or is empty, the first in that order. An absent option keeps its default. The sentence names the option,
- * never its value. The `include` flags are not read here: they choose which panels are read and reach no provider.
+ * `slowQueryLimit` or `sessionLimit` that is not a whole number from 1 to the `ANSWER_LIST_MAX` bound of the list it
+ * limits, which the host core holds a panel request's limit to (`checkMonitoringPanelRequest`), then a present
+ * `schemaFilter` that is not text or is empty, the first in that order. An absent option keeps its default, which is
+ * within its bound. The sentence names the option and its bound, never its value. The `include` flags are not read
+ * here: they choose which panels are read and reach no provider.
  */
 export function monitoringOptionsRefusal(options: Readonly<Record<string, unknown>>): string | undefined {
   for (const name of ["slowQueryLimit", "sessionLimit"] as const) {
-    if (options[name] !== undefined && !isLimit(options[name])) {
-      return `options.${name} must be a whole number of at least 1`;
+    const bound = ANSWER_LIST_MAX[LIMITED_LIST[name]];
+    if (options[name] !== undefined && !isLimit(options[name], bound)) {
+      return `options.${name} must be a whole number from 1 to ${bound}`;
     }
   }
   const { schemaFilter } = options;

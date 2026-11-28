@@ -117,7 +117,8 @@ function checked<Answer>(answer: unknown, refusals: readonly CallRefusal[]): Ans
  * than its bound is refused at the list before any of its items is read. A list of a database's containers, objects,
  * details or tables, or a maintenance run's rows, may hold 2^20 items, and every other list, one within an answer, an
  * object or a path, 2^16. A `describeMany` request that sends a `limit` bounds its `details` by that limit instead, and
- * a slow queries or active sessions panel request its list by its `limit`, so their bounds here are a health answer's.
+ * a slow queries or active sessions panel request its list by its `limit`, which `checkMonitoringPanelRequest` holds
+ * to at most the bound here, so their bounds here are a health answer's and the most a panel's limit may be.
  * An index's `columns`, of an object or of an index statistics row, takes the bound of `columns`, and the index
  * statistics panel's list the bound of `indexes`.
  */
@@ -1044,7 +1045,7 @@ function panelAnswerForm(request: MonitoringPanelRequest): Form {
  * `panel-answer-unreadable` otherwise: a plain record whose one key is the request's panel, another key named, holding
  * that panel's member closed over the SDK's monitoring types, every count a non-negative safe integer, every time,
  * ratio and rate a finite non-negative number, every date a valid `Date`, and the slow queries and the sessions at most
- * the request's `limit` long. Never throws.
+ * the request's `limit` long, a limit `checkMonitoringPanelRequest` admitted before the call. Never throws.
  */
 export function checkPanelAnswer(request: MonitoringPanelRequest, answer: unknown): AnswerCheck<MonitoringPanelAnswer> {
   const out: Refusals = { rule: "panel-answer-unreadable", list: [] };

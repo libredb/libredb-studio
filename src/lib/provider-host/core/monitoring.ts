@@ -5,9 +5,10 @@
  * `panelCall` makes one `monitoring.panel` call on a session and `poolStatsCall` one `monitoring.poolStats` call, and
  * each answers a record of how it ended. Each is checked before it is made: `checkCallStart` refuses a call whose
  * deadline passed or whose signal aborted, then `checkMonitoringFacet` a session that does not offer the facet, then,
- * for a panel, `checkMonitoringPanelRequest` a request for a panel the session's engine does not offer. Each refusal
- * is answered as a record, `called` false, and the provider is never called. Then the context and the panel request
- * are frozen in place, `freezeContext` and `freezeData`, so the caller builds both fresh for each call.
+ * for a panel, `checkMonitoringPanelRequest` a request for a panel the session's engine does not offer or with a limit
+ * outside its list's bound. Each refusal is answered as a record, `called` false, and the provider is never called.
+ * Then the context and the panel request are frozen in place, `freezeContext` and `freezeData`, so the caller builds
+ * both fresh for each call.
  *
  * The call is waited for with `awaitWithin` until the context's signal. An answer is read once with the SDK's check of
  * its call (clause C-112), whatever session answered it, a package's or the bridge's: `checkPanelAnswer` against the

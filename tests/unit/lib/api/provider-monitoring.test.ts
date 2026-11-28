@@ -15,7 +15,12 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { CallContext, HealthInfo, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import {
+  ANSWER_LIST_MAX,
+  type CallContext,
+  type HealthInfo,
+  type MonitoringPanelRequest,
+} from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
 import {
   type GrantedRead,
@@ -915,21 +920,29 @@ describe("granted reads", () => {
 });
 
 describe("monitoringOptionsRefusal", () => {
-  test("the monitoring options are refused by name when a limit is not a whole number of at least 1 or the schema is not text that names one", () => {
+  test("the monitoring options are refused by name when a limit is not a whole number from 1 to its list's answer bound or the schema is not text that names one", () => {
     const schema = marker();
     expect(monitoringOptionsRefusal({})).toBeUndefined();
     expect(
-      monitoringOptionsRefusal({ slowQueryLimit: 1, sessionLimit: 9007199254740991, schemaFilter: schema }),
+      monitoringOptionsRefusal({
+        slowQueryLimit: ANSWER_LIST_MAX.slowQueries,
+        sessionLimit: ANSWER_LIST_MAX.activeSessions,
+        schemaFilter: schema,
+      }),
     ).toBeUndefined();
     expect(
       monitoringOptionsRefusal({ includeTables: false, includeIndexes: true, includeStorage: false }),
     ).toBeUndefined();
 
-    const limit = (name: string) => `options.${name} must be a whole number of at least 1`;
+    const limit = (name: "slowQueryLimit" | "sessionLimit") =>
+      `options.${name} must be a whole number from 1 to ${ANSWER_LIST_MAX[name === "slowQueryLimit" ? "slowQueries" : "activeSessions"]}`;
+    expect(monitoringOptionsRefusal({ slowQueryLimit: 1, sessionLimit: 1 })).toBeUndefined();
     const schemaSentence = "options.schemaFilter must name a schema, as text that is not empty";
     const badLimits: readonly unknown[] = [0, -1, 1.5, "10", Number.NaN, Number.POSITIVE_INFINITY, 1e300, true, null];
-    for (const bad of badLimits) {
+    for (const bad of [...badLimits, Number.MAX_SAFE_INTEGER, ANSWER_LIST_MAX.slowQueries + 1]) {
       expect(monitoringOptionsRefusal({ slowQueryLimit: bad })).toBe(limit("slowQueryLimit"));
+    }
+    for (const bad of [...badLimits, Number.MAX_SAFE_INTEGER, ANSWER_LIST_MAX.activeSessions + 1]) {
       expect(monitoringOptionsRefusal({ sessionLimit: bad })).toBe(limit("sessionLimit"));
     }
     for (const bad of ["", 7, null, []] as const) {

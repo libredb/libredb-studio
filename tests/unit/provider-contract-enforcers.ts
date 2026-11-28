@@ -1945,6 +1945,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the monitoring facets are refused by name to a session that does not offer them",
         "a session that offers monitoring.panel and monitoring.poolStats is called",
         "a monitoring panel request is held to the panels the session's engine offers",
+        "a slow queries or active sessions request's limit is held to a whole number from 1 to its list's ANSWER_LIST_MAX bound",
         "no monitoring request refusal carries a value of the request",
         "a containers parent deeper than the object model's levels is refused as request-level-not-stated at its pointer",
         "a container no path shape of the object model's levels admits is refused at its pointer, under exact and prefixes alike",

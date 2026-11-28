@@ -817,7 +817,7 @@ It holds maintenance, monitoring, tree and source requests to the session's main
 
 - `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest` refuse an operation the session does not list as `request-operation-not-offered`, a placement its spec does not offer as `request-placement-not-offered`, which `kill` and an operation listed with no spec pass, and a preview its spec does not declare as `request-preview-not-offered`;
 - empty text where a request names something, a target, a container, a path or a name in it, is `request-field-empty`;
-- `checkMonitoringPanelRequest` refuses a panel the engine does not offer, a request that names none and an inherited panel name as `request-panel-not-offered`, without throwing;
+- `checkMonitoringPanelRequest` refuses a panel the engine does not offer, a request that names none and an inherited panel name as `request-panel-not-offered`, and a slow queries or active sessions `limit` that is not a whole number from 1 to its list's `ANSWER_LIST_MAX` bound as `request-limit-out-of-range`, without throwing;
 - `checkTreeRequest` refuses a container path the session's object model does not state as `request-level-not-stated` and an object kind it does not state as `request-kind-not-stated`, without throwing;
 - `checkSourceRequest` refuses an object kind the session's object model does not state as `request-kind-not-stated`, one whose source it does not state as `request-source-not-stated`, a path of no segment as `request-field-empty`, and a path deeper than the model admits for the kind as `request-path-not-admitted`, without throwing.
 

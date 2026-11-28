@@ -9,14 +9,15 @@
  * `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet` and `checkMonitoringFacet`, which refuse a console,
  * object, maintenance or monitoring facet the session does not offer, `checkMaintenanceRunRequest` and
  * `checkMaintenancePreviewRequest`, which refuse a maintenance request the session's maintenance does not take,
- * `checkMonitoringPanelRequest`, which refuses a panel the session's engine does not offer, `checkTreeRequest`, which
- * refuses a tree request naming a level or a kind the session's object model does not state, `checkSourceRequest`,
- * which refuses a source request naming a kind the model states without source or a path deeper than it admits,
- * `checkTransactionAnswer` and `checkTransactionStatement`, which refuse a session state a transaction call or a
- * statement inside the transaction answered that the host cannot read, `checkExecuteAnswer`, which refuses a member of
- * an execute answer the host reads that is not of the SDK's type there, `checkTreeAnswer`, which refuses a tree answer
- * that is not its action's form, `checkSourceAnswer`, which refuses a source answer that is not the SDK's closed source
- * document, `checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer` and
+ * `checkMonitoringPanelRequest`, which refuses a panel the session's engine does not offer and a limit outside its
+ * list's bound, `checkTreeRequest`, which refuses a tree request naming a level or a kind the session's object model
+ * does not state, `checkSourceRequest`, which refuses a source request naming a kind the model states without source
+ * or a path deeper than it admits, `checkTransactionAnswer` and `checkTransactionStatement`, which refuse a session
+ * state a transaction call or a statement inside the transaction answered that the host cannot read,
+ * `checkExecuteAnswer`, which refuses a member of an execute answer the host reads that is not of the SDK's type there,
+ * `checkTreeAnswer`, which refuses a tree answer that is not its action's form, `checkSourceAnswer`, which refuses a
+ * source answer that is not the SDK's closed source document, `checkPanelAnswer`, `checkPoolStatsAnswer`,
+ * `checkHealthAnswer`, `checkMaintenanceRunAnswer` and
  * `checkMaintenancePreviewAnswer`, which refuse a monitoring panel, pool statistics, health, maintenance run or
  * maintenance preview answer outside the SDK's type, each answering the answer itself, typed, where it refuses nothing
  * (`AnswerCheck`), and each holding every list to its bound, `ANSWER_LIST_MAX`, the source bounds `SOURCE_PART_LIMIT`

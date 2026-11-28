@@ -33,6 +33,11 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   /** A monitoring panel the session's engine does not offer, or a request naming no panel; into the request. */
   "request-panel-not-offered",
   /**
+   * A slow queries or active sessions panel request whose `limit` is not a whole number from 1 to its list's
+   * `ANSWER_LIST_MAX` bound, or is absent or an accessor; the pointer is into the request, `name` the field.
+   */
+  "request-limit-out-of-range",
+  /**
    * A container path the session's object model does not state: a parent deeper than its container levels, or a
    * container no path shape of its levels admits; the pointer is into the request.
    */
@@ -146,9 +151,10 @@ export interface CallRefusal {
   /** A JSON Pointer into the thing the rule names; the empty string is that thing itself. */
   readonly pointer: string;
   /**
-   * The request field, for a field not honoured or sent empty, the facet's call name, for a facet not offered, or the key, for a key
-   * a refinement, a transaction answer, an execute answer's warning, a tree answer, a source answer, a monitoring panel,
-   * pool statistics, health, maintenance run or maintenance preview answer, or a maintenance run's row cannot have.
+   * The request field, for a field not honoured, sent empty or out of range, the facet's call name, for a facet not
+   * offered, or the key, for a key a refinement, a transaction answer, an execute answer's warning, a tree answer, a
+   * source answer, a monitoring panel, pool statistics, health, maintenance run or maintenance preview answer, or a
+   * maintenance run's row cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -206,6 +212,8 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request at ${at} names an operation whose spec in the session's maintenance declares no preview on a row, so the call was not made.`;
     case "request-panel-not-offered":
       return `The request names at ${at} a monitoring panel the session's engine does not offer, so the call was not made.`;
+    case "request-limit-out-of-range":
+      return `The request carries the field ${name} at ${at} that is not a whole number from 1 to the bound of the list it limits, so the call was not made.`;
     case "request-level-not-stated":
       return `The request names at ${at} a container path whose levels the engine's object model does not state, so the call was not made.`;
     case "request-kind-not-stated":
