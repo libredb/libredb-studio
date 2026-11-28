@@ -194,9 +194,9 @@ export interface EngineSource {
  */
 export interface EngineOffers {
   /**
-   * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection, the
-   * query route, the object tree's reads and the monitoring, health and pool statistics reads reads one, through
-   * `assertLegacyProvider`.
+   * A legacy `DatabaseProvider` the provider factory builds (./factory), which every request reads through
+   * `assertLegacyProvider` except Test Connection, the query route, the object tree's reads and the monitoring, health
+   * and pool statistics reads.
    */
   readonly legacyProvider: boolean;
   /** A plan of a statement (`explain`), built by the connected provider's strategy. */
