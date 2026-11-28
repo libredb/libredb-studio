@@ -639,13 +639,75 @@ describe("the success sentences of a provider's answers", () => {
       },
       notOffered: ["storage"],
     };
-    expect(scrubMonitoringData(scrub, data)).toEqual({
+    expect(scrubMonitoringData(scrubbed(scrub), data)).toEqual({
       ...data,
       errors: { slowQueries: PROVIDER_TEXT_WITHHELD, tables: "relation pg_stat_user_tables is not readable" },
     });
     const answered: MonitoringData = { timestamp: new Date(0), slowQueries: [] };
-    expect(scrubMonitoringData(scrub, answered)).toEqual(answered);
-    expect("errors" in scrubMonitoringData(scrub, answered)).toBe(false);
+    expect(scrubMonitoringData(scrubbed(scrub), answered)).toEqual(answered);
+    expect("errors" in scrubMonitoringData(scrubbed(scrub), answered)).toBe(false);
+  });
+
+  test("scrubMonitoringData reads the overview's table count sentence and the cache advice under the record's grant: Studio's sentence where it grants none, logged once each, through core's scrub where it does, and a panel error through core's scrub on either grant", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const sampled = `counted from ${generated()}`;
+      const advice = `raise the cache ${generated()}`;
+      const unsampled = {
+        version: "Acme 1",
+        uptime: "1 day",
+        activeConnections: 1,
+        maxConnections: 10,
+        databaseSize: "1 MB",
+        databaseSizeBytes: 1048576,
+        tableCount: 1000,
+        indexCount: 3,
+      };
+      const data: MonitoringData = {
+        timestamp: new Date(0),
+        overview: { ...unsampled, tableCountSampledFrom: sampled },
+        performance: { cacheHitRatio: 70, cacheHitAdvice: advice },
+        errors: { tables: `permission denied for ${password}`, slowQueries: "not readable" },
+      };
+      const errors = { tables: PROVIDER_TEXT_WITHHELD, slowQueries: "not readable" };
+
+      // Granted: through core's scrub, logged nowhere; a sentence holding the credential is withheld.
+      expect(scrubMonitoringData(scrubbed(scrub), data)).toEqual({ ...data, errors });
+      const holding: MonitoringData = {
+        ...data,
+        overview: { ...unsampled, tableCountSampledFrom: `sampled by ${password}` },
+        performance: { cacheHitAdvice: `set the cache for ${password}` },
+      };
+      expect(scrubMonitoringData(scrubbed(scrub), holding)).toEqual({
+        ...holding,
+        overview: { ...unsampled, tableCountSampledFrom: PROVIDER_TEXT_WITHHELD },
+        performance: { cacheHitAdvice: PROVIDER_TEXT_WITHHELD },
+        errors,
+      });
+      expect(warn).not.toHaveBeenCalled();
+
+      // Code-only: Studio's sentence for each of the two, the words logged once each through core's scrub under the
+      // route; the panel errors are the request's answers of a failure, through core's scrub as on the granted record.
+      const codeOnly: ProviderWords = { scrub, ownWords: "code-only", route: "api/db/monitoring" };
+      expect(scrubMonitoringData(codeOnly, data)).toEqual({
+        ...data,
+        overview: { ...unsampled, tableCountSampledFrom: PACKAGE_SENTENCE_WITHHELD },
+        performance: { cacheHitRatio: 70, cacheHitAdvice: PACKAGE_SENTENCE_WITHHELD },
+        errors,
+      });
+      const line = (reason: string): [string, { route: string; reason: string }] => [
+        "A provider package's answer gave a reason",
+        { route: "api/db/monitoring", reason },
+      ];
+      expect(warn.mock.calls).toEqual([line(sampled), line(advice)]);
+
+      // An overview and a performance panel with neither sentence, and no errors, are answered as given: no key added.
+      const plain: MonitoringData = { timestamp: new Date(0), overview: unsampled, performance: { cacheHitRatio: 99 } };
+      expect(scrubMonitoringData(codeOnly, plain)).toBe(plain);
+      expect(warn.mock.calls).toHaveLength(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("scrubMaintenanceResult withholds a message that holds the connection's credential and keeps the verdict, the time and the rows", () => {
@@ -971,7 +1033,7 @@ describe("the success sentences of a provider's answers", () => {
       timestamp: new Date(0),
       slowQueries: [{ query: `SELECT '${password}'`, calls: 1, totalTime: 2, avgTime: 2, rows: 1 }],
     };
-    expect(scrubMonitoringData(scrub, data)).toEqual(data);
+    expect(scrubMonitoringData(scrubbed(scrub), data)).toEqual(data);
     const result: MaintenanceResult = {
       success: true,
       executionTime: 1,
@@ -1015,7 +1077,11 @@ describe("the success sentences of a provider's answers", () => {
   });
 
   test("an answer none of whose sentences holds a form answers deep-equal to the answer given, and the answer given is not changed", () => {
-    const data: MonitoringData = { timestamp: new Date(0), errors: { tables: `refused for ${password}` } };
+    const data: MonitoringData = {
+      timestamp: new Date(0),
+      performance: { cacheHitAdvice: `raise it for ${password}` },
+      errors: { tables: `refused for ${password}` },
+    };
     const result: MaintenanceResult = { success: false, executionTime: 1, message: `refused for ${password}` };
     const preview: MaintenancePreview = {
       summary: `Loads ${password}`,
@@ -1063,7 +1129,7 @@ describe("the success sentences of a provider's answers", () => {
       { outcome: "applied", revision: { check: "unavailable", reason: `unreadable ${password}` }, duration: 1 },
     ];
     const before = structuredClone({ data, result, preview, page, refusal, plan, preimage, outcomes });
-    scrubMonitoringData(scrub, data);
+    scrubMonitoringData(scrubbed(scrub), data);
     scrubMaintenanceResult(scrubbed(scrub), result);
     scrubMaintenancePreview(scrubbed(scrub), preview);
     scrubKeyScanPage(scrub, page);
@@ -1074,7 +1140,7 @@ describe("the success sentences of a provider's answers", () => {
     expect({ data, result, preview, page, refusal, plan, preimage, outcomes }).toEqual(before);
 
     const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
-    expect(scrubMonitoringData(clean, data)).toEqual(data);
+    expect(scrubMonitoringData(scrubbed(clean), data)).toEqual(data);
     expect(scrubMaintenanceResult(scrubbed(clean), result)).toEqual(result);
     expect(scrubMaintenancePreview(scrubbed(clean), preview)).toEqual(preview);
     expect(scrubKeyScanPage(clean, page)).toEqual(page);

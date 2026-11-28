@@ -604,6 +604,36 @@ describe("the monitoring routes on a provider package's engine", () => {
     expect(lines().map(([message]) => message)).toEqual(["Unhandled error"]);
     expect(names(seen)).toEqual(["open", "health"]);
   });
+
+  test("a package's table count sentence reaches the client as Studio's sentence where no row grants its words, logged once, and through core's scrub where one does", async () => {
+    const lines = loggedLines();
+    for (const engine of [MON, WORDS]) {
+      const granted = engine === WORDS;
+      const connection = connectionOf(engine);
+      const own = `counted from ${randomUUID()}`;
+      const secret = `sampled by ${String(connection.password)}`;
+      for (const sampledFrom of [own, secret]) {
+        const overview = { ...overviewOf(), tableCount: 1000, tableCountSampledFrom: sampledFrom };
+        hooksFor(engine, {
+          panel: async (request) => (request.panel === "overview" ? { overview } : { tables: ANSWERS.tables }),
+        });
+        const dashboard = await post("monitoring", { connection });
+        expect(dashboard.status).toBe(200);
+        const answered = granted ? (sampledFrom === own ? own : PROVIDER_TEXT_WITHHELD) : PACKAGE_SENTENCE_WITHHELD;
+        expect((dashboard.body as { overview: unknown }).overview).toEqual({
+          ...overview,
+          tableCountSampledFrom: answered,
+        });
+        const reason = sampledFrom === own ? own : PROVIDER_TEXT_WITHHELD;
+        expect(lines()).toEqual(
+          granted
+            ? []
+            : [["A provider package's answer gave a reason", JSON.stringify({ route: "api/db/monitoring", reason })]],
+        );
+        expect(JSON.stringify(dashboard.body)).not.toContain(String(connection.password));
+      }
+    }
+  });
 });
 
 describe("the maintenance routes and fleet health on a provider package's engine", () => {

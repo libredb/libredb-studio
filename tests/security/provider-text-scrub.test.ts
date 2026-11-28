@@ -421,11 +421,26 @@ describe("on every route that resolves the calling connection", () => {
       "any",
     );
     for (const form of forms) {
-      const monitoring = scrubMonitoringData(scrub, {
-        timestamp: new Date(0),
-        errors: { slowQueries: `permission denied for ${form}` },
-      });
+      const monitoring = scrubMonitoringData(
+        { scrub, ownWords: "scrubbed", route: "provider-text" },
+        {
+          timestamp: new Date(0),
+          overview: {
+            version: "PostgreSQL 16.1",
+            uptime: "1 day",
+            maxConnections: 10,
+            databaseSize: "1 MB",
+            tableCount: 1000,
+            tableCountSampledFrom: `sampled by ${form}`,
+            indexCount: 0,
+          },
+          performance: { cacheHitAdvice: `raise it for ${form}` },
+          errors: { slowQueries: `permission denied for ${form}` },
+        },
+      );
       expect(monitoring.errors).toEqual({ slowQueries: PROVIDER_TEXT_WITHHELD });
+      expect(monitoring.overview?.tableCountSampledFrom).toBe(PROVIDER_TEXT_WITHHELD);
+      expect(monitoring.performance).toEqual({ cacheHitAdvice: PROVIDER_TEXT_WITHHELD });
       const result = scrubMaintenanceResult(
         { scrub, ownWords: "scrubbed", route: "provider-text" },
         { success: false, executionTime: 1, message: `refused ${form}` },

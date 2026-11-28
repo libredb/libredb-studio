@@ -23,7 +23,8 @@ const ROUTE = "api/db/monitoring";
  * serves: a legacy provider's bridged session or a provider package's own (clause C-107). A catalog the record does
  * not offer, and a session that does not offer `monitoring.panel`, are refused by name before any call (clause C-111).
  * A package's failure, of its open or of a read, is answered and logged once through the request's `PackageAnswers`
- * (clause C-112), so the route writes no second line for it.
+ * (clause C-112), so the route writes no second line for it, and the two sentences a panel answer writes, the
+ * overview's table count sentence and the cache advice, reach the client under the record's grant of its words.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of body parsing, matching every other provider-reaching route: an unauthenticated
@@ -77,8 +78,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: optionsRefusal }, { status: 400 });
     }
     const { connection, engine } = await resolveServedConnection(body, guard.session);
-    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
-    answers = packageAnswers(engine, scrub, ROUTE);
+    const connectionScrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    scrub = connectionScrub;
+    answers = packageAnswers(engine, connectionScrub, ROUTE);
     const opening = answers;
 
     // The panels run on the record's metadata session (docs/providers/CONTRACT.md, clause C-66), so a dashboard
@@ -95,9 +97,13 @@ export async function POST(req: NextRequest) {
     // wire-compatible engine.
     const { maintenanceOperations, maintenanceOperationSpecs } = target.accepted();
 
-    // A failed panel's sentence is the engine's own, answered through the connection's scrub.
+    // A failed panel's sentence is the engine's own, answered through the connection's scrub; the overview's table count
+    // sentence and the cache advice reach the client under the record's grant of its words (clause C-112).
     return NextResponse.json({
-      ...scrubMonitoringData(scrub, monitoringData),
+      ...scrubMonitoringData(
+        { scrub: connectionScrub, ownWords: engine.grants.ownWords, route: ROUTE },
+        monitoringData,
+      ),
       maintenance: {
         maintenanceOperations,
         ...(maintenanceOperationSpecs === undefined ? {} : { maintenanceOperationSpecs }),

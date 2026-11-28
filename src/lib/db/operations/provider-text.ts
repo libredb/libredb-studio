@@ -241,17 +241,35 @@ export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSo
 }
 
 /**
- * Monitoring data with each panel's `errors` entry scrubbed, the engine's own sentence; every panel key the provider
- * answered is kept, and data with no `errors` is answered as given. The panels' figures and statement texts are
- * database content, never scrubbed.
+ * Monitoring data with the two sentences a provider writes in a panel's answer, the overview's
+ * `tableCountSampledFrom` and the performance panel's `cacheHitAdvice`, read under `words` (`providerSentence`), and
+ * each panel's `errors` entry through core's scrub, since a failed panel's sentence is already the request's answer
+ * of that failure (a package's through its `PackageAnswers`). Every panel key the provider answered is kept, no key is
+ * added, and data holding none of the three is answered as given; the data given is never changed. The panels'
+ * figures and statement texts are database content, never scrubbed.
  */
-export function scrubMonitoringData(scrub: ProviderTextScrub, data: MonitoringData): MonitoringData {
-  if (data.errors === undefined) return data;
-  const errors = Object.fromEntries(
-    Object.entries(data.errors).map(([panel, sentence]) => [panel, scrubProviderText(scrub, sentence)]),
-  );
-  // `Object.entries` widens a panel key to `string`; every key here is one the provider answered in `data.errors`.
-  return { ...data, errors: errors as MonitoringData["errors"] };
+export function scrubMonitoringData(words: ProviderWords, data: MonitoringData): MonitoringData {
+  const { overview, performance, errors } = data;
+  const sampled = overview?.tableCountSampledFrom;
+  const advice = performance?.cacheHitAdvice;
+  if (errors === undefined && sampled === undefined && advice === undefined) return data;
+  return {
+    ...data,
+    ...(overview === undefined || sampled === undefined
+      ? {}
+      : { overview: { ...overview, tableCountSampledFrom: providerSentence(words, sampled) } }),
+    ...(performance === undefined || advice === undefined
+      ? {}
+      : { performance: { ...performance, cacheHitAdvice: providerSentence(words, advice) } }),
+    ...(errors === undefined
+      ? {}
+      : {
+          // `Object.entries` widens a panel key to `string`; every key here is one the provider answered in `errors`.
+          errors: Object.fromEntries(
+            Object.entries(errors).map(([panel, sentence]) => [panel, scrubProviderText(words.scrub, sentence)]),
+          ) as MonitoringData["errors"],
+        }),
+  };
 }
 
 /**

@@ -3314,10 +3314,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
         "a package's open failure and each maintenance call's failure answer the one answer, code-only and granted, logged once, and the run's and the preview's sentences reach the client as Studio's sentence where no row grants the words",
+        "a package's table count sentence reaches the client as Studio's sentence where no row grants its words, logged once, and through core's scrub where one does",
       ],
       "tests/unit/db/operations/provider-text.test.ts": [
         "a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once",
         "a maintenance run's message and a preview's summary, refusal and note are scrubbed where the record grants its words and Studio's sentence where it does not, logged once, and every legacy record grants its words scrubbed",
+        "scrubMonitoringData reads the overview's table count sentence and the cache advice under the record's grant: Studio's sentence where it grants none, logged once each, through core's scrub where it does, and a panel error through core's scrub on either grant",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a code-only package's sentences in a tree answer reach the client as Studio's sentence, and a granted one's through core's scrub",
