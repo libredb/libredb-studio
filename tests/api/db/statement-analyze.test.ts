@@ -3,9 +3,9 @@
  * outside the browser.
  *
  * The session reader is replaced; the rest is the product's own code. The connection is resolved by the real
- * `resolveConnection`, under governance from a granted snapshot and without it from an inline record or the operator's
- * seed file, and the provider is built by the real factory, so every answer below is read off each engine's shipped
- * capabilities. The factory and `resolveConnection` are wrapped rather than replaced: the wrapper records what the
+ * `resolveServedConnection`, under governance from a granted snapshot and without it from an inline record or the
+ * operator's seed file, and the provider is built by the real factory, so every answer below is read off each engine's
+ * shipped capabilities. The factory and `resolveServedConnection` are wrapped rather than replaced: the wrapper records what the
  * route handed them, and every provider the factory builds here gets a `connect` that fails the request, so a route
  * that opened a connection could not answer 200. The query event sink and the admission gate are wrapped the same
  * way, so a test can see that the route reaches neither. One test hands the route a provider whose capabilities
@@ -27,7 +27,7 @@ import { admittedConnection, grantedSnapshot } from "../../helpers/governance/gr
 
 // The real functions, kept before their modules are replaced, so a wrapper never calls itself.
 const realReadProviderDeclarations = actualFactory.readProviderDeclarations;
-const realResolveConnection = actualResolve.resolveConnection;
+const realResolveServedConnection = actualResolve.resolveServedConnection;
 
 /**
  * Every declarations read the factory answered for a route here: what the route handed it. The read hands back data,
@@ -44,8 +44,8 @@ const readProviderDeclarations = mock(
 );
 mock.module("@/lib/db", () => ({ ...actualDb, readProviderDeclarations }));
 
-const resolveConnection = mock(realResolveConnection);
-mock.module("@/lib/seed/resolve-connection", () => ({ ...actualResolve, resolveConnection }));
+const resolveServedConnection = mock(realResolveServedConnection);
+mock.module("@/lib/seed/resolve-connection", () => ({ ...actualResolve, resolveServedConnection }));
 
 const realAdmission = { ...(await import("@/lib/query-events/admission")) };
 const admitQueryExecution = mock(realAdmission.admitQueryExecution);
@@ -161,7 +161,7 @@ beforeEach(() => {
   clearRateLimitState();
   built.length = 0;
   readProviderDeclarations.mockClear();
-  resolveConnection.mockClear();
+  resolveServedConnection.mockClear();
   admitQueryExecution.mockClear();
   recordQueryEvent.mockClear();
   getSession = spyOn(auth, "getSession").mockResolvedValue(ALICE);
@@ -485,7 +485,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     expect(spent.status).toBe(429);
     expect(spent.body).toMatchObject({ code: "RATE_LIMITED", statusCode: 429, retryable: true });
     expect(Number(spent.retryAfter)).toBeGreaterThan(0);
-    expect(resolveConnection).toHaveBeenCalledTimes(3);
+    expect(resolveServedConnection).toHaveBeenCalledTimes(3);
     expect(readProviderDeclarations).toHaveBeenCalledTimes(3);
   });
 });
@@ -504,7 +504,7 @@ describe("POST /api/db/statement/analyze without governance", () => {
       body: { error: "Authentication required", code: "AUTH_REQUIRED" },
       retryAfter: null,
     });
-    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(resolveServedConnection).not.toHaveBeenCalled();
     expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
@@ -515,7 +515,7 @@ describe("POST /api/db/statement/analyze without governance", () => {
     ["JSON null", "null"],
   ])("a body that is %s answers 400 Invalid request body, and resolves nothing", async (_label, body) => {
     expect(await analyze(body)).toEqual({ status: 400, body: { error: "Invalid request body" }, retryAfter: null });
-    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(resolveServedConnection).not.toHaveBeenCalled();
   });
 
   test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {

@@ -5,6 +5,8 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  FacetNotOfferedError,
+  markNotSent,
   PermissionDeniedError,
   PoolExhaustedError,
   QueryCancelledError,
@@ -12,8 +14,9 @@ import {
 } from "@/lib/db/errors";
 import { offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { connectionTextScrub, type ProviderTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import { legacyConnection, legacyProviderType } from "@/lib/db/server-catalog";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
@@ -35,6 +38,10 @@ import { type RecordedUnit, runRecorded } from "@/lib/query-events/recorded-run"
  * budget and while the request stays (`openWithinCall`), and a statement timeout the host cannot wait on is refused
  * before the open. A read past its deadline or a request that leaves answers a `TimeoutError` or a
  * `QueryCancelledError`, so it ends the profile as `ENDS_PROFILE` ends it.
+ *
+ * The connection resolves for any engine the server serves (`resolveServedConnection`), and an engine whose record
+ * offers no column profile, a provider package's, is refused by name before the open, outcome not-sent, 400
+ * `FACET_NOT_OFFERED` (docs/providers/CONTRACT.md, clause C-107).
  */
 
 /** The most columns one profile reads: each one costs the engine a scan of the table. */
@@ -216,8 +223,10 @@ export async function POST(req: NextRequest) {
     }
     const { tablePath, columns } = body;
 
-    const connection = await resolveConnection(body, guard.session);
-    const connectionScrub = providerTextScrub(connection, "any");
+    // Any engine the server serves resolves, so a package's engine is refused below by its record's offer, by name,
+    // rather than at the resolve; core's scrub of any record's connection.
+    const { connection: named, engine } = await resolveServedConnection(body, guard.session);
+    const connectionScrub = connectionTextScrub(named, legacyProviderType(engine), "any");
     scrub = connectionScrub;
 
     // The object's ADDRESS, one element per segment, and it is checked element by element
@@ -238,8 +247,21 @@ export async function POST(req: NextRequest) {
     }
     // Every read waits on the connection's statement timeout, so one the host cannot wait on is refused before the
     // open, in the query route's sentence: inside a measure's refusal it would read as every column's.
-    const timeoutError = queryTimeoutError(connection.queryTimeout);
+    const timeoutError = queryTimeoutError(named.queryTimeout);
     if (timeoutError !== null) return NextResponse.json({ error: timeoutError }, { status: 400 });
+    // Before any open: the profile reads a legacy provider's capabilities and writes its statements with Studio's SQL
+    // generator row of the engine, which a package's engine has none of (`EngineOffers.columnProfile`).
+    if (!engine.offers.columnProfile) {
+      const refusal = new FacetNotOfferedError(
+        "This connection's engine offers no column profile in this LibreDB Studio, so Studio opened nothing.",
+        legacyProviderType(engine),
+        "console",
+        "columnProfile",
+      );
+      markNotSent(refusal);
+      throw refusal;
+    }
+    const connection = legacyConnection(engine, named);
     const path = tablePath as string[];
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);

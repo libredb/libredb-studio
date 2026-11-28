@@ -18,6 +18,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { CallContext } from "@libredb/provider-sdk/calls";
+import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
@@ -27,6 +28,7 @@ import { installHostCore } from "@/lib/provider-host/instance";
 import { parseResponseJSON } from "../../helpers/mock-next";
 import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
+import { withStatementLanguageData } from "../../helpers/package-catalog";
 import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 
 /** The session every request is read as: an admin, or a governed user a governance case sets. */
@@ -44,6 +46,9 @@ const ROUTES: Readonly<Record<string, { POST: (req: never) => Promise<Response> 
   cancel: await import("@/app/api/db/cancel/route"),
   disconnect: await import("@/app/api/db/disconnect/route"),
   health: await import("@/app/api/db/health/route"),
+  profile: await import("@/app/api/db/profile/route"),
+  "provider-meta": await import("@/app/api/db/provider-meta/route"),
+  "statement/analyze": await import("@/app/api/db/statement/analyze/route"),
 };
 const factory = await import("@/lib/db/factory");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
@@ -56,7 +61,43 @@ const REST = "acmerest";
 const WORDS = "acmerestwords";
 const PLAIN = "acmeplain";
 const GOVERNED = "acmerestgoverned";
+/** A package whose engine states no SQL text, and one whose engine declares an object model. */
+const NOSQL = "acmerestnosql";
+const MODELLED = "acmerestmodelled";
 const providers = scratchDirectory("studio-package-engine-rest-");
+
+/** A tree with one container level and one kind of objects with columns: names no engine of Studio's. */
+const DECLARED_MODEL: ObjectModel = {
+  containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+  containerPathShapes: "exact",
+  containerNameSpelling: null,
+  objectKinds: [
+    {
+      id: "item",
+      role: "relation",
+      label: "Item",
+      labelPlural: "Items",
+      hasSource: false,
+      sourceLanguage: null,
+      hasColumns: true,
+      acceptsSourceEdits: false,
+      childKinds: [],
+      attachedTo: null,
+      acceptsRowWrites: false,
+      enumeratedBy: null,
+      countIsListing: false,
+      machineNames: null,
+      group: null,
+    },
+  ],
+  rowActions: [],
+  containersNameKinds: false,
+  tablesNeedContainer: false,
+  tablesAreDerivedGroupings: false,
+  agentWalkScope: null,
+  schemaDiffScope: null,
+  maskedNameKinds: [],
+};
 
 beforeAll(async () => {
   installHostCore(createHostCore(), "test");
@@ -67,6 +108,25 @@ beforeAll(async () => {
       { name: "acme-rest-words", engine: WORDS, offered: ["console.cancel"] },
       { name: "acme-plain", engine: PLAIN },
       { name: "acme-rest-governed", engine: GOVERNED, offered: ["console.cancel"] },
+      {
+        name: "acme-rest-nosql",
+        engine: NOSQL,
+        edit: (engine) => {
+          withStatementLanguageData(engine);
+          const members = engine as Record<string, unknown>;
+          members.sqlText = null;
+          members.sqlWriting = null;
+          members.migrationDdl = null;
+        },
+      },
+      {
+        name: "acme-rest-modelled",
+        engine: MODELLED,
+        offered: ["objects.tree"],
+        edit: (engine) => {
+          (engine as Record<string, unknown>).objects = structuredClone(DECLARED_MODEL);
+        },
+      },
     ],
     { [WORDS]: { ownWords: "scrubbed" }, [GOVERNED]: { deniedFileAccessRefusal: null } },
   );
@@ -318,6 +378,89 @@ describe("the disconnect route on a provider package's engine", () => {
       body: { success: true },
     });
     expect(callsNamed(seen, "close")).toHaveLength(2);
+  });
+});
+
+describe("the record readers on a provider package's engine", () => {
+  /** The not-sent refusal by the record's offer, with `sentence`. */
+  const notOffered = (sentence: string) => ({
+    status: 400,
+    body: expect.objectContaining({ error: sentence, code: "FACET_NOT_OFFERED", outcome: "not-sent" }),
+  });
+  const NO_PROFILE =
+    "This connection's engine offers no column profile in this LibreDB Studio, so Studio opened nothing.";
+  const NO_DECLARATIONS =
+    "Statement analysis reads the engine's statement terminator and editor language from a provider Studio builds without connecting, which this connection's engine does not offer in this LibreDB Studio, so Studio analysed nothing.";
+  const NO_SQL_TEXT =
+    "This connection's engine states no SQL text, so Studio has no statement to analyse and analysed nothing.";
+  const ANALYSIS = { text: "SELECT 1", selection: { start: 0, end: 0 }, cursor: 0 };
+
+  test("the profile route and the statement analysis refuse a package engine by the record's offer, by name", async () => {
+    const seen = hooksFor(REST);
+    const nosql = hooksFor(NOSQL);
+    const connection = connectionOf(REST);
+
+    expect(await post("profile", { connection, tablePath: ["s1", "thing"], columns: ["key"] })).toEqual(
+      notOffered(NO_PROFILE),
+    );
+    // A malformed field is still the caller's, answered first.
+    expect(await post("profile", { connection, tablePath: "s1.thing" })).toEqual({
+      status: 400,
+      body: { error: "tablePath is required: the object address, one segment per element" },
+    });
+
+    // An engine that states SQL text is refused by the declarations it cannot offer, one that states none by that.
+    expect(await post("statement/analyze", { connection, ...ANALYSIS })).toEqual(notOffered(NO_DECLARATIONS));
+    expect(await post("statement/analyze", { connection: connectionOf(NOSQL), ...ANALYSIS })).toEqual(
+      notOffered(NO_SQL_TEXT),
+    );
+    // The analysis reads its fields before the record's offer, as before the provider is built.
+    expect(await post("statement/analyze", { connection, text: 1 })).toEqual({
+      status: 400,
+      body: { error: "text must be a string" },
+    });
+
+    // Nothing opened, and no route answered 501.
+    expect([names(seen), names(nosql)]).toEqual([[], []]);
+  });
+
+  test("provider-meta answers a package engine from its record", async () => {
+    const seen = hooksFor(MODELLED);
+    const plain = hooksFor(REST);
+    const before = factory.getProviderCacheStats().size;
+
+    expect(await post("provider-meta", { connection: connectionOf(MODELLED) })).toEqual({
+      status: 200,
+      body: { engine: { id: MODELLED, displayName: expect.any(String) }, objectModel: DECLARED_MODEL },
+    });
+    expect(await post("provider-meta", connectionOf(REST))).toEqual({
+      status: 200,
+      body: { engine: { id: REST, displayName: expect.any(String) }, objectModel: null },
+    });
+    // The record's body is read without opening a session or keeping a cache entry.
+    expect([names(seen), names(plain), factory.getProviderCacheStats().size]).toEqual([[], [], before]);
+  });
+
+  test("provider-meta refuses a package engine's connection that core's open check refuses, by name, before anything is answered", async () => {
+    const seen = hooksFor(REST);
+    const cases: [Record<string, unknown>, string][] = [
+      [
+        { sshTunnel: { enabled: true, host: "b", port: 22, username: "u", authMethod: "password" } },
+        "This LibreDB Studio opens no SSH tunnel for an engine of a provider package, so it does not open this connection. Turn the tunnel off.",
+      ],
+      [
+        { readOnly: true },
+        `readOnly: true is refused for ${REST}: its provider package's engine does not enforce a read-only mode in this LibreDB Studio, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
+      ],
+    ];
+    for (const [fields, sentence] of cases) {
+      const answer = await post("provider-meta", { connection: { ...connectionOf(REST), ...fields } });
+      expect(answer).toEqual({
+        status: 400,
+        body: expect.objectContaining({ error: sentence, code: "CONFIG_ERROR", outcome: "not-sent" }),
+      });
+    }
+    expect(names(seen)).toEqual([]);
   });
 });
 
