@@ -810,6 +810,9 @@ function addressInventory(
  * (`languageGenerators(...).quotePath`): the dotted spelling reads as a retention policy, so a run that copied it wrote
  * a statement the server refuses. Any other path is no InfluxQL measurement address and keeps the dotted spelling every
  * engine shares, as does a provider package's engine, `type` undefined, whose own language is not read here yet.
+ *
+ * @throws {Error} A host defect, where the InfluxQL generators hold no `quotePath`: the dotted spelling is never answered
+ * for a measurement address in its place.
  */
 function qualifiedName(
   object: AgentInventoryObject,
@@ -822,7 +825,12 @@ function qualifiedName(
     object.path.length === 2
   ) {
     const address = languageGenerators(declaration.capabilities)?.quotePath;
-    if (address !== undefined) return address(object.path);
+    if (address === undefined) {
+      throw new Error(
+        `The InfluxQL generators hold no quotePath, which addresses a measurement of ${declaration.type} by its database and name: a host defect.`,
+      );
+    }
+    return address(object.path);
   }
   return object.path.join(".");
 }
