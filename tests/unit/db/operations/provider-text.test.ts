@@ -5,6 +5,7 @@
  * Every credential here is generated at run time, so no source line holds one.
  */
 import { describe, expect, spyOn, test } from "bun:test";
+import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   AuthenticationError,
@@ -525,7 +526,7 @@ describe("the object read sentences", () => {
         },
       ],
     };
-    const scrubbed = scrubSourceDocument(scrub, document);
+    const scrubbed = scrubSourceDocument({ scrub, ownWords: "scrubbed", route: "provider-text" }, document);
     expect(scrubbed).toEqual({
       path: ["public", "report"],
       kind: "function",
@@ -561,7 +562,7 @@ describe("the object read sentences", () => {
     } as unknown as ObjectSourcePart;
     const document: ObjectSourceDocument = { path: ["public", "report"], kind: "function", parts: [part] };
 
-    const scrubbed = scrubSourceDocument(scrub, document);
+    const scrubbed = scrubSourceDocument({ scrub, ownWords: "scrubbed", route: "provider-text" }, document);
 
     expect(scrubbed.parts[0]).toEqual({
       id: "body",
@@ -574,6 +575,75 @@ describe("the object read sentences", () => {
       edit: { offered: false, reason: PROVIDER_TEXT_WITHHELD },
     } as ObjectSourcePart);
     expect(JSON.stringify(scrubbed)).not.toContain(password);
+  });
+
+  test("a source document's sentences are scrubbed where the record grants its words and Studio's sentence where it does not, Studio's own bound sentence kept, logged once", () => {
+    const own = `the definition is hidden ${generated()}`;
+    const secret = `refused for ${password}`;
+    const bound = sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT);
+    const joined = `${own}; ${bound}`;
+    const readable = (id: string, reason: string): ObjectSourcePart => ({
+      id,
+      label: id,
+      text: "SELECT 1",
+      language: "sql",
+      form: "complete",
+      origin: "stored",
+      truncated: { limit: SOURCE_CHARACTER_LIMIT, reason },
+    });
+    const document: ObjectSourceDocument = {
+      path: ["app", "report"],
+      kind: "function",
+      parts: [
+        { id: "definition", label: "Definition", unavailable: own },
+        { id: "grants", label: "Grants", unavailable: secret, statement: true },
+        readable("studio", bound),
+        readable("own", own),
+        readable("joined", joined),
+        {
+          id: "comment",
+          label: "Comment",
+          text: "x",
+          language: "sql",
+          form: "complete",
+          origin: "rendered",
+          edit: { offered: false, reason: own },
+        },
+      ],
+    };
+    const answered = (sentence: (text: string) => string): ObjectSourceDocument => ({
+      ...document,
+      parts: [
+        { id: "definition", label: "Definition", unavailable: sentence(own) },
+        { id: "grants", label: "Grants", unavailable: sentence(secret), statement: true },
+        readable("studio", bound),
+        readable("own", sentence(own)),
+        readable("joined", sentence(joined)),
+        { ...document.parts[5], edit: { offered: false, reason: sentence(own) } } as ObjectSourcePart,
+      ],
+    });
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      // Granted: each sentence through core's scrub, Studio's bound sentence among them, logged nowhere.
+      expect(scrubSourceDocument(scrubbed(scrub), document)).toEqual(
+        answered((text) => (text === secret ? PROVIDER_TEXT_WITHHELD : text)),
+      );
+      expect(warn).not.toHaveBeenCalled();
+
+      // Code-only: each of the package's sentences as Studio's, logged once through core's scrub; Studio's own bound
+      // sentence alone is kept, and a reason the core joined to the package's is withheld whole.
+      const codeOnly: ProviderWords = { scrub, ownWords: "code-only", route: "api/db/objects/source" };
+      expect(scrubSourceDocument(codeOnly, document)).toEqual(answered(() => PACKAGE_SENTENCE_WITHHELD));
+      expect(warn.mock.calls.map(([line, payload]) => [line, (payload as { reason: string }).reason])).toEqual([
+        ["A provider package's answer gave a reason", own],
+        ["A provider package's answer gave a reason", PROVIDER_TEXT_WITHHELD],
+        ["A provider package's answer gave a reason", own],
+        ["A provider package's answer gave a reason", joined],
+        ["A provider package's answer gave a reason", own],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("a value none of whose sentences holds a form answers deep-equal to the value given, and the value given is not changed", () => {
@@ -606,13 +676,13 @@ describe("the object read sentences", () => {
     const before = structuredClone({ counts, detail, document });
     scrubKindCounts(scrubbed(scrub), counts);
     scrubObjectDetail(scrubbed(scrub), detail);
-    scrubSourceDocument(scrub, document);
+    scrubSourceDocument(scrubbed(scrub), document);
     expect({ counts, detail, document }).toEqual(before);
 
     const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
     expect(scrubKindCounts(scrubbed(clean), counts)).toEqual(counts);
     expect(scrubObjectDetail(scrubbed(clean), detail)).toEqual(detail);
-    expect(scrubSourceDocument(clean, document)).toEqual(document);
+    expect(scrubSourceDocument(scrubbed(clean), document)).toEqual(document);
   });
 });
 

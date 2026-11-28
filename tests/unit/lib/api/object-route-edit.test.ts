@@ -139,14 +139,14 @@ describe("readObjectRouteBody", () => {
 
 describe("the affordance the route strips", () => {
   test("a part of an editable kind keeps the provider's offer", () => {
-    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }), EDITABLE);
+    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }), EDITABLE, true);
     expect((offered.parts[0] as { edit?: unknown }).edit).toEqual({ offered: true });
   });
 
   test("a part whose KIND declares no edit loses it, however the provider answered", () => {
     // ENFORCE rather than trust: a declaration merely read from an implementation is a report and
     // not a bound, as the host core holds the document's shape and bound (`checkSourceAnswer`).
-    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }, "view"), EDITABLE);
+    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }, "view"), EDITABLE, true);
     expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
 
@@ -159,6 +159,7 @@ describe("the affordance the route strips", () => {
         document({ ...READABLE, text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1), edit: { offered: true } }),
       ),
       EDITABLE,
+      true,
     );
     expect(Object.hasOwn(offered.parts[0], "truncated")).toBe(true);
     expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
@@ -168,6 +169,7 @@ describe("the affordance the route strips", () => {
     const offered = offeredSourceEdits(
       document({ ...READABLE, truncated: { limit: 10, reason: "bounded by the provider" }, edit: { offered: true } }),
       EDITABLE,
+      true,
     );
     expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
@@ -175,10 +177,28 @@ describe("the affordance the route strips", () => {
   test("the offer is read by each member's value: a part with no truncation keeps it, and an edit of no value is no offer", () => {
     // The host core rebuilds each part to the members holding a value, so the route reads a member
     // by its value, as the tree's readers do; an own `undefined` is no truncation and no offer.
-    const kept = offeredSourceEdits(document({ ...READABLE, truncated: undefined, edit: { offered: true } }), EDITABLE);
+    const kept = offeredSourceEdits(
+      document({ ...READABLE, truncated: undefined, edit: { offered: true } }),
+      EDITABLE,
+      true,
+    );
     expect((kept.parts[0] as { edit?: unknown }).edit).toEqual({ offered: true });
     const unoffered = document({ ...READABLE, edit: undefined }, "view");
-    expect(offeredSourceEdits(unoffered, EDITABLE).parts[0]).toBe(unoffered.parts[0]);
+    expect(offeredSourceEdits(unoffered, EDITABLE, true).parts[0]).toBe(unoffered.parts[0]);
+  });
+
+  test("offeredSourceEdits withdraws every edit offer where the record offers no object edit", () => {
+    // A provider package's record offers no object edit yet (`EngineOffers.objectEdit`), so an offer its package
+    // answered for a kind its model states editable would be an Edit button the edit routes then refuse.
+    const one = document({ ...READABLE, edit: { offered: true } });
+    const offered = offeredSourceEdits(
+      { ...one, parts: [one.parts[0], { ...one.parts[0], id: "second" }] },
+      EDITABLE,
+      false,
+    );
+    expect(offered.parts.map((part) => Object.hasOwn(part, "edit"))).toEqual([false, false]);
+    const refused = document({ ...READABLE, edit: { offered: false, reason: "the engine builds it" } });
+    expect(Object.hasOwn(offeredSourceEdits(refused, EDITABLE, false).parts[0], "edit")).toBe(false);
   });
 });
 
@@ -369,7 +389,10 @@ describe("the source sites object-route.ts cites in its docblocks", () => {
     expect(read(SRC_EDIT_PLAN)).toContain("if (text.length > EDIT_CHARACTER_LIMIT) {");
     expect(read(SRC_EDIT_APPLY)).toContain("requireEditableKind(provider.getCapabilities(), plan.kind,");
     expect(read(SRC_SOURCE)).toContain("const document = await objectSource(target, req.signal, context.route)");
-    expect(read(SRC_SOURCE)).toContain("offeredSourceEdits(scrubSourceDocument(context.scrub, document),");
+    expect(read(SRC_SOURCE)).toContain(
+      "offeredSourceEdits(document, sourceModel(target.session), context.engine.offers.objectEdit);",
+    );
+    expect(read(SRC_SOURCE)).toContain("return scrubSourceDocument(context.words, offered);");
     // The glob answers repo-relative paths, with backslashes on Windows, joined here with slashes on every platform.
     const callers = [...new Bun.Glob("src/**/*.{ts,tsx}").scanSync(repoRoot)]
       .filter((file) => read(file).includes("offeredSourceEdits("))

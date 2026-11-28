@@ -1,27 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { readBoundedJson } from "@/lib/api/bounded-json";
-import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { editorSourceTarget, metadataTreeTarget } from "@/lib/api/editor-provider";
 import { sourceModel } from "@/lib/api/object-source";
 import { createErrorResponse } from "@/lib/api/errors";
-import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import { raisedByTreeRead, recordingRaised, type TreeTarget } from "@/lib/api/session-target";
-import { resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
+import { type ObjectRead, recordingRaised, type SessionTarget, type TreeTarget } from "@/lib/api/session-target";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import { HostDefectError } from "@/lib/provider-host/access";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
-import {
-  connectionTextScrub,
-  type ProviderTextScrub,
-  type ProviderWords,
-  providerTextScrub,
-} from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, type ProviderTextScrub, type ProviderWords } from "@/lib/db/operations/provider-text";
 import {
   type EngineConnection,
   type EngineRecord,
   legacyConnection,
   legacyProviderType,
+  servedPackage,
 } from "@/lib/db/server-catalog";
 import { checkObjectsFacet } from "@libredb/provider-sdk/calls";
 import {
@@ -83,27 +80,32 @@ import type { UserPayload } from "@/lib/auth";
  * `options` decides how the request is resolved and what `run` is handed, as a value and never a function a route
  * hands in, so the routes import no provider builder:
  *
- * - `{ reads: "tree" }`, which the six tree routes pass: the connection and its engine's record are resolved through
- *   `resolveServedConnection`, so a provider package's engine resolves too, and `run` is handed the tree target of the
+ * Every arm resolves the connection and its engine's record through `resolveServedConnection`, so a provider package's
+ * engine resolves too:
+ *
+ * - `{ reads: "tree" }`, which the six tree routes pass: `run` is handed the tree target of the
  *   record's metadata session (`metadataTreeTarget` in ./editor-provider), beside the editor's, so a tree read never
  *   waits for the editor's statements except on a connection that serves one session (docs/providers/CONTRACT.md,
  *   clause C-66). A package's session that does not offer `objects.tree` is opened and then refused by the session's
  *   offer when the route builds its tree (`objectTree` in ./object-tree), never as the route-level 501. A failure of
- *   the open, and of the run where the package's call raised it, is answered by the record (`packageFailureAnswer` in
- *   ./package-errors): a legacy record's as raised, a package's open failure as a not-sent `ConnectionError`, a refusal
+ *   the open, and of the run where the package's call raised it, is answered by the record through the request's one
+ *   record of the engine's answers (`packageAnswers` in ./package-errors): a legacy record's as raised, a package's open failure as a not-sent `ConnectionError`, a refusal
  *   of what a package answered as the package's defect, and a package's own error by its record's grant of its words,
- *   logged once there. Every other failure of the run is Studio's own and is answered and logged as Studio's
- *   (`raisedByCall`). The context carries the record and how a provider's sentences in an answer reach the client
- *   (`TreeRequestContext.words`).
+ *   logged once there. A value the session's own functions raised is answered as the read of the member that raised
+ *   it, the source read's as a source read, and a host defect as the arm's read. Every other failure of the run is
+ *   Studio's own and is answered and logged as Studio's (`raisedCall`). The context carries the record and how a
+ *   provider's sentences in an answer reach the client (`TreeRequestContext.words`).
+ * - `{ reads: "source" }`, which the source route passes: a provider package's record whose declared calls do not
+ *   offer `objects.source` is refused before any open as `FacetNotOfferedError` naming `objects.source`, 400, outcome
+ *   not-sent (`assertSourceOffered`), and `run` is handed the source target of the record's editor session
+ *   (`editorSourceTarget` in ./editor-provider), which it reads through the host core's source call (`objectSource` in
+ *   ./object-source). Its failures are answered as the tree arm's are, the run's as a source read, and its context is
+ *   the tree arm's.
  * - `{ request: "editPlan" | "editApply" | "keyScan", readBody? }`, which the edit plan, the edit apply and the key
- *   scan pass: resolved through `resolveServedConnection` too, and a record that does not offer the request
- *   (`EngineOffers.objectEdit`, `EngineOffers.keyScan`) is refused before any open as `FacetNotOfferedError` naming the
- *   request, 400, outcome not-sent; no provider package's record offers either, since the provider contract has no
- *   edit or key scan call yet. Every other record opens the editor's provider through `getOrCreateProvider`.
- * - no options, which the source read passes: it reads through the host core's source call on the bridged session of
- *   the editor's provider (`objectSource` in ./object-source), and until a package's session is served there the
- *   connection is resolved through `resolveConnection`, which refuses a provider package's engine as
- *   `PACKAGE_ENGINE_UNSUPPORTED`, 501, and the editor's provider is opened through `getOrCreateProvider`.
+ *   scan pass: a record that does not offer the request (`EngineOffers.objectEdit`, `EngineOffers.keyScan`) is refused
+ *   before any open as `FacetNotOfferedError` naming the request, 400, outcome not-sent; no provider package's record
+ *   offers either, since the provider contract has no edit or key scan call yet. Every other record opens the editor's
+ *   provider through `getOrCreateProvider`.
  *
  * Every arm opens after the guard, the body read and the connection's resolution, with the execution context of the
  * guard's session and the resolved connection.
@@ -117,22 +119,30 @@ export async function handleObjectRequest(
 export async function handleObjectRequest(
   req: NextRequest,
   route: string,
+  run: (
+    target: SessionTarget<ObjectsSession>,
+    body: Record<string, unknown>,
+    context: TreeRequestContext,
+  ) => Promise<unknown>,
+  options: { readonly reads: "source" },
+): Promise<NextResponse>;
+export async function handleObjectRequest(
+  req: NextRequest,
+  route: string,
   run: (provider: DatabaseProvider, body: Record<string, unknown>, context: ObjectRequestContext) => Promise<unknown>,
-  options?: {
-    readonly request?: ProviderRequest;
+  options: {
+    readonly request: ProviderRequest;
     readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>>;
   },
 ): Promise<NextResponse>;
 export async function handleObjectRequest(
   req: NextRequest,
   route: string,
-  run:
-    | ((tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>)
-    | ((provider: DatabaseProvider, body: Record<string, unknown>, context: ObjectRequestContext) => Promise<unknown>),
-  options?:
-    | { readonly reads: "tree" }
+  run: TreeRun | SourceRun | ProviderRun,
+  options:
+    | { readonly reads: "tree" | "source" }
     | {
-        readonly request?: ProviderRequest;
+        readonly request: ProviderRequest;
         readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>>;
       },
 ): Promise<NextResponse> {
@@ -143,10 +153,10 @@ export async function handleObjectRequest(
   if ("response" in guard) return guard.response;
 
   // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
-  // provider ran. `failing` is the record's call a failure is answered by, once the tree arm reached it.
+  // provider ran. `failing` is the record's call a failure is answered by, once a read arm reached it.
   const state: { scrub?: ProviderTextScrub; failing?: FailingCall } = {};
   try {
-    const readBody = options !== undefined && "readBody" in options ? options.readBody : undefined;
+    const readBody = "readBody" in options ? options.readBody : undefined;
     const body = await (readBody === undefined ? readDefaultBody(req) : readBody(req));
 
     // The body goes to the resolve as-is, unlike the schema routes, which also accept a
@@ -154,25 +164,20 @@ export async function handleObjectRequest(
     // connection (`container`, `kind`, `path`, `term`), so a body that names neither `connection`
     // nor `connectionId` is a caller mistake, and reading it as a connection would turn that
     // mistake into a confusing provider error further down.
-    const reads = options !== undefined && "reads" in options;
-    const request = options === undefined || "reads" in options ? undefined : options.request;
-    // The source read: no tree and no request a record offers, so the legacy resolve.
-    if (!reads && request === undefined) {
-      const connection = await resolveConnection(body as ObjectRequestBody, guard.session);
-      if (!connection.type) {
-        return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
-      }
-      state.scrub = providerTextScrub(connection, "any");
-      return await providerRun(run as ProviderRun, body, connection, state.scrub, guard.session, route);
-    }
     const { connection, engine } = await resolveServedConnection(body as ObjectRequestBody, guard.session);
     const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
     state.scrub = scrub;
-    // A tree read, the one arm that names no request.
-    if (request === undefined) {
-      return await treeRun(run as TreeRun, body, { connection, engine, scrub, session: guard.session, route }, state);
+    const resolved = { connection, engine, scrub, session: guard.session, route };
+    if ("reads" in options) {
+      if (options.reads === "tree") {
+        const tree = () => metadataTreeTarget(guard.session, connection, engine);
+        return await readRun("tree read", tree, run as TreeRun, body, resolved, state);
+      }
+      assertSourceOffered(engine);
+      const source = () => editorSourceTarget(guard.session, connection, engine);
+      return await readRun("source read", source, run as SourceRun, body, resolved, state);
     }
-    assertRequestOffered(engine, request);
+    assertRequestOffered(engine, options.request);
     const legacy = legacyConnection(engine, connection);
     return await providerRun(run as ProviderRun, body, legacy, scrub, guard.session, route);
   } catch (error) {
@@ -184,16 +189,12 @@ export async function handleObjectRequest(
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
     }
     const { failing, scrub } = state;
-    if (failing === undefined || scrub === undefined || !raisedByCall(failing, error)) {
-      return createErrorResponse(error, { route, scrub });
-    }
-    // A provider package's failure is logged once where it is answered (`isPackageFailure`), so it gets no second line.
-    const logged = isPackageFailure(failing.engine, error);
-    return createErrorResponse(packageFailureAnswer(failing.engine, failing.call, error, scrub, route), {
-      route,
-      scrub,
-      logged,
-    });
+    const call = failing === undefined ? undefined : raisedCall(failing, error);
+    if (failing === undefined || call === undefined) return createErrorResponse(error, { route, scrub });
+    // A provider package's failure is logged once where it is answered (`PackageAnswers.logged`), so it gets no second
+    // line.
+    const answer = failing.answers.answer(call, error);
+    return createErrorResponse(answer, { route, scrub, logged: failing.answers.logged(answer) });
   }
 }
 
@@ -207,23 +208,36 @@ type ProviderRun = (
 /** A tree route's `run`. */
 type TreeRun = (tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>;
 
-/**
- * The call of the tree arm a failure is answered by: the record's open, then its tree read, with every value the
- * session's own functions raised during the run (`recordingRaised`).
- */
-type FailingCall =
-  | { readonly engine: EngineRecord; readonly call: "open" }
-  | { readonly engine: EngineRecord; readonly call: "tree read"; readonly raised: ReadonlySet<unknown> };
+/** The source route's `run`, on the session target it reads one object's source document on (./object-source). */
+type SourceRun = (
+  target: SessionTarget<ObjectsSession>,
+  body: Record<string, unknown>,
+  context: TreeRequestContext,
+) => Promise<unknown>;
 
 /**
- * Whether `error` is a failure of `failing`'s call, which the record answers (`packageFailureAnswer`): any failure of
- * the open; and of the run, what the session's own functions raised (`raisedByTreeRead` in ./session-target). Any other
- * failure of the run, such as a session Studio's host built stating no object model (`objectTree` in ./object-tree) or
- * a read before the host core's install, is Studio's own.
+ * The call of a read arm a failure is answered by: the record's open, then the arm's read, with every value the
+ * session's own functions raised during the run, each by the read of the member that raised it (`recordingRaised` in
+ * ./session-target), and the request's record of the answers of the engine's failures (`packageAnswers` in
+ * ./package-errors).
  */
-function raisedByCall(failing: FailingCall, error: unknown): boolean {
-  if (failing.call === "open") return true;
-  return raisedByTreeRead(failing.raised, error);
+type FailingCall =
+  | { readonly answers: PackageAnswers; readonly call: "open" }
+  | { readonly answers: PackageAnswers; readonly call: ObjectRead; readonly raised: ReadonlyMap<unknown, ObjectRead> };
+
+/**
+ * The call the record answers `error` as (`packageFailureAnswer`), or undefined where `error` is Studio's own: any
+ * failure of the open is the open's; of the run, a value the session's own functions raised is the read of the member
+ * that raised it, and a host defect, whose refusals name whose defect it is (`REFUSAL_AUTHOR` in ./package-errors),
+ * such as an answer the host core refused, is the arm's read. Any other failure of the run, such as a session Studio's
+ * host built stating no object model (`objectTree` in ./object-tree, `sourceModel` in ./object-source) or a read before
+ * the host core's install, is Studio's own.
+ */
+function raisedCall(failing: FailingCall, error: unknown): "open" | ObjectRead | undefined {
+  if (failing.call === "open") return "open";
+  const raisedBy = failing.raised.get(error);
+  if (raisedBy !== undefined) return raisedBy;
+  return error instanceof HostDefectError ? failing.call : undefined;
 }
 
 /**
@@ -238,7 +252,7 @@ async function providerRun(
   session: ObjectRequestContext["session"] & { readonly role: string },
   route: string,
 ): Promise<NextResponse> {
-  // Covers the source read, the edit routes and keys/scan: the DuckDB editor file-access posture is
+  // Covers the edit routes and keys/scan: the DuckDB editor file-access posture is
   // derived from the verified session role and the resolved connection (non-admin DuckDB file access), so a non-admin
   // browsing or editing objects on a DuckDB connection opens a handle with external access off.
   const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(session, connection));
@@ -246,12 +260,16 @@ async function providerRun(
 }
 
 /**
- * The tree arm: the tree target of the record's metadata session, and `run`'s answer on it, `state.failing` naming the
- * record's call a failure is answered by: the open, then the tree read, which answers by the record only the values
- * the session's own functions raised (`recordingRaised`).
+ * A read arm: the target `open` opens for the resolved record, the tree target of its metadata session or the source
+ * target of its editor session, and `run`'s answer on it, `state.failing` naming the record's call a failure is answered by,
+ * through one record of the request's answers of the engine's failures (`packageAnswers`): the open, then `read`, which
+ * answers by the record only the values the session's own functions raised, each as the read of the member that raised
+ * it (`recordingRaised`), and a host defect as `read`.
  */
-async function treeRun(
-  run: TreeRun,
+async function readRun<Target extends SessionTarget<ObjectsSession>>(
+  read: ObjectRead,
+  open: () => Promise<Target>,
+  run: (target: Target, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>,
   body: Record<string, unknown>,
   resolved: {
     readonly connection: EngineConnection;
@@ -263,12 +281,34 @@ async function treeRun(
   state: { failing?: FailingCall },
 ): Promise<NextResponse> {
   const { connection, engine, scrub, session, route } = resolved;
-  state.failing = { engine, call: "open" };
-  const raised = new Set<unknown>();
-  const tree = recordingRaised(await metadataTreeTarget(session, connection, engine), raised);
-  state.failing = { engine, call: "tree read", raised };
+  const answers = packageAnswers(engine, scrub, route);
+  state.failing = { answers, call: "open" };
+  const raised = new Map<unknown, ObjectRead>();
+  const target = recordingRaised(await open(), raised);
+  state.failing = { answers, call: read, raised };
   const words: ProviderWords = { scrub, ownWords: engine.grants.ownWords, route };
-  return NextResponse.json(await run(tree, body, { connection, engine, session, route, scrub, words }));
+  return NextResponse.json(await run(target, body, { connection, engine, session, route, scrub, words }));
+}
+
+/**
+ * Refuses the source read for `engine` when its record is a provider package's whose declared calls do not offer
+ * `objects.source`, before any open: `FacetNotOfferedError` of the object facet naming it, outcome not-sent
+ * (docs/providers/CONTRACT.md, clause C-107). A legacy record's offer is its bridged session's, read after the open by
+ * the route (`requireSourceReader`), and so is a package session's whose open withdrew the facet.
+ *
+ * @throws {FacetNotOfferedError} Not-sent, when the package does not offer `objects.source`.
+ */
+function assertSourceOffered(engine: EngineRecord): void {
+  if (engine.offers.legacyProvider) return;
+  if (checkObjectsFacet(servedPackage(engine).session.calls, "source").length === 0) return;
+  const error = new FacetNotOfferedError(
+    "This connection's provider package does not offer objects.source, so Studio opened nothing.",
+    legacyProviderType(engine),
+    "objects",
+    "source",
+  );
+  markNotSent(error);
+  throw error;
 }
 
 /** A request a provider route serves that a provider package's record offers none of yet, by its operation. */
@@ -331,7 +371,7 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
 /**
  * What a route gets BESIDE the provider and the body, and the reason each field is here (#789).
  *
- * `connection` is the RESOLVED connection, after `resolveConnection` or `resolveServedConnection` has turned a
+ * `connection` is the RESOLVED connection, after `resolveServedConnection` has turned a
  * `connectionId` into a stored connection or accepted an inline one. The edit-plan route digests it, and a
  * fingerprint computed from a second resolution would be a fingerprint of a possibly different
  * server.
@@ -342,7 +382,7 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  * `route` is the same string the caller passed, repeated here so a route that needs it for an
  * audit event does not have to hold a second copy of its own name.
  *
- * `scrub` is core's scrub of the resolved connection (`providerTextScrub`, `connectionTextScrub`), so a route answers
+ * `scrub` is core's scrub of the resolved connection (`connectionTextScrub`), so a route answers
  * a provider's sentences through the same scrub its errors are answered with.
  *
  * The session is a read-only view of the three `UserPayload` fields a consumer reads: the role and
@@ -357,9 +397,10 @@ export interface ObjectRequestContext {
 }
 
 /**
- * What a tree route gets beside its tree target and the body: the context a provider route gets, with the connection of
- * any engine the server serves, the record of its engine, whose id the route's sentences name the engine by, and how a
- * provider's sentences in a tree answer reach the client (`providerSentence` in src/lib/db/operations/provider-text.ts):
+ * What a tree route, and the source route, gets beside its target and the body: the context a provider route gets, with
+ * the connection of any engine the server serves, the record of its engine, whose id the route's sentences name the
+ * engine by and whose offers the route reads, and how a provider's sentences in a tree or source answer reach the
+ * client (`providerSentence` in src/lib/db/operations/provider-text.ts):
  * through `scrub` where the record grants the engine its own words, and as Studio's sentence where it does not.
  */
 export interface TreeRequestContext extends Omit<ObjectRequestContext, "connection"> {
@@ -814,12 +855,20 @@ export function requireSourceReader(session: ObjectsSession, engine: string, kin
  * from an implementation is a report and not a bound. A provider that offers `edit` on a part whose
  * kind it never declared `acceptsSourceEdits` would ship a client an Edit button for an object no
  * `buildObjectEdit` can plan, and the user would meet the refusal after typing rather than before.
+ *
+ * `recordOffersEdit` is whether the engine's record offers the object edit (`EngineOffers.objectEdit`), which a
+ * provider package's record does not yet: where it does not, no kind is editable, so a package's document reaches the
+ * client with no affordance the edit routes would then refuse.
  */
-export function offeredSourceEdits(document: ObjectSourceDocument, model: ObjectModelView): ObjectSourceDocument {
+export function offeredSourceEdits(
+  document: ObjectSourceDocument,
+  model: ObjectModelView,
+  recordOffersEdit: boolean,
+): ObjectSourceDocument {
   // Destructured rather than mapped, because `parts` is a NON-EMPTY tuple and `Array.prototype.map`
   // answers a plain array that no longer satisfies it.
   const [first, ...rest] = document.parts;
-  const kindEditable = kindAcceptsSourceEdits(model, document.kind);
+  const kindEditable = recordOffersEdit && kindAcceptsSourceEdits(model, document.kind);
   return {
     ...document,
     parts: [stripEdit(first, kindEditable), ...rest.map((part) => stripEdit(part, kindEditable))],
@@ -839,7 +888,8 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
  *    THIS tells the machine not to offer an edit over it. X17 is closed, so the id no longer
  *    resolves and the pairing is named here instead. It WITHDRAWS THE OFFER; it does not make the
  *    submission impossible, and the write-path paragraph below says whose job that is.
- * 2. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
+ * 2. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`, or the engine's record
+ *    offers no object edit at all, as a provider package's does not yet. This is D57,
  *    the defect where a client's declaration can be a different server's, closed on the read path:
  *    the affordance travels with the document from the server that answered it.
  *
@@ -908,9 +958,9 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
  * WHAT THIS CANNOT COVER ON THE READ PATH ITSELF, said out loud rather than left for a reader to
  * assume the opposite.
  * It kills the class on the ROUTE path ONLY. A HOST cannot reach here at all, MEASURED:
- * `handleObjectRequest` takes its provider from `getOrCreateProvider`, which resolves through a
- * closed `switch (connection.type)` in `src/lib/db/factory.ts` with no registration point for
- * anyone else, and the embedded shell has no API routes, so a host implementing the workspace
+ * `handleObjectRequest` reads the source on the record's editor session, which the provider factory
+ * opens (`getOrCreateEditorSession` in `src/lib/db/factory.ts`) for an engine the server catalog
+ * serves, and the embedded shell has no API routes, so a host implementing the workspace
  * source seam answers its document straight to the pane. The EMBEDDED half is the client-side
  * predicate in `src/components/object-source/source-editable.ts`, which reads the affordance of
  * the document it was handed from that document alone, a refusal part drawn before it and a hybrid

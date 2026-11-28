@@ -21,8 +21,10 @@
  *
  * A caller that answers a provider package's failure by its record (`packageFailureAnswer` in ./package-errors), the
  * object routes and MCP's `inspect_schema`, answers so only what the package's own tree or source read raised: it
- * reads its target through `recordingRaised` and asks `raisedByTreeRead` of each failure, so a failure Studio raised
- * after the open is answered as Studio's own, never as the package's.
+ * reads its target through `recordingRaised`, which names each raised value by the read of the member that raised it,
+ * and asks of each failure whether the session raised it (`raisedByTreeRead` for MCP, `raisedCall` in ./object-route
+ * for the object routes, which answer it as the read that raised it), so a failure Studio raised after the open is
+ * answered as Studio's own, never as the package's.
  */
 import { type CallContext, type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
 import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
@@ -270,13 +272,34 @@ export function providerSourceTarget(provider: DatabaseProvider): SessionTarget<
 export function entryTreeTarget(entry: CachedSession, connection: EngineConnection): TreeTarget {
   const { opened } = entry;
   if (opened.form === "provider") return providerTreeTarget(opened.provider);
-  return {
-    session: opened.session,
-    env: opened.env,
-    timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
-    wholeServer: () => null,
-    ...entryMarks(entry),
-  };
+  return { ...packageTarget(entry, opened.session, opened.env, connection), wholeServer: () => null };
+}
+
+/**
+ * The source target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
+ * provider's through `providerSourceTarget`, whose session offers `objects.source` exactly where the provider defines
+ * `readObjectSource`; a provider package's session with its declared environment, the connection's own statement
+ * timeout or Studio's default, and the marks of each read on the entry.
+ */
+export function entrySourceTarget(entry: CachedSession, connection: EngineConnection): SessionTarget<ObjectsSession> {
+  const { opened } = entry;
+  if (opened.form === "provider") return providerSourceTarget(opened.provider);
+  return packageTarget(entry, opened.session, opened.env, connection);
+}
+
+/**
+ * The target of a provider package's `session` held by `entry`, the one the tree, source, monitoring and maintenance
+ * targets of an entry build on (`entryTreeTarget`, `entrySourceTarget`, `entryMonitoringTarget`,
+ * `packageMaintenanceOpening`): its declared environment `env`, the connection's own statement timeout or Studio's
+ * default, and the marks of each call on the entry.
+ */
+function packageTarget<Session>(
+  entry: CachedSession,
+  session: Session,
+  env: EnvReader,
+  connection: EngineConnection,
+): SessionTarget<Session> {
+  return { session, env, timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT, ...entryMarks(entry) };
 }
 
 /**
@@ -297,23 +320,30 @@ function studioSpec(spec: MaintenanceSpec): MaintenanceOperationSpec {
   };
 }
 
+/** A read of an object facet a raised value is named by: the read of the session's member that raised it. */
+export type ObjectRead = "tree read" | "source read";
+
 /**
- * `target` with each function its session holds, the tree read and, where the session offers `objects.source`, the
- * source read, recording in `raised` each value it threw or rejected with, passed on as the same value, so a caller
- * answers by the record only what the session's own calls raised (`raisedByTreeRead`). The session handed on holds
- * exactly the members `target`'s session holds, so a function is present exactly where the session offers its call, as
- * `ObjectsSession` states.
+ * `target` with each function its session holds, the tree read where the session offers `objects.tree` and the source
+ * read where it offers `objects.source`, recording in `raised` each value it threw or rejected with by the read of the
+ * member that raised it, passed on as the same value, so a caller answers by the record only what the session's own
+ * calls raised, and the object routes as the read that raised it. The session handed on holds exactly the members
+ * `target`'s session holds, so a function is present exactly where the session offers its call, as `ObjectsSession`
+ * states.
  */
-export function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeTarget {
+export function recordingRaised<Target extends SessionTarget<ObjectsSession>>(
+  target: Target,
+  raised: Map<unknown, ObjectRead>,
+): Target {
   const { session } = target;
   const { tree, source } = session;
   const recorded =
-    <Request, Answer>(call: (request: Request, ctx: CallContext) => Promise<Answer>) =>
+    <Request, Answer>(call: (request: Request, ctx: CallContext) => Promise<Answer>, read: ObjectRead) =>
     async (request: Request, ctx: CallContext): Promise<Answer> => {
       try {
         return await call.call(session, request, ctx);
       } catch (error) {
-        raised.add(error);
+        raised.set(error, read);
         throw error;
       }
     };
@@ -322,8 +352,8 @@ export function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeT
     session: {
       calls: session.calls,
       ...(session.objectModel === undefined ? {} : { objectModel: session.objectModel }),
-      ...(tree === undefined ? {} : { tree: recorded(tree) }),
-      ...(source === undefined ? {} : { source: recorded(source) }),
+      ...(tree === undefined ? {} : { tree: recorded(tree, "tree read") }),
+      ...(source === undefined ? {} : { source: recorded(source, "source read") }),
     },
   };
 }
@@ -356,13 +386,7 @@ export function entryMonitoringTarget(entry: CachedSession, connection: EngineCo
   const { opened } = entry;
   if (opened.form === "provider") return providerMonitoringTarget(opened.provider);
   const { session } = opened;
-  return {
-    session,
-    env: opened.env,
-    timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
-    accepted: () => acceptedOf(session),
-    ...entryMarks(entry),
-  };
+  return { ...packageTarget(entry, session, opened.env, connection), accepted: () => acceptedOf(session) };
 }
 
 /**
@@ -370,7 +394,7 @@ export function entryMonitoringTarget(entry: CachedSession, connection: EngineCo
  * one of the session's functions raised, or a host defect, whose refusals name whose defect it is (`REFUSAL_AUTHOR` in
  * ./package-errors), such as a tree answer the host core refused. Any other failure is Studio's own.
  */
-export function raisedByTreeRead(raised: ReadonlySet<unknown>, error: unknown): boolean {
+export function raisedByTreeRead(raised: ReadonlyMap<unknown, ObjectRead>, error: unknown): boolean {
   return raised.has(error) || error instanceof HostDefectError;
 }
 
@@ -391,12 +415,9 @@ export function packageMaintenanceOpening(
   return {
     accepted: () => acceptedOf(session),
     target: async () => ({
-      session,
-      env: opened.env,
-      timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
+      ...packageTarget(entry, session, opened.env, connection),
       maintenance: () => session.maintenance,
       engineUser: () => opened.engineUser,
-      ...entryMarks(entry),
     }),
   };
 }

@@ -63,7 +63,8 @@ import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-cor
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { UserPayload } from "@/lib/auth";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
-import type { TreeTarget } from "@/lib/api/session-target";
+import { providerSourceTarget, type SessionTarget, type TreeTarget } from "@/lib/api/session-target";
+import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
@@ -128,9 +129,11 @@ mock.module("@/lib/seed/resolve-connection", () => ({
 
 /*
  * The tree routes open the record's metadata session through the factory (`getOrCreateMetadataSession`, read by
- * `metadataTreeTarget` in src/lib/api/editor-provider.ts): a legacy record's entry holds the provider the file's
- * `getOrCreateMetadataProvider` stand-in answers for the same connection and execution context. The real factory is
- * held before its module is mocked, so nothing here reads the mock through its own namespace.
+ * `metadataTreeTarget` in src/lib/api/editor-provider.ts), and the source route the record's editor session
+ * (`getOrCreateEditorSession`, read by `editorSourceTarget`): a legacy record's entry holds the provider the file's
+ * `getOrCreateMetadataProvider` or `getOrCreateProvider` stand-in answers for the same connection and execution
+ * context. The real factory is held before its module is mocked, so nothing here reads the mock through its own
+ * namespace.
  */
 const realFactory = { ...(await import("@/lib/db/factory")) };
 mock.module("@/lib/db/factory", () => ({
@@ -139,6 +142,17 @@ mock.module("@/lib/db/factory", () => ({
     opened: {
       form: "provider",
       provider: await (mockGetOrCreateMetadataProvider as (...args: unknown[]) => Promise<DatabaseProvider>)(
+        connection,
+        {},
+        execution,
+      ),
+    },
+    engine,
+  }),
+  getOrCreateEditorSession: async (connection: unknown, engine: unknown, execution: unknown) => ({
+    opened: {
+      form: "provider",
+      provider: await (mockGetOrCreateProvider as (...args: unknown[]) => Promise<DatabaseProvider>)(
         connection,
         {},
         execution,
@@ -361,21 +375,18 @@ describe("the shared guard", () => {
 
   test("refuses a resolved connection with no type", async () => {
     const body = { connection: { id: "x", name: "No type" }, container: ["app"], path: ["app", "t"], kind: "view" };
-    // The source read's resolve answers the connection as it is, and the handler refuses it.
-    const source = await sourceRoute.POST(
-      createMockRequest("/api/db/objects/source", { method: "POST", body }) as never,
-    );
-    expect(source.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(source)).error).toContain("Valid connection configuration");
-    // The served resolve refuses it itself.
-    const counts = await countsRoute.POST(
-      createMockRequest("/api/db/objects/counts", { method: "POST", body }) as never,
-    );
-    expect(counts.status).toBe(400);
-    expect(await parseResponseJSON(counts)).toMatchObject({
-      code: "PROVIDER_UNKNOWN",
-      error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
-    });
+    // The served resolve refuses it itself, on the source read as on the tree reads.
+    for (const [route, handler] of [
+      ["/api/db/objects/source", sourceRoute],
+      ["/api/db/objects/counts", countsRoute],
+    ] as const) {
+      const answer = await handler.POST(createMockRequest(route, { method: "POST", body }) as never);
+      expect([route, answer.status]).toEqual([route, 400]);
+      expect(await parseResponseJSON(answer)).toMatchObject({
+        code: "PROVIDER_UNKNOWN",
+        error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
+      });
+    }
   });
 
   test("maps a provider error through the shared error mapper", async () => {
@@ -2841,6 +2852,7 @@ describe("the body read the handler actually performs", () => {
         return { ok: true };
       },
       {
+        request: "keyScan",
         readBody: async (req) => {
           sawRequest = req;
           return { connectionId: "seed-1", marker: "read-by-the-substitute" };
@@ -2854,10 +2866,12 @@ describe("the body read the handler actually performs", () => {
     expect(sawBody).toEqual({ connectionId: "seed-1", marker: "read-by-the-substitute" });
   });
 
-  test("with NO options the default read runs, and it refuses that same body", async () => {
+  test("without readBody the default read runs, and it refuses that same body", async () => {
     // The control. Without it, a `readBody` that was never consulted and a default that never runs
     // are indistinguishable.
-    const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }));
+    const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }), {
+      request: "keyScan",
+    });
 
     expect(response.status).toBe(400);
     expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: "Empty request body" });
@@ -2869,6 +2883,7 @@ describe("the body read the handler actually performs", () => {
     // different sentences on one handler, so the pair is asserted rather than left for a later reader
     // to discover from a bug report.
     const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }), {
+      request: "keyScan",
       readBody: (req) => readObjectRouteBody(req, 1024),
     });
 
@@ -2887,7 +2902,7 @@ describe("the body read the handler actually performs", () => {
       post({ text: "x".repeat(2048) }),
       probeRoute,
       async () => ({ ok: true }),
-      { readBody: (req) => readObjectRouteBody(req, 1024) },
+      { request: "keyScan", readBody: (req) => readObjectRouteBody(req, 1024) },
     );
 
     expect(response.status).toBe(413);
@@ -2899,9 +2914,14 @@ describe("the body read the handler actually performs", () => {
   test("a refusal carrying a code renders the code on a REAL response", async () => {
     // The `code` arm was unit-tested through `objectRouteErrorBody` and had never been driven through
     // an HTTP response. The edit routes are its live producer; this is the shape they will answer.
-    const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async () => {
-      throw new ObjectRouteError("that plan is not one this server will run", 400, ApiErrorCode.EDIT_PLAN_INVALID);
-    });
+    const response = await handleObjectRequest(
+      post({ connectionId: "seed-1" }),
+      probeRoute,
+      async () => {
+        throw new ObjectRouteError("that plan is not one this server will run", 400, ApiErrorCode.EDIT_PLAN_INVALID);
+      },
+      { request: "keyScan" },
+    );
 
     expect(response.status).toBe(400);
     expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
@@ -3217,10 +3237,15 @@ describe("the context the handler hands run", () => {
     const password = crypto.randomUUID();
     const resolved = { id: "seed-1", name: "Seeded", type: "postgres", password };
     mockResolveConnection.mockResolvedValueOnce(resolved);
-    const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
-      seen = ctx;
-      return { ok: true };
-    });
+    const response = await handleObjectRequest(
+      post({ connectionId: "seed-1" }),
+      probeRoute,
+      async (_p, _b, ctx) => {
+        seen = ctx;
+        return { ok: true };
+      },
+      { request: "keyScan" },
+    );
 
     expect(response.status).toBe(200);
     expect(seen?.connection).toEqual(resolved as never);
@@ -3233,10 +3258,15 @@ describe("the context the handler hands run", () => {
 
   test("an INLINE connection reaches the context as the resolution answered it", async () => {
     let seen: ObjectRequestContext | undefined;
-    await handleObjectRequest(post({ connection }), probeRoute, async (_p, _b, ctx) => {
-      seen = ctx;
-      return { ok: true };
-    });
+    await handleObjectRequest(
+      post({ connection }),
+      probeRoute,
+      async (_p, _b, ctx) => {
+        seen = ctx;
+        return { ok: true };
+      },
+      { request: "keyScan" },
+    );
 
     expect(seen?.connection).toEqual(connection as never);
   });
@@ -3250,10 +3280,15 @@ describe("the context the handler hands run", () => {
       username: string;
     });
     let seen: ObjectRequestContext | undefined;
-    await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
-      seen = ctx;
-      return { ok: true };
-    });
+    await handleObjectRequest(
+      post({ connectionId: "seed-1" }),
+      probeRoute,
+      async (_p, _b, ctx) => {
+        seen = ctx;
+        return { ok: true };
+      },
+      { request: "keyScan" },
+    );
 
     expect(seen?.session).toEqual({ role: "user", username: "auditor" });
   });
@@ -3914,6 +3949,12 @@ describe("the tree routes on the metadata session", () => {
         typeof handleObjectRequest
       >[0];
     const answered = async (provider: DatabaseProvider) => ({ editor: provider === activeProvider });
+    // A source read's target is the bridged session of the editor's provider: it offers the source read exactly where
+    // that provider defines readObjectSource.
+    const answeredSource = async (target: SessionTarget<ObjectsSession>) => ({
+      editor: true,
+      source: target.session.calls.objects.source,
+    });
     // A tree read's target is the bridged session of the metadata session's provider: its model is that provider's.
     const answeredTree = async (tree: TreeTarget) => ({ editor: false, tree: tree.session.calls.objects.tree });
     const metadata = objectProvider();
@@ -3932,13 +3973,20 @@ describe("the tree routes on the metadata session", () => {
         mockGetOrCreateMetadataProvider.mock.calls.length,
       ]);
     };
-    await counted("no options", () => handleObjectRequest(request(), probeRoute, answered));
+    await counted("the object source", () =>
+      handleObjectRequest(request(), probeRoute, answeredSource, { reads: "source" }),
+    );
     await counted("a request the record offers", () =>
       handleObjectRequest(request(), probeRoute, answered, { request: "keyScan" }),
     );
     await counted("the object tree", () => handleObjectRequest(request(), probeRoute, answeredTree, { reads: "tree" }));
     expect(seen).toEqual([
-      ["no options", { editor: true }, 1, 0],
+      [
+        "the object source",
+        { editor: true, source: providerSourceTarget(activeProvider).session.calls.objects.source },
+        1,
+        0,
+      ],
       ["a request the record offers", { editor: true }, 1, 0],
       ["the object tree", { editor: false, tree: "offered" }, 0, 1],
     ]);

@@ -413,7 +413,7 @@ describe("the object tree's routes on a provider package's engine", () => {
 
   test("the tree arm hands a route every member its session offers, the source read among them, and answers a value it raised as the package's", async () => {
     // ObjectsSession holds `source` exactly when the session offers objects.source, so the target the tree arm hands a
-    // route keeps it, recording what it raised as the tree function's raises are recorded (`recordingRaised`).
+    // route keeps it, recording what it raised by the member that raised it (`recordingRaised`).
     const own = `the source read failed ${randomUUID()}`;
     hooksFor(TREE);
     setHooks(SOURCE, {
@@ -445,12 +445,13 @@ describe("the object tree's routes on a provider package's engine", () => {
         source: "not-offered",
       });
       expect(members).toEqual({ [SOURCE]: true, [TREE]: false });
-      // The package's own error, answered by the record in Studio's sentence naming its code, and logged once.
+      // The package's own error, answered by the record in Studio's sentence naming its code, and logged once, as the
+      // source read that raised it, never as a tree read.
       expect(offered.status).toBe(500);
       expect((await parseResponseJSON<{ error: string }>(offered)).error).toMatch(
-        /^The provider package's tree read failed \(.+\); the server's log holds its words\.$/,
+        /^The provider package's source read failed \(.+\); the server's log holds its words\.$/,
       );
-      expect(error.mock.calls.filter(([line]) => line === "A provider package's tree read failed")).toHaveLength(1);
+      expect(error.mock.calls.map(([line]) => line)).toEqual(["A provider package's source read failed"]);
     } finally {
       error.mockRestore();
     }

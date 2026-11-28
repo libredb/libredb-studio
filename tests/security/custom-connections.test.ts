@@ -98,9 +98,9 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches or the maintenance route helper, handleMaintenanceRequest, which every maintenance route reaches, each having resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches or the maintenance route helper, handleMaintenanceRequest, which every maintenance route reaches, each having resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
-    "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
+    "handleObjectRequest resolves through resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts":
     "opens only seeds that opted in with mcp: true, read from getManagedConnections, through acquireExecutionProfileProvider or a provider package's metadataTreeTarget",
   "api/test-connection.ts":

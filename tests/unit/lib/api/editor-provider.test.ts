@@ -74,12 +74,13 @@ const {
   editorMaintenanceOpening,
   editorMonitoringTarget,
   editorProvider,
+  editorSourceTarget,
   editorTarget,
   metadataMaintenanceOpening,
   metadataMonitoringTarget,
   metadataTreeTarget,
 } = await import("@/lib/api/editor-provider");
-const { providerTreeTarget } = await import("@/lib/api/session-target");
+const { providerSourceTarget, providerTreeTarget } = await import("@/lib/api/session-target");
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
 const session = (role: string) => ({ role });
@@ -539,6 +540,86 @@ describe("the maintenance openings", () => {
       // Refused after the open, of the one session the opener opens.
       expect(openedMetadataSessions.length + openedEditor.length).toBe(1);
     }
+  });
+});
+
+describe("editorSourceTarget", () => {
+  const legacyEngine = { id: connection.type, offers: { legacyProvider: true } } as unknown as EngineRecord;
+  const packageEngine = { id: "acmeps", offers: { legacyProvider: false } } as unknown as EngineRecord;
+  const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
+
+  test("the editor's source target is the record's editor session by its form, and a provider's target is one bridged session", async () => {
+    // A legacy record's entry holds a provider: its target is one bridged session of it, offering objects.source
+    // exactly where the provider defines readObjectSource, no environment, the provider's statement timeout, no marks.
+    const reader = {
+      ...providerOf({}),
+      config: { ...connection, queryTimeout: 5 },
+      readObjectSource: async () => ({ path: [], kind: "view", parts: [] }),
+    } as unknown as DatabaseProvider;
+    editorEntry = { opened: { form: "provider", provider: reader }, engine: legacyEngine } as unknown as CachedSession;
+    openedEditor.length = 0;
+    const legacy = await editorSourceTarget(session("admin"), connection, legacyEngine);
+    expect(legacy.session.calls.objects.source).toBe("offered");
+    expect(legacy.session.objectModel).toEqual(providerSourceTarget(reader).session.objectModel);
+    expect(() => legacy.env.get("PATH")).toThrow();
+    expect(legacy.timeout()).toBe(5);
+    legacy.started();
+    legacy.ended(undefined);
+    editorEntry = {
+      opened: { form: "provider", provider: providerOf({}) },
+      engine: legacyEngine,
+    } as unknown as CachedSession;
+    const plain = await editorSourceTarget(session("admin"), connection, legacyEngine);
+    expect(plain.session.calls.objects.source).toBe("not-offered");
+    expect(Object.hasOwn(plain.session, "source")).toBe(false);
+
+    // A provider package's entry holds its session: its target is that session with its declared environment, the
+    // connection's own statement timeout or Studio's default, and each read counted on the entry while it runs.
+    const packageSession = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = {
+      opened: { form: "session", session: packageSession, env },
+      engine: packageEngine,
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    editorEntry = entry;
+    const target = await editorSourceTarget(session("user"), packageConnection, packageEngine);
+    expect(target.session as unknown).toBe(packageSession);
+    expect(target.env as unknown).toBe(env);
+    expect(target.timeout()).toBe(1234);
+    const untimed = await editorSourceTarget(
+      session("user"),
+      { ...packageConnection, queryTimeout: undefined },
+      packageEngine,
+    );
+    expect(untimed.timeout()).toBe(60_000);
+
+    target.started();
+    expect(entry.running).toBe(1);
+    target.ended({ kind: "answered" });
+    expect(entry.running).toBe(0);
+    expect(entry.lastUsed).toBeGreaterThan(0);
+    // A stopped read counts until the call it stopped waiting for has settled.
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    target.started();
+    target.ended({ kind: "stopped", settled });
+    expect(entry.running).toBe(1);
+    settle();
+    await settled;
+    await Promise.resolve();
+    expect(entry.running).toBe(0);
+
+    // One open per call, of the record handed, under the editor posture of the session, with no wait of its own.
+    expect(openedEditor.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: true }, []],
+      [connection, legacyEngine, { allowExternalFileAccess: true }, []],
+      [packageConnection, packageEngine, { allowExternalFileAccess: false }, []],
+      [{ ...packageConnection, queryTimeout: undefined }, packageEngine, { allowExternalFileAccess: false }, []],
+    ]);
   });
 });
 

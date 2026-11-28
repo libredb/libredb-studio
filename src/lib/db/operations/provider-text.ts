@@ -6,8 +6,8 @@
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
- * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`, which read them
- * under the record's grant of a package's own words, `providerSentence`, and `scrubSourceDocument`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
+ * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail` and `scrubSourceDocument`, which read
+ * them under the record's grant of a package's own words, `providerSentence`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
  * `scrubMaintenancePreview`, `scrubKeyScanPage`, and an object edit's `scrubObjectEditRefusal`, `scrubObjectEditPlan`,
  * `scrubObjectEditPreimage` and `scrubObjectEditOutcome`), before any fence, prompt, ledger row, response or log line.
  * A code a record keeps goes through `recordedProviderCode`. It reads the secret-class values
@@ -23,7 +23,11 @@
  * an error's full record (`errorRecord`), whose string fields therefore never hold a form, and which keeps the
  * error's own kind, code and outcome when its text is withheld.
  */
-import type { MaintenanceRunAnswer } from "@libredb/provider-sdk/calls";
+import {
+  type MaintenanceRunAnswer,
+  SOURCE_CHARACTER_LIMIT,
+  sourceBoundTruncationReason,
+} from "@libredb/provider-sdk/calls";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { type ErrorRecord, errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
@@ -206,37 +210,56 @@ export function scrubObjectDetail(words: ProviderWords, detail: ObjectDetail): O
 }
 
 /**
- * One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. Its
- * form is read by the value of its `unavailable`, as the host core's check read it (`isSourcePartUnavailable`).
+ * Studio's own sentence on a source text the host core cut at `SOURCE_CHARACTER_LIMIT` (`boundSourceAnswer` in
+ * packages/provider-sdk/src/calls/source.ts): no provider's words, so a source document keeps it on every grant.
  */
-function scrubSourcePart(scrub: ProviderTextScrub, part: ObjectSourcePart): ObjectSourcePart {
-  if (isSourcePartUnavailable(part)) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
+const STUDIO_SOURCE_BOUND_REASON = sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT);
+
+/**
+ * A part's truncation sentence as the client receives it under `words`: Studio's own bound sentence kept where the
+ * record grants no words, and every other sentence read as a provider's (`providerSentence`). A sentence the core joined
+ * to a provider's own after it is the provider's too, read whole, so a provider's words never pass where no words are
+ * granted; where they are, the sentence goes through core's scrub, Studio's own among them.
+ */
+function sourceTruncationReason(words: ProviderWords, reason: string): string {
+  if (words.ownWords !== "scrubbed" && reason === STUDIO_SOURCE_BOUND_REASON) return reason;
+  return providerSentence(words, reason);
+}
+
+/**
+ * One source part with its refusal, truncation and refused edit sentences read under `words` (`providerSentence`,
+ * `sourceTruncationReason`); its text, id and label are data. Its form is read by the value of its `unavailable`, as the
+ * host core's check read it (`isSourcePartUnavailable`).
+ */
+function scrubSourcePart(words: ProviderWords, part: ObjectSourcePart): ObjectSourcePart {
+  if (isSourcePartUnavailable(part)) return { ...part, unavailable: providerSentence(words, part.unavailable) };
   return {
     ...part,
     ...(part.truncated === undefined
       ? {}
-      : { truncated: { limit: part.truncated.limit, reason: scrubProviderText(scrub, part.truncated.reason) } }),
+      : { truncated: { limit: part.truncated.limit, reason: sourceTruncationReason(words, part.truncated.reason) } }),
     ...(part.edit === undefined || part.edit.offered
       ? {}
-      : { edit: { offered: false, reason: scrubProviderText(scrub, part.edit.reason) } }),
+      : { edit: { offered: false, reason: providerSentence(words, part.edit.reason) } }),
   };
 }
 
 /**
- * A source document with each part's `unavailable`, `truncated.reason` and refused `edit.reason` scrubbed, the
- * provider's own sentences. A part's text, label and statement flag and an offered edit are kept, and `parts` stays a
- * non-empty tuple in the same order.
+ * A source document with each part's `unavailable`, `truncated.reason` and refused `edit.reason` read under `words`
+ * (`scrubSourcePart`): through core's scrub where the engine's record grants its own words, a legacy engine's among them,
+ * and as Studio's sentence where it does not, Studio's own bound sentence kept. A part's text, label and statement flag
+ * and an offered edit are kept, and `parts` stays a non-empty tuple in the same order.
  *
- * The source route scrubs the document the host core's source call checked and cut (`sourceCall` in
+ * The source route reads the document the host core's source call checked and cut (`sourceCall` in
  * src/lib/provider-host/core/objects.ts), which holds at least one part, each in the form the check read it.
  */
-export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSourceDocument): ObjectSourceDocument {
+export function scrubSourceDocument(words: ProviderWords, document: ObjectSourceDocument): ObjectSourceDocument {
   // Destructured rather than mapped, because `parts` is a non-empty tuple and `Array.prototype.map` answers a plain
   // array that no longer satisfies it.
   const [first, ...rest] = document.parts;
   return {
     ...document,
-    parts: [scrubSourcePart(scrub, first), ...rest.map((part) => scrubSourcePart(scrub, part))],
+    parts: [scrubSourcePart(words, first), ...rest.map((part) => scrubSourcePart(words, part))],
   };
 }
 

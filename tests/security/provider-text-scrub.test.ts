@@ -410,7 +410,7 @@ describe("on every route that resolves the calling connection", () => {
           },
         ],
       };
-      const source = scrubSourceDocument(scrub, document);
+      const source = scrubSourceDocument({ scrub, ownWords: "scrubbed", route: "provider-text-scrub" }, document);
       expectNoForm("an object read's sentences", JSON.stringify([counts, detail, source]));
     }
   });

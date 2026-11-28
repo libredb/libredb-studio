@@ -20,15 +20,18 @@ import {
   type ConsoleTarget,
   entryConsoleTarget,
   entryMonitoringTarget,
+  entrySourceTarget,
   entryTreeTarget,
   type MaintenanceOpening,
   type MonitoringTarget,
   packageMaintenanceOpening,
   providerMaintenanceTarget,
   providerMonitoringTarget,
+  type SessionTarget,
   type TreeTarget,
 } from "@/lib/api/session-target";
 import { HostDefectError } from "@/lib/provider-host/access";
+import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -41,11 +44,11 @@ import type { DatabaseConnection } from "@/lib/types";
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
  * `POST /api/db/query` opens every engine, as `metadataTreeTarget` decides the object tree's session of any record,
- * `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring reads' sessions of any record, and
- * `editorMaintenanceOpening` and `metadataMaintenanceOpening` the maintenance requests' sessions of any record, the
- * metadata session for the kill that must not wait for the editor's statements. The cancel, which acts on the whole
- * connection rather than in one database and finds a statement in whichever session runs it, opens through
- * `editorConsoleTarget` below, with no catalog.
+ * `editorSourceTarget` the object source read's, `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring
+ * reads' sessions of any record, and `editorMaintenanceOpening` and `metadataMaintenanceOpening` the maintenance
+ * requests' sessions of any record, the metadata session for the kill that must not wait for the editor's statements.
+ * The cancel, which acts on the whole connection rather than in one database and finds a statement in whichever session
+ * runs it, opens through `editorConsoleTarget` below, with no catalog.
  *
  * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
  * `getOrCreateProvider` as it is; a catalog session opens after it, on the same connection.
@@ -279,6 +282,23 @@ export async function metadataMaintenanceOpening(
   assertCatalogOffered(engine, catalog, "maintenance");
   const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection));
   return maintenanceOpening(session, connection, engine, catalog, entry);
+}
+
+/**
+ * The source target of `connection`'s editor session of `engine`, for any record the server serves: the entry
+ * `getOrCreateEditorSession` answers (src/lib/db/factory.ts), opened under the session's editor posture as
+ * `editorTarget` opens it, with the same owner and no wait of the request's own, read by its form (`entrySourceTarget`
+ * in ./session-target): a legacy provider's bridged session, or a provider package's session with its declared
+ * environment, the connection's own statement timeout and each read counted on the entry. The object source route
+ * reads one object's source document on it (`handleObjectRequest` in ./object-route).
+ */
+export async function editorSourceTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+): Promise<SessionTarget<ObjectsSession>> {
+  const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection));
+  return entrySourceTarget(entry, connection);
 }
 
 /**

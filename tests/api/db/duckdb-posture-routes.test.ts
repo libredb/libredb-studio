@@ -36,7 +36,7 @@ const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
   return mockProvider;
 });
 /**
- * The query route's, pool statistics' and the maintenance requests' one open of any record
+ * The query route's, the source route's, pool statistics' and the maintenance requests' one open of any record
  * (`getOrCreateEditorSession`): its entry holds the stand-in provider.
  */
 const mockGetOrCreateEditorSession = mock(async (...args: unknown[]) => {
@@ -178,10 +178,17 @@ function onTheMetadataSession(route: string): boolean {
 
 /**
  * The routes that open the editor's session of the connection's record rather than its editor provider: the query
- * route, pool statistics, which reads the editor's pool, the cancel, which finds a run on the editor's session, and the
- * maintenance run and its preview, which run every operation but a kill there.
+ * route, the object source read, pool statistics, which reads the editor's pool, the cancel, which finds a run on the
+ * editor's session, and the maintenance run and its preview, which run every operation but a kill there.
  */
-const OPENS_THE_EDITOR_SESSION = new Set(["query", "pool-stats", "cancel", "maintenance", "maintenance/preview"]);
+const OPENS_THE_EDITOR_SESSION = new Set([
+  "query",
+  "objects/source",
+  "pool-stats",
+  "cancel",
+  "maintenance",
+  "maintenance/preview",
+]);
 
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);

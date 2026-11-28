@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ObjectTree } from "@/lib/api/object-tree";
 import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import { raisedByTreeRead, recordingRaised } from "@/lib/api/session-target";
+import { type ObjectRead, raisedByTreeRead, recordingRaised } from "@/lib/api/session-target";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
@@ -470,7 +470,9 @@ type CallTree =
  * The call of a provider package's session a failure is answered by (`packageFailureAnswer`): the metadata session's
  * open, then its tree reads, with every value the session's tree function raised (`recordingRaised`).
  */
-type PackageCall = { readonly call: "open" } | { readonly call: "tree read"; readonly raised: ReadonlySet<unknown> };
+type PackageCall =
+  | { readonly call: "open" }
+  | { readonly call: "tree read"; readonly raised: ReadonlyMap<unknown, ObjectRead> };
 
 /**
  * The tree of a connection whose record offers execution profiles: the provider acquired under agent-operations
@@ -525,7 +527,7 @@ async function packageTree(
   packageDatabaseChoice(args.database);
   failing.current = { call: "open" };
   const target = stepOf(await metadataTargetWithinCall(call, connection, deadline));
-  const raised = new Set<unknown>();
+  const raised = new Map<unknown, ObjectRead>();
   failing.current = { call: "tree read", raised };
   return {
     kind: "tree",

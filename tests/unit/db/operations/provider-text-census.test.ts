@@ -546,7 +546,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [dbRoute("profile"), "reasonOf", "withheldProviderError"],
   [fleetHealth, "POST", "connectionTextScrub"],
   [fleetHealth, "POST", "withheldProviderError"],
-  [objectRoute, "handleObjectRequest", "providerTextScrub"],
+  [objectRoute, "handleObjectRequest", "connectionTextScrub"],
   [dbRoute("objects", "counts"), "POST", "scrubKindCounts"],
   [dbRoute("objects", "describe"), "POST", "scrubObjectDetail"],
   [dbRoute("objects", "inventory"), "POST", "scrubObjectDetail"],
