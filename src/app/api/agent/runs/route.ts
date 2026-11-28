@@ -10,6 +10,7 @@ import {
 } from "@/lib/agent/execution-policy";
 import { decodeHistoryCursor, type AgentHistoryCursor } from "@/lib/agent/history";
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
+import { servedAvailabilityTables } from "@/lib/agent/languages/server";
 import { startRefusalSentence } from "@/lib/agent/posture";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
 import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
@@ -401,7 +402,12 @@ export async function POST(req: Request) {
       is the same status the route's other cross-field refusal (`autoExecute` on a
       workflow that presents no answer) answers with.
     */
-    const availability = workflowAvailability(mode as AgentRunMode, requestedWorkflow, engine);
+    const availability = workflowAvailability(
+      mode as AgentRunMode,
+      requestedWorkflow,
+      engine,
+      servedAvailabilityTables(),
+    );
     if (!availability.open) {
       return badRequest(
         startRefusalSentence(availability, engine),

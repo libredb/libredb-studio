@@ -42,6 +42,7 @@
  */
 
 import { planDeliverableOf, requiredVariant } from "./agent-manifest";
+import type { AgentClientPacks } from "./languages/client";
 import { mergeDisjoint } from "./disjoint-merge";
 import { composedClaims, planArtifacts, recommendsIndex, verifyInvestigationGoal } from "./goal-claims";
 import type { AgentFamilyVerifierIds, AgentGoalRule, AgentPackShortfall } from "./languages/pack";
@@ -295,14 +296,14 @@ export type VerifiableAgentRun = Pick<
  * inside a fenced block is a statement's own text, not a refusal — and the verdict
  * stays a pure fold over the ledger: that reader touches no clock, model or database.
  */
-function verifyPlanningGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+function verifyPlanningGoal(run: VerifiableAgentRun, packs: AgentClientPacks): readonly AgentGoalShortfall[] {
   const closing = run.events.flatMap((event) =>
     event.kind === "closing-statement" && event.text.length > 0 ? [event.text] : [],
   );
   if (closing.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-plan"];
   // The deliverable the plan-mode prompt asked for (`planDeliverableOf`, the same reading `systemPrompt` makes), so a
   // variant whose plan is prose is never failed for drafting no statement.
-  if (planDeliverableOf(run.statementLanguage, run.workflowType).kind === "prose") return [];
+  if (planDeliverableOf(run.statementLanguage, run.workflowType, packs).kind === "prose") return [];
   if (run.events.some((event) => event.kind === "plan-statement-drafted")) return [];
   if (closing.some((text) => readPlanStatement(text).kind === "refusal")) return [];
   return run.status === "cancelled" ? ["cancelled"] : ["no-statement"];
@@ -581,8 +582,6 @@ export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWo
   "data-analysis": goalOf("agent-data-analysis.1"),
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
-const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };
-
 /**
  * The goal this run is judged against. Mode decides first and the workflow cannot
  * override it, for the same reason it cannot in `selectAgentTools`: planning has no
@@ -592,9 +591,11 @@ const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, ve
  * before that field reads its variant's verifier, which for a run with no language
  * is the SQL workflow's: the rule that judged every run written then.
  */
-function goalFor(run: VerifiableAgentRun): AgentWorkflowGoal {
-  if (run.mode === "planning") return PLANNING_GOAL;
-  return goalOf(run.verifier ?? requiredVariant(run.statementLanguage, run.workflowType).verifier);
+function goalFor(run: VerifiableAgentRun, packs: AgentClientPacks): AgentWorkflowGoal {
+  if (run.mode === "planning") {
+    return { verifier: AGENT_PLANNING_VERIFIER, verify: (planned) => verifyPlanningGoal(planned, packs) };
+  }
+  return goalOf(run.verifier ?? requiredVariant(run.statementLanguage, run.workflowType, packs).verifier);
 }
 
 /**
@@ -604,11 +605,16 @@ function goalFor(run: VerifiableAgentRun): AgentWorkflowGoal {
  * resumed process reads the ledger, and an eval asserts against the ledger. A
  * verdict derived from anything else would be a claim about a run that the run's
  * own record could not support.
+ *
+ * The run's language facts (its variant's verifier, a plan's deliverable) are read from
+ * `packs`, the registry of client facets its caller hands: the server's composed from the
+ * installed catalog (`servedClientPacks` in `languages/server.ts`), which this module does
+ * not import, since verifying a goal loads no server facet.
  */
-export function verifyRunGoal(run: VerifiableAgentRun): AgentGoalVerdict {
+export function verifyRunGoal(run: VerifiableAgentRun, packs: AgentClientPacks): AgentGoalVerdict {
   // One lookup, so the id in the verdict is by construction the id of the rule that
   // produced it.
-  const goal = goalFor(run);
+  const goal = goalFor(run, packs);
   const unmet = goal.verify(run);
   return { outcome: unmet.length === 0 ? "answered" : "unanswered", verifier: goal.verifier, unmet };
 }

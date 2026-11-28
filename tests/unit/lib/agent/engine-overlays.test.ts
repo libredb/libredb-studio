@@ -4,7 +4,7 @@ import { parseGrantRegister } from "@libredb/grant-register";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { composeEstimatingExplain } from "@/lib/agent/composed-sql";
-import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS, DECLARED_AGENT_LANGUAGES, languageClientPack } from "@/lib/agent/languages/client";
 import { engineClientPack, engineFamily, enginesSupporting } from "@/lib/agent/languages/engines/client";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
 import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
@@ -285,10 +285,12 @@ describe("the engine registry", () => {
   test.each(ALL_TYPES)("%s has a client pack exactly when it speaks a language, over that language's facet", (type) => {
     const language = statementLanguage[type];
     if (language === null) {
-      expect(() => engineClientPack(legacyAgentEngine(type))).toThrow(new Error(`no engine pack for ${type}`));
+      expect(() => engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS)).toThrow(
+        new Error(`no engine pack for ${type}`),
+      );
     } else if (language === "sql") {
       // A SQL engine's client overlay holds its client dialect, laid over SQL's own facet member for member.
-      const pack = engineClientPack(legacyAgentEngine(type));
+      const pack = engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS);
       const client = languageClientPack(language);
       expect(Object.keys(without(pack, "dialect"))).toEqual(Object.keys(client));
       for (const [member, value] of Object.entries(without(pack, "dialect"))) {
@@ -297,14 +299,14 @@ describe("the engine registry", () => {
       expect(pack.dialect).toBeDefined();
     } else {
       // A family with no client dialect gives its engines an empty overlay, so the facet is the family's own object.
-      expect(engineClientPack(legacyAgentEngine(type))).toBe(languageClientPack(language));
+      expect(engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS)).toBe(languageClientPack(language));
     }
   });
 
   test("a name that is no engine has no pack, inherited names included", () => {
-    expect(() => engineClientPack({ id: "toString", grants: { statementLanguage: null } })).toThrow(
-      new Error("no engine pack for toString"),
-    );
+    expect(() =>
+      engineClientPack({ id: "toString", grants: { statementLanguage: null } }, BUNDLED_CLIENT_PACKS),
+    ).toThrow(new Error("no engine pack for toString"));
     // The resolver reads the engine's record first: a name the server catalog serves no record of is refused by it.
     expect(() => agentEnginePack("toString")).toThrow(UnknownProviderError);
     expect(() => agentEnginePack("spark")).toThrow(
@@ -383,17 +385,19 @@ describe("the engine packs", () => {
       expect(existsSync(path.join(import.meta.dir, "../../../../src/lib/agent/languages", declared))).toBe(false);
       // No overlay row: the family is its grant, the client facet and the pack are the family's own objects, and the
       // server overlay is empty, so the server facet one run reads is the family's own.
-      expect(engineFamily(legacyAgentEngine(type))).toBe(declared);
-      expect(engineClientPack(legacyAgentEngine(type))).toBe(languageClientPack(declared));
+      expect(engineFamily(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS)).toBe(declared);
+      expect(engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS)).toBe(languageClientPack(declared));
       expect(agentEnginePack(type)).toBe(agentLanguagePack(declared));
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
       expect(runServerPack(declared, type)).toBe(languageServerPack(declared));
       expect(enginesSupporting("catalogRead")).not.toContain(type);
     }
     // A name that is no own key holds no row, and a type with no language has no pack.
-    expect(engineFamily({ id: "toString", grants: { statementLanguage: null } })).toBeNull();
-    expect(engineFamily(legacyAgentEngine("bigquery"))).toBeNull();
-    expect(() => engineClientPack(legacyAgentEngine("bigquery"))).toThrow(new Error("no engine pack for bigquery"));
+    expect(engineFamily({ id: "toString", grants: { statementLanguage: null } }, BUNDLED_CLIENT_PACKS)).toBeNull();
+    expect(engineFamily(legacyAgentEngine("bigquery"), BUNDLED_CLIENT_PACKS)).toBeNull();
+    expect(() => engineClientPack(legacyAgentEngine("bigquery"), BUNDLED_CLIENT_PACKS)).toThrow(
+      new Error("no engine pack for bigquery"),
+    );
     expect(() => agentEnginePack("bigquery")).toThrow(
       new Error("no engine pack for bigquery: Studio grants it no statement language"),
     );
@@ -444,7 +448,7 @@ describe("the engine packs", () => {
       expect(value).toBe((client as unknown as Record<string, unknown>)[member]);
     }
     expect(pack.server.dialect).toBe(engineServerDialect(type));
-    expect(pack.client.dialect).toBe(engineClientPack(legacyAgentEngine(type)).dialect);
+    expect(pack.client.dialect).toBe(engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS).dialect);
     expect(Object.isFrozen(pack)).toBe(true);
     expect(Object.isFrozen(pack.server)).toBe(true);
     expect(Object.isFrozen(pack.client)).toBe(true);
@@ -742,7 +746,7 @@ describe("engineServerDialect", () => {
 
 describe("the client dialect", () => {
   const clientDialect = (type: DatabaseType): AgentEngineClientDialect => {
-    const dialect = engineClientPack(legacyAgentEngine(type)).dialect;
+    const dialect = engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS).dialect;
     if (dialect === undefined) throw new Error(`${type} has no client dialect`);
     return dialect;
   };
@@ -792,7 +796,7 @@ describe("the client dialect", () => {
       "mqtt",
       "sparkplug",
     ] as const) {
-      expect(engineClientPack(legacyAgentEngine(type)).dialect).toBeUndefined();
+      expect(engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS).dialect).toBeUndefined();
     }
   });
 
@@ -801,7 +805,7 @@ describe("the client dialect", () => {
     const presence = Object.fromEntries(
       CLIENT_DIALECT_MEMBERS.map((member) => [member, server[member] === "unsupported" ? "unsupported" : "supported"]),
     );
-    const client = engineClientPack(legacyAgentEngine(type)).dialect;
+    const client = engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS).dialect;
     if (client === undefined) {
       // An engine with no client dialect supplies no server member a client asks about.
       expect(Object.values(presence).every((value) => value === "unsupported")).toBe(true);

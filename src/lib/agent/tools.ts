@@ -193,7 +193,6 @@ import { asBytes, binaryText } from "@/lib/export/binary";
 import { nonFiniteWord } from "@/lib/non-finite";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import {
-  AGENT_LANGUAGE_COPY,
   type AgentStatementArgument,
   type AgentStatementLanguageId,
   type AgentWorkflowVariant,
@@ -245,6 +244,8 @@ import {
   REFERENCE_STATEMENT_DEFINITIONS,
   languageServer,
   languageServerPack,
+  serverLanguageClientPack,
+  servedClientPacks,
 } from "./languages/server";
 import { evaluateAutoExecute } from "./auto-execute";
 import { summarisePlan } from "./plan-summary";
@@ -1160,7 +1161,7 @@ function workflowTools(
   workflow: AgentRunWorkflowType,
   engine: string | undefined,
 ): readonly AgentToolDefinition[] {
-  const variant = requiredVariant(language, workflow);
+  const variant = requiredVariant(language, workflow, servedClientPacks());
   let byReadings = VARIANT_TOOLS.get(variant);
   if (byReadings === undefined) {
     byReadings = new Map();
@@ -3668,7 +3669,7 @@ export async function runReadQueryTool(
   const definition = agentToolDefinition(language, context.workflowType, "run_read_query");
   const parsed = parseToolInput(definition.inputSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
-  const argument = AGENT_LANGUAGE_COPY[language].argument;
+  const argument = serverLanguageClientPack(language).copy.argument;
   const server = languageServer(language);
   // The text every server layer reads - the descriptor's input, the ledger's statement, the repair identity, the
   // provider's parse - is the language's own reading of the argument, made once here: a mongo command arrives as a

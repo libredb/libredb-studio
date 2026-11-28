@@ -79,6 +79,7 @@ const { agentPosture } = await import("@/lib/agent/posture");
 const {
   AGENT_EVIDENCE_EVENTS,
   AGENT_PACK_REQUIREMENTS,
+  BUNDLED_CLIENT_PACKS,
   agentLanguageOfGrant,
   isAgentStatementLanguage,
   languageClientPack,
@@ -135,8 +136,8 @@ describe("a data-declared language in the language registries", () => {
   test("the language registries hold a data-declared language beside the module languages, and refuse one whose name a module or another declared language holds", () => {
     expect(isAgentStatementLanguage("acmeread")).toBe(true);
     expect(isAgentStatementLanguage("acmeplain")).toBe(false);
-    expect<string | null>(agentLanguageOfGrant("mqtt", "acmeread")).toBe("acmeread");
-    expect(() => agentLanguageOfGrant("mqtt", "acmeplain")).toThrow(
+    expect<string | null>(agentLanguageOfGrant("mqtt", "acmeread", BUNDLED_CLIENT_PACKS)).toBe("acmeread");
+    expect(() => agentLanguageOfGrant("mqtt", "acmeplain", BUNDLED_CLIENT_PACKS)).toThrow(
       'mqtt is granted the statement language "acmeplain", for which agent mode holds no pack',
     );
 
@@ -204,7 +205,7 @@ describe("a data-declared language in the language registries", () => {
       open: false,
       cause: "no-variant",
     });
-    expect(agentVariant(ACME, "investigation")).toBe(client.variants.investigation);
+    expect(agentVariant(ACME, "investigation", BUNDLED_CLIENT_PACKS)).toBe(client.variants.investigation);
 
     const definition = agentToolDefinition(ACME, "investigation", "run_read_query");
     expect(definition.description).toBe(AGENT.text.investigation.toolDescription as string);

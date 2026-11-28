@@ -17,7 +17,20 @@ import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { AgentManifestError, legacyAgentEngine, openWorkflows } from "@/lib/agent/agent-manifest";
+import { parseGrantRegister } from "@libredb/grant-register";
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
+import { acmereadData } from "../helpers/declared-agent-language";
 import { legacyStatementLanguageTable } from "../helpers/legacy-register";
+import {
+  admittedFor,
+  admittedManifest,
+  declaredLanguageSha256,
+  packageRow,
+  withCatalog,
+  withStatementLanguageData,
+} from "../helpers/package-catalog";
 
 const statementLanguage = legacyStatementLanguageTable();
 
@@ -306,6 +319,45 @@ describe("classifying an objective into a workflow", () => {
     expect(narrowed).not.toContain("query-optimization:");
     expect(narrowed).toContain("\ndata-analysis:");
     expect(lastCall?.system).toBe(full as string);
+  });
+
+  test("the classifier tells a package language's workflows in its declared words, read from the catalog installed when it is asked", async () => {
+    /** A catalog of one package engine whose row grants it `data`, its own declared language. */
+    const grantingCatalog = (data: NonNullable<StatementLanguageData>) => {
+      const manifest = admittedManifest("acmeclassified", (declared) => {
+        declared.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
+        withStatementLanguageData(declared, data);
+      });
+      const pkg = admittedFor("acme-classified", manifest);
+      const row = packageRow(pkg, "acmeclassified", {
+        statementLanguage: data.name,
+        languageSha256: declaredLanguageSha256(manifest),
+        agentExecution: true,
+      });
+      return composeServerCatalog([pkg], [], parseGrantRegister([row], LEGACY_ENGINE_IDS));
+    };
+    const description = (data: NonNullable<StatementLanguageData>) =>
+      (data.agent as NonNullable<typeof data.agent>).text.investigation.classifierDescription as string;
+    const all = ["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"] as const;
+    replies("operations");
+
+    const first = acmereadData();
+    const answered = await withCatalog(grantingCatalog(first), () =>
+      classifyAgentWorkflow("what is slow", { statementLanguage: "acmeread" as never, workflows: all }),
+    );
+    expect(answered).toEqual({ workflowType: "operations", outcome: "classified" });
+    const told = (lastCall?.system ?? "").split("\n").filter((line) => /^[a-z-]+: /.test(line));
+    expect(told.map((line) => line.slice(0, line.indexOf(":")))).toEqual(["investigation", "operations"]);
+    expect(told[0]).toBe(`investigation: ${description(first)}`);
+
+    // A newly installed catalog composes the language from other text: its words are told, never the previous ones.
+    const second = acmereadData();
+    expect(description(second)).not.toBe(description(first));
+    await withCatalog(grantingCatalog(second), () =>
+      classifyAgentWorkflow("what is slow", { statementLanguage: "acmeread" as never, workflows: all }),
+    );
+    expect(lastCall?.system).toContain(`\ninvestigation: ${description(second)}\n`);
+    expect(lastCall?.system).not.toContain(description(first));
   });
 
   test("an offered set with no workflow the language has a variant of is a manifest error, and no model is called", async () => {

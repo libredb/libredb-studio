@@ -16,6 +16,7 @@ import {
 import { applyStatementName } from "@/components/agent/rail-parts";
 import { useAgentRun } from "@/components/agent/use-agent-run";
 import * as manifest from "@/lib/agent/agent-manifest";
+import { type AgentClientPacks, BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
 import type { AgentRunWorkflowType, AgentThreadContext } from "@/lib/agent/types";
@@ -4189,14 +4190,21 @@ describe("AgentRail", () => {
       test("the step states the terms of the language the rail resolved, not SQL's by assumption", async () => {
         const real = { ...manifest };
         // Built before the substitution: the manifest's own functions read the substitute once it is in place.
-        const handingOver = { ...real.requiredVariant("kubectl", "data-analysis"), canAutoExecute: true };
+        const handingOver = {
+          ...real.requiredVariant("kubectl", "data-analysis", BUNDLED_CLIENT_PACKS),
+          canAutoExecute: true,
+        };
         try {
           mock.module("@/lib/agent/agent-manifest", () => ({
             ...real,
-            agentVariant: (language: manifest.AgentStatementLanguageId | undefined, workflow: AgentRunWorkflowType) =>
+            agentVariant: (
+              language: manifest.AgentStatementLanguageId | undefined,
+              workflow: AgentRunWorkflowType,
+              packs: AgentClientPacks,
+            ) =>
               language === "kubectl" && workflow === "data-analysis"
                 ? handingOver
-                : real.agentVariant(language, workflow),
+                : real.agentVariant(language, workflow, packs),
           }));
           const view = await consentOf({ connectionType: "kubernetes" });
 

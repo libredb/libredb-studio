@@ -1862,7 +1862,7 @@ decided — absent means `false`, and a value that is not a boolean is refused r
 only there, the route **refuses** `autoExecute: true` on any other workflow or in planning mode
 rather than normalising it to `false`, and `investigation.ts` states `AUTO_EXECUTE_RULE` to the model
 only when the same record says the run can present an answer.
-The workflow half of that is `AGENT_WORKFLOW_PRESENTS_ANSWER`, and the engine half is the run's variant's `canAutoExecute` (`AGENT_WORKFLOW_VARIANTS` in `src/lib/agent/agent-manifest.ts`), which the route, the rail and the run's rules all read.
+The workflow half of that is `AGENT_WORKFLOW_PRESENTS_ANSWER`, and the engine half is the run's variant's `canAutoExecute`, its language's workflow variant (`agentVariant` in `src/lib/agent/agent-manifest.ts`), which the route, the rail and the run's rules all read: the route and the run's rules from the server's registry, the rail from the browser's.
 
 **It is not offered on Kubernetes or MongoDB, and on SQL Server, DuckDB and MySQL it never fires.**
 Every kubectl and mongo variant declares `canAutoExecute: false`: a kubectl answer is never run on the editor's terms, and a MongoDB one waits on a plan reading the gate can weigh and a verified replay, which land together (B118).
@@ -3026,6 +3026,7 @@ point exports.
 Agent mode reads statements in twenty-four statement languages, `sql`, `kubectl`, `mongo`, `libredbkv`, `influxql`, `weaviateapi`, `qdrantapi`, `cypher`, `milvusrpc`, `rediscli`, `etcdctl`, `oxiacli`, `rabbitread`, `s3api`, `fsquery`, `snmpget`, `netconfrpc`, `modbusread`, `promql`, `opcuaread`, `mtconnectread`, `mqttread`, `sparkplugread` and `kafkaread`, and what it does differently in each lives in that language's pack under `src/lib/agent/languages/<statement-language>/`, never in `src/lib/db`.
 A language an engine's declaration states as data, `kafkaread` today, has no pack module of its own: its request form, text and MCP statement tool are the declaration's `statementLanguageData`, projected into `src/lib/db/engine-catalog/statement-language.generated.ts`, and one engine-neutral composer builds its client, server and MCP facets from them (`declared-client.ts`, `declared-server.ts` and `declared-mcp.ts` under `src/lib/agent/languages/`), registered after the module languages.
 The data is the engine record's in the server's engine catalog, the projection's for a legacy engine: the server's registries compose a language from the records whose grants grant it, after boot and once per installed catalog (`servedLanguageData` in `src/lib/db/operations/served-language-data.ts`), and the browser composes the bundled declarations' languages from the projection.
+The server reads a language's client facts (whether it is one, its workflow variants, its copy, an engine's granted language and client facet, the run header's language) from that composition too, `servedClientPacks()` in `src/lib/agent/languages/server.ts`, handed to each reader, so a provider package's engine granted its own declared language is known on the server; the browser reads its bundled composition, `BUNDLED_CLIENT_PACKS` in `src/lib/agent/languages/client.ts`, until it reads the server's catalog.
 The agent imports the database layer, and the database layer never imports the agent.
 The core (`investigation.ts`, `tools.ts` and the modules beside them) names no statement language a pack owns and no engine, which the guard at the end of this section holds.
 
@@ -3033,7 +3034,7 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 
 | Facet | Tier rule | What it holds | Read through |
 | --- | --- | --- | --- |
-| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture words and the evidence events it writes | `languageClientPack` |
+| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture words and the evidence events it writes | `serverLanguageClientPack` on the server, `languageClientPack` in the browser |
 | `server` | Below `tools.ts`: it never reaches the execution tier | the adapter, the tool overrides and base definitions, the recommendation card, grounding, the tool rules and the shortfall notices | `languageServerPack` |
 | `execution` | Above `tools.ts`: only the run loop reads it | the tool arms and the evidence tools | `agentLanguagePack` |
 | `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `agentLanguageMcpFacets()` in `languages/mcp.ts` |
@@ -3086,9 +3087,10 @@ No shipped overlay overrides a Shared member.
 
 | Scope | Resolver | Answers |
 | --- | --- | --- |
-| Statement-language family | `languageClientPack`, `languageServerPack`, `agentLanguagePack` | one family's client facet, server facet or whole pack; an id the server does not know is a named error |
-| Engine | `engineFamily` | the statement-language family a type speaks, or null |
-| Engine | `engineClientPack` | the family's client facet with the engine's client overlay applied |
+| Every statement language | `servedClientPacks` | the server's registry of client facets, composed from the installed catalog: every module language's and each served declared language's; the browser's is `BUNDLED_CLIENT_PACKS` |
+| Statement-language family | `languageClientPack`, `languageServerPack`, `agentLanguagePack` | one family's client facet in the browser's composition, server facet or whole pack; an id the server does not know is a named error for the last two |
+| Engine | `engineFamily` | the statement-language family a type speaks, its granted language read in the registry it is handed, or null |
+| Engine | `engineClientPack` | the family's client facet in the registry it is handed, with the engine's client overlay applied |
 | Engine | `engineServerOverlay` | the engine's server overlay as the registry holds it, or an empty one for a type id with none; a value that is not a type id is refused with `UnknownProviderError` |
 | Engine | `engineServerDialect` | the engine's server dialect, every member `"unsupported"` for a type id with none; a value that is not a type id is refused with `UnknownProviderError` |
 | Every engine | `everyEngineServerDialect` | every registered engine's server dialect, for a rule derived across engines such as the restated-prefix strip |

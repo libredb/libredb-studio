@@ -17,9 +17,21 @@
  * language id the record does not hold can still arrive from a ledger, and reaching one is a named error rather than
  * a quiet fall back to SQL: a statement fingerprinted as SQL, or refused with a SQL sentence, is a wrong answer that
  * looks like a right one.
+ *
+ * Beside the server packs it composes the server's registry of client facets, `servedClientPacks`, and the
+ * availability tables over it, `servedAvailabilityTables`, once per installed catalog: every client fact the server
+ * reads of a language (whether it is one, which the run header check asks, its availability, its variants, its copy, an
+ * engine's granted language and client facet, MCP's arms) comes from this registry, never from the browser's bundled
+ * composition (`BUNDLED_CLIENT_PACKS` in `client.ts`), so a language only a provider package declares is known on the
+ * server.
  */
 import { servedLanguageData } from "@/lib/db/operations/served-language-data";
-import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
+import {
+  AGENT_REQUIREMENT_ENGINES,
+  type AgentAvailabilityTables,
+  type AgentModuleLanguageId,
+  type AgentStatementLanguageId,
+} from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import { UNAVAILABLE_TEXT } from "../tool-contracts";
 import type { AgentRunWorkflowType } from "../types";
@@ -45,7 +57,7 @@ import { OPCUAREAD_SERVER_PACK } from "./opcuaread/server";
 import { MTCONNECTREAD_SERVER_PACK } from "./mtconnectread/server";
 import { MQTTREAD_SERVER_PACK } from "./mqttread/server";
 import { SPARKPLUGREAD_SERVER_PACK } from "./sparkplugread/server";
-import { composeDeclaredLanguages, declaredClientPack, languageClientPack } from "./client";
+import { type AgentClientPacks, composeDeclaredLanguages, declaredClientPack, MODULE_CLIENT_PACKS } from "./client";
 import type { DeclaredAgentLanguage } from "./declared-client";
 import { composeDeclaredServerPack } from "./declared-server";
 import type {
@@ -90,9 +102,14 @@ const MODULE_SERVER_PACKS = Object.freeze({
   sparkplugread: SPARKPLUGREAD_SERVER_PACK,
 } satisfies Record<AgentModuleLanguageId, AgentLanguageServerPack>);
 
-/** The server's composition of the declared languages it serves, with each one's server facet. */
+/**
+ * The server's composition of the declared languages it serves, with each one's server facet, the registry of client
+ * facets over the module languages and them, and the availability tables over that registry.
+ */
 interface ServedServerPacks {
   readonly declared: readonly DeclaredAgentLanguage[];
+  readonly clientPacks: AgentClientPacks;
+  readonly availabilityTables: AgentAvailabilityTables;
   readonly packs: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerPack>>;
   readonly workflowToolRules: Readonly<
     Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
@@ -104,7 +121,8 @@ const SERVED_SERVER_PACKS = new WeakMap<readonly DeclaredAgentLanguage[], Served
 
 /**
  * The server packs of the installed catalog: the module languages' and each served declared language's, its server
- * facet composed from its data, a plan or a profile answered in Studio's words; composed once per installed catalog.
+ * facet composed from its data, a plan or a profile answered in Studio's words; and the client facets of the same
+ * languages, a declared language's composed from its data (`declaredClientPack`); composed once per installed catalog.
  *
  * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
  * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
@@ -121,8 +139,14 @@ function servedServerPacks(): ServedServerPacks {
         composeDeclaredServerPack(id, agent, UNAVAILABLE_TEXT.ANSWER_NOT_A_DATA_READ),
       ]),
     );
+    const clientPacks: AgentClientPacks = Object.freeze({
+      ...MODULE_CLIENT_PACKS,
+      ...Object.fromEntries(declared.map((language) => [language.id, declaredClientPack(language)])),
+    });
     served = Object.freeze({
       declared,
+      clientPacks,
+      availabilityTables: Object.freeze({ packs: clientPacks, requirementEngines: AGENT_REQUIREMENT_ENGINES }),
       packs: Object.freeze({ ...MODULE_SERVER_PACKS, ...packs }),
       workflowToolRules: Object.freeze({
         ...MODULE_WORKFLOW_TOOL_RULES,
@@ -160,9 +184,38 @@ export function languageServer(language: AgentStatementLanguageId): AgentLanguag
 }
 
 /**
- * The client facet the server reads for `language`: a module language's own (`languageClientPack`), or a served
- * declared language's, composed from the data the installed catalog grants (`declaredClientPack`), the browser's very
- * facet for a language the bundled declarations state. `index.ts` and MCP's statement arms read a language's client
+ * The server's registry of client facets: every module language's own, and each served declared language's, composed
+ * from the data the installed catalog grants (`declaredClientPack`), the browser's very facet for a language the
+ * bundled declarations state; frozen, composed once per installed catalog. Every server reader of a language's client
+ * facts is handed it: the run header check, the granted language of an engine, the engine packs, the run loop's
+ * variants and copy, the workflow classifier, and the start and classify routes through `servedAvailabilityTables`.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language, where a granted name is a module language's or two served engines state it.
+ */
+export function servedClientPacks(): AgentClientPacks {
+  return servedServerPacks().clientPacks;
+}
+
+/**
+ * The tables the server decides a workflow's availability from (`workflowAvailability` and `openWorkflows` in
+ * `agent-manifest.ts`): its registry of client facets (`servedClientPacks`) and the engines each listed requirement
+ * holds on; frozen, composed once per installed catalog.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language, where a granted name is a module language's or two served engines state it.
+ */
+export function servedAvailabilityTables(): AgentAvailabilityTables {
+  return servedServerPacks().availabilityTables;
+}
+
+/**
+ * The client facet the server reads for `language`, from its registry (`servedClientPacks`): a module language's own,
+ * or a served declared language's. `index.ts`, MCP's statement arms and the run loop's copy read a language's client
  * facts through it, so a language only the installed catalog serves has them on the server.
  *
  * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
@@ -171,10 +224,9 @@ export function languageServer(language: AgentStatementLanguageId): AgentLanguag
  * @throws {Error} Naming the language, where neither a module language nor a served declared language is `language`.
  */
 export function serverLanguageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {
-  const declared = servedServerPacks().declared.find(({ id }) => id === language);
-  if (declared !== undefined) return declaredClientPack(declared);
-  if (Object.hasOwn(MODULE_SERVER_PACKS, language)) return languageClientPack(language);
-  throw new Error(`no client facet for ${language}`);
+  const packs = servedClientPacks();
+  if (!Object.hasOwn(packs, language)) throw new Error(`no client facet for ${language}`);
+  return packs[language];
 }
 
 /**

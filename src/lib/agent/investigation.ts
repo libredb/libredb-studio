@@ -45,7 +45,6 @@
 
 import { createHash } from "node:crypto";
 import {
-  AGENT_LANGUAGE_COPY,
   type AgentLanguageCopy,
   type AgentStatementLanguageId,
   PLAN_ESTIMATE_OPERATIONS,
@@ -166,6 +165,8 @@ import {
   LANGUAGE_USAGE_BAR_NOTICE,
   LANGUAGE_USAGE_BAR_TOOL,
   languageServer,
+  serverLanguageClientPack,
+  servedClientPacks,
 } from "./languages/server";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
@@ -610,16 +611,19 @@ function shortfallsIfReported(
   events: readonly AgentRunEvent[],
   claims: readonly AgentReportClaim[],
 ): readonly AgentGoalShortfall[] {
-  return verifyRunGoal({
-    mode: record.mode,
-    workflowType: record.workflowType,
-    statementLanguage: record.statementLanguage,
-    verifier: record.verifier,
-    // The status the run would end in, so the verdict is the one this report would earn
-    // rather than one shaped by a `cancelled` arm that has not happened.
-    status: "succeeded",
-    events: [...events, { kind: "report-composed", atMs: 0, claims }],
-  }).unmet;
+  return verifyRunGoal(
+    {
+      mode: record.mode,
+      workflowType: record.workflowType,
+      statementLanguage: record.statementLanguage,
+      verifier: record.verifier,
+      // The status the run would end in, so the verdict is the one this report would earn
+      // rather than one shaped by a `cancelled` arm that has not happened.
+      status: "succeeded",
+      events: [...events, { kind: "report-composed", atMs: 0, claims }],
+    },
+    servedClientPacks(),
+  ).unmet;
 }
 
 /**
@@ -1684,7 +1688,7 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   // where the others are — the engine decides it and nothing else — so a prose run
   // that was told the grounded sentence on an engine that could not be read would be
   // pointed at an inventory it does not have.
-  const deliverable = planDeliverableOf(record.statementLanguage, record.workflowType);
+  const deliverable = planDeliverableOf(record.statementLanguage, record.workflowType, servedClientPacks());
   const planningDeliverableRules =
     deliverable.kind === "prose"
       ? grounding.schemaKnown
@@ -1702,7 +1706,7 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
     engine.statementLanguage === undefined ? "" : ` Write every statement in ${engine.statementLanguage}.`;
   const rules =
     record.mode === "agent"
-      ? `${agentRules(AGENT_LANGUAGE_COPY[statementFamilyOf(record.statementLanguage)])}${languageSentence} ${workflowToolRules(record, engine)}`
+      ? `${agentRules(serverLanguageClientPack(statementFamilyOf(record.statementLanguage)).copy)}${languageSentence} ${workflowToolRules(record, engine)}`
       : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
   // a run opened without the setting hands nothing anywhere; and a workflow that is
@@ -1716,14 +1720,14 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   const canHandOver =
     record.mode === "agent" &&
     record.autoExecute &&
-    requiredVariant(record.statementLanguage, record.workflowType).canAutoExecute;
+    requiredVariant(record.statementLanguage, record.workflowType, servedClientPacks()).canAutoExecute;
   const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
   // An agent-mode run without its variant is an error; a plan reads `planObjectiveOf`,
   // which never is, because planning is never gated by a language.
   const objective =
     record.mode === "agent"
-      ? requiredVariant(record.statementLanguage, record.workflowType).objective
-      : planObjectiveOf(record.statementLanguage, record.workflowType);
+      ? requiredVariant(record.statementLanguage, record.workflowType, servedClientPacks()).objective
+      : planObjectiveOf(record.statementLanguage, record.workflowType, servedClientPacks());
   return `You are the LibreDB Studio database investigator. ${rules}${handover} ${objective} ${SHARED_RULES}`;
 }
 
@@ -2217,7 +2221,7 @@ function deriveStepId(toolName: string, input: unknown): string {
  */
 function identifyingInput(input: unknown, language: AgentStatementLanguageId): unknown {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return input;
-  const { argument } = AGENT_LANGUAGE_COPY[language];
+  const { argument } = serverLanguageClientPack(language).copy;
   const raw = (input as Readonly<Record<string, unknown>>)[argument];
   if (raw === null || typeof raw !== "object") return input;
   const text = languageServer(language).canonicalize(raw);
@@ -2237,7 +2241,9 @@ export function draftedStatement(
   language: AgentStatementLanguageId,
 ): { sql: string; rationale: string } | null {
   if (input === null || typeof input !== "object") return null;
-  const { [AGENT_LANGUAGE_COPY[language].argument]: statement, rationale } = input as Readonly<Record<string, unknown>>;
+  const { [serverLanguageClientPack(language).copy.argument]: statement, rationale } = input as Readonly<
+    Record<string, unknown>
+  >;
   const sql = languageServer(language).canonicalize(statement);
   if (sql === null) return null;
   return { sql, rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)" };
@@ -2423,7 +2429,7 @@ function narrowedToolNames(record: AgentRunRecord, since = Number.POSITIVE_INFIN
     AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType] && presentableArtifact(record.events) === undefined;
   for (const name of [
     "compose_report" as const,
-    ...requiredVariant(record.statementLanguage, record.workflowType).narrowedExtras,
+    ...requiredVariant(record.statementLanguage, record.workflowType, servedClientPacks()).narrowedExtras,
     ...(stillOwesARead ? (["run_read_query"] as const) : []),
   ]) {
     if (held.has(name) && !usedUp(record, name, since)) kept.add(name);
@@ -4309,7 +4315,7 @@ export async function runInvestigation(
               // drift between the notice and the tool it points at.
               holdsPresentable: presentableArtifact(sofar.events) !== undefined,
               holdsCompare: holdsTool("compare_plans"),
-              noun: AGENT_LANGUAGE_COPY[statementFamilyOf(record.statementLanguage)].noun,
+              noun: serverLanguageClientPack(statementFamilyOf(record.statementLanguage)).copy.noun,
             });
             return advice === null ? [] : [{ shortfall, advice }];
           })[0];

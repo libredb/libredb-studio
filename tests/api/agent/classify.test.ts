@@ -22,7 +22,12 @@ import * as realSeed from "@/lib/seed/resolve-connection";
 import { legacyAgentEngine, notReviewedSentence, openWorkflows } from "@/lib/agent/agent-manifest";
 import { noAdapterSentence } from "@/lib/agent/posture";
 import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
-import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
+import {
+  AGENT_PACKAGE_ENGINES,
+  AGENT_PACKAGE_LANGUAGE,
+  agentPackageCatalog,
+  agentPackageLanguageCatalog,
+} from "../../helpers/agent-package-catalog";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 import { servedResolveOver } from "../../helpers/served-resolve";
 
@@ -441,6 +446,30 @@ describe("POST /api/agent/classify", () => {
       expect((await post(READING, "agent")).status).toBe(200);
       expect(mockClassify).toHaveBeenCalledWith("what is slow", {
         statementLanguage: undefined,
+        workflows: ["operations"],
+      });
+    });
+  });
+
+  test("classify answers a package engine granted its own declared language in that language", async () => {
+    await withCatalog(agentPackageLanguageCatalog(), async () => {
+      const post = async (mode: string) => {
+        mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type: AGENT_PACKAGE_LANGUAGE });
+        const res = await POST(classifyRequest({ objective: "what is slow", connectionId: "seed:acme", mode }));
+        return res.status;
+      };
+
+      // Plan mode opens every workflow; the classifier narrows them to the language's variants itself.
+      expect(await post("planning")).toBe(200);
+      expect(mockClassify).toHaveBeenLastCalledWith("what is slow", {
+        statementLanguage: "acmeread",
+        workflows: ["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"],
+      });
+
+      // Agent mode opens only the operations workflow, its row granting a reading and no statement session opening.
+      expect(await post("agent")).toBe(200);
+      expect(mockClassify).toHaveBeenLastCalledWith("what is slow", {
+        statementLanguage: "acmeread",
         workflows: ["operations"],
       });
     });

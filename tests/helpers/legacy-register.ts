@@ -12,7 +12,7 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BODY_CONNECTION_FIELDS, type SeedAgentCredential } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { agentLanguageOfGrant } from "@/lib/agent/languages/client";
+import { agentLanguageOfGrant, BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 
 /** Every shipped engine's legacy row, keyed by engine. */
 const LEGACY_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
@@ -34,7 +34,8 @@ export function legacyRegisterTable<M extends keyof RegisterGrants>(member: M): 
 
 /**
  * Every shipped engine's legacy statement language, keyed by engine in the shipped order, frozen, read through the
- * agent's own `agentLanguageOfGrant` as agent mode reads it, so a name agent mode holds no pack for throws here too.
+ * agent's own `agentLanguageOfGrant` against the browser's composition, the registry the legacy engines' languages
+ * are the same in on the server with nothing installed, so a name agent mode holds no pack for throws here too.
  */
 export function legacyStatementLanguageTable(): Readonly<Record<DatabaseType, AgentStatementLanguageId | null>> {
   return byEngine(
@@ -42,7 +43,7 @@ export function legacyStatementLanguageTable(): Readonly<Record<DatabaseType, Ag
       Object.fromEntries(
         Object.entries(LEGACY_ROWS).map(([engine, row]) => [
           engine,
-          agentLanguageOfGrant(engine, row.grants.statementLanguage),
+          agentLanguageOfGrant(engine, row.grants.statementLanguage, BUNDLED_CLIENT_PACKS),
         ]),
       ),
     ),

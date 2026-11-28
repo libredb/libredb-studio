@@ -824,6 +824,7 @@ describe("docs/AGENT.md names every language-pack resolver in its Language packs
     ...Object.keys(engineServerResolvers),
     ...Object.keys(enginePackResolvers),
     "languageClientPack",
+    "servedClientPacks",
     "languageServerPack",
     "agentLanguagePack",
     "statementFamilyOf",

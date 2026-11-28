@@ -21,6 +21,8 @@ import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
 import * as realDb from "@/lib/db";
 import * as realManifest from "@/lib/agent/agent-manifest";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
+import { servedAvailabilityTables } from "@/lib/agent/languages/server";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
@@ -35,7 +37,12 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 import { servedResolveOver } from "../../helpers/served-resolve";
-import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
+import {
+  AGENT_PACKAGE_ENGINES,
+  AGENT_PACKAGE_LANGUAGE,
+  agentPackageCatalog,
+  agentPackageLanguageCatalog,
+} from "../../helpers/agent-package-catalog";
 import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
 
 const { SeedConnectionError } = realSeed;
@@ -966,7 +973,7 @@ describe("POST /api/agent/runs", () => {
 
   test("a run opened under another language persists it, and its verifier", async () => {
     const variant = {
-      ...realManifest.requiredVariant("sql", "investigation"),
+      ...realManifest.requiredVariant("sql", "investigation", BUNDLED_CLIENT_PACKS),
       verifier: "agent-database-assessment.1" as const,
     };
     mockWorkflowAvailability.mockImplementationOnce(() => ({ open: true, statementLanguage: "kubectl", variant }));
@@ -1046,7 +1053,12 @@ describe("POST /api/agent/runs", () => {
       expect(res.status).toBe(400);
       expect(body).toEqual({ error: `refused: ${cause}`, refused: "engine-unsupported" });
       // Availability is read from the connection's engine record.
-      expect(mockWorkflowAvailability).toHaveBeenCalledWith("agent", "investigation", servedEngineRecord("postgres"));
+      expect(mockWorkflowAvailability).toHaveBeenCalledWith(
+        "agent",
+        "investigation",
+        servedEngineRecord("postgres"),
+        servedAvailabilityTables(),
+      );
       expect(mockStart).not.toHaveBeenCalled();
       expect(mockAdmitAgentModel).not.toHaveBeenCalled();
     },
@@ -2118,5 +2130,42 @@ describe("POST /api/agent/runs on a provider package's engine", () => {
     expect(noAdapterSentence(getDBConfig("spark").label, true)).toContain("The operations workflow still runs here");
     expect(mockAdmitAgentModel).not.toHaveBeenCalled();
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a run on a package engine granted its own declared language plans in that language, opens its operations workflow, and its statement workflows are refused by name while Studio opens no statement session through a package", async () => {
+    /** The status, body and persisted run of a start on the language's engine, with its catalog installed. */
+    const startSpoken = (body: Record<string, unknown>) =>
+      withCatalog(agentPackageLanguageCatalog(), async () => {
+        mockStart.mockClear();
+        mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type: AGENT_PACKAGE_LANGUAGE });
+        const res = await POST(startRequest({ ...VALID_BODY, connectionId: "seed:acme", ...body }));
+        return {
+          status: res.status,
+          body: await parseResponseJSON<{ error?: string; refused?: string }>(res),
+          persisted: mockStart.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined,
+          displayName: servedEngineRecord(AGENT_PACKAGE_LANGUAGE).displayName,
+        };
+      });
+
+    const planned = await startSpoken({ mode: "planning", workflowType: "investigation" });
+    expect(planned.status).toBe(202);
+    expect(planned.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
+    expect(planned.persisted?.statementLanguage).toBe("acmeread");
+    expect(planned.persisted?.verifier).toBeUndefined();
+
+    const refused = await startSpoken({ workflowType: "investigation" });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({
+      error: realManifest.noStatementSessionSentence(refused.displayName, true),
+      refused: "engine-unsupported",
+    });
+    expect(refused.persisted).toBeUndefined();
+
+    // The operations workflow sends no statement: it opens where the row grants a reading, in the engine's language.
+    const operations = await startSpoken({ workflowType: "operations" });
+    expect(operations.status).toBe(202);
+    expect(operations.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
+    expect(operations.persisted?.statementLanguage).toBe("acmeread");
+    expect(operations.persisted).not.toHaveProperty("verifier");
   });
 });

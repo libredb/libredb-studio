@@ -11,6 +11,7 @@ import {
   planDeliverableOf,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { fingerprintMqttread, mqttreadRowCapAdvice } from "@/lib/agent/languages/mqttread/adapter";
 import {
@@ -139,7 +140,7 @@ describe("the prompt texts", () => {
   test("only the investigation and the operations variants are held, the operations workflow opens nowhere here, a plan is prose, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.mqttread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.mqttread.investigation?.canAutoExecute).toBe(false);
-    expect(planDeliverableOf("mqttread", "investigation")).toEqual({ kind: "prose" });
+    expect(planDeliverableOf("mqttread", "investigation", BUNDLED_CLIENT_PACKS)).toEqual({ kind: "prose" });
     expect(workflowAvailability("agent", "investigation", legacyAgentEngine("mqtt")).open).toBe(true);
     // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
     // curated reading (its legacy row in the grant register lists none).

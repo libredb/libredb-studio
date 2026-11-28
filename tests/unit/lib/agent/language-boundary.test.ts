@@ -1274,10 +1274,12 @@ describe("planted violations yield exactly their findings", () => {
       "AGENT_LANGUAGE_COPY",
       "AGENT_PLAN_ESTIMATE_OPERATION",
       "AGENT_WORKFLOW_VARIANTS",
+      "BUNDLED_CLIENT_PACKS",
     ]);
     expect([...LANGUAGE_TABLE_ACCESSORS].sort()).toEqual([
       "agentLanguageMcpFacets",
       "languageToolArms",
+      "servedClientPacks",
       "workflowToolRules",
     ]);
   });
@@ -1534,10 +1536,13 @@ describe("planted violations yield exactly their findings", () => {
     // The manifest reads the engines' client dialects, and the verifiers load the manifest, so their closure fails too.
     // The run resolver reads each engine's family from `engines/client.ts`, so a cycle closes there.
     // The SQL statement card reads the manifest's plan operations, so a cycle closes there from both of its importers.
+    // The server registry composes its availability tables over the manifest's requirement engines, so one closes there
+    // too.
     const toCard = `${toServer} -> ${LANGUAGES}/server.ts`;
     expect(layeringFindings(prepend(client, 'import "../../engines/server";'))).toEqual([
       `R3 client: ${engines} reaches ${server} through ${engines} -> ${client} -> ${server}`,
       `R3 client: ${client} reaches ${server} through ${client} -> ${server}`,
+      `R3 cycle: ${toCard} -> ${AGENT}/agent-manifest.ts`,
       `R3 cycle: ${toCard} -> ${LANGUAGES}/sql/recommendation.ts -> ${AGENT}/agent-manifest.ts`,
       `R3 cycle: ${toCard} -> ${LANGUAGES}/sql/server.ts -> ${LANGUAGES}/sql/recommendation.ts -> ${AGENT}/agent-manifest.ts`,
       `R3 cycle: ${engines} -> ${client} -> ${server} -> ${engines}`,

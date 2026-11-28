@@ -19,12 +19,15 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
+import { acmereadData } from "../../../helpers/declared-agent-language";
 import {
   admittedFor,
   admittedManifest,
+  declaredLanguageSha256,
   packageRow,
   withCatalog,
   withLoosestClaims,
+  withStatementLanguageData,
 } from "../../../helpers/package-catalog";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
@@ -563,6 +566,55 @@ describe("the engine a run header names, read against the installed catalog", ()
         expect(runHeaderRefusal({ mode: "planning", engine: "acmebare" })).toBeNull();
       });
     }
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("a run header naming a package language the installed catalog composes is read; one it no longer composes is history, refused for a new step by name", async () => {
+    const data = acmereadData();
+    const manifest = admittedManifest("acmespoken", (declared) => {
+      declared.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
+      withStatementLanguageData(declared, data);
+    });
+    const spoken = admittedFor("acme-spoken", manifest);
+    const granted = parseGrantRegister(
+      [
+        packageRow(spoken, "acmespoken", {
+          statementLanguage: data.name,
+          languageSha256: declaredLanguageSha256(manifest),
+          agentExecution: true,
+        }),
+      ],
+      LEGACY_ENGINE_IDS,
+    );
+    const header = { statementLanguage: data.name, workflowType: "investigation", engine: "acmespoken" } as const;
+    const unknownLanguage: AgentRunHeaderRefusal = {
+      field: "statementLanguage",
+      reason: "unknown",
+      id: data.name,
+      named: `the statement language "${data.name}"`,
+      sentence: `This run was recorded in the statement language "${data.name}", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.`,
+    };
+
+    await withCatalog(composeServerCatalog([spoken], [], granted), () => {
+      expect(runHeaderRefusal({ mode: "planning", ...header })).toBeNull();
+      expect(runHeaderRefusal({ mode: "agent", ...header })).toBeNull();
+      // A workflow the language has no variant of is read in plan mode and refused, by the pair, in agent mode.
+      expect(runHeaderRefusal({ mode: "planning", ...header, workflowType: "query-optimization" })).toBeNull();
+      expect(runHeaderRefusal({ mode: "agent", ...header, workflowType: "query-optimization" })).toEqual({
+        field: "workflowType",
+        reason: "unknown",
+        id: "query-optimization",
+        named: `the workflow "query-optimization" in the statement language "${data.name}"`,
+        sentence: `This run is for the workflow "query-optimization" in the statement language "${data.name}", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.`,
+      });
+    });
+
+    // The catalog no longer composes the language: nothing installed, or the same package with no row granting it.
+    expect(runHeaderRefusal({ mode: "planning", ...header })).toEqual(unknownLanguage);
+    await withCatalog(composeServerCatalog([spoken], [], parseGrantRegister([], LEGACY_ENGINE_IDS)), () => {
+      expect(runHeaderRefusal({ mode: "planning", ...header })).toEqual(unknownLanguage);
+      expect(runHeaderRefusal({ mode: "agent", ...header })).toEqual(unknownLanguage);
+    });
     expect(serverCatalogInstalled()).toBe(false);
   });
 });

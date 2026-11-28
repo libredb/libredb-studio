@@ -99,7 +99,7 @@ import {
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
-import { isAgentStatementLanguage } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS, isAgentStatementLanguage } from "@/lib/agent/languages/client";
 import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
@@ -2449,9 +2449,9 @@ describe("the census", () => {
     expect(
       differing((type, d) => {
         const { statementLanguage, overlay } = d.agent;
-        if (engineFamily(legacyAgentEngine(type)) !== statementLanguage) return false;
+        if (engineFamily(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS) !== statementLanguage) return false;
         if (statementLanguage === null) return true;
-        const client = engineClientPack(legacyAgentEngine(type)).dialect;
+        const client = engineClientPack(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS).dialect;
         const dialect = overlay?.dialect ?? null;
         return dialect === null ? client === undefined : sameValue(client, clientViewOf(dialect));
       }),

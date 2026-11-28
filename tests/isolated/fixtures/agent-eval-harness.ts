@@ -39,6 +39,7 @@ import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { type AgentGoalVerdict, verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -632,7 +633,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
           ? withoutCatalogReads(sent, engine.catalogReads)
           : withoutGroundingReads(sent, engine.groundingReads),
       transcripts: transcripts(),
-      verdict: verifyRunGoal(view.record),
+      verdict: verifyRunGoal(view.record, BUNDLED_CLIENT_PACKS),
     };
   };
 
