@@ -264,7 +264,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateReadOnlyStatementSession: {
     "src/lib/api/editor-provider.ts":
-      "readOnlyStatementSession opens for the connection its caller hands it, and no module calls it yet: its callers, agent mode and MCP's package arm, each list themselves under readOnlyStatementSession here once they reach it through a reviewed path",
+      "readOnlyStatementSession opens for the connection its caller hands it, and every caller reached it through a reviewed path first: agent mode's drive, listed under readOnlyStatementSession here, and MCP's package arm once it lists itself there",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -323,6 +323,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest opens the tree routes' metadata session only after resolving the request's connection through resolveServedConnection",
     "src/lib/mcp/context.ts":
       "metadataTarget opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
+    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+  },
+  readOnlyStatementSession: {
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
   },
   editorSourceTarget: {

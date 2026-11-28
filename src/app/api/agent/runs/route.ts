@@ -374,10 +374,10 @@ export async function POST(req: Request) {
          that requests a language its record does not grant, is answered with `notReviewedSentence`,
          naming it, and naming the operations workflow only where it opens. Read after the language,
          so an engine with neither keeps the no-adapter sentence below.
-       - **The READ-ONLY STATEMENT SESSION**, the engine record's `offers.executionProfiles`. An engine
-         whose record grants agent execution and whose session opens through its provider package is
-         answered with `noStatementSessionSentence`, naming it, since agent mode opens no read-only
-         statement session through a package yet. Every legacy record offers execution profiles.
+       - **The READ-ONLY STATEMENT SESSION**, the engine record's `offers.readOnlyStatements`. An
+         engine whose record grants agent execution and whose provider package takes no read-only
+         execute is answered with `noStatementSessionSentence`, naming it. Every legacy record offers
+         one.
        - **The VARIANT and what it requires.** A language may have no variant of the
          workflow, or a variant whose tools need a reading this engine does not serve;
          either is refused with the manifest's own sentence.

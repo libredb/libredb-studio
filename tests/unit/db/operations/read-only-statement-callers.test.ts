@@ -569,10 +569,14 @@ describe("the agent's statements and the hand-over replay on the host core", () 
       ].sort(),
     );
     // A provider package's read-only statement session is opened by the factory under the read-only statement policy,
-    // through one builder, which alone reads its entry as a facade target.
+    // through one builder, which alone reads its entry as a facade target, and which agent mode's drive alone calls, in
+    // the sessions it hands a run.
     expect(callsOutsideProviders(PACKAGE_SESSION_OPENER).map((call) => `${call.file} in ${call.declaration}`)).toEqual([
       `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,
     ]);
+    expect(callsOutsideProviders(PACKAGE_SESSION_BUILDER).map((call) => `${call.file} in ${call.declaration}`)).toEqual(
+      [`${join("src", "lib", "agent", "runtime.ts")} in readOnlyStatements`],
+    );
     expect(callsOutsideProviders("entryReadOnlyTarget").map((call) => `${call.file} in ${call.declaration}`)).toEqual([
       `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,
     ]);

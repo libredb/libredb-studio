@@ -465,8 +465,8 @@ For an engine that states no SQL text, whose register row reviews no grammar, th
 
 ### M-88 (informative): A package engine's statement language in agent mode and on MCP
 
-A package engine's statement language data (M-85) will be served in agent mode and on MCP only as the engine's register row grants it (M-87).
-Until then neither agent mode nor MCP sends a package engine a statement, so nothing checks the first sentence yet.
+A package engine's statements are sent in agent mode only in the statement language its register row grants (M-87), and only through a read-only statement session (C-78), which Studio opens only where its package lists `readOnly` in `honours` and its open keeps it there.
+MCP sends a package engine no statement yet, so nothing checks the first sentence on MCP.
 
 ### M-89 (normative): An engine's object model is data of its declaration
 

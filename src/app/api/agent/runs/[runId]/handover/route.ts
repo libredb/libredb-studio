@@ -12,7 +12,6 @@ import { providerReadOnlyTarget } from "@/lib/api/session-target";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
-import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
@@ -55,9 +54,9 @@ import type { DatabaseConnection } from "@/lib/types";
  *    `connectionId` under the persisted actor through the served resolve, the same
  *    authority a drive authorizes against. A caller cannot name a different database for
  *    a statement another database approved. An engine whose record offers no execution
- *    profiles, a provider package's, is refused by name before anything opens
- *    (`statementSessionRefusal`), since the replay runs on a read-only statement session
- *    and the hand-over opens none through a package.
+ *    profiles, a provider package's, is refused by name before anything opens, since the
+ *    replay runs only on a provider bundled with Studio: no workflow variant a package's
+ *    language has auto-executes, so no package run's answer is ever handed over.
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
  *
@@ -122,7 +121,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     // Answered as the acquisition's refusal of an engine with no read-only statement path is.
     if (!resolved.engine.offers.executionProfiles) {
       throw new StudioProfileRefusal(
-        `${statementSessionRefusal(resolved.engine.displayName)} So the hand-over runs nothing.`,
+        `The hand-over replays a statement only on a provider bundled with Studio, and ${resolved.engine.displayName} is served by a provider package, so the hand-over runs nothing.`,
         "PROFILE_UNSUPPORTED_BY_PROVIDER",
       );
     }

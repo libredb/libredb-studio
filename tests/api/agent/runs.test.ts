@@ -42,6 +42,8 @@ import {
   AGENT_PACKAGE_LANGUAGE,
   agentPackageCatalog,
   agentPackageLanguageCatalog,
+  type AgentPackageLanguageOptions,
+  offByOneByte,
 } from "../../helpers/agent-package-catalog";
 import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
 
@@ -2085,11 +2087,11 @@ describe("POST /api/agent/runs on a provider package's engine", () => {
     expect(mockDriveAgentRun).toHaveBeenCalledTimes(1);
   });
 
-  test("a package engine granted agent execution is refused by name at start while Studio opens no read-only statement session through a package, its row reviewing no grammar", async () => {
+  test("a package engine granted agent execution is refused by name at start where its package takes no read-only execute, its row reviewing no grammar", async () => {
     const record = await withCatalog(agentPackageCatalog(), () => servedEngineRecord(EXECUTING));
     // Vacuity: the row grants the language and agent execution and reviews no grammar.
     expect(record.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true, reviewedGrammar: false });
-    expect(record.offers.executionProfiles).toBe(false);
+    expect(record.offers.readOnlyStatements).toBe(false);
     for (const workflowType of STATEMENT_WORKFLOWS) {
       // oxlint-disable-next-line no-await-in-loop -- one start at a time, each reading the mocks the one before left.
       const refused = await startOn(EXECUTING, { workflowType });
@@ -2132,21 +2134,32 @@ describe("POST /api/agent/runs on a provider package's engine", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
-  test("a run on a package engine granted its own declared language plans in that language, opens its operations workflow, and its statement workflows are refused by name while Studio opens no statement session through a package", async () => {
-    /** The status, body and persisted run of a start on the language's engine, with its catalog installed. */
-    const startSpoken = (body: Record<string, unknown>) =>
-      withCatalog(agentPackageLanguageCatalog(), async () => {
-        mockStart.mockClear();
-        mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type: AGENT_PACKAGE_LANGUAGE });
-        const res = await POST(startRequest({ ...VALID_BODY, connectionId: "seed:acme", ...body }));
-        return {
-          status: res.status,
-          body: await parseResponseJSON<{ error?: string; refused?: string }>(res),
-          persisted: mockStart.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined,
-          displayName: servedEngineRecord(AGENT_PACKAGE_LANGUAGE).displayName,
-        };
-      });
+  /**
+   * The status, body and persisted run of a start on the language's engine, with its catalog built of `options`
+   * installed, and the availability the start route reads of `body`'s workflow in agent mode under that catalog.
+   */
+  const startSpoken = (body: Record<string, unknown>, options: AgentPackageLanguageOptions = {}) =>
+    withCatalog(agentPackageLanguageCatalog(options), async () => {
+      mockStart.mockClear();
+      mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type: AGENT_PACKAGE_LANGUAGE });
+      const res = await POST(startRequest({ ...VALID_BODY, connectionId: "seed:acme", ...body }));
+      const record = servedEngineRecord(AGENT_PACKAGE_LANGUAGE);
+      return {
+        status: res.status,
+        body: await parseResponseJSON<{ error?: string; refused?: string }>(res),
+        persisted: mockStart.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined,
+        displayName: record.displayName,
+        record,
+        availability: realManifest.workflowAvailability(
+          "agent",
+          body.workflowType as AgentRunWorkflowType,
+          record,
+          servedAvailabilityTables(),
+        ),
+      };
+    });
 
+  test("a run on a package engine granted its own declared language plans in that language, opens its operations workflow, and its statement workflows are refused by name where its package takes no read-only execute", async () => {
     const planned = await startSpoken({ mode: "planning", workflowType: "investigation" });
     expect(planned.status).toBe(202);
     expect(planned.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
@@ -2167,5 +2180,43 @@ describe("POST /api/agent/runs on a provider package's engine", () => {
     expect(operations.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
     expect(operations.persisted?.statementLanguage).toBe("acmeread");
     expect(operations.persisted).not.toHaveProperty("verifier");
+  });
+
+  test("a run on a package engine granted its own declared language opens its investigation in agent mode where its package honours readOnly, persisting the language", async () => {
+    const opened = await startSpoken({ workflowType: "investigation" }, { honours: ["readOnly"] });
+    expect(opened.record.offers.readOnlyStatements).toBe(true);
+    expect(opened.status).toBe(202);
+    if (!opened.availability.open) throw new Error("the investigation is closed under the catalog");
+    expect(opened.persisted).toMatchObject({
+      ...realManifest.persistedRunFacts("agent", "investigation", AGENT_PACKAGE_LANGUAGE, opened.availability),
+      connectionId: "seed:acme",
+      mode: "agent",
+      workflowType: "investigation",
+    });
+    expect(opened.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
+    expect(opened.persisted?.statementLanguage).toBe("acmeread");
+    // Its language has no variant of another statement workflow.
+    const optimizing = await startSpoken({ workflowType: "query-optimization" }, { honours: ["readOnly"] });
+    expect(optimizing.status).toBe(400);
+    expect(optimizing.persisted).toBeUndefined();
+  });
+
+  test("a package engine whose row's language digest is off by one byte is served no language, refused by the not-reviewed sentence", async () => {
+    const options = { honours: ["readOnly"], digest: offByOneByte };
+    const refused = await startSpoken({ workflowType: "investigation" }, options);
+    // Vacuity: the package takes a read-only execute, its row grants agent execution, and no language is granted.
+    expect(refused.record.offers.readOnlyStatements).toBe(true);
+    expect(refused.record.grants).toMatchObject({ agentExecution: true, statementLanguage: null });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({
+      error: realManifest.notReviewedSentence(refused.displayName, true),
+      refused: "engine-unsupported",
+    });
+    expect(refused.persisted).toBeUndefined();
+    // Plan mode opens on it with no language.
+    const planned = await startSpoken({ mode: "planning", workflowType: "investigation" }, options);
+    expect(planned.status).toBe(202);
+    expect(planned.persisted?.engine).toBe(AGENT_PACKAGE_LANGUAGE);
+    expect(planned.persisted?.statementLanguage).toBeUndefined();
   });
 });

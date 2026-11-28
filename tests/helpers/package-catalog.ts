@@ -64,16 +64,21 @@ function deepFrozen<T>(value: T): T {
 }
 
 /**
- * The minimal manifest for engine `id`, changed by `edit`, admitted by the SDK's validator and deep-frozen.
+ * The minimal manifest for engine `id`, changed by `edit`, its console execute honouring the request fields `honours`
+ * (none by default, as the minimal manifest declares), admitted by the SDK's validator and deep-frozen.
  *
  * @throws {Error} Naming the first refusal, for a manifest the validator refuses.
  */
 export function admittedManifest(
   id: string,
   edit: (engine: EditableEngine) => void = () => undefined,
+  honours: readonly string[] = [],
 ): ProviderManifest {
   const raw = rawManifest(id);
   edit(raw.engines[0] as EditableEngine);
+  ((raw.calls as Record<string, Record<string, unknown>>).console as Record<string, unknown>).execute = {
+    honours: [...honours],
+  };
   const verdict = VALIDATOR.validate(raw);
   if (!verdict.admitted) {
     throw new Error(`the fixture manifest of ${id} is refused: ${JSON.stringify(verdict.refusals.slice(0, 3))}`);

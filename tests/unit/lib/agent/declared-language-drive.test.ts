@@ -34,6 +34,18 @@ import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
  * installed before those imports too, though the server's language registries and MCP's statement arms read the
  * catalog installed when they are read (`servedLanguageData`, `mcpStatementSurface`), not when their modules load, so
  * every module this file loads reads the one crafted catalog from its first read.
+ *
+ * The last two cases put a provider package's catalog in the crafted one's place (`withPackageCatalog`): a package,
+ * admitted through Studio's boot admission (tests/helpers/package-session-fixture.ts), declares its own language
+ * `acmepkgread`, `acmeread`'s data under another name and with no MCP tool, and its row grants it under the digest of
+ * that data; a second package is granted `sql`. Both rows review no grammar, and both packages take a read-only
+ * execute. A declared statement is admitted by its declared form and sent through the package's read-only statement
+ * session, never judged by the SQL guard, and agent mode sends a package granted `sql` no statement, since the SQL
+ * workflows' requirements hold on legacy engines alone: its text meets only plan mode's draft fence, which reads
+ * Studio's default grammar. While the package catalog is installed, MQTT's substituted grant names a language no
+ * served record states, so neither case reads MQTT; each reinstalls the crafted catalog when it ends. The fence and
+ * the query events are recorded by substitutions spreading the real modules captured before them, each recorder
+ * calling the captured function, so every other case reads them unchanged.
  */
 
 const ACMEREAD = acmereadData();
@@ -58,14 +70,29 @@ mock.module("@/lib/db/claim-grants", () => ({
       : REAL_CLAIM_GRANTS.legacyEngineGrants(id),
 }));
 
-const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
-const { craftedCatalog, withEngineRecord } = await import("../../../helpers/package-catalog");
-installServerCatalog(
-  withEngineRecord(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }), "mqtt", (engine) => ({
-    ...engine,
-    statementLanguageData: ACMEREAD,
-  })),
+const REAL_GUARD = { ...(await import("@/lib/db/operations/statement-guard")) };
+const REAL_BUILD = { ...(await import("@/lib/query-events/build")) };
+const REAL_SINK = { ...(await import("@/lib/query-events/sink")) };
+const inspected = mock((...args: Parameters<typeof REAL_GUARD.inspectAgentStatement>) =>
+  REAL_GUARD.inspectAgentStatement(...args),
 );
+const built = mock((...args: Parameters<typeof REAL_BUILD.buildQueryEvent>) => REAL_BUILD.buildQueryEvent(...args));
+const recorded = mock((...args: Parameters<typeof REAL_SINK.recordQueryEvent>) => REAL_SINK.recordQueryEvent(...args));
+mock.module("@/lib/db/operations/statement-guard", () => ({ ...REAL_GUARD, inspectAgentStatement: inspected }));
+mock.module("@/lib/query-events/build", () => ({ ...REAL_BUILD, buildQueryEvent: built }));
+mock.module("@/lib/query-events/sink", () => ({ ...REAL_SINK, recordQueryEvent: recorded }));
+
+const { forgetServerCatalog, installServerCatalog, servedEngines, servedEngineRecord } = await import(
+  "@/lib/db/server-catalog"
+);
+const { craftedCatalog, withEngineRecord, withLoosestClaims, withStatementLanguageData } = await import(
+  "../../../helpers/package-catalog"
+);
+const CRAFTED = withEngineRecord(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }), "mqtt", (engine) => ({
+  ...engine,
+  statementLanguageData: ACMEREAD,
+}));
+installServerCatalog(CRAFTED);
 
 const {
   AGENT_LANGUAGE_COPY,
@@ -116,7 +143,17 @@ const { createTargetScope } = await import("@/lib/db/operations/policy");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 const { CENSUS_CONNECTION } = await import("../../../helpers/census-connection");
-const { createDatabaseProvider } = await import("@/lib/db/factory");
+const { clearProviderCache, createDatabaseProvider } = await import("@/lib/db/factory");
+const { admitSessionPackages, setHooks } = await import("../../../helpers/package-session-fixture");
+const { removeScratch, scratchDirectory } = await import("../../../helpers/provider-artifacts");
+const { servedAvailabilityTables, servedClientPacks } = await import("@/lib/agent/languages/server");
+const { grantedAgentLanguage } = await import("@/lib/agent/granted-language");
+const { readOnlyStatementSession } = await import("@/lib/api/editor-provider");
+const { agentEngineDeclarations } = await import("@/lib/agent/engine-view");
+const { validatePlanStatement } = await import("@/lib/agent/plan-statement");
+const { languageDataSha256 } = await import("@/lib/db/language-digest");
+const { ConnectionError } = await import("@/lib/db/errors");
+const { logger } = await import("@/lib/logger");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(() => {
@@ -427,3 +464,264 @@ async function harness() {
     },
   };
 }
+
+/** `acmeread`'s data under the name `acmepkgread`, with no MCP tool, which a provider package declares as its own. */
+const PKG_LANGUAGE = (() => {
+  const data = acmereadData("acmepkgread");
+  return { ...data, agent: { ...(data.agent as NonNullable<typeof data.agent>), mcp: null } };
+})();
+const PKG_AGENT = PKG_LANGUAGE.agent;
+/** The package engine granted its own language, and the one granted `sql`; both take a read-only execute. */
+const PKG_READ = "acmepkgreadengine";
+const PKG_SQL = "acmepkgsqlengine";
+const PKG_PROVIDERS = scratchDirectory("studio-declared-language-drive-");
+afterAll(() => removeScratch(PKG_PROVIDERS));
+
+/** The package catalog, admitted once in this process (the loader keeps every package it admitted). */
+let packageCatalog: Parameters<typeof installServerCatalog>[0] | undefined;
+
+/**
+ * Runs `body` with the package catalog installed in the crafted one's place, then closes every session it opened and
+ * reinstalls the crafted catalog. The first call admits both packages through boot admission, which installs their
+ * catalog; a later call installs the catalog it composed.
+ */
+async function withPackageCatalog<T>(body: () => Promise<T>): Promise<T> {
+  forgetServerCatalog();
+  try {
+    if (packageCatalog === undefined) {
+      const unread = { deniedFileAccessRefusal: null, readRootsRequired: false, agentExecution: true } as const;
+      await admitSessionPackages(
+        PKG_PROVIDERS,
+        [
+          {
+            name: "acme-pkg-read",
+            engine: PKG_READ,
+            honours: ["readOnly"],
+            edit: (engine) => {
+              engine.agent = { statementLanguage: PKG_LANGUAGE.name, overlay: { dialect: null, grounding: null } };
+              withStatementLanguageData(engine, PKG_LANGUAGE);
+            },
+          },
+          {
+            name: "acme-pkg-sql",
+            engine: PKG_SQL,
+            offered: ["objects.tree", "monitoring.panel"],
+            honours: ["readOnly"],
+            edit: withLoosestClaims,
+          },
+        ],
+        {
+          [PKG_READ]: {
+            ...unread,
+            statementLanguage: PKG_LANGUAGE.name,
+            languageSha256: languageDataSha256(PKG_LANGUAGE),
+          },
+          [PKG_SQL]: { ...unread, statementLanguage: "sql" },
+        },
+      );
+      packageCatalog = Object.freeze({ engines: servedEngines(), unavailable: new Map() });
+    } else {
+      installServerCatalog(packageCatalog);
+    }
+    return await body();
+  } finally {
+    await clearProviderCache();
+    forgetServerCatalog();
+    installServerCatalog(CRAFTED);
+  }
+}
+
+/** What the package's functions were called with in one case. */
+interface PackageCalls {
+  readonly opens: unknown[];
+  readonly executes: unknown[];
+}
+
+/** Hooks for `engine`'s package recording every open and execute; each execute answers one row. */
+function packageHooks(engine: string): PackageCalls {
+  const calls: PackageCalls = { opens: [], executes: [] };
+  setHooks(engine, {
+    open: (ctx) => {
+      calls.opens.push(ctx);
+      return Promise.resolve({ handle: { session: randomUUID() } });
+    },
+    close: () => Promise.resolve(),
+    execute: (_handle, request) => {
+      calls.executes.push(request);
+      return Promise.resolve({
+        results: [
+          {
+            columns: [{ name: "name" }],
+            next: () => Promise.resolve({ rows: [["t"]], done: true }),
+            close: () => Promise.resolve(),
+          },
+        ],
+        warnings: [],
+        executionTimeMs: 1,
+        pageApplied: false,
+      });
+    },
+  });
+  return calls;
+}
+
+/**
+ * A run of the package engine `engine` as the drive builds it: its facts from its record (`agentEngineDeclarations`),
+ * its read-only statement session over the real `readOnlyStatementSession`, and an acquirer that fails the case if
+ * called, since a package's engine has no profiled provider.
+ */
+async function packageRun(engine: string) {
+  const record = servedEngineRecord(engine);
+  const connection = {
+    id: `seed:${randomUUID()}`,
+    name: "Acme",
+    type: engine,
+    host: "pkg.local",
+    password: randomUUID(),
+    createdAt: new Date(0),
+  };
+  const { capabilities, labels } = await agentEngineDeclarations(record, connection, {});
+  const acquireProvider = mock(async (): Promise<DatabaseProvider> => {
+    throw new Error(
+      "the run's acquirer opens a legacy provider only, and this run is a package engine's: a test defect",
+    );
+  });
+  return {
+    record,
+    capabilities,
+    acquireProvider,
+    context: {
+      runId: "run-pkg",
+      modelId: "unmeasured-model-for-tests",
+      mode: "agent" as const,
+      workflowType: "investigation" as const,
+      statementLanguage: PKG_LANGUAGE.name as typeof ACME,
+      actor: { sessionId: "session-1", role: "user" as const },
+      connection,
+      capabilities,
+      labels,
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope(connection.id),
+      tracker: new ExecutionBudgetTracker(),
+      artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+      deadline: new AgentRunDeadline(
+        AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+        () => 1_000,
+      ),
+      repairs: new AgentRepairLedger(),
+      sessions: {
+        ...LEGACY_RUN_SESSIONS,
+        readOnlyStatements: () => readOnlyStatementSession({ role: "user" }, connection, record),
+      },
+      acquireProvider,
+      clock: () => 1_000,
+    },
+  };
+}
+
+describe("a provider package's own declared language", () => {
+  test("a package's own language, granted by its row, is composed from the installed catalog and drives a run with no composer change", async () => {
+    await withPackageCatalog(async () => {
+      const language = PKG_LANGUAGE.name as typeof ACME;
+      // The installed catalog composes the package's language: the registries hold it, and the engine is granted it.
+      expect(Object.hasOwn(servedClientPacks(), language)).toBe(true);
+      expect<string | null>(grantedAgentLanguage(PKG_READ)).toBe(language);
+      expect(agentEnginePack(PKG_READ)).toBe(agentLanguagePack(language));
+      expect(workflowToolRules()[language]?.investigation).toBe(PKG_AGENT.text.investigation.toolRule as string);
+      const record = servedEngineRecord(PKG_READ);
+      expect(record.offers.readOnlyStatements).toBe(true);
+      expect(workflowAvailability("agent", "investigation", record, servedAvailabilityTables())).toEqual({
+        open: true,
+        statementLanguage: language,
+        variant: servedClientPacks()[language]?.variants.investigation ?? null,
+      });
+
+      // A refused request answers its declared sentence, and the package never opens.
+      const calls = packageHooks(PKG_READ);
+      const refusedText = JSON.stringify({ read: "topics", topic: randomUUID() });
+      const declared = admitDeclaredRequest(PKG_AGENT.request, refusedText);
+      expect(declared?.code).toBe("topic-not-taken");
+      const refused = await packageRun(PKG_READ);
+      expect(await runReadQueryTool(refused.context, { statement: refusedText })).toMatchObject({
+        kind: "unavailable",
+        reasonCode: "STATEMENT_NOT_ADMITTED",
+        detail: declared?.message,
+      });
+      expect(calls.opens).toEqual([]);
+
+      // An admitted one opens the package's read-only statement session and is sent through it as written.
+      const admitted = await packageRun(PKG_READ);
+      const outcome = await runReadQueryTool(admitted.context, { statement: '{"read":"topics"}' });
+      expect(outcome.kind).toBe("completed");
+      if (outcome.kind === "completed") expect(outcome.artifact.operationId).toBe(`${language}.query.read`);
+      expect(calls.opens).toEqual([
+        expect.objectContaining({ policy: expect.objectContaining({ readOnly: true, sendsStatements: true }) }),
+      ]);
+      expect(calls.executes).toEqual([
+        expect.objectContaining({ statement: '{"read":"topics"}', readOnly: expect.any(Object) }),
+      ]);
+      expect(admitted.acquireProvider).not.toHaveBeenCalled();
+
+      // A package whose open fails sent nothing: the run is told a not-sent connection failure in Studio's sentence,
+      // the package's words logged once under the statement's route.
+      const marker = randomUUID();
+      setHooks(PKG_READ, {
+        open: () => Promise.reject(new Error(`the package could not sign in ${marker}`)),
+        close: () => Promise.resolve(),
+      });
+      const logged = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        const unopened = await packageRun(PKG_READ);
+        const failed = await runReadQueryTool(unopened.context, { statement: '{"read":"topics"}' }).then(
+          (answer) => answer,
+          (error: unknown) => error,
+        );
+        expect(failed).toBeInstanceOf(ConnectionError);
+        expect((failed as Error).message).toStartWith("The provider package's open failed (");
+        expect(JSON.stringify([(failed as Error).message])).not.toContain(marker);
+        expect(logged.mock.calls.filter(([line]) => line === "A provider package's open failed")).toEqual([
+          [expect.any(String), expect.anything(), { route: "agent/statement" }],
+        ]);
+      } finally {
+        logged.mockRestore();
+      }
+    });
+    // The crafted catalog is back, and it composes no language of the package's.
+    expect(Object.hasOwn(servedClientPacks(), PKG_LANGUAGE.name)).toBe(false);
+  });
+
+  test("a package engine whose row reviews no grammar is fenced under the default grammar and its query events keep none of its statement text", async () => {
+    await withPackageCatalog(async () => {
+      for (const recorder of [inspected, built, recorded]) recorder.mockClear();
+      // The package's own language: its statement is admitted by its declared form and sent through its read-only
+      // statement session; the SQL guard never reads it, and no query event is built or recorded.
+      expect(servedEngineRecord(PKG_READ).grants.reviewedGrammar).toBe(false);
+      const calls = packageHooks(PKG_READ);
+      const run = await packageRun(PKG_READ);
+      expect((await runReadQueryTool(run.context, { statement: '{"read":"topics"}' })).kind).toBe("completed");
+      expect(calls.executes).toHaveLength(1);
+      for (const recorder of [inspected, built, recorded]) expect(recorder).not.toHaveBeenCalled();
+
+      // A package granted sql: agent mode sends it no statement, so nothing opens; plan mode's draft is judged by the
+      // fence under Studio's default grammar, which is handed no grammar of the package's.
+      const sql = servedEngineRecord(PKG_SQL);
+      expect(sql.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true, reviewedGrammar: false });
+      expect(sql.offers.readOnlyStatements).toBe(true);
+      const sqlCalls = packageHooks(PKG_SQL);
+      for (const workflow of ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const) {
+        expect(workflowAvailability("agent", workflow, sql, servedAvailabilityTables())).toMatchObject({
+          open: false,
+          cause: "requirement-unmet",
+        });
+      }
+      const draft = "SELECT id FROM orders";
+      const planned = await packageRun(PKG_SQL);
+      expect(validatePlanStatement(draft, null, planned.capabilities.queryLanguage)).toMatchObject({
+        guardApplicable: true,
+      });
+      expect(inspected.mock.calls).toEqual([[draft]]);
+      expect(sqlCalls).toEqual({ opens: [], executes: [] });
+      for (const recorder of [built, recorded]) expect(recorder).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -9,7 +9,8 @@
  * Each case forgets the catalog it installs. A planted package `acme-facts` serves engine `acmefacts`, whose declaration
  * states `acmeread` (tests/helpers/declared-agent-language.ts) and requests it as its agent statement language, with the
  * `health` reading; its register row grants that language under the digest of the data it declares, agent execution
- * and the reading. Its record offers no execution profiles, so no statement workflow opens on it.
+ * and the reading. Its package takes no read-only execute (its record does not offer `readOnlyStatements`), so no
+ * statement workflow opens on it.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";

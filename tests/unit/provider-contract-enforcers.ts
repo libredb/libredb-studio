@@ -3284,10 +3284,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/agent/classify.test.ts": ["classify answers a package engine's connection"],
       "tests/api/agent/runs.test.ts": [
         "a run on a package engine with no register row plans, and its execution is refused as not reviewed, by name",
+        "a run on a package engine granted its own declared language opens its investigation in agent mode where its package honours readOnly, persisting the language",
       ],
       "tests/isolated/agent-package-engine-drive.test.ts": [
         "a plan-mode run on a package engine is driven from its ledger through the served resolve, and grounds through its package's metadata session",
         "the operations workflow reads a package engine's granted readings through its package, and refuses every other by name",
+        "an agent-mode run in a package's own declared language is driven from its ledger, grounds and sends its statements through the package's read-only statement session",
       ],
     },
   },
@@ -3299,6 +3301,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/isolated/factory-package-read-only-session.test.ts": [
         "a package's read-only statement session opens through its package under the read-only statement policy, once per package and frame, beside the editor's session",
         "a package engine the factory opens no read-only statement session for is refused by name before its package opens, in the gates' order",
+      ],
+      "tests/unit/lib/agent/declared-language-drive.test.ts": [
+        "a package's own language, granted by its row, is composed from the installed catalog and drives a run with no composer change",
       ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
