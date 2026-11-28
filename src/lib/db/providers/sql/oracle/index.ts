@@ -44,8 +44,8 @@ import {
   type ReadOnlyStatementBudget,
   type ReadOnlyStatementMode,
 } from "../../../types";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,

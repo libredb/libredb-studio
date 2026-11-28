@@ -137,6 +137,8 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "object-kind-duplicate",
   "object-kind-unstated",
   "object-row-activation-duplicate",
+  "object-source-inconsistent",
+  "object-source-not-offered",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -851,10 +853,13 @@ const CONTAINER_LEVEL_LISTS: readonly string[] = Object.freeze(["", "schema", "c
  * states: a masked kind, a row action's kind, a child kind, an attached kind, a maintenance spec's kind and a catalog
  * capture's kind word. A repeated kind still counts as stated, so only the repeat itself is refused. At most one row
  * action states `activates` for a kind: a later activating action naming a kind an earlier one names is refused at its
- * `activates`. A declaration that states no model is read by none of them here: `manifestRuleRefusals` refuses its
- * facet kinds, since no model states any kind, and requires a model where the package offers objects.tree. A
- * declaration read alone keeps those two rules out, so a legacy declaration with no model stays admitted under
- * `validateEngine`.
+ * `activates`. Each kind's source members agree with its `hasSource`: a kind with source states its `sourceLanguage`,
+ * and a kind without source states none and does not accept source edits, each refused at the member's pointer as
+ * `object-source-inconsistent`. A declaration that states no model is read by none of them here:
+ * `manifestRuleRefusals` refuses its facet kinds, since no model states any kind, requires a model where the package
+ * offers objects.tree or objects.source, and refuses a kind with source where the package does not offer
+ * objects.source. A declaration read alone keeps those rules out, so a legacy declaration with no model stays admitted
+ * under `validateEngine`.
  */
 function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const model = engine.objects;
@@ -891,6 +896,14 @@ function objectModelRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
   model.objectKinds.forEach(({ childKinds, attachedTo }, index) => {
     childKinds.forEach((kind, position) => named(kind, `${base}/objectKinds/${index}/childKinds/${position}`));
     if (attachedTo !== null) named(attachedTo, `${base}/objectKinds/${index}/attachedTo`);
+  });
+  model.objectKinds.forEach(({ hasSource, sourceLanguage, acceptsSourceEdits }, index) => {
+    const at = `${base}/objectKinds/${index}`;
+    if (hasSource === (sourceLanguage === null)) {
+      refusals.push(schemaRefusal("object-source-inconsistent", `${at}/sourceLanguage`));
+    }
+    if (acceptsSourceEdits && !hasSource)
+      refusals.push(schemaRefusal("object-source-inconsistent", `${at}/acceptsSourceEdits`));
   });
   for (const [kind, pointer] of facetKindReferences(engine, at)) named(kind, pointer);
   return refusals;
@@ -1233,8 +1246,10 @@ const PROXY_VARIABLES: readonly string[] = Object.freeze(["HTTP_PROXY", "HTTPS_P
 /**
  * The rules of a whole manifest the schema cannot state: no proxy variable in the environment, unique engine ids,
  * compatibility entries that match, fence aliases that name one engine each, an object model stated by every
- * engine where the package offers objects.tree, since the tree is read only through it, and no maintenance spec kind
- * or catalog capture kind word in an engine that states no model, since no model states that kind.
+ * engine where the package offers objects.tree or objects.source, since both are read only through it, no kind with
+ * source where the package does not offer objects.source, since an engine's source is read only through it, and no
+ * maintenance spec kind or catalog capture kind word in an engine that states no model, since no model states that
+ * kind.
  */
 function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
@@ -1250,12 +1265,20 @@ function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVoc
     declared.add(engine.id);
     if (!covered.has(engine.id)) refusals.push(schemaRefusal("compatibility-engine-missing", `/engines/${index}/id`));
     if (engine.objects === undefined) {
-      if (manifest.calls.objects.tree === "offered") {
+      if (manifest.calls.objects.tree === "offered" || manifest.calls.objects.source === "offered") {
         refusals.push(schemaRefusal("object-model-missing", `/engines/${index}`));
       }
       for (const [, pointer] of facetKindReferences(engine, `/engines/${index}`)) {
         refusals.push(schemaRefusal("object-kind-unstated", pointer));
       }
+    } else if (manifest.calls.objects.source !== "offered") {
+      engine.objects.objectKinds.forEach(({ hasSource }, position) => {
+        if (hasSource) {
+          refusals.push(
+            schemaRefusal("object-source-not-offered", `/engines/${index}/objects/objectKinds/${position}/hasSource`),
+          );
+        }
+      });
     }
     refusals.push(...engineRuleRefusals(engine, `/engines/${index}`, vocabularies));
   });
@@ -1526,7 +1549,7 @@ export function refusalSentence(refusal: ManifestRefusal): string {
     case "plan-estimate-prefix-executes":
       return `The estimating prefix at ${at} holds ANALYZE or ANALYSE, a word that runs the plan rather than estimating it.`;
     case "object-model-missing":
-      return `The engine declaration at ${at} states no object model, which an engine of a package that offers objects.tree states.`;
+      return `The engine declaration at ${at} states no object model, which an engine of a package that offers objects.tree or objects.source states.`;
     case "object-level-duplicate":
       return `The container level id at ${at} repeats the id of an earlier level of the engine's object model.`;
     case "object-level-order":
@@ -1537,5 +1560,9 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The object kind at ${at} is not one the engine's object model states, or the engine states no object model.`;
     case "object-row-activation-duplicate":
       return `The row action at ${at} activates a row of a kind an earlier activating row action of the engine's object model already names.`;
+    case "object-source-inconsistent":
+      return `The object kind member at ${at} contradicts the kind's hasSource: a kind with source states its source language, and only a kind with source states one or accepts source edits.`;
+    case "object-source-not-offered":
+      return `The object kind at ${at} has source, which an engine reads only through objects.source, and the package does not offer it.`;
   }
 }

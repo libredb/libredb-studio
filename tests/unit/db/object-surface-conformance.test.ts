@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound, callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface, SOURCE_PART_FALLBACK_LANGUAGE } from "../../helpers/object-surface-conformance";
 
 function fakeProvider(overrides: Record<string, any> = {}) {

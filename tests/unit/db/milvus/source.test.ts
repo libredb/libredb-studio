@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   MILVUS_PARTITIONS_LISTED,
   type MilvusSourceInput,

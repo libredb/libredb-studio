@@ -16,12 +16,8 @@ import {
   readObjectRouteBody,
   type ObjectRequestContext,
 } from "@/lib/api/object-route";
-import {
-  isSourcePartStatement,
-  SOURCE_CHARACTER_LIMIT,
-  SOURCE_PART_LIMIT,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { isSourcePartStatement } from "@/lib/db/object-kinds";
 import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 // The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
 // refusal sentence through untouched and the client refuses that document, and one test pinning

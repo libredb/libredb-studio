@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { KafkaError, type KafkaConfigEntry, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
 import {

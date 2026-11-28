@@ -1,4 +1,4 @@
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { AuditReason } from "@/lib/audit";
 import type {
   ObjectEditCatalogFact,

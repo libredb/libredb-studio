@@ -9,7 +9,7 @@
  * rabbitmq_stream_management plugin, one tracking GET says whether this account could take the queue's messages,
  * and an "Access" statement says so. A part the account may not read carries the permissions sentence instead.
  */
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type { ObjectSourceDocument, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 import {
   countsLabel,

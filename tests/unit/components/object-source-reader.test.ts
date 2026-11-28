@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { partEditability, type SourceEditablePart } from "@/components/object-source/source-editable";
 import { httpSourceReader, isSourceDocumentShape } from "@/components/object-source/source-reader";
-import { isSourcePartStatement, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
+import { isSourcePartStatement } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**

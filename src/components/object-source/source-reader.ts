@@ -1,6 +1,6 @@
 import { appFetch } from "@/lib/config/base-path";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
-import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectSourceDocument, ObjectSourceForm, ObjectSourceOrigin } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 

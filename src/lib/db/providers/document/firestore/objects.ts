@@ -14,7 +14,8 @@
  * withheld), the connection's target, and the surface that asked, so an answer past its cap is worded for it.
  */
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   DatabaseObject,
   KindCount,

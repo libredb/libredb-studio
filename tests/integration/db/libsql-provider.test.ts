@@ -33,13 +33,8 @@ import {
   ExecutionProfileError,
   QueryError,
 } from "@/lib/db/errors";
-import {
-  containerDepth,
-  isCountUnavailable,
-  isSourcePartUnavailable,
-  kindHasColumns,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { containerDepth, isCountUnavailable, isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import { buildResultExport } from "@/lib/export/result-export";

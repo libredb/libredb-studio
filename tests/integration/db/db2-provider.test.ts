@@ -25,11 +25,8 @@ import {
 import { errorKind } from "@/lib/db/error-record";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import {
-  callerBoundTruncationReason,
-  isSourcePartUnavailable,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { generateTableQuery } from "@/lib/query-generators";
 import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";

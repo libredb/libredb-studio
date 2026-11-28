@@ -8,7 +8,7 @@
  *
  * Pure: it receives the answers and never a client.
  */
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type { ObjectSourcePart } from "@/lib/db/types";
 import { WEAVIATE_BOUNDS } from "@/lib/languages/weaviateapi/routes";
 import type { WeaviateClass } from "./schema";

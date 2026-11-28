@@ -5,7 +5,7 @@
  * caller's bound through the shared helper.
  */
 import { describe, expect, test } from "bun:test";
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import { readWeaviateClass } from "@/lib/db/providers/vector/weaviate/schema";
 import {
   COUNT_NOT_READ,

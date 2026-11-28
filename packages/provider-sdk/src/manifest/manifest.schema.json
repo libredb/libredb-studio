@@ -205,14 +205,17 @@
       "additionalProperties": false
     },
     "objectsCalls": {
-      "description": "The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container.",
+      "description": "The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container. source: read the source document of one object of a kind whose object model states it has source.",
       "type": "object",
       "properties": {
         "tree": {
           "$ref": "#/$defs/facetOffer"
+        },
+        "source": {
+          "$ref": "#/$defs/facetOffer"
         }
       },
-      "required": ["tree"],
+      "required": ["tree", "source"],
       "additionalProperties": false
     },
     "maintenanceCalls": {
@@ -3918,7 +3921,7 @@
       "additionalProperties": false
     },
     "objectModel": {
-      "description": "The engine's object model, which an engine whose package offers objects.tree, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none.",
+      "description": "The engine's object model, which an engine whose package offers objects.tree or objects.source, or whose maintenance specs or catalog capture name an object kind, states and every other engine may leave out: the container levels its tree draws, the object kinds its containers hold with what each kind's objects offer, the actions a row offers, and how a container is addressed, named and walked. Every member is required, written as null, false or an empty list where the engine has none.",
       "type": "object",
       "properties": {
         "containerLevels": {

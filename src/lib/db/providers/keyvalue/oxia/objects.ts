@@ -11,7 +11,7 @@
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type {
   DatabaseObject,
   KindCount,

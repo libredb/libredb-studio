@@ -1,5 +1,5 @@
 import { EDIT_BODY_BYTE_LIMIT, planExecutableLength } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type {
   ObjectEditConsequenceClass,
   ObjectEditOutcome,
@@ -17,9 +17,9 @@ import type {
  * NO SERVER IMPORT IN THIS FILE. The browser narrows a HOST's answer with the same predicates the
  * route narrows a provider's answer with, and a predicate that lived beside the plan token would
  * drag `jose` and `node:crypto` into the client bundle. The two VALUE imports above are within
- * that rule and are checked rather than assumed: `object-edit.ts` and `object-kinds.ts` reach
- * `errors.ts` and `api/error-codes.ts` and nothing else, and both are already imported by the
- * client components in `src/components/object-source/`. The rule used to hold BY CONSTRUCTION,
+ * that rule and are checked rather than assumed: `object-edit.ts` and the provider SDK's calls
+ * entry reach the SDK's own source in packages/provider-sdk and nothing else, and both are already
+ * imported by the client components in `src/components/object-source/`. The rule used to hold BY CONSTRUCTION,
  * when every import here was type-only, and now holds by a property of files that grow, so
  * `tests/unit/lib/api/object-edit-wire.test.ts` walks the closure and fails on the first bare
  * value import anywhere in it.

@@ -8,7 +8,7 @@ import {
   isObjectEditUnitShape,
 } from "@/lib/api/object-edit-wire";
 import { EDIT_BODY_BYTE_LIMIT, EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 
 const STEP = { text: "SELECT 1", language: "pgsql", segments: [{ from: "user", start: 0, end: 8 }] };
 const UNIT = { medium: "statement", steps: [STEP] };
@@ -826,12 +826,26 @@ describe("every host-supplied string is bounded", () => {
 // The module's "NO SERVER IMPORT IN THIS FILE" rule, which stopped holding by construction the day
 // this module gained its first two VALUE imports and now holds by a property of the files it reaches
 // (fix round 2). `object-kinds.ts` is a file that grows, so without this a value import added there
-// puts `jose` or `node:crypto` into the client bundle with every other gate green.
+// puts `jose` or `node:crypto` into the client bundle with every other gate green. The provider SDK
+// is this repository's own source too (packages/provider-sdk, the home of the source bounds), so the
+// walk enters it through its package.json exports and holds it to the same rule.
 
 const REPO_ROOT = join(import.meta.dir, "../../../../");
 
 /** Repository-relative and POSIX-spelled, so the closure reads the same on Windows as on Linux. */
 const repoRelative = (file: string): string => relative(REPO_ROOT, file).split(sep).join("/");
+
+const SDK_NAME = "@libredb/provider-sdk";
+const SDK_DIR = join(REPO_ROOT, "packages/provider-sdk");
+const SDK_EXPORTS = (
+  JSON.parse(readFileSync(join(SDK_DIR, "package.json"), "utf8")) as { exports: Record<string, string> }
+).exports;
+
+/** The SDK file an `@libredb/provider-sdk` specifier names through the package's exports, or `undefined`. */
+function sdkFileOf(specifier: string): string | undefined {
+  const target = SDK_EXPORTS[`.${specifier.slice(SDK_NAME.length)}`];
+  return target === undefined ? undefined : join(SDK_DIR, target);
+}
 
 /** The file a specifier names, resolved the way the bundler resolves it, or `undefined`. */
 function moduleFileOf(specifier: string, fromDirectory: string): string | undefined {
@@ -846,9 +860,11 @@ function moduleFileOf(specifier: string, fromDirectory: string): string | undefi
 describe("the wire module's import closure stays free of the server", () => {
   test("no VALUE import anywhere in the closure leaves this repository's own source", () => {
     // Type-only imports are erased and cannot pull a package into a bundle, so only the value ones
-    // are walked. A BARE specifier is what would drag `jose`, `node:crypto` or `next/server` in;
-    // `@/` and relative ones are followed. The closure's answer today is that there are no bare
-    // value imports at all, which is the strongest form of the rule and the clearest failure.
+    // are walked, and a re-export (`export ... from`) is walked as an import, since the SDK's entries
+    // are barrels of them. A BARE specifier is what would drag `jose`, `node:crypto` or `next/server`
+    // in; `@/`, relative and the SDK's own ones are followed. The closure's answer today is that there
+    // are no other bare value imports at all, which is the strongest form of the rule and the clearest
+    // failure.
     const entry = join(REPO_ROOT, "src/lib/api/object-edit-wire.ts");
     const walked = new Set<string>();
     const pending = [entry];
@@ -859,15 +875,17 @@ describe("the wire module's import closure stays free of the server", () => {
       if (walked.has(file)) continue;
       walked.add(file);
       const here = dirname(file);
-      for (const match of readFileSync(file, "utf8").matchAll(/^import\s+(type\s+)?[^;]*?from\s+"([^"]+)";/gm)) {
-        if (match[1] !== undefined) continue;
-        const specifier = match[2] as string;
+      const statements = /^(?:import\s+(type\s+)?[^;]*?|export\s+(type\s+)?(?:\*|\{[^}]*\}))\s+from\s+"([^"]+)";/gm;
+      for (const match of readFileSync(file, "utf8").matchAll(statements)) {
+        if (match[1] !== undefined || match[2] !== undefined) continue;
+        const specifier = match[3] as string;
         const named = `${repoRelative(file)} imports ${specifier}`;
-        if (!specifier.startsWith("@/") && !specifier.startsWith(".")) {
+        const inSdk = specifier === SDK_NAME || specifier.startsWith(`${SDK_NAME}/`);
+        if (!specifier.startsWith("@/") && !specifier.startsWith(".") && !inSdk) {
           external.push(named);
           continue;
         }
-        const resolved = moduleFileOf(specifier, here);
+        const resolved = inSdk ? sdkFileOf(specifier) : moduleFileOf(specifier, here);
         if (resolved === undefined) unresolved.push(named);
         else pending.push(resolved);
       }
@@ -878,11 +896,23 @@ describe("the wire module's import closure stays free of the server", () => {
     // pass for the wrong reason: the two value imports this module's docblock names, and what THEY
     // reach, must all be in it.
     expect([...walked].map(repoRelative).sort()).toEqual([
-      "src/lib/api/error-codes.ts",
+      "packages/provider-sdk/src/calls/answers.ts",
+      "packages/provider-sdk/src/calls/deadline.ts",
+      "packages/provider-sdk/src/calls/define-provider.ts",
+      "packages/provider-sdk/src/calls/env.ts",
+      "packages/provider-sdk/src/calls/freeze.ts",
+      "packages/provider-sdk/src/calls/index.ts",
+      "packages/provider-sdk/src/calls/records.ts",
+      "packages/provider-sdk/src/calls/refusals.ts",
+      "packages/provider-sdk/src/calls/results.ts",
+      "packages/provider-sdk/src/calls/session.ts",
+      "packages/provider-sdk/src/calls/source.ts",
+      "packages/provider-sdk/src/calls/transaction.ts",
+      "packages/provider-sdk/src/calls/types.ts",
+      "packages/provider-sdk/src/errors/index.ts",
+      "packages/provider-sdk/src/values/codec.ts",
       "src/lib/api/object-edit-wire.ts",
-      "src/lib/db/errors.ts",
       "src/lib/db/object-edit.ts",
-      "src/lib/db/object-kinds.ts",
     ]);
   });
 });

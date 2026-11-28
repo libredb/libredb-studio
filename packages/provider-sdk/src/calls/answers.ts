@@ -1,6 +1,6 @@
 /**
- * The host's reading of what a console execute and an object tree call answered (docs/providers/CONTRACT.md, clauses
- * C-48, C-62 and C-112).
+ * The host's reading of what a console execute, an object tree call and an object source call answered
+ * (docs/providers/CONTRACT.md, clauses C-48, C-62, C-112 and C-115).
  *
  * The host passes an execute answer's result list, its first result's columns and row count, its execution time and
  * its warnings on to the caller, so it reads each of them once, here, before it pumps a row: a member that is missing
@@ -16,7 +16,13 @@
  * Each record's form is declared against its SDK type, one entry per member, so a member added to a tree type fails
  * typecheck here until its form names it, as the frame reader's shapes do.
  *
- * Both checks read every member once, with one set of readers. Each list's length is read once, from its own data
+ * The host passes a source answer on whole too, so `checkSourceAnswer` reads it once, here, against the SDK's closed
+ * source document: the request's own path and kind, one to `SOURCE_PART_LIMIT` parts, each one of its three forms, told
+ * apart by an own `unavailable`, every text and sentence filled, every sentence at most `SOURCE_CHARACTER_LIMIT` long,
+ * and no part id twice, each refused at its pointer as `source-answer-unreadable`. A text past the character bound is
+ * not refused: the host cuts it (`boundSourceAnswer`).
+ *
+ * The checks read every member once, with one set of readers. Each list's length is read once, from its own data
  * descriptor, and a length that is no count, or a list longer than its bound, `ANSWER_LIST_MAX` for its member or a
  * `describeMany` request's `limit`, is refused at the list before any item is read; a list's first hole is refused at
  * its index and ends the list's reading, so a sparse list of any length is read in as many steps as it holds items
@@ -29,11 +35,12 @@
  *
  * Each reader reads the answer by its own property descriptors: a getter is never called but refused, an inherited
  * property is never read, and no refusal carries a value of the answer. An optional member present as an own data
- * property whose value is `undefined` reads as absent, in both answers, since the SDK's optional types admit it, and
- * so does a member of another arm of a union in a tree answer; a required member present so is missing.
+ * property whose value is `undefined` reads as absent, in every answer, since the SDK's optional types admit it, and
+ * so does a member of another arm of a union in a tree or a source answer; a required member present so is missing.
  */
 import { isPlainRecord, type OwnRead, pointerTo, readOwn } from "./records";
 import type { CallRefusal } from "./refusals";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "./source";
 import type {
   ColumnSchema,
   Container,
@@ -45,7 +52,11 @@ import type {
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectPartEdit,
   ObjectReadRange,
+  ObjectSourceDocument,
+  ObjectSourcePart,
+  SourceRequest,
   TreeContainersAnswer,
   TreeCountAnswer,
   TreeDescribeAnswer,
@@ -100,7 +111,7 @@ const WARNING_MEMBERS: readonly string[] = Object.freeze(["message", "code", "se
 
 /** Where a reading of an answer puts what it refuses: the rule its check names, and the refusals found so far. */
 interface Refusals {
-  readonly rule: "execute-answer-unreadable" | "tree-answer-unreadable";
+  readonly rule: "execute-answer-unreadable" | "tree-answer-unreadable" | "source-answer-unreadable";
   readonly list: CallRefusal[];
 }
 
@@ -648,4 +659,162 @@ export function checkTreeAnswer<R extends TreeRequest>(
   answer: unknown,
 ): AnswerCheck<TreeAnswerOf<R["action"]>> {
   return checked(answer, treeAnswerRefusals(request, answer));
+}
+
+/** Filled text: text that is not empty and not whitespace only. */
+const filledForm: Form = (value, pointer, out) => {
+  if (typeof value !== "string" || value.trim() === "") refuse(out, pointer);
+};
+
+/** Whether `value` is a sentence of a source document: filled text at most `SOURCE_CHARACTER_LIMIT` long. */
+function isSentence(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "" && value.length <= SOURCE_CHARACTER_LIMIT;
+}
+
+/** A sentence of a source document (`isSentence`). */
+const sentenceForm: Form = (value, pointer, out) => {
+  if (!isSentence(value)) refuse(out, pointer);
+};
+
+/** One of the words `words` has as its own keys: a vocabulary the SDK's types state only as a union. */
+function wordForm(words: Readonly<Record<string, true>>): Form {
+  return (value, pointer, out) => {
+    if (typeof value !== "string" || !Object.hasOwn(words, value)) refuse(out, pointer);
+  };
+}
+
+/** Exactly the value `expected`. */
+function exactlyForm(expected: unknown): Form {
+  return (value, pointer, out) => {
+    if (value !== expected) refuse(out, pointer);
+  };
+}
+
+/** A readable part. */
+type ReadablePart = Extract<ObjectSourcePart, { readonly text: string }>;
+
+/** A readable part's forms, a key per word of the SDK's union, so a word added to it fails typecheck here. */
+const SOURCE_FORMS = Object.freeze<Record<ReadablePart["form"], true>>({ complete: true, partial: true });
+
+/** A readable part's origins, a key per word of the SDK's union, so a word added to it fails typecheck here. */
+const SOURCE_ORIGINS = Object.freeze<Record<ReadablePart["origin"], true>>({
+  stored: true,
+  regenerated: true,
+  rendered: true,
+});
+
+/** A part the engine answers its sentence for: a refusal, or a statement where it is marked so. */
+type SentencePart = Omit<Extract<ObjectSourcePart, { readonly statement: true }>, "statement"> &
+  Partial<Pick<Extract<ObjectSourcePart, { readonly statement: true }>, "statement">>;
+
+/** The SDK's `ObjectPartEdit`: refused with the engine's sentence where it has an own `reason`, offered otherwise. */
+const editForm = chosenForm(
+  [
+    [
+      "reason",
+      armOf<Extract<ObjectPartEdit, { readonly offered: false }>>({
+        offered: required(exactlyForm(false)),
+        reason: required(sentenceForm),
+      }),
+    ],
+  ],
+  armOf<Extract<ObjectPartEdit, { readonly offered: true }>>({ offered: required(exactlyForm(true)) }),
+);
+
+/**
+ * The parts of one source answer: a list of one to `SOURCE_PART_LIMIT` parts, each a readable part or, where it has an
+ * own `unavailable`, the engine's sentence, with `statement` only `true`; each id a sentence no earlier part's id is.
+ * A fresh form for each answer, since it holds the ids it has read.
+ */
+function partListForm(): Form {
+  const ids = new Set<string>();
+  const idForm: Form = (value, pointer, out) => {
+    if (!isSentence(value) || ids.has(value)) {
+      refuse(out, pointer);
+      return;
+    }
+    ids.add(value);
+  };
+  const partForm = chosenForm(
+    [
+      [
+        "unavailable",
+        armOf<SentencePart>({
+          id: required(idForm),
+          label: required(sentenceForm),
+          unavailable: required(sentenceForm),
+          statement: optional(exactlyForm(true)),
+        }),
+      ],
+    ],
+    armOf<ReadablePart>({
+      id: required(idForm),
+      label: required(sentenceForm),
+      text: required(filledForm),
+      language: required(sentenceForm),
+      form: required(wordForm(SOURCE_FORMS)),
+      origin: required(wordForm(SOURCE_ORIGINS)),
+      truncated: optional(
+        recordForm<NonNullable<ReadablePart["truncated"]>>({
+          limit: required(countForm),
+          reason: required(sentenceForm),
+        }),
+      ),
+      edit: optional(editForm),
+    }),
+  );
+  return guarded((value, pointer, out) => {
+    let empty = false;
+    listForm(partForm, SOURCE_PART_LIMIT, true, (length) => {
+      empty = length === 0;
+    })(value, pointer, out);
+    if (empty) refuse(out, pointer);
+  });
+}
+
+/**
+ * The path a source answer names: a list of text exactly the request's `expected` path, its length refused at the list
+ * before any segment is read, and a segment other than the request's refused at its index.
+ */
+function echoedPathForm(expected: readonly string[]): Form {
+  return guarded((value, pointer, out) => {
+    const segments = new Map(expected.map((segment, index) => [pointerTo(pointer, index), segment]));
+    let echoed = true;
+    const segmentForm: Form = (segment, at, into) => {
+      if (echoed && segment !== segments.get(at)) refuse(into, at);
+    };
+    treeListForm(segmentForm, ANSWER_LIST_MAX.path, (length) => {
+      if (length === expected.length) return;
+      echoed = false;
+      refuse(out, pointer);
+    })(value, pointer, out);
+  });
+}
+
+/**
+ * Every way `answer`, what an `objects.source` call answered `request`, is not the SDK's closed source document
+ * (clause C-115), as `source-answer-unreadable` at a pointer into the answer: a plain record of exactly `path`, the
+ * request's path segment by segment (`echoedPathForm`), `kind`, the request's kind, and `parts` (`partListForm`). An
+ * optional member present as an own `undefined` reads as absent, as does a member of another form of a part; a getter
+ * is refused, never called, an inherited property is never read, and no refusal carries a value. A reading that
+ * throws, a revoked Proxy or a trap that throws, is refused at the pointer being read, so this never throws.
+ */
+function sourceAnswerRefusals(request: SourceRequest, answer: unknown): readonly CallRefusal[] {
+  const out: Refusals = { rule: "source-answer-unreadable", list: [] };
+  recordForm<ObjectSourceDocument>({
+    path: required(echoedPathForm(request.path)),
+    kind: required(exactlyForm(request.kind)),
+    parts: required(partListForm()),
+  })(answer, "", out);
+  return out.list;
+}
+
+/**
+ * `answer`, what an `objects.source` call answered `request`, read against the SDK's closed source document
+ * (`sourceAnswerRefusals`): the answer itself, typed as `ObjectSourceDocument`, where nothing is refused, and the
+ * refusals otherwise. A text past `SOURCE_CHARACTER_LIMIT` is read, not refused: `boundSourceAnswer` cuts it. Never
+ * throws.
+ */
+export function checkSourceAnswer(request: SourceRequest, answer: unknown): AnswerCheck<ObjectSourceDocument> {
+  return checked(answer, sourceAnswerRefusals(request, answer));
 }

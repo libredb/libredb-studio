@@ -290,6 +290,25 @@ describe("the object model of every shipped engine", () => {
     expect(refusalsOf(type, activating)).toEqual([
       `object-row-activation-duplicate at /objects/rowActions/${model.rowActions.length + 1}/activates`,
     ]);
+    // The source consistency rule, planted on the first kind: source with no language, a language without source, and
+    // source edits without source.
+    const sourcePlant = (change: Partial<ObjectModel["objectKinds"][number]>) => {
+      const planted = copy(model);
+      planted.objectKinds = [
+        { ...model.objectKinds[0], ...change },
+        ...model.objectKinds.slice(1),
+      ] as ObjectModel["objectKinds"];
+      return refusalsOf(type, planted);
+    };
+    expect(sourcePlant({ hasSource: true, sourceLanguage: null, acceptsSourceEdits: false })).toEqual([
+      "object-source-inconsistent at /objects/objectKinds/0/sourceLanguage",
+    ]);
+    expect(sourcePlant({ hasSource: false, sourceLanguage: "sql", acceptsSourceEdits: false })).toEqual([
+      "object-source-inconsistent at /objects/objectKinds/0/sourceLanguage",
+    ]);
+    expect(sourcePlant({ hasSource: false, sourceLanguage: null, acceptsSourceEdits: true })).toEqual([
+      "object-source-inconsistent at /objects/objectKinds/0/acceptsSourceEdits",
+    ]);
     // The level order rule, planted by reversing a shipped two-level model: the schema then the catalog.
     const twoLevels = projections.find(
       ({ variant, model }) => variant === "census" && model.containerLevels.length === 2,
@@ -300,14 +319,16 @@ describe("the object model of every shipped engine", () => {
     expect(refusalsOf(twoLevels.type, twoLevels.model)).toEqual([]);
     expect(refusalsOf(twoLevels.type, reversed)).toEqual(["object-level-order at /objects/containerLevels"]);
 
-    // In a manifest whose package offers objects.tree, the declaration is admitted with its model and refused without.
+    // In a manifest whose package offers objects.tree and objects.source, the declaration is admitted with its model and
+    // refused without.
     const manifest = (objects: ObjectModel | undefined) => {
       const draft = minimalManifest();
       const declaration: Record<string, unknown> = { ...declarationOf(type) };
       if (objects !== undefined) declaration.objects = objects;
       draft.engines = [declaration];
       (draft.compatibility[0] as { engine: string }).engine = type;
-      (draft.calls as { objects: { tree: string } }).objects.tree = "offered";
+      (draft.calls as { objects: { tree: string; source: string } }).objects.tree = "offered";
+      (draft.calls as { objects: { tree: string; source: string } }).objects.source = "offered";
       const verdict = VALIDATOR.validate(draft);
       return verdict.admitted ? [] : (verdict.refusals as SchemaRefusal[]).map((r) => `${r.rule} at ${r.pointer}`);
     };

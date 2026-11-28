@@ -95,8 +95,8 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,

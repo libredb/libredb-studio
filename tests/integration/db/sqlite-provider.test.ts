@@ -43,13 +43,13 @@ import {
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import { SQLITE_OPEN_BUSY_TIMEOUT_MS, SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   containerDepth,
   declaredKinds,
   isCountUnavailable,
   isSourcePartUnavailable,
   kindHasColumns,
-  sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { flattenTree } from "@/components/object-tree/flatten";
 import type { SQLiteDatabase, SQLiteStatement } from "@/lib/db/providers/sql/sqlite-driver";

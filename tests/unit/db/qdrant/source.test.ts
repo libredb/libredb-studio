@@ -5,7 +5,7 @@
  * tests/fixtures/qdrant-surface/ produce, never the abridged example of the design.
  */
 import { describe, expect, test } from "bun:test";
-import { sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import { readQdrantPayloadSample } from "@/lib/db/providers/vector/qdrant/sample";
 import { readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
 import {

@@ -100,6 +100,7 @@ import type {
   ObjectSourceDocument,
   ObjectSourcePart,
 } from "@/lib/db/types";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   callerBoundTruncationReason,
   declaredKinds,
@@ -112,7 +113,6 @@ import {
   kindAcceptsSourceEdits,
   kindHasColumns,
   relationKindIds,
-  sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 // The SAME key the providers and the joins use. A helper keying paths its own way could
 // certify a provider whose own reader disagrees with it about what one path is.

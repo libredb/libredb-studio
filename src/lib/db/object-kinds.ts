@@ -677,70 +677,10 @@ export function isSourcePartStatement(
   );
 }
 
-/** The default per-part character bound the source route applies when a caller names none. */
-export const SOURCE_CHARACTER_LIMIT = 1_000_000;
-
-/**
- * The most parts one document may carry before the route refuses it.
- *
- * The tuple type has no upper bound and the shipped maximum is two (an Oracle or MariaDB
- * package), but the embedded seam takes its document from a HOST outside our compiler, so the
- * real response size is `SOURCE_CHARACTER_LIMIT` times `parts.length` unless something bounds
- * the count. Four times the largest shape any engine produces, so no correct provider can
- * reach it.
- */
-export const SOURCE_PART_LIMIT = 8;
-
-/**
- * The ONE sentence a caller's source bound is reported with (#789 Phase 2).
- *
- * A function beside `callerBoundTruncationReason` rather than a reuse of it: the two bound
- * different things and the existing sentence names objects. One place for the same reason that
- * one records, which is that eleven implementers wrote three unrelated phrasings for one event
- * before it was written down.
- */
-export function sourceBoundTruncationReason(limit: number): string {
-  return `the source read was bounded at ${limit.toLocaleString("en-US")} characters by its caller`;
-}
-
-/**
- * One part's text under a caller's bound, with the mark the bound owes (#789 Phase 2).
- *
- * Hoisted here rather than written sixteen times, on the evidence that `comparePaths` was
- * written four times before anyone owned it. An exact answer is NEVER marked, which is the
- * rule `sampledFrom` already follows verbatim, because marking one teaches a reader to
- * discount every mark.
- */
-export function applySourceBound(
-  text: string,
-  limit: number | undefined,
-): {
-  readonly text: string;
-  readonly truncated?: { readonly limit: number; readonly reason: string };
-} {
-  if (limit === undefined || text.length <= limit) return { text };
-  const cut = text.slice(0, limit);
-  // The bound counts UTF-16 CODE UNITS, so it can land BETWEEN the two halves of a surrogate
-  // pair, and an astral character is exactly that: a PL/pgSQL body or a Lua library holding an
-  // emoji, cut at that offset, would end in an unpaired high surrogate. That is not a
-  // character, JSON serializes it as a lone escape and Monaco draws a replacement glyph, so
-  // the pair is dropped whole. The last unit of the cut can only BE a high surrogate when its
-  // low half sits at `limit` in the original, because this arm runs only when the text is
-  // longer than the bound. `truncated.limit` still names the CALLER's number rather than the
-  // emitted length: the bound is what was asked for, and reporting anything else describes a
-  // bound nobody set.
-  const last = cut.charCodeAt(cut.length - 1);
-  const kept = last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
-  return {
-    text: kept,
-    truncated: { limit, reason: sourceBoundTruncationReason(limit) },
-  };
-}
-
 /**
  * The entry guard every `readObjectSource` opens with, in ONE place (#789 Phase 2).
  *
- * Hoisted in the same spirit as `applySourceBound` above it and for the same measured reason
+ * Hoisted in the same spirit as the provider SDK's `applySourceBound` and for the same measured reason
  * standing ruling 5h gives for `comparePaths`: this preamble was written NINE times, verbatim,
  * across `sqlite`, `libsql`, `clickhouse`, `cassandra`, `trino`, `postgres`, `mssql`, `mysql`
  * and `duckdb`, and SonarCloud's duplication report on PR #820 named one of its copies as a

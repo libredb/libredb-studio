@@ -16,8 +16,8 @@ import type {
   ObjectSourceDocument,
   ProviderCapabilities,
 } from "@/lib/db/types";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,

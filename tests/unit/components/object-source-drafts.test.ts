@@ -8,7 +8,7 @@ import {
   writeDraft,
   type SourceDraft,
 } from "@/components/object-source/source-drafts";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectEditRevision } from "@/lib/db/types";
 import { holdWorkspaceOwner } from "@/lib/config/base-path";
 import { WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";

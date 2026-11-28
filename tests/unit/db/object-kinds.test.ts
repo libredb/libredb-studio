@@ -1,5 +1,12 @@
 import { describe, test, expect } from "bun:test";
+import {
+  applySourceBound,
+  SOURCE_CHARACTER_LIMIT,
+  SOURCE_PART_LIMIT,
+  sourceBoundTruncationReason,
+} from "@libredb/provider-sdk/calls";
 import { QueryError } from "@/lib/db/errors";
+import * as objectKinds from "@/lib/db/object-kinds";
 import type {
   ContainerLevelSpec,
   KindCount,
@@ -30,10 +37,6 @@ import {
   kindHasSource,
   isSourcePartUnavailable,
   isSourcePartStatement,
-  applySourceBound,
-  sourceBoundTruncationReason,
-  SOURCE_CHARACTER_LIMIT,
-  SOURCE_PART_LIMIT,
   requireSourceKind,
   kindAcceptsSourceEdits,
   requireEditableKind,
@@ -586,8 +589,15 @@ describe("the source bounds", () => {
     expect(SOURCE_CHARACTER_LIMIT).toBe(1_000_000);
   });
 
-  test("the part bound is four times the largest shape any engine in the fleet produces", () => {
+  test("the part bound is twice the largest shape any engine in the fleet produces", () => {
     expect(SOURCE_PART_LIMIT).toBe(8);
+  });
+
+  // object-kinds.ts is in the VS Code extension's host bundle, which never carries workspace package code
+  // (vscode-extension/scripts/bundle-checks.mjs), so the bounds are read from the SDK and never through it.
+  test("object-kinds states no source bound, reason or bound helper, so every reader imports the SDK's", () => {
+    const stated = ["SOURCE_CHARACTER_LIMIT", "SOURCE_PART_LIMIT", "sourceBoundTruncationReason", "applySourceBound"];
+    expect(stated.filter((name) => name in objectKinds)).toEqual([]);
   });
 
   test("the bound sentence names the number and the caller", () => {

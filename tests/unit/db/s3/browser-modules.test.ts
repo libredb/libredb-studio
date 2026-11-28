@@ -1,8 +1,9 @@
 /**
  * The S3 modules shipped to the browser: every browser-safe module of the provider's core and of the object preview
- * imports only another member of this table, a browser-safe console module, the shared console modules, the four
+ * imports only another member of this table, a browser-safe console module, the shared console modules, the five
  * engine-neutral shared modules and types; never a server module, a Node built-in or `encoding`, `connection-options`
- * or `endpoint`; and none names `Buffer`. Each shared module, with its value imports transitively within src/lib,
+ * or `endpoint`; and none names `Buffer`. Each shared module, with its value imports transitively within src/lib and
+ * the provider SDK's source,
  * imports no Node built-in and names no `Buffer`. Proven both ways: the real sources pass, and each planted import
  * fails by name. The console's and the editor's own modules have their rows in the console describe of this file.
  */
@@ -13,6 +14,12 @@ import ts from "typescript";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const S3 = "src/lib/db/providers/objectstore/s3";
+const SDK_NAME = "@libredb/provider-sdk";
+/** The provider SDK's directory, repository-relative; its entries are the `exports` of its package.json. */
+const SDK_DIR = "packages/provider-sdk";
+const SDK_EXPORTS = (
+  JSON.parse(readFileSync(join(ROOT, SDK_DIR, "package.json"), "utf8")) as { exports: Record<string, string> }
+).exports;
 
 /** A path with Windows separators turned to "/", so a path built on any platform compares against this file's tables. */
 function posixPath(file: string): string {
@@ -49,6 +56,8 @@ const CONSOLE_IMPORTABLE = new RegExp(
 /** The engine-neutral shared modules a browser-safe module may import. */
 const SHARED_MODULES: readonly string[] = [
   "@/lib/db/object-kinds",
+  // The provider SDK's calls entry, the home of the source bounds and the bound helper (clause C-115).
+  "@libredb/provider-sdk/calls",
   "@/lib/db/utils/json-integers",
   "@/lib/db/utils/result-fields",
   "@/lib/db/errors",
@@ -83,6 +92,10 @@ function valueImports(source: string): string[] {
 /** The repository-relative file a specifier names, or undefined for a package or a Node built-in. */
 function resolveModule(fromFile: string, specifier: string): string | undefined {
   let base: string;
+  if (specifier.startsWith(`${SDK_NAME}/`)) {
+    const target = SDK_EXPORTS[`.${specifier.slice(SDK_NAME.length)}`];
+    return target === undefined ? undefined : posixPath(join(SDK_DIR, target));
+  }
   if (specifier.startsWith("@/")) base = join(ROOT, "src", specifier.slice(2));
   else if (specifier.startsWith(".")) base = resolve(dirname(join(ROOT, fromFile)), specifier);
   else return undefined;
@@ -117,7 +130,10 @@ function findings(file: string, source: string): string[] {
   return found;
 }
 
-/** A shared module and its value imports, transitively within src/lib: any Node built-in or Buffer it reaches. */
+/**
+ * A shared module and its value imports, transitively within src/lib and the provider SDK's source: any Node built-in
+ * or Buffer it reaches.
+ */
 function sharedFindings(specifier: string): string[] {
   const start = resolveModule("src/module.ts", specifier) as string;
   const seen = new Set<string>();
@@ -135,7 +151,7 @@ function sharedFindings(specifier: string): string[] {
         continue;
       }
       const target = resolveModule(file, imported);
-      if (target?.startsWith("src/lib/")) queue.push(target);
+      if (target?.startsWith("src/lib/") || target?.startsWith(`${SDK_DIR}/`)) queue.push(target);
     }
   }
   return found;

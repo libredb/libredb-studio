@@ -6,10 +6,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { SOURCE_PART_LIMIT, applySourceBound, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
-  SOURCE_PART_LIMIT,
   acceptedContainerShapes,
-  applySourceBound,
   containerDepth,
   enumerableKinds,
   findKind,
@@ -19,7 +18,6 @@ import {
   type ObjectKindView,
   type ObjectModelView,
   renderContainerShapes,
-  sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
 import type {
@@ -654,7 +652,7 @@ export function requireSourceReader(
  * KEPT and joined rather than replaced: a second bound is a second fact.
  *
  * `parts.length` is bounded too, because the tuple type has no upper bound and the real response
- * size is `limit` times the part count. `SOURCE_PART_LIMIT` is four times the largest shape any
+ * size is `limit` times the part count. `SOURCE_PART_LIMIT` is twice the largest shape any
  * engine in the fleet produces, so no correct provider can reach it and a provider that does is a
  * defect rather than a database fact.
  *

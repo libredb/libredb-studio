@@ -24,7 +24,7 @@
  */
 import { QueryError } from "@/lib/db/errors";
 import { EDIT_CHARACTER_LIMIT } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import type {
   DatabaseType,
   ObjectEditBuild,

@@ -81,8 +81,8 @@ import {
   measureRowBytes,
   rowBudgetSentence,
 } from "@/lib/db/read-only-budget";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,

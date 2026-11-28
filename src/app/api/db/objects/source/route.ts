@@ -6,7 +6,7 @@ import {
   requireSourceReader,
   requireString,
 } from "@/lib/api/object-route";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import { scrubSourceDocument } from "@/lib/db/operations/provider-text";
 import { bridgedObjectModel } from "@/lib/provider-host/legacy-bridge";
 

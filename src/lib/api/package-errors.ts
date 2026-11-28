@@ -64,6 +64,8 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "request-panel-not-offered": "studio",
   "request-level-not-stated": "studio",
   "request-kind-not-stated": "studio",
+  "request-source-not-stated": "studio",
+  "request-path-not-admitted": "studio",
   "facet-not-offered": "studio",
   "call-deadline-passed": "studio",
   "call-signal-aborted": "studio",
@@ -79,6 +81,7 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "transaction-answer-unreadable": "package",
   "execute-answer-unreadable": "package",
   "tree-answer-unreadable": "package",
+  "source-answer-unreadable": "package",
 });
 
 /** The words that open the message of the error logged for a refusal of what a provider package answered. */

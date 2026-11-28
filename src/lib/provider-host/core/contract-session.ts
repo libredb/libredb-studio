@@ -20,9 +20,9 @@
  *    refusals (clause C-10).
  * 6. The session's calls are `sessionCalls` of the manifest's calls and the refinement, its maintenance
  *    `sessionMaintenance` of the engine's, and it is a read-only statement session exactly when the open policy says
- *    `readOnly` and `sendsStatements` (clause C-78). A session that offers `objects.tree` states the object model the
- *    engine's admitted declaration states, by reference, which the host core holds every tree call to (clause M-89);
- *    one that does not offer it states none, since nothing reads it.
+ *    `readOnly` and `sendsStatements` (clause C-78). A session that offers `objects.tree` or `objects.source` states the
+ *    object model the engine's admitted declaration states, by reference, which the host core holds every tree call to
+ *    (clause M-89); one that offers neither states none, since nothing reads it.
  *
  * `teardownContractSession` tears a session down under the teardown's deadlines (clause C-45): its close under a cleanup
  * context with the package's environment, waited for at most the close deadline, with no rollback step, since a contract
@@ -179,7 +179,8 @@ function narrowed(
 /**
  * The session over `handle` of `impl`, with `calls`, `maintenance` and `panels` as narrowed for it: each member present
  * exactly when `calls` offers it, each calling the package's function as a method of the object that holds it, and
- * `objectModel`, the declaration's, beside `tree` where the declaration states one.
+ * `objectModel`, the declaration's, where the declaration states one and `calls` offers `objects.tree` or
+ * `objects.source`.
  */
 function bindSession(
   impl: ProviderImpl<unknown>,
@@ -207,9 +208,13 @@ function bindSession(
     ...(offered(checkConsoleFacet(calls, "transaction")) && {
       transaction: (request, ctx) => consoleImpl.transaction?.(handle, request, ctx),
     }),
+    ...((offered(checkObjectsFacet(calls, "tree")) || offered(checkObjectsFacet(calls, "source"))) &&
+      objectModel !== undefined && { objectModel }),
     ...(offered(checkObjectsFacet(calls, "tree")) && {
-      ...(objectModel !== undefined && { objectModel }),
       tree: (request, ctx) => objects?.tree?.(handle, request, ctx),
+    }),
+    ...(offered(checkObjectsFacet(calls, "source")) && {
+      source: (request, ctx) => objects?.source?.(handle, request, ctx),
     }),
     ...(offered(checkMaintenanceFacet(calls, "run")) && {
       run: (request, ctx) => maintenanceImpl?.run?.(handle, request, ctx),

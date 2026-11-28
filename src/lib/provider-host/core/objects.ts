@@ -35,6 +35,8 @@ import {
   checkTreeRequest,
   freezeContext,
   freezeData,
+  type ObjectSourceDocument,
+  type SourceRequest,
   type TreeAnswer,
   type TreeAnswerOf,
   type TreeRequest,
@@ -53,13 +55,18 @@ import {
 
 /**
  * One session as the host core calls its object facets: its calls, the object model its engine is read through, and its
- * tree function with the handle already bound.
+ * tree and source functions with the handle already bound.
  */
 export interface ObjectsSession {
   readonly calls: Calls;
-  /** The engine's object model the session's tree is read through; present exactly when the session offers `objects.tree`. */
+  /**
+   * The engine's object model the session's tree and source are read through; present where the session offers
+   * `objects.tree` or `objects.source`.
+   */
   readonly objectModel?: ObjectModel;
   tree?(request: TreeRequest, ctx: CallContext): Promise<TreeAnswer>;
+  /** The engine's source read (clause C-115); present exactly when the session offers `objects.source`. */
+  source?(request: SourceRequest, ctx: CallContext): Promise<ObjectSourceDocument>;
 }
 
 /** A tree call that answered: the session's own answer, by reference, in the form its request's action answers. */

@@ -416,6 +416,9 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ],
     ["objects.tree", "answer", { details: [objectDetail()], truncated: { limit: 1, reason: marker() } }],
     ["objects.tree", "answer", { details: [] }],
+    ["objects.source", "context", { deadline: 1 }],
+    ["objects.source", "request", { path: [marker(), ""], kind: "routine" }],
+    ["objects.source", "answer", { path: [marker()], kind: "routine", parts: sourceParts() }],
     ["maintenance.run", "context", { deadline: 1 }],
     ["maintenance.run", "request", { operation: "vacuum", target: marker(), container: marker() }],
     ["maintenance.run", "request", { operation: "kill", target: "4711" }],
@@ -456,6 +459,33 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
       },
     ],
     ["result.next", "answer", { rows: [], done: false }],
+  ];
+}
+
+/** A source document's parts, one of each form, every optional member of a readable part present in one of them. */
+function sourceParts(): Json[] {
+  return [
+    {
+      id: marker(),
+      label: marker(),
+      text: marker(),
+      language: "sql",
+      form: "complete",
+      origin: "stored",
+      truncated: { limit: 10, reason: marker() },
+      edit: { offered: false, reason: marker() },
+    },
+    {
+      id: marker(),
+      label: marker(),
+      text: marker(),
+      language: "sql",
+      form: "partial",
+      origin: "rendered",
+      edit: { offered: true },
+    },
+    { id: marker(), label: marker(), unavailable: marker() },
+    { id: marker(), label: marker(), unavailable: marker(), statement: true },
   ];
 }
 
@@ -504,6 +534,9 @@ describe("readFrame", () => {
       "objects.tree context",
       "objects.tree request",
       "objects.tree answer",
+      "objects.source context",
+      "objects.source request",
+      "objects.source answer",
       "maintenance.run context",
       "maintenance.run request",
       "maintenance.run answer",
@@ -1209,6 +1242,85 @@ describe("readFrame", () => {
       missing("/truncated/reason", "reason"),
     ]);
     expect(reads).toBe(0);
+  });
+
+  test("a source request and a source answer cross as their closed shapes, each part one of its three forms", () => {
+    const request = (value: unknown) => readFrame("objects.source", "request", value);
+    const answer = (value: unknown) => readFrame("objects.source", "answer", value);
+    const unreadable = (part: FramePart, pointer: string) =>
+      refusal("frame-value-unreadable", "objects.source", part, pointer);
+    const unknown = (part: FramePart, pointer: string, key: string) =>
+      refusal("frame-key-unknown", "objects.source", part, pointer, key);
+    const missing = (part: FramePart, pointer: string, key: string) =>
+      refusal("frame-key-missing", "objects.source", part, pointer, key);
+    const [readable, , refused, statement] = sourceParts();
+    const document = (parts: unknown[]) => ({ path: [marker()], kind: "routine", parts });
+
+    expect(request({ path: [], kind: "routine" })).toEqual([]);
+    expect(request({ path: "a", kind: 1, limit: 1 })).toEqual([
+      unreadable("request", "/path"),
+      unreadable("request", "/kind"),
+      unknown("request", "/limit", "limit"),
+    ]);
+    expect(request({ path: [1] })).toEqual([unreadable("request", "/path/0"), missing("request", "/kind", "kind")]);
+
+    // The frame reader reads shapes only: an empty part list, an empty text and another object's path are the host's
+    // answer check's to refuse.
+    expect(answer({ path: [], kind: marker(), parts: [] })).toEqual([]);
+    expect(answer(document([{ ...readable, text: "" }]))).toEqual([]);
+    expect(answer({ kind: "routine", parts: {}, extra: 1 })).toEqual([
+      unreadable("answer", "/parts"),
+      unknown("answer", "/extra", "extra"),
+      missing("answer", "/path", "path"),
+    ]);
+    // A part is read as the form its keys name: the engine's sentence with or without a statement, or a readable text.
+    expect(answer(document([{ ...readable, unavailable: marker() }]))).toEqual([
+      unknown("answer", "/parts/0/text", "text"),
+      unknown("answer", "/parts/0/language", "language"),
+      unknown("answer", "/parts/0/form", "form"),
+      unknown("answer", "/parts/0/origin", "origin"),
+      unknown("answer", "/parts/0/truncated", "truncated"),
+      unknown("answer", "/parts/0/edit", "edit"),
+    ]);
+    expect(
+      answer(
+        document([
+          { ...statement, statement: "true" },
+          { ...refused, text: marker() },
+        ]),
+      ),
+    ).toEqual([unreadable("answer", "/parts/0/statement"), unknown("answer", "/parts/1/text", "text")]);
+    expect(answer(document([{ ...readable, statement: true }]))).toEqual([
+      unknown("answer", "/parts/0/statement", "statement"),
+    ]);
+    expect(
+      answer(
+        document([
+          {
+            ...readable,
+            form: "whole",
+            origin: 1,
+            truncated: { limit: "1", reason: marker() },
+            edit: { offered: false },
+          },
+        ]),
+      ),
+    ).toEqual([
+      unreadable("answer", "/parts/0/form"),
+      unreadable("answer", "/parts/0/origin"),
+      unreadable("answer", "/parts/0/truncated/limit"),
+      unreadable("answer", "/parts/0/edit/offered"),
+    ]);
+    expect(answer(document([{ ...readable, edit: { offered: true, reason: marker() } }, null]))).toEqual([
+      unreadable("answer", "/parts/0/edit/offered"),
+      unreadable("answer", "/parts/1"),
+    ]);
+    expect(answer(document([{ id: marker(), label: marker() }]))).toEqual([
+      missing("answer", "/parts/0/text", "text"),
+      missing("answer", "/parts/0/language", "language"),
+      missing("answer", "/parts/0/form", "form"),
+      missing("answer", "/parts/0/origin", "origin"),
+    ]);
   });
 
   test("a containers answer may carry needsConfiguration as text, read as part of its closed shape", () => {

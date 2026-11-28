@@ -28,12 +28,8 @@ import {
   type CouchbaseHttpTransportDeps,
 } from "@/lib/db/providers/document/couchbase/http-transport";
 import { type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
-import {
-  declaredKinds,
-  isSourcePartUnavailable,
-  kindHasColumns,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { declaredKinds, isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";

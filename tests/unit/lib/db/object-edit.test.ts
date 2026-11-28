@@ -11,7 +11,7 @@ import {
   pinnedSessionValue,
   planExecutableLength,
 } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectEditConsequenceClass, ObjectEditOutcome, ObjectEditPlan, ObjectEditRefusal } from "@/lib/db/types";
 
 const PLAN: ObjectEditPlan = {

@@ -65,7 +65,8 @@ import {
   QueryError,
   RefusedBeforeSendError,
 } from "@/lib/db/errors";
-import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { comparePaths } from "@/lib/db/object-path";

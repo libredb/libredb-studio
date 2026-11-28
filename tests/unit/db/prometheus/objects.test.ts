@@ -15,6 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import { flattenTree } from "@/components/object-tree/flatten";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
+import { SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   assertObjectPathShape,
   callerBoundTruncationReason,
@@ -24,8 +25,6 @@ import {
   kindAcceptsSourceEdits,
   kindHasColumns,
   type ObjectPathShapeEngine,
-  SOURCE_PART_LIMIT,
-  sourceBoundTruncationReason,
   isCountSampled,
 } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";

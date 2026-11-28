@@ -44,8 +44,8 @@ import {
   type ObjectSourceDocument,
   type ObjectSourcePart,
 } from "../../types";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   callerBoundTruncationReason,
   containerDepth,

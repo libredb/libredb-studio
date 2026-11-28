@@ -145,7 +145,7 @@ import {
 } from "@/components/object-source";
 import { DRAFT_KEY, draftKeyFor, readDraft } from "@/components/object-source/source-drafts";
 import { NOT_OFFERED_SENTENCE } from "@/components/object-source/source-editable";
-import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@libredb/provider-sdk/calls";
 import { pathKey } from "@/lib/db/object-path";
 import type {
   ObjectEditPlan,

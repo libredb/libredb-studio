@@ -64,7 +64,12 @@ import type {
   KindCount as SdkKindCount,
   ObjectDetail as SdkObjectDetail,
   ObjectDetailBatch as SdkObjectDetailBatch,
+  ObjectPartEdit as SdkObjectPartEdit,
   ObjectReadRange as SdkObjectReadRange,
+  ObjectSourceDocument as SdkObjectSourceDocument,
+  ObjectSourceForm as SdkObjectSourceForm,
+  ObjectSourceOrigin as SdkObjectSourceOrigin,
+  ObjectSourcePart as SdkObjectSourcePart,
   ObjectsFacet,
   OpenContext,
   OpenPolicy,
@@ -124,8 +129,13 @@ import type {
   MonitoringOptions,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectPartEdit,
   ObjectReadOptions,
   ObjectReadRange,
+  ObjectSourceDocument,
+  ObjectSourceForm,
+  ObjectSourceOrigin,
+  ObjectSourcePart,
   OpenQueryTransactionOutcome,
   PerformanceMetrics,
   PoolConfig,
@@ -1178,6 +1188,44 @@ describe("the call surface census", () => {
     expect(keys).toEqual([true, true, true, true, true, true, true, true]);
     expect(answers).toEqual([true, true, true, true, true, true]);
     expect(back).toEqual([containers, counts, objects, detail, batch]);
+  });
+
+  test("the object source document is Studio's own shape", () => {
+    const parity: [
+      Mutual<SdkObjectSourceForm, ObjectSourceForm>,
+      Mutual<SdkObjectSourceOrigin, ObjectSourceOrigin>,
+      Mutual<SdkObjectPartEdit, ObjectPartEdit>,
+      Mutual<SdkObjectSourcePart, ObjectSourcePart>,
+      Mutual<SdkObjectSourceDocument, ObjectSourceDocument>,
+      Mutual<SdkObjectSourceDocument, Awaited<ReturnType<NonNullable<DatabaseProvider["readObjectSource"]>>>>,
+    ] = [true, true, true, true, true, true];
+    const keys: [SameKeys<SdkObjectSourceDocument, ObjectSourceDocument>] = [true];
+
+    // A sample of each part form crosses both ways.
+    const document: ObjectSourceDocument = {
+      path: ["public", "order_total"],
+      kind: "function",
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: "CREATE FUNCTION order_total() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
+          language: "sql",
+          form: "complete",
+          origin: "regenerated",
+          truncated: { limit: 10, reason: "bounded" },
+          edit: { offered: false, reason: "must be owner of function order_total" },
+        },
+        { id: "body", label: "Body", unavailable: "permission denied" },
+        { id: "note", label: "Note", unavailable: "nothing is read here", statement: true },
+      ],
+    };
+    const sdk: SdkObjectSourceDocument = document;
+    const back: ObjectSourceDocument = sdk;
+
+    expect(parity).toEqual([true, true, true, true, true, true]);
+    expect(keys).toEqual([true]);
+    expect(back).toBe(document);
   });
 
   test("every member of today's maintenance surface has a place in the maintenance calls or the open answer", () => {

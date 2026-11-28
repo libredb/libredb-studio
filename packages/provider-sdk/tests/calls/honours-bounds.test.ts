@@ -49,7 +49,7 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
         endScope: "offered",
         transaction: "offered",
       },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     };

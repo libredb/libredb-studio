@@ -5,7 +5,7 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import { S3_PREVIEW_LIMITS, S3_TYPE, type S3PreviewLimits } from "./constants";
 import { buildRows } from "./preview-cells";
 import { csvRows, type RowsInput, type RowsOutcome } from "./preview-csv";

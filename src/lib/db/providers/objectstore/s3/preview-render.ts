@@ -3,7 +3,7 @@
  * only the provider's browser-safe modules, the shared console modules, the engine-neutral shared modules and types.
  * Every preview sentence is one literal here; the console's `--max-rows` refusal imports it.
  */
-import { applySourceBound, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { applySourceBound, SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectSourcePart } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { S3_SHOWN_NAME_CHARS } from "./constants";

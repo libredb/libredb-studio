@@ -36,7 +36,7 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
   if (name === "checkRefinement") {
     const declared = {
       console: { execute: { honours: [] }, cancel: "offered", endScope: "offered", transaction: "offered" },
-      objects: { tree: "offered" },
+      objects: { tree: "offered", source: "offered" },
       maintenance: { run: "offered", preview: "offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     };

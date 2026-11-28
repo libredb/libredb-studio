@@ -29,7 +29,8 @@
  * `readObjectSource` among them, since the budget never cuts a definition's one row but only keeps or drops it.
  */
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   Container,
   DatabaseObject,

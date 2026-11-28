@@ -60,8 +60,8 @@ import {
   type ObjectPartEdit,
   type ObjectSourceForm,
 } from "../../types";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,

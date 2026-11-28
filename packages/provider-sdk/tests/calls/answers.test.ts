@@ -1,9 +1,9 @@
 /**
  * The host reads what a console execute answered, once, before it pumps a row, and refuses by name a member it cannot
  * read (docs/providers/CONTRACT.md, clause C-112); it reads what a tree call answered against its action's form the
- * same way (clause C-62).
+ * same way (clause C-62), and what a source call answered against the SDK's closed source document (clause C-115).
  *
- * Each case hands `checkExecuteAnswer` or `checkTreeAnswer` one answer and asserts the exact refusal list: a pointer
+ * Each case hands `checkExecuteAnswer`, `checkTreeAnswer` or `checkSourceAnswer` one answer and asserts the exact refusal list: a pointer
  * into the answer, the key where the answer has one it cannot have, and never a value of the answer. A getter is planted
  * where a member is read and counts its calls, so a case shows it was never called. Every planted value is generated at
  * run time.
@@ -17,7 +17,11 @@ import {
   CallRefusalError,
   callRefusalSentence,
   checkExecuteAnswer,
+  checkSourceAnswer,
   checkTreeAnswer,
+  SOURCE_CHARACTER_LIMIT,
+  SOURCE_PART_LIMIT,
+  type SourceRequest,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 
@@ -1001,6 +1005,336 @@ describe("checkTreeAnswer", () => {
       expect(
         treeRefusals(requests.containers, { containers: [{ path: listOfLength(length(), reads), name, level: 0 }] }),
       ).toEqual([treeUnreadable("/containers/0/path")]);
+    }
+    expect(reads.count).toBe(0);
+  });
+});
+
+function sourceUnreadable(pointer: string, name?: string): CallRefusal {
+  return name === undefined
+    ? { rule: "source-answer-unreadable", pointer }
+    : { rule: "source-answer-unreadable", pointer, name };
+}
+
+/** The refusals `checkSourceAnswer` answers for `answer` to `request`, none where it reads the answer. */
+function sourceRefusals(request: SourceRequest, answer: unknown): readonly CallRefusal[] {
+  const check = checkSourceAnswer(request, answer);
+  return check.kind === "read" ? [] : check.refusals;
+}
+
+/** A readable part, every optional member present, with `over` replacing its members. */
+function readablePartOf(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: marker(),
+    label: marker(),
+    text: marker(),
+    language: "sql",
+    form: "complete",
+    origin: "stored",
+    truncated: { limit: 10, reason: marker() },
+    edit: { offered: false, reason: marker() },
+    ...over,
+  };
+}
+
+/** A source answer to `request` holding `parts`, with `over` replacing its members. */
+function sourceAnswerOf(
+  request: SourceRequest,
+  parts: readonly unknown[],
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { path: [...request.path], kind: request.kind, parts: [...parts], ...over };
+}
+
+describe("checkSourceAnswer", () => {
+  const request: SourceRequest = { path: [marker(), "", marker()], kind: "routine" };
+
+  test("a source answer outside the SDK's closed form is refused as source-answer-unreadable at its pointer, a key it cannot have named and no value carried", () => {
+    const planted = marker();
+    const extra = `k${marker()}`;
+
+    // An answer that is no plain record is refused once, at the top level.
+    for (const answer of [undefined, null, planted, 1, [], new (class Answer {})()]) {
+      expect(sourceRefusals(request, answer)).toEqual([sourceUnreadable("")]);
+    }
+    // Every member missing, and a key the document cannot have named, an inherited name included.
+    expect(sourceRefusals(request, {})).toEqual([
+      sourceUnreadable("/path"),
+      sourceUnreadable("/kind"),
+      sourceUnreadable("/parts"),
+    ]);
+    const inherited = Object.assign(sourceAnswerOf(request, [readablePartOf()]), { constructor: planted });
+    expect(sourceRefusals(request, { ...sourceAnswerOf(request, [readablePartOf()]), [extra]: planted })).toEqual([
+      sourceUnreadable(`/${extra}`, extra),
+    ]);
+    expect(sourceRefusals(request, inherited)).toEqual([sourceUnreadable("/constructor", "constructor")]);
+
+    // A readable part: each member of the wrong type or outside its vocabulary, and a key it cannot have, named.
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [
+          readablePartOf({
+            id: 1,
+            label: null,
+            text: [],
+            language: 2,
+            form: "whole",
+            origin: "guessed",
+            truncated: { limit: -1, reason: planted, [extra]: planted },
+            edit: { offered: "yes" },
+            [extra]: planted,
+          }),
+        ]),
+      ),
+    ).toEqual([
+      sourceUnreadable("/parts/0/id"),
+      sourceUnreadable("/parts/0/label"),
+      sourceUnreadable("/parts/0/text"),
+      sourceUnreadable("/parts/0/language"),
+      sourceUnreadable("/parts/0/form"),
+      sourceUnreadable("/parts/0/origin"),
+      sourceUnreadable("/parts/0/truncated/limit"),
+      sourceUnreadable(`/parts/0/truncated/${extra}`, extra),
+      sourceUnreadable("/parts/0/edit/offered"),
+      sourceUnreadable(`/parts/0/${extra}`, extra),
+    ]);
+    for (const limit of [1.5, Number.NaN, 2 ** 53, "1", null]) {
+      expect(
+        sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ truncated: { limit, reason: planted } })])),
+      ).toEqual([sourceUnreadable("/parts/0/truncated/limit")]);
+    }
+    // An edit refused with no reason, and one offered with a reason, are neither form of an edit.
+    expect(sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ edit: { offered: false } })]))).toEqual([
+      sourceUnreadable("/parts/0/edit/offered"),
+    ]);
+    expect(
+      sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ edit: { offered: true, reason: planted } })])),
+    ).toEqual([sourceUnreadable("/parts/0/edit/offered")]);
+    // A readable part missing its members.
+    expect(sourceRefusals(request, sourceAnswerOf(request, [{ id: planted, label: planted }]))).toEqual([
+      sourceUnreadable("/parts/0/text"),
+      sourceUnreadable("/parts/0/language"),
+      sourceUnreadable("/parts/0/form"),
+      sourceUnreadable("/parts/0/origin"),
+    ]);
+
+    // A hybrid: a text beside the engine's sentence is read as the refused form, and its text is named.
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [
+          { ...readablePartOf({ truncated: undefined, edit: undefined }), unavailable: planted },
+        ]),
+      ),
+    ).toEqual([
+      sourceUnreadable("/parts/0/text", "text"),
+      sourceUnreadable("/parts/0/language", "language"),
+      sourceUnreadable("/parts/0/form", "form"),
+      sourceUnreadable("/parts/0/origin", "origin"),
+    ]);
+    // A statement is true only, and only beside the engine's sentence.
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [{ id: planted, label: planted, unavailable: planted, statement: "true" }]),
+      ),
+    ).toEqual([sourceUnreadable("/parts/0/statement")]);
+    expect(
+      sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ statement: true, truncated: undefined })])),
+    ).toEqual([sourceUnreadable("/parts/0/statement", "statement")]);
+    // A part that is no plain record, and a part list that is no list.
+    expect(sourceRefusals(request, sourceAnswerOf(request, [null, planted]))).toEqual([
+      sourceUnreadable("/parts/0"),
+      sourceUnreadable("/parts/1"),
+    ]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [], { parts: { 0: readablePartOf() } }))).toEqual([
+      sourceUnreadable("/parts"),
+    ]);
+
+    // No refusal carries a value of the answer.
+    const refusals = [
+      ...sourceRefusals(request, { path: [planted], kind: planted, parts: [{ id: planted, label: planted }] }),
+      ...sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ form: planted, [extra]: planted })])),
+    ];
+    const text = JSON.stringify(refusals) + new CallRefusalError(refusals).message;
+    expect(text).not.toContain(planted);
+    expect(callRefusalSentence(sourceUnreadable("/parts/0/text"))).toBe(
+      'The source answer value at "/parts/0/text" is missing, an accessor, empty, longer than the SDK\'s bound, or not what the provider contract allows there for the request, so Studio did not read it.',
+    );
+    expect(callRefusalSentence(sourceUnreadable("/parts/0/text", "text"))).toBe(
+      'The source answer has the key "text" at "/parts/0/text", which the provider contract does not define there, so Studio did not read it.',
+    );
+  });
+
+  test("a source answer naming another path or kind than its request, no part, more parts than the SDK's bound, an empty text or a sentence past the character bound is refused, and a text past the bound is not", () => {
+    const part = (): Record<string, unknown> => readablePartOf();
+    const [first, , third] = request.path;
+
+    // Another object than the request names: a segment, a shorter or longer path, or another kind.
+    expect(sourceRefusals(request, sourceAnswerOf(request, [part()], { path: [first, "", marker()] }))).toEqual([
+      sourceUnreadable("/path/2"),
+    ]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [part()], { path: [first, ""] }))).toEqual([
+      sourceUnreadable("/path"),
+    ]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [part()], { path: [first, "", third, ""] }))).toEqual([
+      sourceUnreadable("/path"),
+    ]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [part()], { path: [first, 1, third] }))).toEqual([
+      sourceUnreadable("/path/1"),
+    ]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [part()], { kind: "view" }))).toEqual([
+      sourceUnreadable("/kind"),
+    ]);
+
+    // No part, and one more part than the SDK's bound, refused at the list before any part is read.
+    const reads = { count: 0 };
+    expect(sourceRefusals(request, sourceAnswerOf(request, []))).toEqual([sourceUnreadable("/parts")]);
+    expect(
+      sourceRefusals(request, sourceAnswerOf(request, [], { parts: longList(SOURCE_PART_LIMIT + 1, reads) })),
+    ).toEqual([sourceUnreadable("/parts")]);
+    expect(reads.count).toBe(0);
+    const most = Array.from({ length: SOURCE_PART_LIMIT }, () => part());
+    expect(sourceRefusals(request, sourceAnswerOf(request, most))).toEqual([]);
+
+    // An empty or whitespace text, an empty id, label or language, and an empty sentence of the engine's.
+    for (const empty of ["", " \n\t "]) {
+      expect(
+        sourceRefusals(
+          request,
+          sourceAnswerOf(request, [
+            readablePartOf({ id: empty, label: empty, text: empty, language: empty }),
+            { id: marker(), label: marker(), unavailable: empty },
+            readablePartOf({ truncated: { limit: 1, reason: empty }, edit: { offered: false, reason: empty } }),
+          ]),
+        ),
+      ).toEqual([
+        sourceUnreadable("/parts/0/id"),
+        sourceUnreadable("/parts/0/label"),
+        sourceUnreadable("/parts/0/text"),
+        sourceUnreadable("/parts/0/language"),
+        sourceUnreadable("/parts/1/unavailable"),
+        sourceUnreadable("/parts/2/truncated/reason"),
+        sourceUnreadable("/parts/2/edit/reason"),
+      ]);
+    }
+
+    // A sentence past the character bound is refused, since no mark can state its cut; a text past it is not.
+    const over = "x".repeat(SOURCE_CHARACTER_LIMIT + 1);
+    const longest = "x".repeat(SOURCE_CHARACTER_LIMIT);
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [
+          readablePartOf({ id: over, label: over, language: over, text: over }),
+          { id: marker(), label: marker(), unavailable: over, statement: true },
+          readablePartOf({ truncated: { limit: 1, reason: over }, edit: { offered: false, reason: over } }),
+        ]),
+      ),
+    ).toEqual([
+      sourceUnreadable("/parts/0/id"),
+      sourceUnreadable("/parts/0/label"),
+      sourceUnreadable("/parts/0/language"),
+      sourceUnreadable("/parts/1/unavailable"),
+      sourceUnreadable("/parts/2/truncated/reason"),
+      sourceUnreadable("/parts/2/edit/reason"),
+    ]);
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [readablePartOf({ id: longest, label: longest, text: over, truncated: undefined })]),
+      ),
+    ).toEqual([]);
+
+    // A part id an earlier part holds is refused at the later id, whatever the parts' forms.
+    const id = marker();
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [
+          readablePartOf({ id }),
+          { id: marker(), label: marker(), unavailable: marker() },
+          { id, label: marker(), unavailable: marker(), statement: true },
+          readablePartOf({ id }),
+        ]),
+      ),
+    ).toEqual([sourceUnreadable("/parts/2/id"), sourceUnreadable("/parts/3/id")]);
+  });
+
+  test("a getter in a source answer is refused and never called, an optional member present with no value reads as absent, and a well-formed answer of each part form passes", () => {
+    const reads = { count: 0 };
+    const parts = [
+      readablePartOf(),
+      readablePartOf({ form: "partial", origin: "regenerated", truncated: undefined, edit: { offered: true } }),
+      readablePartOf({ origin: "rendered", truncated: undefined, edit: undefined }),
+      { id: marker(), label: marker(), unavailable: marker() },
+      { id: marker(), label: marker(), unavailable: marker(), statement: true },
+    ];
+    const answer = sourceAnswerOf(request, parts);
+    const check: AnswerCheck<unknown> = checkSourceAnswer(request, answer);
+    expect(check).toEqual({ kind: "read", answer });
+    expect(check.kind === "read" && check.answer).toBe(answer);
+    const refused = checkSourceAnswer(request, sourceAnswerOf(request, []));
+    expect(refused).toEqual({ kind: "refused", refusals: [sourceUnreadable("/parts")] });
+
+    // A getter is refused at its pointer, never called: on the document, in its path, on a part, in a part's member.
+    expect(sourceRefusals(request, withAccessor(sourceAnswerOf(request, [readablePartOf()]), "kind", reads))).toEqual([
+      sourceUnreadable("/kind"),
+    ]);
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [readablePartOf()], { path: withAccessor([...request.path], "1", reads, "") }),
+      ),
+    ).toEqual([sourceUnreadable("/path/1")]);
+    expect(
+      sourceRefusals(request, sourceAnswerOf(request, [], { parts: withAccessor([readablePartOf()], "0", reads, {}) })),
+    ).toEqual([sourceUnreadable("/parts/0")]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [withAccessor(readablePartOf(), "text", reads)]))).toEqual([
+      sourceUnreadable("/parts/0/text"),
+    ]);
+    // A getter for the sentence chooses the refused form, which then holds no text.
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [withAccessor({ id: marker(), label: marker() }, "unavailable", reads)]),
+      ),
+    ).toEqual([sourceUnreadable("/parts/0/unavailable")]);
+    expect(reads.count).toBe(0);
+
+    // A hole in the part list is refused once and ends the list.
+    const holed: unknown[] = [readablePartOf()];
+    holed[2] = readablePartOf();
+    expect(sourceRefusals(request, sourceAnswerOf(request, [], { parts: holed }))).toEqual([
+      sourceUnreadable("/parts/1"),
+    ]);
+
+    // An optional member present with no value reads as absent, a member of another form's included.
+    expect(
+      sourceRefusals(
+        request,
+        sourceAnswerOf(request, [
+          readablePartOf({ truncated: undefined, edit: undefined, unavailable: undefined, statement: undefined }),
+          { id: marker(), label: marker(), unavailable: marker(), statement: undefined, text: undefined },
+        ]),
+      ),
+    ).toEqual([]);
+    // A required member present with no value is still missing.
+    expect(sourceRefusals(request, sourceAnswerOf(request, [readablePartOf({ text: undefined })]))).toEqual([
+      sourceUnreadable("/parts/0/text"),
+    ]);
+
+    // A reading that throws is refused at the pointer being read, and the check never throws.
+    expect(sourceRefusals(request, revoked())).toEqual([sourceUnreadable("")]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [revoked()]))).toEqual([sourceUnreadable("/parts/0")]);
+    expect(sourceRefusals(request, sourceAnswerOf(request, [], { parts: onLengthRead([], thrower) }))).toEqual([
+      sourceUnreadable("/parts"),
+    ]);
+    for (const length of nonCountLengths()) {
+      expect(sourceRefusals(request, sourceAnswerOf(request, [], { parts: listOfLength(length(), reads) }))).toEqual([
+        sourceUnreadable("/parts"),
+      ]);
     }
     expect(reads.count).toBe(0);
   });

@@ -11,7 +11,7 @@
  * parts are `partial`: neither is a request Studio's console runs. Pure: objects.ts makes the reads.
  */
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type { DatabaseType, ObjectSourcePart } from "@/lib/db/types";
 import { serverText } from "@/lib/db/utils/server-text";
 import type { DescribeCollectionResponse, WireFieldSchema, WireFunctionSchema, WireIndexDescription } from "./client";

@@ -65,8 +65,8 @@ import {
   TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,

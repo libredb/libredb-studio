@@ -4891,8 +4891,8 @@ describe("the calls segment", () => {
     expect(refusalsFor(manifest((m) => delete m.calls.objects.tree))).toEqual([
       refusal("missing-key", "/calls/objects", "tree"),
     ]);
-    expect(refusalsFor(manifest((m) => (m.calls.objects.source = "offered")))).toEqual([
-      refusal("unknown-key", "/calls/objects", "source"),
+    expect(refusalsFor(manifest((m) => (m.calls.objects.notAFacet = "offered")))).toEqual([
+      refusal("unknown-key", "/calls/objects", "notAFacet"),
     ]);
     expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "maybe")))).toEqual([
       refusal("value-not-allowed", "/calls/objects/tree"),
@@ -4901,6 +4901,15 @@ describe("the calls segment", () => {
       refusal("object-model-missing", "/engines/0"),
     ]);
     expect(refusalsFor(modelled())).toEqual([]);
+  });
+  test("objects that leave out source are refused as missing-key, and a source offer outside the vocabulary as value-not-allowed", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls.objects.source))).toEqual([
+      refusal("missing-key", "/calls/objects", "source"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.source = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/objects/source"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.source = "not-offered")))).toEqual([]);
   });
   test("calls that leave out maintenance, or maintenance that leaves out run or preview, are refused as missing-key", () => {
     expect(refusalsFor(manifest((m) => delete m.calls.maintenance))).toEqual([
@@ -4961,6 +4970,7 @@ describe("the object model", () => {
         schemaDiffScope: "agent-walk",
         maskedNameKinds: ["part"],
       });
+      m.calls.objects.source = "offered";
       objectsOf(m).objectKinds.push(
         objectKind("routine", {
           role: "routine",
@@ -5032,6 +5042,80 @@ describe("the object model", () => {
     expect(refusalsFor(manifest())).toEqual([]);
     expect(refusalsFor(manifest((m) => (m.engines[0].objects = objectModel())))).toEqual([]);
     expect(refusalsFor(modelled((m) => (m.engines[0].objects = null)))).toEqual([refusal("wrong-type", OBJECTS)]);
+  });
+
+  test("a package that offers objects.source states an object model, and each kind's source language and source edits agree with its source", () => {
+    const sourced = (change: (m: Json) => void = () => {}) =>
+      manifest((m) => {
+        m.calls.objects.source = "offered";
+        m.engines[0].objects = objectModel();
+        objectsOf(m).objectKinds.push(
+          objectKind("routine", { role: "routine", hasSource: true, sourceLanguage: "sql" }),
+        );
+        change(m);
+      });
+
+    // A package that offers only objects.source states a model for every engine.
+    expect(refusalsFor(manifest((m) => (m.calls.objects.source = "offered")))).toEqual([
+      refusal("object-model-missing", "/engines/0"),
+    ]);
+    expect(refusalsFor(sourced())).toEqual([]);
+    // A package that offers source with no kind with source is admitted, since one package serves several engines.
+    expect(
+      refusalsFor(manifest((m) => ((m.calls.objects.source = "offered"), (m.engines[0].objects = objectModel())))),
+    ).toEqual([]);
+    // A kind with source states its language; only a kind with source states one or accepts source edits.
+    const inconsistent = sourced((m) => {
+      objectsOf(m).objectKinds[2].sourceLanguage = null;
+      objectsOf(m).objectKinds[0].sourceLanguage = "sql";
+      objectsOf(m).objectKinds[1].acceptsSourceEdits = true;
+    });
+    expect(refusalsFor(inconsistent)).toEqual([
+      refusal("object-source-inconsistent", `${OBJECTS}/objectKinds/0/sourceLanguage`),
+      refusal("object-source-inconsistent", `${OBJECTS}/objectKinds/1/acceptsSourceEdits`),
+      refusal("object-source-inconsistent", `${OBJECTS}/objectKinds/2/sourceLanguage`),
+    ]);
+    // An engine read alone is held to the same rule, at pointers relative to it.
+    expect(validator.validateEngine(inconsistent.engines[0])).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("object-source-inconsistent", "/objects/objectKinds/0/sourceLanguage"),
+        refusal("object-source-inconsistent", "/objects/objectKinds/1/acceptsSourceEdits"),
+        refusal("object-source-inconsistent", "/objects/objectKinds/2/sourceLanguage"),
+      ],
+    });
+    expect(refusalSentence(refusal("object-source-inconsistent", `${OBJECTS}/objectKinds/0/sourceLanguage`))).toBe(
+      `The object kind member at ${OBJECTS}/objectKinds/0/sourceLanguage contradicts the kind's hasSource: a kind with source states its source language, and only a kind with source states one or accepts source edits.`,
+    );
+    expect(refusalSentence(refusal("object-model-missing", "/engines/0"))).toBe(
+      "The engine declaration at /engines/0 states no object model, which an engine of a package that offers objects.tree or objects.source states.",
+    );
+  });
+
+  test("a kind with source in a package that does not offer objects.source is refused at its hasSource", () => {
+    const withSource = (m: Json) =>
+      objectsOf(m).objectKinds.push(
+        objectKind("routine", { role: "routine", hasSource: true, sourceLanguage: "sql" }),
+        objectKind("view", { hasSource: true, sourceLanguage: "sql" }),
+      );
+
+    expect(refusalsFor(modelled(withSource))).toEqual([
+      refusal("object-source-not-offered", `${OBJECTS}/objectKinds/2/hasSource`),
+      refusal("object-source-not-offered", `${OBJECTS}/objectKinds/3/hasSource`),
+    ]);
+    expect(
+      refusalsFor(
+        modelled((m) => {
+          withSource(m);
+          m.calls.objects.source = "offered";
+        }),
+      ),
+    ).toEqual([]);
+    // An engine read alone has no package calls, so it is not held to this rule.
+    expect(validator.validateEngine(modelled(withSource).engines[0]).admitted).toBe(true);
+    expect(refusalSentence(refusal("object-source-not-offered", `${OBJECTS}/objectKinds/2/hasSource`))).toBe(
+      `The object kind at ${OBJECTS}/objectKinds/2/hasSource has source, which an engine reads only through objects.source, and the package does not offer it.`,
+    );
   });
 
   test("a repeated container level id or object kind id is refused at the later one's pointer", () => {
