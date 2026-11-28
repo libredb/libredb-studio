@@ -13,7 +13,7 @@ import * as clientPacks from "@/lib/agent/languages/client";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import type { AgentLanguageClientPack } from "@/lib/agent/languages/pack";
-import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
+import { agentPosture, autoExecuteTerms, noAdapterSentence, startRefusalSentence } from "@/lib/agent/posture";
 import {
   POSTURE_ARMS,
   POSTURE_ENGINES,
@@ -282,6 +282,33 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
     expect(posture.body).toBe(
       `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
     );
+  });
+
+  test("the start refusal names the engine by its label and the operations workflow only where it opens, and the no-adapter sentence where it opens is the legacy posture's body", () => {
+    const spark = { ...manifest.legacyAgentEngine("spark"), displayName: "Apache Spark" };
+    const unread = { ...spark, grants: { ...spark.grants, agentReadings: [] } };
+    const noAdapter = { open: false, cause: "no-adapter" } as const;
+    expect(startRefusalSentence(noAdapter, spark)).toBe(
+      agentPosture({ mode: "agent", engine: "spark", engineLabel: getDBConfig("spark").label, handover: false }).body,
+    );
+    expect(startRefusalSentence(noAdapter, spark)).toBe(noAdapterSentence("Apache Spark", true));
+    expect(startRefusalSentence(noAdapter, unread)).toBe(
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. Plan mode drafts on every engine.`,
+    );
+    for (const engine of [spark, unread]) {
+      const opens = manifest.operationsWorkflowOpens(engine);
+      expect(startRefusalSentence({ open: false, cause: "not-reviewed" }, engine)).toBe(
+        manifest.notReviewedSentence("Apache Spark", opens),
+      );
+      expect(startRefusalSentence({ open: false, cause: "no-statement-session" }, engine)).toBe(
+        manifest.noStatementSessionSentence("Apache Spark", opens),
+      );
+    }
+    for (const cause of ["no-variant", "requirement-unmet"] as const) {
+      expect(startRefusalSentence({ open: false, cause, sentence: "The manifest's own sentence." }, spark)).toBe(
+        "The manifest's own sentence.",
+      );
+    }
   });
 
   test("the hand-over tick cannot unblock an unsupported engine", () => {
@@ -934,6 +961,28 @@ describe("core decides the tone and the headline from the arm and the review rec
         qualifier: "plan mode drafts here",
         title: "Studio has not reviewed agent mode's read-only statement path on MQTT",
         body: manifest.notReviewedSentence("MQTT", false),
+      });
+    } finally {
+      mock.module("@/lib/db/claim-grants", () => real);
+    }
+  });
+
+  test("the unsupported arm on an engine that offers no reading names only plan mode as the way forward", async () => {
+    // Captured as a plain object before the substitution: the namespace itself follows the replacement.
+    const real = { ...grants };
+    try {
+      mock.module("@/lib/db/claim-grants", () => ({
+        ...real,
+        legacyEngineGrants: (id: string) =>
+          id === "spark" ? { ...real.legacyEngineGrants(id), agentReadings: [] } : real.legacyEngineGrants(id),
+      }));
+      const { agentPosture: unread } = await import("@/lib/agent/posture");
+      expect(unread({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false })).toEqual({
+        tone: "blocked",
+        headline: "Cannot execute on Apache Spark",
+        qualifier: "plan mode drafts here",
+        title: "Agent mode has no read-only statement path on Apache Spark",
+        body: noAdapterSentence("Apache Spark", false),
       });
     } finally {
       mock.module("@/lib/db/claim-grants", () => real);

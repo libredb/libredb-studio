@@ -38,7 +38,9 @@
 import {
   type AgentEngine,
   type AgentStatementLanguageId,
+  type AgentWorkflowAvailability,
   legacyAgentEngine,
+  noStatementSessionSentence,
   notReviewedSentence,
   operationsWorkflowOpens,
 } from "@/lib/agent/agent-manifest";
@@ -163,8 +165,9 @@ function planPosture(language: AgentStatementLanguageId | null): AgentPosture {
  * Agent mode on an engine whose provider implements no read-only statement path.
  *
  * Two facts travel with the refusal because leaving either out reads as a dead end: plan
- * mode drafts here, and the `operations` workflow runs here too - it composes no statement
- * at all, so its acquisition never asks the engine for a read-only one.
+ * mode drafts here, and the `operations` workflow runs here too where it opens - it composes no
+ * statement at all, so its acquisition never asks the engine for a read-only one. The body is
+ * `noAdapterSentence`, the start route's refusal, so the strip and the refusal say one thing.
  *
  * The body says the refusal happens AT START, which is what `POST /api/agent/runs` now
  * does: a run whose workflow sends a statement is refused from the connection's own type
@@ -177,14 +180,55 @@ function planPosture(language: AgentStatementLanguageId | null): AgentPosture {
  * bounded by Studio's request allowlist and the identity's RBAC. Each executable engine's
  * own posture names its boundary, so this arm only promises that one is declared.
  */
-function unsupportedPosture(engineLabel: string): AgentPosture {
+function unsupportedPosture(engine: AgentEngine, engineLabel: string): AgentPosture {
+  const operationsOpens = operationsWorkflowOpens(engine);
   return {
     tone: "blocked",
     headline: `Cannot execute on ${engineLabel}`,
-    qualifier: "plan mode drafts here, and the operations workflow still runs",
+    qualifier: operationsOpens
+      ? "plan mode drafts here, and the operations workflow still runs"
+      : "plan mode drafts here",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
-    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(GRANTED_AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
+    body: noAdapterSentence(engineLabel, operationsOpens),
   };
+}
+
+/**
+ * The refusal of a statement-sending run on an engine with no statement language, naming it and the ways forward that
+ * remain on it: the operations workflow only where it opens, `operationsOpens` (`operationsWorkflowOpens`), as
+ * `notReviewedSentence` names it. Every legacy engine with no language opens the operations workflow, since every
+ * legacy engine opens at least one workflow in agent mode (tests/unit/lib/agent/agent-manifest.test.ts), so the
+ * unsupported posture of each says it.
+ */
+export function noAdapterSentence(engineLabel: string, operationsOpens: boolean): string {
+  const refusal = `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(GRANTED_AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened.`;
+  return operationsOpens
+    ? `${refusal} The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`
+    : `${refusal} Plan mode drafts on every engine.`;
+}
+
+/**
+ * The sentence the start route refuses a run with where `workflowAvailability` is closed on `engine`, its engine
+ * record, naming the engine by the record's display name and the operations workflow only where it opens: the
+ * no-adapter sentence for an engine with no language (the unsupported posture's body on a legacy engine), the
+ * not-reviewed sentence, the no-statement-session sentence, and the manifest's own sentence for a missing variant or an
+ * unmet requirement.
+ */
+export function startRefusalSentence(
+  availability: Extract<AgentWorkflowAvailability, { open: false }>,
+  engine: AgentEngine & { readonly displayName: string },
+): string {
+  const operationsOpens = operationsWorkflowOpens(engine);
+  switch (availability.cause) {
+    case "no-adapter":
+      return noAdapterSentence(engine.displayName, operationsOpens);
+    case "not-reviewed":
+      return notReviewedSentence(engine.displayName, operationsOpens);
+    case "no-statement-session":
+      return noStatementSessionSentence(engine.displayName, operationsOpens);
+    default:
+      return availability.sentence;
+  }
 }
 
 /**
@@ -329,7 +373,7 @@ export function agentPosture(input: {
   const language = engine === null ? null : grantedAgentStatementLanguage(engine);
   if (input.mode === "planning") return planPosture(language);
   if (engine === null) return unresolvedPosture();
-  if (language === null) return unsupportedPosture(input.engineLabel);
+  if (language === null) return unsupportedPosture(engine, input.engineLabel);
   if (!engine.grants.agentExecution) return notReviewedPosture(engine, input.engineLabel);
   if (typeof input.refusedHere === "string") {
     return refusedPosture(engine, input.engineLabel, input.refusedHere);
