@@ -285,8 +285,8 @@ export class Neo4jProvider extends GraphBaseProvider {
     return [];
   }
 
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
-    return this.monitored(readActiveSessions);
+  public async getActiveSessions(options?: { limit?: number }): Promise<ActiveSessionDetails[]> {
+    return this.monitored((client, database) => readActiveSessions(client, database, options?.limit));
   }
 
   public async getTableStats(): Promise<TableStats[]> {
