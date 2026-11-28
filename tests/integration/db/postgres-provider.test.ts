@@ -329,6 +329,13 @@ const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
 const { readGrantedHealth, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
+const { objectTree } = await import("@/lib/api/object-tree");
+const { providerTreeTarget } = await import("@/lib/api/session-target");
+
+// The granted health reads and the count reads below go through the process's host core
+// (src/lib/provider-host/instance.ts), so this file composes its own, once.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ============================================================================
 // Helpers
@@ -2648,6 +2655,9 @@ describe("PostgresProvider", () => {
       const seen: string[] = [];
       mockQueryFn = (sql: string) => {
         seen.push(sql);
+        // The count statement answers a row of its own shape: the generic row below has no
+        // `n`, and a count that is not a whole number is refused (`kindCountOf`).
+        if (sql.includes("GROUP BY kind")) return Promise.resolve({ rows: [{ kind: "table", n: 1 }] });
         return defaultMockQuery(sql);
       };
       provider = new PostgresProvider(makePgConfig());
@@ -3621,9 +3631,6 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("the health and slow queries read through the bridge and the host core, in pg's own value types", () => {
-    beforeAll(() => installHostCore(createHostCore(), "test"));
-    afterAll(forgetHostCore);
-
     const grant = () => ({
       deadline: Date.now() + 30_000,
       deadlineSentence: "The granted reading did not answer within its grant.",
@@ -7422,6 +7429,75 @@ describe("object surface", () => {
     expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
     await provider.disconnect();
   });
+
+  /** The counts of `schema` read the way the object browser reads them: through the host core's tree call. */
+  function countsThroughCore(provider: InstanceType<typeof PostgresProvider>, schema: string) {
+    return objectTree(providerTreeTarget(provider), new AbortController().signal, "test").countObjects([schema]);
+  }
+
+  test("an INT8 count pg answers as decimal text is read as its number through the host core", async () => {
+    // CockroachDB's INT is INT8, so `count(*)::int` arrives with OID 20, which pg answers as
+    // decimal text: measured on CockroachDB v26.4.1, `n` came back the string "1".
+    mockQueryFn = async (sql) => {
+      if (sql.includes("GROUP BY kind")) return { rows: [{ kind: "table", n: "1" }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await countsThroughCore(provider, "public");
+    expect(counts.table).toEqual({ count: 1 });
+    expect(counts.view).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("the routine-less retry reads a count answered as decimal text too", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+      }
+      if (sql.includes("GROUP BY kind")) return { rows: [{ kind: "table", n: "2" }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await countsThroughCore(provider, "app");
+    expect(counts.table).toEqual({ count: 2 });
+    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "prokind" does not exist' });
+    await provider.disconnect();
+  });
+
+  // Each value on the first read and on the routine-less retry, which applies its rows apart.
+  test.each([
+    ["past 2^53 - 1", "9007199254740993", "the first read"],
+    ["negative", -1, "the first read"],
+    ["not decimal text", "1e3", "the first read"],
+    ["fractional", 1.5, "the first read"],
+    ["past 2^53 - 1", "9007199254740993", "the routine-less retry"],
+    ["negative", -1, "the routine-less retry"],
+    ["not decimal text", "1e3", "the routine-less retry"],
+    ["fractional", 1.5, "the routine-less retry"],
+  ])(
+    "a count that is not a non-negative safe integer (%s) is refused by name on %s, never filed as unavailable",
+    async (_label, n, read) => {
+      mockQueryFn = async (sql) => {
+        if (read === "the routine-less retry" && sql.includes("prokind")) {
+          throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+        }
+        if (sql.includes("GROUP BY kind")) return { rows: [{ kind: "view", n }] };
+        return { rows: [] };
+      };
+      const provider = makeProvider();
+      await provider.connect();
+      const caught = await countsThroughCore(provider, "public").catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(QueryError);
+      expect((caught as Error).message).toContain(
+        'the count of the kind "view" the server answered is not a non-negative whole number of at most 2^53 - 1',
+      );
+      expect((caught as Error).message).not.toContain(String(n));
+      await provider.disconnect();
+    },
+  );
 });
 
 /**
