@@ -466,7 +466,7 @@ For an engine that states no SQL text, whose register row reviews no grammar, th
 ### M-88 (informative): A package engine's statement language in agent mode and on MCP
 
 A package engine's statement language data (M-85) will be served in agent mode and on MCP only as the engine's register row grants it (M-87).
-Until then agent mode and MCP refuse a package engine's connection as C-107 says, so nothing checks the first sentence yet.
+Until then agent mode refuses a package engine's connection as C-107 says, and MCP serves no package engine's statement language, so nothing checks the first sentence yet.
 
 ### M-89 (normative): An engine's object model is data of its declaration
 
@@ -1212,7 +1212,7 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection, the query route, the object tree's reads and the monitoring, health and pool statistics reads, its session opening through its package (C-109); the object edit and key scan requests, which the contract has no call for yet, refuse it before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+An admitted package's engine is served by Test Connection, the query route, the object tree's reads, the monitoring, health and pool statistics reads and MCP, its session opening through its package (C-109); the object edit and key scan requests, which the contract has no call for yet, refuse it before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
 `PROVIDER_UNAVAILABLE` and `PACKAGE_ENGINE_UNSUPPORTED` are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
 
 ### C-109 (normative): A package's open receives only the context core builds
