@@ -226,7 +226,7 @@
     "@simplewebauthn/server": "^14.0.3",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/react-virtual": "^3.14.10",
-    "@xyflow/react": "^12.11.6",
+    "@xyflow/react": "^13.0.2",
     "@zumer/snapdom": "2.15.0",
     "ajv": "^8.17.1",
     "apache-arrow": "21.2.0",
