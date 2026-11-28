@@ -117,7 +117,7 @@ const mockResolveConnection = mock(async (body: Record<string, unknown>): Promis
  */
 const mockResolveServedConnection = mock(async (body: Record<string, unknown>) => {
   const connection = (await mockResolveConnection(body)) as { type?: unknown };
-  return { connection, engine: connection.type === undefined ? undefined : servedEngineRecord(connection.type) };
+  return { connection, engine: servedEngineRecord(connection.type) };
 });
 
 mock.module("@/lib/seed/resolve-connection", () => ({
@@ -361,15 +361,22 @@ describe("the shared guard", () => {
   });
 
   test("refuses a resolved connection with no type", async () => {
-    const response = await countsRoute.POST(
-      createMockRequest("/api/db/objects/counts", {
-        method: "POST",
-        body: { connection: { id: "x", name: "No type" }, container: ["app"] },
-      }) as never,
+    const body = { connection: { id: "x", name: "No type" }, container: ["app"], path: ["app", "t"], kind: "view" };
+    // The source read's resolve answers the connection as it is, and the handler refuses it.
+    const source = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", { method: "POST", body }) as never,
     );
-
-    expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("Valid connection configuration");
+    expect(source.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(source)).error).toContain("Valid connection configuration");
+    // The served resolve refuses it itself.
+    const counts = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", { method: "POST", body }) as never,
+    );
+    expect(counts.status).toBe(400);
+    expect(await parseResponseJSON(counts)).toMatchObject({
+      code: "PROVIDER_UNKNOWN",
+      error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
+    });
   });
 
   test("maps a provider error through the shared error mapper", async () => {
@@ -3916,7 +3923,7 @@ describe("the tree routes on the metadata session", () => {
     );
   });
 
-  test("handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution", async () => {
+  test("handleObjectRequest opens the editor's provider for the source read and a request the record offers, and the metadata session's tree target for the tree reads, after the guard and the connection's resolution", async () => {
     const probeRoute = "api/db/objects/probe";
     const request = () =>
       createMockRequest(`/${probeRoute}`, { method: "POST", body: { connection } }) as never as Parameters<

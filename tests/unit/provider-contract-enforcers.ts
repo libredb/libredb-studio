@@ -2655,7 +2655,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db-objects.test.ts": [
         "each tree route reads on the connection's metadata session, and the source and edit routes on the editor's",
         "a tree route answers while the editor's provider holds every read, without waiting for it",
-        "handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution",
+        "handleObjectRequest opens the editor's provider for the source read and a request the record offers, and the metadata session's tree target for the tree reads, after the guard and the connection's resolution",
       ],
       "vscode-extension/test/unit/backend-handlers.test.ts": [
         "each tree call reads through the host core's tree call, on the provider of the connection's metadata session",
@@ -3224,7 +3224,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
-        "the edit plan, the edit apply and the key scan refuse a package engine by the record's offer before any open",
       ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",

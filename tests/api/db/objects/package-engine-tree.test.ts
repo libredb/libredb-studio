@@ -18,6 +18,8 @@ import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:te
 import { randomUUID } from "node:crypto";
 import { type CallRefusal, callRefusalSentence, type TreeRequest } from "@libredb/provider-sdk/calls";
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
+import { handleObjectRequest } from "@/lib/api/object-route";
+import { objectTree } from "@/lib/api/object-tree";
 import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { PACKAGE_SENTENCE_WITHHELD, PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
@@ -356,6 +358,40 @@ describe("the object tree's routes on a provider package's engine", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  test("a Studio error after a package engine's open is answered and logged as Studio's own, never as the package's", async () => {
+    const seen = hooksFor(TREE);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // The route's run hands the facade the opened session as stating no object model: a defect of Studio's host
+      // session, raised by `objectTree` after the open and before any tree call of the package's.
+      const answer = await handleObjectRequest(
+        new Request("http://localhost:3000/api/db/objects/probe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ connection: connectionOf(TREE) }),
+        }) as never,
+        "api/db/objects/probe",
+        async (tree) =>
+          objectTree(
+            { ...tree, session: { ...tree.session, objectModel: undefined } },
+            new AbortController().signal,
+            "api/db/objects/probe",
+          ).objectModel,
+        { reads: "tree" },
+      );
+      expect(answer.status).toBe(500);
+      expect(await parseResponseJSON<unknown>(answer)).toEqual({
+        error: "The session offers objects.tree and states no object model, a defect of the host's session.",
+        code: "INTERNAL_ERROR",
+        statusCode: 500,
+      });
+      expect(error.mock.calls.map(([line]) => line)).toEqual(["Unhandled error"]);
+    } finally {
+      error.mockRestore();
+    }
+    expect(names(seen)).toEqual(["open"]);
   });
 
   test("a package engine whose session does not offer objects.tree is refused by the session's offer, not 501", async () => {

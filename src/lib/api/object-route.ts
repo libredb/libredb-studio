@@ -9,6 +9,7 @@ import { resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-c
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import { HostDefectError } from "@/lib/provider-host/access";
 import {
   connectionTextScrub,
   type ProviderTextScrub,
@@ -34,7 +35,6 @@ import {
   type ObjectModelView,
   renderContainerShapes,
 } from "@/lib/db/object-kinds";
-import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
 import type {
   DatabaseConnection,
   DatabaseObject,
@@ -89,10 +89,12 @@ import type { UserPayload } from "@/lib/auth";
  *   waits for the editor's statements except on a connection that serves one session (docs/providers/CONTRACT.md,
  *   clause C-66). A package's session that does not offer `objects.tree` is opened and then refused by the session's
  *   offer when the route builds its tree (`objectTree` in ./object-tree), never as the route-level 501. A failure of
- *   the open and of the run is answered by the record (`packageFailureAnswer` in ./package-errors): a legacy record's
- *   as raised, a package's open failure as a not-sent `ConnectionError`, a refusal of what a package answered as the
- *   package's defect, and a package's own error by its record's grant of its words, logged once there. The context
- *   carries the record and how a provider's sentences in an answer reach the client (`TreeRequestContext.words`).
+ *   the open, and of the run where the package's call raised it, is answered by the record (`packageFailureAnswer` in
+ *   ./package-errors): a legacy record's as raised, a package's open failure as a not-sent `ConnectionError`, a refusal
+ *   of what a package answered as the package's defect, and a package's own error by its record's grant of its words,
+ *   logged once there. Every other failure of the run is Studio's own and is answered and logged as Studio's
+ *   (`raisedByCall`). The context carries the record and how a provider's sentences in an answer reach the client
+ *   (`TreeRequestContext.words`).
  * - `{ request: "editPlan" | "editApply" | "keyScan", readBody? }`, which the edit plan, the edit apply and the key
  *   scan pass: resolved through `resolveServedConnection` too, and a record that does not offer the request
  *   (`EngineOffers.objectEdit`, `EngineOffers.keyScan`) is refused before any open as `FacetNotOfferedError` naming the
@@ -156,12 +158,13 @@ export async function handleObjectRequest(
     // The source read: no tree and no request a record offers, so the legacy resolve.
     if (!reads && request === undefined) {
       const connection = await resolveConnection(body as ObjectRequestBody, guard.session);
-      if (!connection.type) return untypedConnection();
+      if (!connection.type) {
+        return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
+      }
       state.scrub = providerTextScrub(connection, "any");
       return await providerRun(run as ProviderRun, body, connection, state.scrub, guard.session, route);
     }
     const { connection, engine } = await resolveServedConnection(body as ObjectRequestBody, guard.session);
-    if (!connection.type) return untypedConnection();
     const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
     state.scrub = scrub;
     // A tree read, the one arm that names no request.
@@ -180,7 +183,9 @@ export async function handleObjectRequest(
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
     }
     const { failing, scrub } = state;
-    if (failing === undefined || scrub === undefined) return createErrorResponse(error, { route, scrub });
+    if (failing === undefined || scrub === undefined || !raisedByCall(failing, error)) {
+      return createErrorResponse(error, { route, scrub });
+    }
     // A provider package's failure is logged once where it is answered (`isPackageFailure`), so it gets no second line.
     const logged = isPackageFailure(failing.engine, error);
     return createErrorResponse(packageFailureAnswer(failing.engine, failing.call, error, scrub, route), {
@@ -189,11 +194,6 @@ export async function handleObjectRequest(
       logged,
     });
   }
-}
-
-/** The refusal of a resolved connection that names no type. */
-function untypedConnection(): NextResponse {
-  return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
 }
 
 /** A provider route's `run`. */
@@ -206,10 +206,49 @@ type ProviderRun = (
 /** A tree route's `run`. */
 type TreeRun = (tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>;
 
-/** The call of the tree arm a failure is answered by: the record's open, then its tree read. */
-interface FailingCall {
-  readonly engine: EngineRecord;
-  readonly call: "open" | "tree read";
+/**
+ * The call of the tree arm a failure is answered by: the record's open, then its tree read, with every value the
+ * session's tree function raised during the run (`recordingRaised`).
+ */
+type FailingCall =
+  | { readonly engine: EngineRecord; readonly call: "open" }
+  | { readonly engine: EngineRecord; readonly call: "tree read"; readonly raised: ReadonlySet<unknown> };
+
+/**
+ * Whether `error` is a failure of `failing`'s call, which the record answers (`packageFailureAnswer`): any failure of
+ * the open; and of the run, a value the session's tree function raised, or a host defect, whose refusals name whose
+ * defect it is (`REFUSAL_AUTHOR` in ./package-errors), such as a tree answer the host core refused. Any other failure
+ * of the run, such as a session Studio's host built stating no object model (`objectTree` in ./object-tree) or a read
+ * before the host core's install, is Studio's own.
+ */
+function raisedByCall(failing: FailingCall, error: unknown): boolean {
+  if (failing.call === "open") return true;
+  return failing.raised.has(error) || error instanceof HostDefectError;
+}
+
+/**
+ * `target` with its session's tree function recording in `raised` each value it threw or rejected with, passed on as
+ * the same value, so a route answers by the record only what the session's own call raised (`raisedByCall`).
+ */
+function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeTarget {
+  const { session } = target;
+  const tree = session.tree;
+  if (tree === undefined) return target;
+  return {
+    ...target,
+    session: {
+      calls: session.calls,
+      ...(session.objectModel === undefined ? {} : { objectModel: session.objectModel }),
+      tree: async (request, ctx) => {
+        try {
+          return await tree.call(session, request, ctx);
+        } catch (error) {
+          raised.add(error);
+          throw error;
+        }
+      },
+    },
+  };
 }
 
 /**
@@ -233,7 +272,8 @@ async function providerRun(
 
 /**
  * The tree arm: the tree target of the record's metadata session, and `run`'s answer on it, `state.failing` naming the
- * record's call a failure is answered by.
+ * record's call a failure is answered by: the open, then the tree read, which answers by the record only the values
+ * the session's tree function raised (`recordingRaised`).
  */
 async function treeRun(
   run: TreeRun,
@@ -249,8 +289,9 @@ async function treeRun(
 ): Promise<NextResponse> {
   const { connection, engine, scrub, session, route } = resolved;
   state.failing = { engine, call: "open" };
-  const tree = await metadataTreeTarget(session, connection, engine);
-  state.failing = { engine, call: "tree read" };
+  const raised = new Set<unknown>();
+  const tree = recordingRaised(await metadataTreeTarget(session, connection, engine), raised);
+  state.failing = { engine, call: "tree read", raised };
   const words: ProviderWords = { scrub, ownWords: engine.grants.ownWords, route };
   return NextResponse.json(await run(tree, body, { connection, engine, session, route, scrub, words }));
 }
@@ -268,7 +309,7 @@ const PROVIDER_REQUESTS: Readonly<Record<ProviderRequest, { offer: "objectEdit" 
 
 /**
  * Refuses `request` for `engine` when its record does not offer it, before any open: `FacetNotOfferedError` of the
- * object facet naming the request, outcome not-sent (docs/providers/CONTRACT.md, clause C-111).
+ * object facet naming the request, outcome not-sent (docs/providers/CONTRACT.md, clause C-107).
  *
  * @throws {FacetNotOfferedError} Not-sent, when the record does not offer the request.
  */
