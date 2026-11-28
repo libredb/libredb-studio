@@ -39,7 +39,7 @@ import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 // their digits alone and the inner parse is a second chance to round the same value.
 // An explain strategy may not import from a provider directory, which is why this
 // lives in db/utils rather than here.
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type DruidAgentQueryOptions,

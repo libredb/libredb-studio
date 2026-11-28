@@ -10,7 +10,7 @@
  * alone would reorder and merge (R40 M19).
  */
 import { QueryError } from "@/lib/db/errors";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { QueryWarning } from "@/lib/types";
 import type { WireFieldData, WireScalarField, WireVectorField } from "./client";
 import { binaryRow, bfloat16Row, float16Row, indexMapFromSparse, int8Row, sparseFromRow } from "./codec";

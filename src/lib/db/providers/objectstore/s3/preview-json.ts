@@ -5,7 +5,7 @@
  * names keeps at most `maxColumns` times 8 names, the bound the CSV rows put on a record's fields: names past that
  * are counted for N-COLUMNS but never named, so an object of a million members costs the work of 8,192 columns.
  */
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { buildRows } from "./preview-cells";
 import type { RowsInput, RowsOutcome } from "./preview-csv";

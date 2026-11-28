@@ -137,7 +137,7 @@ import {
 } from "@/lib/db/types";
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { SearchHttpTransport } from "./http-transport";
 import { isSystemIndex, toColumns } from "./introspect";
 import {

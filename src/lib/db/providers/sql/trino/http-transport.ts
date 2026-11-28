@@ -51,7 +51,7 @@ import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 // setting that would quote it, so the raw body is rewritten before it is parsed.
 // Shared with the Druid transport, which is in the same position; ClickHouse escapes
 // it server-side instead (`output_format_json_quote_64bit_integers`, #264).
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type SqlGrammar } from "@libredb/provider-sdk/sql";

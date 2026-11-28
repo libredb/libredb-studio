@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { formatCellCopy } from "@/components/results-grid/utils";
 import { RequestRefusal } from "@/lib/db/console/dialect";
 import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { DatabaseConnection, QueryResult, SSLConfig } from "@/lib/types";
 import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
 import expectedCells from "../fixtures/vector/qdrant/expected-cells.json";

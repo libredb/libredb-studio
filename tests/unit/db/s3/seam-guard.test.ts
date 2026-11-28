@@ -3,7 +3,7 @@
  * directory, an AWS SDK package, `minio`, `fast-xml-parser` or any XML package; no file imports
  * `node:crypto` or `crypto`, by import or require(), because the SigV4 core is the shared one in src/lib/db/auth/aws/sigv4.ts; `createNodeByteTransport` is named only by index.ts, as the default of `deps.createTransport`; no file
  * names `plaintextSecretRefusal`, whose sentence says a password would cross the network, which is false under SigV4;
- * and no file defines a byte-size formatter, because the shared `formatBytes` exists.
+ * and no file defines a byte-size formatter, because the SDK's `formatBytes` exists.
  * Proven both ways: the real sources pass, and each planted line fails by name.
  */
 import { describe, expect, test } from "bun:test";
@@ -69,7 +69,7 @@ function findings(file: string, source: string): string[] {
   if (/\bplaintextSecretRefusal\b/.test(source))
     found.push(`${file} names plaintextSecretRefusal; S3 decides plain HTTP with isLoopbackHost`);
   if (BYTE_FORMATTER.test(source))
-    found.push(`${file} defines a byte-size formatter; import formatBytes from @/lib/db/utils/pool-manager`);
+    found.push(`${file} defines a byte-size formatter; import formatBytes from @libredb/provider-sdk/values`);
   return found;
 }
 
@@ -144,7 +144,7 @@ describe("the S3 provider directory's seams", () => {
     [
       "function formatBytes(n: number) { return `${n} B`; }\n",
       "key-scan.ts",
-      "key-scan.ts defines a byte-size formatter; import formatBytes from @/lib/db/utils/pool-manager",
+      "key-scan.ts defines a byte-size formatter; import formatBytes from @libredb/provider-sdk/values",
     ],
   ])("a planted %p in %s fails by name", (planted, file, finding) => {
     expect(findings(file, planted)).toEqual([finding]);
@@ -154,7 +154,7 @@ describe("the S3 provider directory's seams", () => {
     const source = [
       'import { objectPath } from "./encoding";',
       'import { s3Refusal } from "./console/guard";',
-      'import { formatBytes } from "@/lib/db/utils/pool-manager";',
+      'import { formatBytes } from "@libredb/provider-sdk/values";',
       'import { signatureV4 } from "@/lib/db/auth/aws/sigv4";',
     ].join("\n");
     expect(findings("sigv4.ts", source)).toEqual([]);

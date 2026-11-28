@@ -148,8 +148,8 @@ describe("planted violations fail by name", () => {
     ],
     [
       `${PROVIDER}/routes.ts`,
-      'import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";\n',
-      `qdrant browser module: ${PROVIDER}/routes.ts imports @/lib/db/utils/json-integers, which a browser module may not import`,
+      'import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";\n',
+      `qdrant browser module: ${PROVIDER}/routes.ts imports @libredb/provider-sdk/values, which a browser module may not import`,
     ],
     [
       `${PROVIDER}/request.ts`,

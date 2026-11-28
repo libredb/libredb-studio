@@ -24,7 +24,7 @@ import {
   readQdrantVersion,
   versionGateRefusal,
 } from "@/lib/db/providers/vector/qdrant/versions";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { DatabaseConnection } from "@/lib/types";
 import { expectCalls } from "../../../helpers/call-log";
 import {

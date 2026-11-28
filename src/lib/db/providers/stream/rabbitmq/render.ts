@@ -11,7 +11,7 @@
  *
  * Pure: the tally counts what the result's warnings report, and no sentence is built here.
  */
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { FieldEntry, FieldValue } from "./amqp/field-table";
 import type { RawMessage } from "./amqp/read-loop";
 import {

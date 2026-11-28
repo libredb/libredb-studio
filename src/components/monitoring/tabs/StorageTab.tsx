@@ -14,7 +14,7 @@ import type { MonitoringData } from "@/lib/db/types";
 // guarded nothing, so a negative rendered as "-1 B", a non-finite as "NaN B" and an
 // exabyte as "1073741824.00 GB". The shared one refuses a negative or a non-finite with
 // "N/A" and spells PB and EB, which is the distinction this whole tab is about.
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface StorageTabProps {

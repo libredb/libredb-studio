@@ -22,10 +22,10 @@
  * that must obey it - and `tests/unit/db/sqlite-int64.test.ts` is what keeps a third
  * driver from quietly growing a copy of its own.
  *
- * It is NOT in `db/utils`: that home is for a rule no provider may own, which
- * `json-integers.ts` needed because a non-provider parser imports it too. Every
- * consumer here is a SQL provider, so the provider family is the narrowest home that
- * holds them both.
+ * It is NOT in `db/utils` or the SDK: those homes are for a rule no provider may own,
+ * which the JSON integer reader of `@libredb/provider-sdk/values` needed because a
+ * non-provider parser imports it too. Every consumer here is a SQL provider, so the
+ * provider family is the narrowest home that holds them both.
  *
  * Nothing here knows a wire format. Each provider still spells the converted value
  * its own way - `bun:sqlite` and `node:sqlite` take a real `bigint`, Hrana takes

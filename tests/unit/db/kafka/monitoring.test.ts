@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { healthFrom, overviewFrom, storageFrom } from "@/lib/db/providers/stream/kafka/monitoring";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { type DatabaseConnection } from "@/lib/types";

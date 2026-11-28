@@ -55,7 +55,7 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/read-only-budget";
-import { formatBytes } from "../../utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import {
   loadSQLiteDriver,
   type SQLiteDatabase,

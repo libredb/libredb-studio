@@ -13,7 +13,7 @@
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { KeyScanCapability, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import type { BucketListing, ObjectListing, S3CallOptions, S3Surface } from "./client";
 import { S3_KEY_MAX_BYTES, S3_KEY_SCAN_DEFAULT_COUNT, S3_KEY_SCAN_MAX_COUNT, S3_TYPE } from "./constants";
 import {

@@ -59,7 +59,8 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
+import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { type TrinoRow, type TrinoTransport, TrinoTransportError } from "./transport";
 
 // ============================================================================

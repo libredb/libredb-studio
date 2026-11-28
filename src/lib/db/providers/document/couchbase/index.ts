@@ -74,7 +74,7 @@ import {
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { unionFields, uniquelyKeyedRows } from "@/lib/db/utils/result-fields";
 import {

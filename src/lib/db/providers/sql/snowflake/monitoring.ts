@@ -22,7 +22,8 @@ import type {
   TableStats,
   ActiveSessionDetails,
 } from "@/lib/db/types";
-import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
+import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { quoteLiteral } from "@/lib/sql/values";
 import { SNOWFLAKE, SNOWFLAKE_ERROR_SENTENCES, SnowflakeError } from "./errors";
 import {

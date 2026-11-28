@@ -15,7 +15,7 @@
  * a string, and a document that repeats a member name, or holds a
  * number no double shows as sent, is answered as its text.
  */
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 
 export type KafkaEncoding = "null" | "confluent" | "json" | "text" | "base64";
 

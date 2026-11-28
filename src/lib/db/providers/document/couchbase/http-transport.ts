@@ -39,7 +39,7 @@ import {
 } from "@/lib/db/http/node-transport";
 import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { quoteIdentifier } from "./keyspace";
 import {
   type AgentQueryOpts,

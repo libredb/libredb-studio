@@ -24,7 +24,7 @@ import type {
   ObjectKindSpec,
   ObjectSourceDocument,
 } from "@/lib/db/types";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { DatabaseType } from "@/lib/types";
 import type { QdrantAnswer, QdrantOp, QdrantRequest, QdrantSend } from "./client";
 import type { QdrantCollectionFacts } from "./request";

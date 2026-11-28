@@ -1,10 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import {
-  mergePoolConfig,
-  validatePoolConfig,
-  withTimeout,
-  formatDuration,
-} from "@/lib/db/utils/pool-manager";
+import { mergePoolConfig, validatePoolConfig, withTimeout, formatDuration } from "@/lib/db/utils/pool-manager";
 import { TimeoutError } from "@/lib/db/errors";
 import { DEFAULT_POOL_CONFIG, type PoolConfig } from "@/lib/db/types";
 

@@ -58,7 +58,8 @@ const SHARED_MODULES: readonly string[] = [
   "@/lib/db/object-kinds",
   // The provider SDK's calls entry, the home of the source bounds and the bound helper (clause C-115).
   "@libredb/provider-sdk/calls",
-  "@/lib/db/utils/json-integers",
+  // The provider SDK's values entry, the home of the JSON integer reader.
+  "@libredb/provider-sdk/values",
   "@/lib/db/utils/result-fields",
   "@/lib/db/errors",
 ];
@@ -241,7 +242,8 @@ const CONSOLE_ALLOWED: readonly RegExp[] = [
   /^\.\.\/(constants|names|preview-render)$/,
   /^@\/lib\/db\/console\/[a-z-]+$/,
   /^@\/lib\/db\/(object-kinds|errors)$/,
-  /^@\/lib\/db\/utils\/(json-integers|result-fields)$/,
+  /^@\/lib\/db\/utils\/result-fields$/,
+  /^@libredb\/provider-sdk\/values$/,
 ];
 
 const EDITOR_MODULES = [

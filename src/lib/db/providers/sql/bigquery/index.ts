@@ -19,7 +19,7 @@ import {
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import type {
   ActiveSessionDetails,

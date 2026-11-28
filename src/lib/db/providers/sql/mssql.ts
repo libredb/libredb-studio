@@ -79,7 +79,7 @@ import {
   MSSQL_SERIALISED_PREFIX,
   MSSQL_TIME_BUDGET_PREFIX,
 } from "@/lib/sql/mssql-read-only-refusals";
-import { formatBytes } from "../../utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { uniqueFieldNames } from "../../utils/result-fields";
