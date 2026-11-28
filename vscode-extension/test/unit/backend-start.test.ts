@@ -250,6 +250,7 @@ describe("the child entry", () => {
       "maintenanceRunCall",
       "panelCall",
       "poolStatsCall",
+      "sourceCall",
       "transactionCall",
       "treeCall",
     ]);
