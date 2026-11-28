@@ -16,7 +16,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/db/errors";
-import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { forgetServerCatalog, installServerCatalog, legacyConnection, serverEngine } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { resetCache } from "@/lib/seed";
@@ -167,5 +168,18 @@ describe("a package engine on a connection route", () => {
     ).catch((error: unknown) => error);
     expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
     expect((refusal as PackageEngineUnsupportedError).code).toBe("PACKAGE_ENGINE_UNSUPPORTED");
+  });
+
+  test("every shipped engine's inline connection resolves through the served resolve to itself with its engine's legacy record, as a legacy provider takes it", async () => {
+    for (const id of SHIPPED_DATABASE_TYPES) {
+      const legacy = serverEngine(id);
+      if (legacy.kind !== "served") throw new Error(`${id} is ${legacy.kind}`);
+      const connection = inline(id);
+      const resolved = await resolveServedConnection({ connection }, ADMIN);
+      expect(resolved.connection).toEqual({ ...connection, managed: false });
+      expect(resolved.engine).toBe(legacy.engine);
+      expect(resolved.engine.offers.legacyProvider).toBe(true);
+      expect(resolved.connection).toBe(legacyConnection(resolved.engine, resolved.connection));
+    }
   });
 });
