@@ -1165,6 +1165,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/grant-register-legacy-rows.test.ts": [
         "every legacy row's language digest equals the digest of its declaration's statement language data, null for null",
       ],
+      "tests/unit/lib/agent/fixture-language-served.test.ts": [
+        "the out-of-tree fixture's own language, granted by a planted row, is served on the confirmation gate, in agent mode and on MCP with no composer change",
+        "with the row's digest off by one byte it is served on none",
+      ],
     },
   },
   "M-88": {
@@ -1185,6 +1189,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/isolated/agent-package-engine-drive.test.ts": [
         "an agent-mode run in a package's own declared language is driven from its ledger, grounds and sends its statements through the package's read-only statement session",
+      ],
+      "tests/unit/lib/agent/fixture-language-served.test.ts": [
+        "the out-of-tree fixture's own language, granted by a planted row, is served on the confirmation gate, in agent mode and on MCP with no composer change",
       ],
     },
   },
