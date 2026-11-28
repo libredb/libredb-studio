@@ -342,7 +342,7 @@ describe("the out-of-tree fixture", () => {
     expect(validator.validate(manifest)).toMatchObject({ admitted: true });
   });
 
-  test("its manifest requests every claim at its restrictive value but those the SDK refuses at it for an engine with no agent credential and no seed-only field, or that its statement language's agent part requires", () => {
+  test("its manifest requests every claim at its restrictive value but those the SDK refuses at it for an engine with no agent credential and no seed-only field, those its statement language's agent part requires, and the read-only execute and MCP claims its language's granted path needs", () => {
     const manifest = JSON.parse(manifestText) as Record<string, unknown>;
     const at = (pointer: string): unknown =>
       pointer
@@ -355,8 +355,12 @@ describe("the out-of-tree fixture", () => {
       "/engines/0/policy/singleWriterFile": false,
       "/engines/0/policy/agentCredentialForm": "none",
       "/engines/0/policy/maskingExemptColumns": null,
-      "/engines/0/mcp/exposable": false,
-      "/engines/0/mcp/statementRead": false,
+      // Requested for its language's granted path: a register row grants each only where the manifest requests it.
+      // With no row each is read at its restrictive value (the acceptance), and with a planted row each is granted
+      // (tests/unit/lib/agent/fixture-language-served.test.ts).
+      "/calls/console/execute/honours": ["readOnly"],
+      "/engines/0/mcp/exposable": true,
+      "/engines/0/mcp/statementRead": true,
       "/engines/0/mcp/metadataReadChangesState": true,
       "/engines/0/connection/opensLocalFile": true,
       "/engines/0/connection/hostPathFields": [],
@@ -462,9 +466,13 @@ describe("the out-of-tree fixture", () => {
     expect(filesNaming(files, [...ids, fixture.language.name], readText)).toEqual([]);
   });
 
-  test("its entry imports only the SDK's calls subpath and its own manifest", () => {
+  test("its entry imports only the SDK's calls and values subpaths and its own manifest", () => {
     const entry = readText(path.join(FIXTURE, fixture.acceptance.entrySource));
-    expect(moduleSpecifiers(entry).sort()).toEqual(["../libredb-provider.json", "@libredb/provider-sdk/calls"]);
+    expect(moduleSpecifiers(entry).sort()).toEqual([
+      "../libredb-provider.json",
+      "@libredb/provider-sdk/calls",
+      "@libredb/provider-sdk/values",
+    ]);
   });
 
   test("nothing in the repository imports a file of the fixture", () => {
