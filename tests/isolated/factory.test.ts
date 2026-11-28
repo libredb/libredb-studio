@@ -101,6 +101,7 @@ import { markersReachableFrom } from "../helpers/reachable-markers";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { sealVersionOne } from "../helpers/storage-envelope-v1";
 import { legacyAgentCredentialTable, legacyRegisterTable } from "../helpers/legacy-register";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 const agentCredential = legacyAgentCredentialTable();
@@ -496,7 +497,7 @@ const {
   logUnclaimedOpen,
 } = await import("@/lib/db/factory");
 const { assertReadOnlyHonoured: assertReadOnlyOf } = await import("@/lib/db/open-check");
-const { legacyProviderEngine } = await import("@/lib/db/server-catalog");
+const { legacyConnection, legacyProviderEngine, servedEngineRecord } = await import("@/lib/db/server-catalog");
 /** `assertReadOnlyHonoured` of `connection`, read with its engine's record as the factory's entry points read it. */
 function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   assertReadOnlyOf(legacyProviderEngine(connection.type, "open"), connection);
@@ -7601,7 +7602,9 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs, frozenClock),
       repairs: new AgentRepairLedger(),
-      acquireProvider: acquireExecutionProfileProvider,
+      sessions: LEGACY_RUN_SESSIONS,
+      acquireProvider: (target, profile) =>
+        acquireExecutionProfileProvider(legacyConnection(servedEngineRecord(target.type), target), profile),
       clock: frozenClock,
     };
   }

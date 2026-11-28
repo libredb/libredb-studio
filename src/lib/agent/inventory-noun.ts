@@ -8,7 +8,7 @@
  * value.
  */
 
-import type { ProviderLabels } from "@/lib/db/types";
+import type { AgentEngineLabels } from "./engine-view";
 
 /**
  * The word this engine's inventory rows go by, in the run's own prose.
@@ -50,7 +50,7 @@ export interface AgentInventoryNoun {
  */
 export const TABLE_INVENTORY_NOUN: AgentInventoryNoun = Object.freeze({ singular: "table", plural: "tables" });
 
-/** The noun a provider's labels declare. */
-export function inventoryNoun(labels: ProviderLabels): AgentInventoryNoun {
+/** The noun an engine's labels declare (`AgentEngineLabels`): a legacy provider's own, or a package's model's. */
+export function inventoryNoun(labels: AgentEngineLabels): AgentInventoryNoun {
   return { singular: labels.entityName.toLowerCase(), plural: labels.entityNamePlural.toLowerCase() };
 }

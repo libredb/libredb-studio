@@ -39,6 +39,7 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 const MODES: readonly AgentRunMode[] = ["planning", "agent"];
 const WORKFLOWS: readonly AgentRunWorkflowType[] = [
@@ -147,6 +148,7 @@ async function driveFirstTurn(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider: async () => provider,
         clock,
       },

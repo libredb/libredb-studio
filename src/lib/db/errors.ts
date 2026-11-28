@@ -628,7 +628,14 @@ export type ExecutionProfileDenyCode =
    * `policy.readRootsRequired`, src/lib/db/claim-grants.ts), and the connection declares none, so nothing is read. Raised by the provider when a
    * statement-sending agent profile opens, and by MCP's acquisition, its own code so both answer it in Studio's words.
    */
-  | "READ_ROOTS_REQUIRED";
+  | "READ_ROOTS_REQUIRED"
+  /**
+   * The connection configures an agent credential, and its engine's session opens through its provider package with
+   * the connection's own credential, which takes no agent credential (docs/providers/CONTRACT.md, clause C-109), so
+   * agent mode reads nothing on it rather than read as a login the seed did not name for the agent. Raised by the
+   * agent's grounding walk before the package's open, and its own code because no other one's repair is this one.
+   */
+  | "AGENT_CREDENTIAL_NOT_TAKEN";
 
 /**
  * Raised when a provider cannot be vended under a requested execution profile.

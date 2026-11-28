@@ -82,6 +82,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { egressDecision } from "@/lib/db/egress-decision";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 const ORIGIN = new URL(process.env.LIBREDB_ES_ORIGIN ?? "http://127.0.0.1:9200");
 const ADMIN_USER = process.env.LIBREDB_ES_ADMIN_USER;
@@ -264,6 +265,7 @@ async function planGrounding(): Promise<Awaited<ReturnType<typeof captureContext
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2, clock),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => provider,
     clock,
   };

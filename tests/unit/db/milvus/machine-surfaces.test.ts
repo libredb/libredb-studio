@@ -36,6 +36,7 @@ import {
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { legacyRegisterEngines, legacyRegisterTable } from "../../../helpers/legacy-register";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /** The engines whose legacy row of the grant register grants agent execution, in catalog order. */
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
@@ -93,6 +94,7 @@ function agentContext(provider: MilvusProvider): AgentToolContext {
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2, clock),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => provider,
     clock,
   };

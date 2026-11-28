@@ -48,7 +48,7 @@ import type { ErrorRecord } from "@/lib/db/error-record";
 import type { ExecutionProfileDenyCode } from "@/lib/db/errors";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
-import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
+import type { AgentChartSpec, ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
 import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import type { AgentStatementLanguageId } from "./agent-manifest";
@@ -1490,8 +1490,8 @@ export type AgentRunEvent =
       readonly kind: "plan-statement-drafted";
       /** The statement as the model wrote it, verbatim, fence removed. */
       readonly sql: string;
-      /** The engine it was written for — the connection this drive was given. */
-      readonly dialect: DatabaseType;
+      /** The engine it was written for, the connection this drive was given, by its id in the server catalog. */
+      readonly dialect: string;
       /**
        * The editor language this connection's statements render in, resolved from the drive's
        * capabilities by the ladder `tab-language.ts` walks (#1089).

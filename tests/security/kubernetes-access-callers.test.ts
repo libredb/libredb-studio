@@ -246,7 +246,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
-    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+    "src/lib/agent/engine-view.ts":
+      "agentEngineDeclarations reads the declarations of the connection the agent runtime hands it, which that runtime resolved (AGENT_RUNTIME)",
     "src/lib/api/editor-provider.ts":
       "editorMaintenanceOpening and metadataMaintenanceOpening read a legacy provider's declarations for the connection their caller hands them, and their one caller is the maintenance route helper listed under them here, which resolved it through resolveServedConnection first",
   },
@@ -327,6 +328,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest opens the tree routes' metadata session only after resolving the request's connection through resolveServedConnection",
     "src/lib/mcp/context.ts":
       "metadataTarget opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
+    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
   },
   editorSourceTarget: {
     "src/lib/api/object-route.ts":

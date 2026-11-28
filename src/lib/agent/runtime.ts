@@ -26,8 +26,9 @@
  *    drive of that run sees.
  */
 
-import { readProviderDeclarations } from "@/lib/db";
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
+import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { legacyConnection, servedEngineRecord } from "@/lib/db/server-catalog";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -41,6 +42,7 @@ import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
+import { agentEngineDeclarations } from "./engine-view";
 import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentInvestigationResult, runInvestigation } from "./investigation";
@@ -204,12 +206,15 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
   // connection ("any"): the capability read below is built from the connection's own credential, the statement
   // providers from the agent's.
   const scrub = providerTextScrub(connection, "any");
+  // The record of the run's engine: `resolveConnection` admits only an engine whose record offers a legacy provider.
+  const engine = servedEngineRecord(connection.type);
   try {
-    // Capabilities and labels are type-driven and read without connecting, the way
-    // /api/db/provider-meta reads them. The live, read-only provider a statement
-    // actually runs on is acquired per call through the execution-profile seam.
-    // One provider for both, so a run's declared behaviour and its declared
-    // vocabulary can never come from two different readings.
+    // The engine's capabilities and labels are read from its record without connecting
+    // (`agentEngineDeclarations`): a legacy engine's are its provider's own, read the way
+    // /api/db/provider-meta reads them, and a provider package's engine's are its admitted
+    // declaration's. The live, read-only provider a statement actually runs on is acquired
+    // per call through the execution-profile seam. One reading for both, so a run's declared
+    // behaviour and its declared vocabulary can never come from two different readings.
     //
     // So no `withOneShotTunnel` wrapper here (#457): `readProviderDeclarations` builds the provider
     // without connecting it or opening its tunnel, and hands back data (FND-2 slice 5).
@@ -222,7 +227,8 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
     // sends no statement, so no provider proves a statement boundary for a provider that is never connected. It carries
     // the editor posture of the run's persisted actor, as the acquirer below does, so a connection that posture denies
     // file access is refused here, before Studio reads the path it names, and one it grants is built.
-    const { capabilities, labels } = await readProviderDeclarations(
+    const { capabilities, labels } = await agentEngineDeclarations(
+      engine,
       connection,
       executionContextFor("agent-operations", editorExecutionContext(actor, connection)),
     );
@@ -257,7 +263,15 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
         // decides whether a SQLite handle opens at all, keys the profiled cache, and picks which open single-writer
         // handle an operations acquisition may borrow.
         acquireProvider: (target, profile) =>
-          acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),
+          acquireExecutionProfileProvider(
+            legacyConnection(engine, target),
+            profile,
+            {},
+            editorExecutionContext(actor, target),
+          ),
+        // The record's metadata session under the run's persisted actor, the session the tree routes read; the
+        // grounding walk opens it on a provider package's engine only.
+        sessions: { metadataTree: () => metadataTreeTarget({ role: actor.role }, connection, engine) },
       },
     });
     return { kind: "finished", result };
@@ -332,6 +346,8 @@ const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRun
   AGENT_CREDENTIAL_REQUIRED: "agent-credential-unusable",
   // A seed whose read roots were removed after the run opened; the repair is the seed entry's read roots.
   READ_ROOTS_REQUIRED: "read-roots-required",
+  // A provider package's engine whose connection names an agent credential: the repair is the agent credential field.
+  AGENT_CREDENTIAL_NOT_TAKEN: "agent-credential-unusable",
 } satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>);
 
 /**

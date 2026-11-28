@@ -6,7 +6,6 @@
 import { clusterUsageReadInput, clusterWorkloadsReadInput } from "@/lib/db/operations/descriptors";
 import type { AuditedInvocation } from "@/lib/db/operations/execution";
 import type { ExecutionBudget } from "@/lib/db/operations/budgets";
-import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type {
   ClusterUsageInput,
@@ -21,6 +20,7 @@ import {
   AgentCuratedReadError,
   type AgentToolContext,
   type AgentToolOutcome,
+  legacyRunReading,
   parseToolInput,
   readOnlyBudgetFor,
   runAuditedAgentCall,
@@ -73,8 +73,7 @@ async function runClusterUsage(
   phase.statementSent = true;
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
-    type: context.connection.type,
-    scrub: providerTextScrub(context.connection, "profiled"),
+    ...legacyRunReading(context),
     statement: `usage ${input.namespace} ${input.selector ?? ""}`,
     budget: handed,
     holdUntilSettled,
@@ -137,8 +136,7 @@ async function runWorkloadProfile(
   phase.statementSent = true;
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
-    type: context.connection.type,
-    scrub: providerTextScrub(context.connection, "profiled"),
+    ...legacyRunReading(context),
     statement: `workloads ${input.namespace}`,
     budget: handed,
     holdUntilSettled,

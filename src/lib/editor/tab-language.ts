@@ -38,7 +38,9 @@ export type { EditorLanguage };
  * regexes and backslash escapes highlighted and completed as SQL. It renders in the `influxql` language
  * InfluxDB's editor contribution registers over the provider's own lexer.
  */
-export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
+export function resolveTabType(
+  capabilities?: Pick<ProviderCapabilities, "queryDialect" | "queryLanguage"> | null,
+): QueryTab["type"] {
   const dialect = dialectSpec(capabilities ?? undefined);
   if (dialect !== undefined) return dialect.tabType;
   if (capabilities?.queryLanguage === "json") return "mongodb";

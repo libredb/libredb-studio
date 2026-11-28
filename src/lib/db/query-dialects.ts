@@ -62,18 +62,22 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = BUNDL
  * time, and an own-key lookup would coerce `["kafka"]` to `kafka` and throw on an object whose `toString` is not
  * callable, where every per-dialect comparison before the registry simply missed.
  */
-export function registeredDialect(capabilities: ProviderCapabilities | undefined): QueryDialect | undefined {
+export function registeredDialect(
+  capabilities: Pick<ProviderCapabilities, "queryDialect"> | undefined,
+): QueryDialect | undefined {
   const dialect: unknown = capabilities?.queryDialect;
   return typeof dialect === "string" && Object.hasOwn(QUERY_DIALECTS, dialect) ? (dialect as QueryDialect) : undefined;
 }
 
 /** The registry record of the dialect a declaration names, or undefined as `registeredDialect` is. */
-export function dialectSpec(capabilities: ProviderCapabilities | undefined): DialectSpec | undefined {
+export function dialectSpec(
+  capabilities: Pick<ProviderCapabilities, "queryDialect"> | undefined,
+): DialectSpec | undefined {
   const dialect = registeredDialect(capabilities);
   return dialect === undefined ? undefined : QUERY_DIALECTS[dialect];
 }
 
 /** Whether a declaration names any dialect at all, a registered one or not. */
-export function declaresDialect(capabilities: ProviderCapabilities | undefined): boolean {
+export function declaresDialect(capabilities: Pick<ProviderCapabilities, "queryDialect"> | undefined): boolean {
   return capabilities?.queryDialect !== undefined;
 }

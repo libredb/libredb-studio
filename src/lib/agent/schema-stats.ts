@@ -45,12 +45,13 @@
 
 import { composeStatisticsAvailabilityProbe } from "./composed-sql";
 import { AgentComposedSqlError } from "./composed-sql-primitives";
-import { type AgentToolContext, readStatisticsForGrounding } from "./tools";
+import { type AgentToolContext, legacyRunType, readStatisticsForGrounding } from "./tools";
 import { addressableObjects } from "./inventory-objects";
 import { engineServerDialect } from "./languages/engines/server";
 import { fenceUntrustedContent } from "./untrusted-content";
 import type { AgentInventory } from "./types";
-import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { engineAuthor } from "@/lib/db/operations/provider-text";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseType } from "@/lib/types";
 
 /** Why a run has no statistics. All four are states the run continues from. */
@@ -174,7 +175,9 @@ export async function readSchemaStatistics(context: AgentToolContext): Promise<A
   const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
   if (artifact === undefined) return unavailable("STATISTICS_RESULT_UNAVAILABLE");
 
-  return { kind: "read", dialect, byTable: statistics.build(artifact.value.rows) };
+  // Read: the statistics read is a legacy provider's statement path (`readStatisticsForGrounding`), so the run's
+  // engine is a legacy engine here.
+  return { kind: "read", dialect: legacyRunType(context), byTable: statistics.build(artifact.value.rows) };
 }
 
 // ============================================================================
@@ -332,7 +335,7 @@ export function packSchemaStatistics(
     operationId: "agent/schema-stats",
     reference: `${statistics.dialect} engine estimates`,
     // The statistics were read through the run's connection, whose type `dialect` is.
-    relayedBy: providerAuthor(statistics.dialect),
+    relayedBy: engineAuthor(servedEngineRecord(statistics.dialect)),
   };
 
   const close = (body: string, omitted: number): string =>

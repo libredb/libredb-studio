@@ -92,6 +92,7 @@ const DENY_CODES: Readonly<Record<ExecutionProfileDenyCode, true>> = {
   CONNECTION_SECRET_UNRESOLVABLE: true,
   AGENT_CREDENTIAL_REQUIRED: true,
   READ_ROOTS_REQUIRED: true,
+  AGENT_CREDENTIAL_NOT_TAKEN: true,
 };
 
 export const EXECUTION_PROFILE_DENY_CODES = Object.keys(DENY_CODES) as readonly ExecutionProfileDenyCode[];

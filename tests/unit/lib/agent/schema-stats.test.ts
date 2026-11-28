@@ -22,10 +22,12 @@ import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operati
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { legacyStatementLanguageTable } from "../../../helpers/legacy-register";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 const statementLanguage = legacyStatementLanguageTable();
 
@@ -121,7 +123,7 @@ function harness(
       throw new Error("the statistics read never prepares its composed statement");
     },
   } as unknown as DatabaseProvider;
-  const acquireProvider = mock(async (_connection: DatabaseConnection, _profile: string) => provider);
+  const acquireProvider = mock(async (_connection: EngineConnection, _profile: string) => provider);
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
 
   return {
@@ -144,6 +146,7 @@ function harness(
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider,
       clock: frozenClock,
     },

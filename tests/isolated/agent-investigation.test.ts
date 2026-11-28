@@ -54,6 +54,7 @@ import type {
   IndexSchema,
   QueryResult,
 } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import {
   type Turn,
   answersProse,
@@ -79,6 +80,7 @@ import {
   responsesTextStream,
   responsesToolCallStream,
 } from "./fixtures/agent-transport";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 /**
  * The investigation workflow (#329 T7b): the loop that turns one objective into a
@@ -237,7 +239,7 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
       })),
     }),
   } as unknown as DatabaseProvider;
-  const acquireProvider = mock(async (_connection: DatabaseConnection, profile: string) => {
+  const acquireProvider = mock(async (_connection: EngineConnection, profile: string) => {
     const failure = options.acquireFails?.(profile);
     if (failure) throw failure;
     return provider;
@@ -272,6 +274,7 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, deadlineClock),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider,
     },
     queryReadOnly,

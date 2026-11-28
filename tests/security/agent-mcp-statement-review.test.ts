@@ -21,6 +21,7 @@ import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } 
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -28,9 +29,8 @@ afterAll(forgetHostCore);
 // The server's gates read SQLite's engine record, so Studio's own catalog with that record's grant changed is installed
 // before any of them loads, and forgotten when the file ends.
 const { craftedCatalog } = await import("../helpers/package-catalog");
-const { forgetServerCatalog, installServerCatalog, serverCatalogInstalled, servedEngineRecord } = await import(
-  "@/lib/db/server-catalog"
-);
+const { forgetServerCatalog, installServerCatalog, legacyConnection, serverCatalogInstalled, servedEngineRecord } =
+  await import("@/lib/db/server-catalog");
 installServerCatalog(craftedCatalog({ sqlite: { agentExecution: false } }));
 afterAll(forgetServerCatalog);
 
@@ -151,10 +151,11 @@ describe("an engine the review record does not list, though its provider impleme
         artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets.maxTotalRunMs, () => 1_000),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider: async (target, profile) => {
           try {
             const provider = await acquireExecutionProfileProvider(
-              target,
+              legacyConnection(servedEngineRecord(target.type), target),
               profile,
               {},
               { allowExternalFileAccess: true },
@@ -289,6 +290,7 @@ describe("an engine the review record does not list, though its provider impleme
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs, () => 1_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider,
       clock: () => 1_000,
     };

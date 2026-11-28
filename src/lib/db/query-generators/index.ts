@@ -178,7 +178,9 @@ export const SQL_ENGINE_GENERATORS: Readonly<Partial<Record<DatabaseType, SqlEng
 );
 
 /** The generators of the language a declaration names, looked up as an own key; undefined for SQL. */
-export function languageGenerators(capabilities: ProviderCapabilities): LanguageGenerators | undefined {
+export function languageGenerators(
+  capabilities: Pick<ProviderCapabilities, "queryLanguage">,
+): LanguageGenerators | undefined {
   const language: string = capabilities.queryLanguage;
   return Object.hasOwn(LANGUAGE_GENERATORS, language)
     ? LANGUAGE_GENERATORS[language as EngineQueryLanguage]

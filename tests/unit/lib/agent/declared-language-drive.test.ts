@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { acmereadData } from "../../../helpers/declared-agent-language";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /**
  * A statement language declared as data, `acmeread` (tests/helpers/declared-agent-language.ts), offered on a legacy
@@ -420,6 +421,7 @@ async function harness() {
         () => 1_000,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider,
       clock: () => 1_000,
     },

@@ -63,6 +63,7 @@ import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/l
 import { TABLE_LABELS } from "../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { type ScriptedTurn, modelOver, scriptedModel } from "./agent-scripted-model";
+import { LEGACY_RUN_SESSIONS } from "../../helpers/agent-engine-sessions";
 
 // ─── the two Phase 1 engines ────────────────────────────────────────────────
 
@@ -593,6 +594,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       artifacts,
       deadline: new AgentRunDeadline(budget.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => {
         const failure = options.acquireFails?.();
         if (failure) throw failure;
