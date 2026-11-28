@@ -559,8 +559,9 @@ export async function POST(req: NextRequest) {
 
     // A query action's text is held to the console text bound the engine's record states, where it states one, as the
     // query route holds it (`checkEditorQuery` in src/lib/api/editor-query.ts): answered 413, naming the size and the
-    // bound and never the text, before any call on the session. A session that does not offer the transaction answers
-    // the refusal above first.
+    // bound and never the text, after the open above and before any transaction or statement call: on a session not yet
+    // cached the package's open precedes the 413, and no statement is sent. A session that does not offer the
+    // transaction answers the refusal above first.
     const textLimit = rowTextByteLimit(engine.statementLanguageRow);
     const overLimit =
       query === undefined || textLimit === undefined ? undefined : consoleTextOverLimit(query.sql, textLimit);
