@@ -8,6 +8,7 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 // The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -134,6 +135,7 @@ async function systemPromptOf(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => providerDouble(engine, capabilities, listed.id),
     },
   });
@@ -165,6 +167,7 @@ function notADataReadOn(engine: DatabaseType): string | undefined {
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS["data-analysis"].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => {
         throw new Error("an answer reaches no database");
       },

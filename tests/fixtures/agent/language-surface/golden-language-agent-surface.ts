@@ -78,6 +78,7 @@ import {
   scriptedModel,
   type Turn,
 } from "../../../isolated/fixtures/agent-scripted-model";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 const MODES: readonly AgentRunMode[] = ["planning", "agent"];
 const WORKFLOWS: readonly AgentRunWorkflowType[] = [
@@ -227,6 +228,7 @@ async function drive(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider: async () => provider,
         clock,
       },
@@ -608,6 +610,7 @@ async function toolContext(
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => provider,
     clock,
   };

@@ -472,15 +472,18 @@ const factory = join("src", "lib", "db", "factory.ts");
 
 /** Every crossing of provider text on the covered paths, and the core function each calls: one row per call. */
 const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: string])[] = [
-  [agent("tools.ts"), "runAuditedAgentCall", "providerTextScrub"],
+  [agent("tools.ts"), "runTextScrub", "connectionTextScrub"],
+  [agent("tools.ts"), "legacyRunReading", "runTextScrub"],
+  [agent("tools.ts"), "readObjectInventoryForGrounding", "runTextScrub"],
+  [agent("tools.ts"), "runAuditedAgentCall", "runTextScrub"],
   [agent("tools.ts"), "runAuditedAgentCall", "scrubProviderText"],
   [agent("tools.ts"), "runAuditedAgentCall", "withScrubbedWarnings"],
   [agent("tools.ts"), "runAuditedAgentCall", "fenceProviderText"],
   [agent("tools.ts"), "enumerateGroundingContainers", "scrubProviderText"],
-  [agent("tools.ts"), "walkObjectInventory", "scrubProviderText"],
-  [agent("languages", "kubectl", "tools.ts"), "runClusterUsage", "providerTextScrub"],
-  [agent("languages", "kubectl", "tools.ts"), "runWorkloadProfile", "providerTextScrub"],
-  [agent("languages", "mongo", "tools.ts"), "invoke", "providerTextScrub"],
+  [agent("tools.ts"), "walkObjectInventory", "providerSentence"],
+  [agent("languages", "kubectl", "tools.ts"), "runClusterUsage", "legacyRunReading"],
+  [agent("languages", "kubectl", "tools.ts"), "runWorkloadProfile", "legacyRunReading"],
+  [agent("languages", "mongo", "tools.ts"), "invoke", "legacyRunReading"],
   [agent("investigation.ts"), "describeSettled", "scrubProviderText"],
   [agent("context-snapshot.ts"), "scrubSnapshotSentences", "scrubProviderText"],
   [agent("investigation.ts"), "describeSettled", "fenceProviderText"],
@@ -581,7 +584,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */
 const SNAPSHOT_SENTENCE =
-  "a snapshot's provider sentence: walkObjectInventory scrubbed it at the capture, scrubSnapshotSentences before a prompt";
+  "a snapshot's provider sentence: walkObjectInventory read it under the record's grant of its words at the capture, scrubSnapshotSentences before a prompt";
 
 /**
  * The reason the legacy bridge's tree reads are no crossing of their own: the bridge hands each answer by reference to
@@ -708,9 +711,9 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the query event builder's own refusal of an input",
   [`${childHandlers}: runTarget: error.message`]: "the run target rule's RangeError, Studio's",
   [`${agent("tools.ts")}: walkObjectInventory: tree.countObjects`]:
-    "the grounding's counts, read through the host core's tree call, whose sentences walkObjectInventory scrubs with scrubProviderText",
+    "the grounding's counts, read through the host core's tree call, whose sentences walkObjectInventory reads under the record's grant of its words with providerSentence",
   [`${agent("tools.ts")}: walkObjectInventory: tree.describeObjects`]:
-    "a batch read through the host core's tree call, whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
+    "a batch read through the host core's tree call, whose sentences walkObjectInventory reads field by field under the record's grant of its words with providerSentence",
   [`${mcp("tools", "inspect-schema.ts")}: inspectTable: tree.describeObject`]:
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${childHandlers}: selectStatement: tree.describeObject`]:

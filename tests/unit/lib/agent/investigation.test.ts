@@ -60,6 +60,7 @@ import {
 } from "../../../isolated/fixtures/agent-scripted-model";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 // The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -141,6 +142,7 @@ async function planDrive(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => provider,
     },
   });
@@ -307,6 +309,7 @@ async function kubectlDrive(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => {
         if (options.unreachable) throw new Error("no connection is reachable from this process");
         return provider;
@@ -1113,6 +1116,7 @@ async function agentDrive(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => provider,
     },
   }).catch(() => undefined);
@@ -1462,6 +1466,7 @@ async function planDriveRefusingReadOnly(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async (_connection, profile) => {
         requested.push(profile);
         if (profile === "agent-read-only") {

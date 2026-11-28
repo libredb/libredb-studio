@@ -43,6 +43,7 @@ import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import type { QueryResult } from "@/lib/types";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../helpers/kubernetes-markers";
 import { connectionOf, insideDirectory } from "./kubernetes-evidence";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const CLUSTER = "k8s-probe";
@@ -157,6 +158,7 @@ async function gateRun(
       artifacts,
       deadline: new AgentRunDeadline(budget.runDeadlineMs),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => provider,
     },
   });

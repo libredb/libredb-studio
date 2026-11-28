@@ -23,6 +23,7 @@ import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture, captureVm } from "../../../helpers/prometheus-fixtures";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 // The agent's grounding walk reads through the host core's tree calls, and its readings through its monitoring calls,
 // so this file composes its own core.
@@ -124,6 +125,7 @@ function agentContext(
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets.maxTotalRunMs * 2, clock),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => provider,
     clock,
   };

@@ -74,7 +74,16 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
-import { type MonitoringTarget, providerMonitoringTarget, providerTreeTarget } from "@/lib/api/session-target";
+import {
+  type MonitoringTarget,
+  type ObjectRead,
+  providerMonitoringTarget,
+  providerTreeTarget,
+  raisedByTreeRead,
+  recordingRaised,
+  type TreeTarget,
+} from "@/lib/api/session-target";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
 import { hostCore } from "@/lib/provider-host/instance";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runComposedStatement } from "@/lib/api/composed-statement";
@@ -92,6 +101,7 @@ import {
   QueryError,
   RefusedBeforeSendError,
   StudioObjectModelRefusal,
+  StudioProfileRefusal,
   StudioTimeoutRefusal,
   waitedSeconds,
 } from "@/lib/db/errors";
@@ -100,9 +110,11 @@ import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import {
   errorRecord,
   isStudioRefusal,
-  providerAuthor,
+  connectionTextScrub,
+  engineAuthor,
   type ProviderTextScrub,
-  providerTextScrub,
+  type ProviderWords,
+  providerSentence,
   scrubProviderText,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
@@ -115,7 +127,14 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderType,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
+import type { AgentEngineCapabilities, AgentEngineLabels } from "@/lib/agent/engine-view";
 import { typeIdRow } from "@/lib/db/type-id";
 import {
   type AuditedInvocation,
@@ -136,9 +155,6 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   ObjectDetail,
-  ObjectKindSpec,
-  ProviderCapabilities,
-  ProviderLabels,
   ReadOnlyStatementBudget,
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
@@ -152,6 +168,7 @@ import {
   sessionDefaultContainer,
 } from "@/lib/db/container-walk";
 import {
+  type ObjectKindView,
   applicableKinds,
   containerDepth,
   enumerableKinds,
@@ -332,9 +349,18 @@ export interface AgentToolDefinition {
 }
 
 export type AgentProviderAcquirer = (
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   profile: ExecutionProfile,
 ) => Promise<DatabaseProvider>;
+
+/**
+ * The sessions of a run's engine a tool opens through the engine's record rather than the acquirer: the record's
+ * metadata session, as a tree target (`metadataTreeTarget` in src/lib/api/editor-provider.ts), which the grounding walk
+ * reads a provider package's engine on. The drive builds it for every record; only a package engine's walk calls it.
+ */
+export interface AgentEngineSessions {
+  metadataTree(): Promise<TreeTarget>;
+}
 
 /**
  * Everything one run's tool call needs. Note what is NOT here: no execution
@@ -378,10 +404,12 @@ export interface AgentToolContext {
   readonly engine?: string;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
-  readonly connection: DatabaseConnection;
-  readonly capabilities: ProviderCapabilities;
+  /** The run's connection, of any engine the server serves; the engine's record is read by its type (`runEngine`). */
+  readonly connection: EngineConnection;
+  /** The engine's facts the run reads, its provider's own for a legacy engine (`agentEngineDeclarations`). */
+  readonly capabilities: AgentEngineCapabilities;
   /**
-   * The provider's own vocabulary, read the same way and at the same moment as its
+   * The engine's own vocabulary, read the same way and at the same moment as its
    * capabilities (#414).
    *
    * Here for one job: what this engine CALLS the rows of a schema inventory. Every
@@ -390,11 +418,11 @@ export interface AgentToolContext {
    * on `connection.type` in the prompt layer, which `CLAUDE.md` forbids and which
    * would have had to be extended by hand for every engine added since.
    *
-   * The whole `ProviderLabels` rather than the two fields the prompts use, because
-   * the resource is what the provider hands over and narrowing it here would make the
-   * next sentence that needs `rowName` a second plumbing job.
+   * The agent's view of the labels (`AgentEngineLabels`): a legacy provider's whole
+   * `ProviderLabels` is one as it is, and a provider package's engine is named by its
+   * declared object model (`agentEngineDeclarations`).
    */
-  readonly labels: ProviderLabels;
+  readonly labels: AgentEngineLabels;
   readonly registry: OperationRegistry;
   readonly scope: TargetScope;
   readonly tracker: ExecutionBudgetTracker;
@@ -402,6 +430,8 @@ export interface AgentToolContext {
   readonly deadline: AgentRunDeadline;
   readonly repairs: AgentRepairLedger;
   readonly acquireProvider: AgentProviderAcquirer;
+  /** The sessions of the run's engine opened through its record (`AgentEngineSessions`). */
+  readonly sessions: AgentEngineSessions;
   /**
    * The run's billed-read allowance, handed to the provider inside every budget the drive's
    * reads carry (`readOnlyBudgetFor`), so the grounding's catalog reads and the model's
@@ -412,6 +442,57 @@ export interface AgentToolContext {
   readonly readAllowance?: RunReadAllowance;
   /** Injected for the audited-execution elapsed measurement, as in `execution.ts`. */
   readonly clock?: () => number;
+}
+
+/**
+ * The record of the run's engine, read by its connection's type: the one reading of the run's engine every author,
+ * scrub and type read of a tool takes, as `runServerPack` and `catalogReadAdmission` read it.
+ */
+export function runEngine(context: Pick<AgentToolContext, "connection">): EngineRecord {
+  return servedEngineRecord(context.connection.type);
+}
+
+/**
+ * Core's scrub of the run's connection, read by its record, the twin of MCP's (`mcpTextScrub` in src/lib/mcp/context.ts):
+ * a record that offers execution profiles scrubs what its profiled providers receive (`"profiled"`), and a provider
+ * package's session opens with the connection's own credential (docs/providers/CONTRACT.md, clause C-109), so its scrub
+ * covers every secret (`"any"`).
+ */
+export function runTextScrub(context: Pick<AgentToolContext, "connection">): ProviderTextScrub {
+  const engine = runEngine(context);
+  return connectionTextScrub(
+    context.connection,
+    legacyProviderType(engine),
+    engine.offers.executionProfiles ? "profiled" : "any",
+  );
+}
+
+/** The author a notice names for the text the run's engine relayed (`engineAuthor`), read from the run's record. */
+export function runAuthor(context: Pick<AgentToolContext, "connection">): string {
+  return engineAuthor(runEngine(context));
+}
+
+/**
+ * What a legacy provider's read-only reading of the run is handed of its engine (`runReadOnlyReading`): the engine as
+ * its `DatabaseType` (`legacyRunType`, a host defect for a provider package's engine) and core's scrub of the run's
+ * connection (`runTextScrub`).
+ */
+export function legacyRunReading(context: Pick<AgentToolContext, "connection">): {
+  readonly type: DatabaseType;
+  readonly scrub: ProviderTextScrub;
+} {
+  return { type: legacyRunType(context), scrub: runTextScrub(context) };
+}
+
+/**
+ * The run's engine as the `DatabaseType` a statement path of a legacy provider takes: a statistics, catalog or curated
+ * read, which a provider package's engine never reaches, since its run composes no statement and acquires no profiled
+ * provider.
+ *
+ * @throws {Error} A host defect, `legacyConnection`'s: when the run's engine is a provider package's.
+ */
+export function legacyRunType(context: Pick<AgentToolContext, "connection">): DatabaseType {
+  return legacyConnection(runEngine(context), context.connection).type;
 }
 
 /**
@@ -1588,7 +1669,7 @@ async function runStatement(
   // handed out, so an over-budget answer is refused before any of it is mapped or rendered. A stopped call keeps this
   // execution counted until it settles, also when the time refusal answered the run first.
   return runReadOnlyExecute(provider, {
-    type: context.connection.type,
+    type: legacyRunType(context),
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
     ...(mode === undefined ? {} : { mode }),
@@ -1737,7 +1818,7 @@ export class AgentCuratedReadError extends Error {
  * table and sometimes an alias, and resolving an alias would need the statement's FROM clause;
  * inventing a mapping is worse than saying nothing.
  */
-function columnsThatExist(message: string, connection: DatabaseConnection): string | undefined {
+function columnsThatExist(message: string, connection: EngineConnection): string | undefined {
   // The LAST two segments, because the engine names the column as the statement wrote it and a
   // statement usually writes an alias in front: `e.dept_emp.dept_no` is alias, table, column, and
   // taking the first two would look up "e" and find nothing. Measured — the only database error
@@ -2004,7 +2085,7 @@ export async function runAuditedAgentCall(
 
   // Every provider text this call can carry to the ledger or the prompt passes core's scrub of the connection's
   // credential first (src/lib/db/operations/provider-text.ts).
-  const scrub = providerTextScrub(context.connection, "profiled");
+  const scrub = runTextScrub(context);
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
     outcome = guardRefuses(call.guardedStatement)
@@ -2149,13 +2230,13 @@ export async function runAuditedAgentCall(
                 label: "refusal before sending",
                 operationId: call.operationId,
                 reference: fingerprint,
-                author: providerAuthor(context.connection.type),
+                author: runAuthor(context),
               })
             : fenceUntrustedContent(message, {
                 label: "database error",
                 operationId: call.operationId,
                 reference: fingerprint,
-                relayedBy: providerAuthor(context.connection.type),
+                relayedBy: runAuthor(context),
               }),
         // EVERY model, unlike the worked examples three tools below. Those are a whole call built
         // from the run's own ledger and long enough to crowd a small model's turn, so they stay
@@ -2218,7 +2299,7 @@ export async function runAuditedAgentCall(
           label: `${call.label ?? "result"} warnings`,
           operationId: artifact.operationId,
           reference: artifact.correlationId,
-          relayedBy: providerAuthor(context.connection.type),
+          relayedBy: runAuthor(context),
         })}`;
   return {
     kind: "completed",
@@ -2233,7 +2314,7 @@ export async function runAuditedAgentCall(
       label: `${call.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
-      relayedBy: providerAuthor(context.connection.type),
+      relayedBy: runAuthor(context),
     })}${warned}`,
   };
 }
@@ -2796,6 +2877,12 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
   // every run on such an engine for a reading that cannot exist.
   if (declared.length === 0) return { kind: "unsupported" };
 
+  const engine = runEngine(context);
+  const scrub = runTextScrub(context);
+  // One record of the walk's package failures, so each is logged once, and every value the package's tree function
+  // raised, so only those are answered as the package's (`recordingRaised`).
+  const answers = packageAnswers(engine, scrub, OBJECT_INVENTORY_ROUTE);
+  const raised = new Map<unknown, ObjectRead>();
   let inventory: AgentInventory = { objects: [], kinds: [] };
   let defaultContainer: readonly string[] | undefined;
   let outcome: AgentToolOutcome;
@@ -2807,33 +2894,16 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
       label: "provider object inventory",
       grounding: true,
       invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
-        // Which profile grounds the run, decided by what the run is (`groundsUnderExecutionProfile`): a
-        // statement-sending agent run on an engine with a statement language grounds under ITS OWN boundary, so the
-        // acquisition opens the execution profile, whose connect proves the engine and the principal, and a run
-        // whose boundary cannot open is refused at its grounding. The drive then ends it before its first model turn
-        // (`runInvestigation`), as it ends a composed-catalog engine's run whose read-only grounding is refused. Plan
-        // mode and the operations workflow keep the operations profile: they send no statement of the model's, so
-        // their acquisition proves nothing on an engine that proves its boundary only for one that does. SQL Server
-        // still refuses a privileged principal under the operations profile too, which #1744's D345 records as its
-        // debt. Kubernetes changes profile here with no behaviour change: its profiled connect verifies nothing, its
-        // boundary is per-request, and its tests hold that.
-        const groundingProfile = groundsUnderExecutionProfile(context)
-          ? AGENT_EXECUTION_PROFILE
-          : AGENT_OPERATIONS_PROFILE;
-        const provider = await context.acquireProvider(context.connection, groundingProfile);
+        // The boot order is read first, so a walk before the host core's install is refused by name before the walk's
+        // bridged session is built, which reads the provider's capabilities, and before a package's session opens.
+        hostCore();
+        const target = await groundingTreeTarget(context, engine, answers, raised);
         const startedAtMs = context.clock?.() ?? Date.now();
         // THE HONEST LIMIT, stated because the alternative reading of this deadline is wrong: no
         // provider member here takes a budget, so what the walk's one deadline, the time its call
         // was granted, bounds is THE RUN and not the database. Every read is a host core tree call
         // under it (`grantedObjectTree`); the read in flight at the deadline is not cancelled and
         // counts against the run's concurrency until it settles, and the walk sends no further read.
-        // The boot order is read first, so a walk before the host core's install is refused by name before the walk's
-        // bridged session is built, which reads the provider's capabilities.
-        hostCore();
-        const target = providerTreeTarget(
-          provider,
-          context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance },
-        );
         const tree = grantedObjectTree(target, {
           deadline: Date.now() + budget.statementTimeoutMs,
           timeRefusal: () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
@@ -2843,17 +2913,21 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         phase.statementSent = true;
 
         try {
-          const walked = await walkObjectInventory(
-            tree,
-            context.capabilities,
-            declared,
-            providerTextScrub(context.connection, "profiled"),
-          );
+          const walked = await walkObjectInventory(tree, context.capabilities, declared, {
+            scrub,
+            ownWords: engine.grants.ownWords,
+            route: OBJECT_INVENTORY_ROUTE,
+          });
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
         } catch (error) {
           if (error instanceof AgentSchemaReadTimeout) throw error;
-          throw asReadingFailure(error, context.connection.type);
+          // A failure a package's own tree function raised is answered by its record and logged once; any other is
+          // Studio's own or a legacy provider's, answered as raised (`packageFailureAnswer`).
+          throw asReadingFailure(
+            raisedByTreeRead(raised, error) ? answers.answer("tree read", error) : error,
+            legacyProviderType(engine),
+          );
         }
 
         // The projection is one row per object naming its kind, so the artifact a claim
@@ -2887,6 +2961,68 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
 }
 
 /**
+ * The tree target the grounding walk reads `engine` on.
+ *
+ * A record that offers execution profiles: the provider the run's acquirer opens under the grounding's profile, read
+ * through the legacy bridge with the run's read allowance (`providerTreeTarget`).
+ *
+ * Any other record, a provider package's engine: its metadata session, opened through the record
+ * (`context.sessions.metadataTree()`), the same session the tree routes and MCP's `inspect_schema` read, after two
+ * refusals by name that no package open precedes. A grounding the run takes under the execution profile is refused,
+ * since Studio opens no read-only statement session through a package yet; and a connection that names an agent
+ * credential is refused, since the package's session opens with the connection's own credential
+ * (docs/providers/CONTRACT.md, clause C-109), which would read as a login the seed did not name for the agent. A failed
+ * open is answered by the record (`answers`), a not-sent `ConnectionError` logged once as the package's where it is one,
+ * so the capture is unavailable and the plan run goes on as on a legacy engine it could not reach. The target records
+ * every value the session's tree function raises in `raised`, named by the read that raised it, so the walk answers
+ * only those as the package's.
+ */
+async function groundingTreeTarget(
+  context: AgentToolContext,
+  engine: EngineRecord,
+  answers: PackageAnswers,
+  raised: Map<unknown, ObjectRead>,
+): Promise<TreeTarget> {
+  if (engine.offers.executionProfiles) {
+    // Which profile grounds the run, decided by what the run is (`groundsUnderExecutionProfile`): a
+    // statement-sending agent run on an engine with a statement language grounds under ITS OWN boundary, so the
+    // acquisition opens the execution profile, whose connect proves the engine and the principal, and a run
+    // whose boundary cannot open is refused at its grounding. The drive then ends it before its first model turn
+    // (`runInvestigation`), as it ends a composed-catalog engine's run whose read-only grounding is refused. Plan
+    // mode and the operations workflow keep the operations profile: they send no statement of the model's, so
+    // their acquisition proves nothing on an engine that proves its boundary only for one that does. SQL Server
+    // still refuses a privileged principal under the operations profile too, which #1744's D345 records as its
+    // debt. Kubernetes changes profile here with no behaviour change: its profiled connect verifies nothing, its
+    // boundary is per-request, and its tests hold that.
+    const groundingProfile = groundsUnderExecutionProfile(context) ? AGENT_EXECUTION_PROFILE : AGENT_OPERATIONS_PROFILE;
+    const provider = await context.acquireProvider(context.connection, groundingProfile);
+    return providerTreeTarget(
+      provider,
+      context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance },
+    );
+  }
+  if (groundsUnderExecutionProfile(context)) {
+    throw new StudioProfileRefusal(
+      "Agent mode opens no execution profile on an engine served by a provider package: its session opens through its package, and Studio opens no read-only statement session through a package yet.",
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+  if (context.connection.agentUser || context.connection.agentPassword) {
+    throw new StudioProfileRefusal(
+      `Connection "${context.connection.id}" configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, which receives no agent credential, so agent mode reads nothing on it.`,
+      "AGENT_CREDENTIAL_NOT_TAKEN",
+    );
+  }
+  let target: TreeTarget;
+  try {
+    target = await context.sessions.metadataTree();
+  } catch (error) {
+    throw answers.answer("open", error);
+  }
+  return recordingRaised(target, raised);
+}
+
+/**
  * The walk itself: every container, every kind the object surface enumerates, under both bounds.
  *
  * `declared` is `enumerableKinds()` and never `declaredKinds()`: a kind only the Keys panel
@@ -2914,9 +3050,9 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  */
 async function walkObjectInventory(
   tree: GrantedObjectTree,
-  capabilities: ProviderCapabilities,
-  declared: readonly ObjectKindSpec[],
-  scrub: ProviderTextScrub,
+  capabilities: AgentEngineCapabilities,
+  declared: readonly ObjectKindView[],
+  words: ProviderWords,
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   // The walk's first read, where the engine declares a container level (U189): a provider whose inventory is
   // configuration the connection lacks lists no container and says why on that top-level listing, and that empty
@@ -2929,7 +3065,7 @@ async function walkObjectInventory(
       inventory: {
         objects: [],
         kinds: declared.map((spec) =>
-          inventoryKind(spec, capabilities, { unavailable: scrubProviderText(scrub, needs) }),
+          inventoryKind(spec, capabilities, { unavailable: providerSentence(words, needs) }),
         ),
       },
     };
@@ -2938,7 +3074,7 @@ async function walkObjectInventory(
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
-  const grounding = await enumerateGroundingContainers(tree, capabilities, scrub, top.containers);
+  const grounding = await enumerateGroundingContainers(tree, capabilities, words.scrub, top.containers);
   const { unlistedParents, unlistedParentsNotNamed } = grounding;
   const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
@@ -2966,21 +3102,21 @@ async function walkObjectInventory(
       // A kind whose names are withheld is counted and never listed, so no name of it reaches a model.
       if (kindNamesWithheld(spec)) {
         if (count === undefined) withheldUncounted.add(spec.id);
-        else if (isCountUnavailable(count)) unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
+        else if (isCountUnavailable(count)) unavailable.set(spec.id, providerSentence(words, count.unavailable));
         else {
           withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
-          if (isCountSampled(count)) sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
+          if (isCountSampled(count)) sampledFrom.set(spec.id, providerSentence(words, count.sampledFrom));
         }
         continue;
       }
       // The exception the docblock names: the refusal this count met is the refusal the listing
       // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
       if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
-        unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
+        unavailable.set(spec.id, providerSentence(words, count.unavailable));
         continue;
       }
       if (count !== undefined && isCountSampled(count)) {
-        sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
+        sampledFrom.set(spec.id, providerSentence(words, count.sampledFrom));
       }
       if (pairs >= INVENTORY_PAIR_LIMIT) {
         truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
@@ -3011,7 +3147,7 @@ async function walkObjectInventory(
         // fitted, because a complete list of objects whose columns were cut is still an
         // incomplete reading, and a model told otherwise reads a missing column as an absent one.
         if (batch.truncated !== undefined) {
-          truncated = { limit: batch.truncated.limit, reason: scrubProviderText(scrub, batch.truncated.reason) };
+          truncated = { limit: batch.truncated.limit, reason: providerSentence(words, batch.truncated.reason) };
         }
       }
       const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
@@ -3029,9 +3165,10 @@ async function walkObjectInventory(
           // A column the engine only inferred from sampled data is named by the data, so it never enters the
           // inventory a model is grounded on.
           columns: machineColumns(detail?.columns ?? []),
-          // A refused index read carries the provider's sentence, scrubbed like every other provider text here.
+          // A refused index read carries the provider's sentence, read under the record's grant of its words like every
+          // other provider sentence here (`providerSentence`).
           indexes: isIndexesUnavailable(detail?.indexes)
-            ? { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) }
+            ? { unavailable: providerSentence(words, detail.indexes.unavailable) }
             : (detail?.indexes ?? []),
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
@@ -3082,8 +3219,8 @@ async function walkObjectInventory(
 
 /** What the inventory records of a declared kind: its declaration, what the walk read of it, and the derived mark. */
 function inventoryKind(
-  spec: ObjectKindSpec,
-  capabilities: ProviderCapabilities,
+  spec: ObjectKindView,
+  capabilities: AgentEngineCapabilities,
   read: Omit<AgentInventoryKind, "id" | "role" | "label" | "labelPlural" | "derivedGroupings">,
 ): AgentInventoryKind {
   return {
@@ -3129,7 +3266,7 @@ function inventoryKind(
  */
 async function enumerateGroundingContainers(
   tree: GrantedObjectTree,
-  capabilities: ProviderCapabilities,
+  capabilities: AgentEngineCapabilities,
   scrub: ProviderTextScrub,
   topLevel: readonly Container[],
 ): Promise<{
@@ -3229,7 +3366,10 @@ const NO_TOP_LEVEL: TreeContainersAnswer = Object.freeze({ containers: Object.fr
  * The walk's first read: the top-level container listing, which carries the provider's reason where its inventory
  * needs configuration the session lacks, and whose containers are the walk's first level. None at depth 0.
  */
-function topLevelListing(tree: GrantedObjectTree, capabilities: ProviderCapabilities): Promise<TreeContainersAnswer> {
+function topLevelListing(
+  tree: GrantedObjectTree,
+  capabilities: AgentEngineCapabilities,
+): Promise<TreeContainersAnswer> {
   return containerDepth(capabilities) === 0 ? Promise.resolve(NO_TOP_LEVEL) : tree.containers();
 }
 
@@ -3282,7 +3422,7 @@ export async function readStatisticsForGrounding(
   context: AgentToolContext,
   statement: AgentStatisticsStatement,
 ): Promise<AgentToolOutcome> {
-  const dialect = context.connection.type;
+  const dialect = legacyRunType(context);
   if (groundingStatementsUnderExecutionProfile(context)) {
     return statement === "availability"
       ? readStatementForGrounding(context, { sql: availabilityProbe(dialect), label: STATISTICS_AVAILABILITY_LABEL })
@@ -3380,15 +3520,16 @@ async function readCatalog(
   const parsed = parseToolInput(selectorSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = normalizeSelector(parsed.value);
+  const type = legacyRunType(context);
   let sql: string;
   try {
-    sql = composeCatalogRead(context.connection.type, selector);
+    sql = composeCatalogRead(type, selector);
   } catch (error) {
     return composedSqlOutcome(error);
   }
   // Supplied: `composeCatalogRead` refuses an engine whose catalog read is unsupported.
-  const { declaredSchema, retry } = engineServerDialect(context.connection.type).catalogRead as AgentCatalogRead;
-  const mapRows = catalogRowMapper(context.connection.type, selector.kind ?? "columns");
+  const { declaredSchema, retry } = engineServerDialect(type).catalogRead as AgentCatalogRead;
+  const mapRows = catalogRowMapper(type, selector.kind ?? "columns");
   const request: AgentOperationRequest = {
     operationId: "sql.query.read",
     sql,
@@ -3397,7 +3538,7 @@ async function readCatalog(
     ...(mapRows === undefined ? {} : { mapRows }),
     // Minted right after composing, where Studio grants the overlay's claim that its catalog statement is a command
     // (`catalogReadAdmission`).
-    ...catalogReadAdmission(context.connection.type, sql),
+    ...catalogReadAdmission(type, sql),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.
@@ -3588,7 +3729,7 @@ interface CuratedReading {
    * `runCuratedRead`; a provider's own ranked list never meets those bounds, so only the provider's
    * declaration can say so (#1085 6.2).
    */
-  readonly scope?: (labels: ProviderLabels) => string | undefined;
+  readonly scope?: (labels: AgentEngineLabels) => string | undefined;
   /**
    * The reading's host call on `target`'s session within `grant`, started synchronously, so a read made before the host
    * core is installed throws by name rather than as the promise's rejection.
@@ -3879,7 +4020,7 @@ async function runCuratedRead(
   try {
     answered = await started;
   } catch (error) {
-    throw asReadingFailure(error, context.connection.type);
+    throw asReadingFailure(error, legacyProviderType(runEngine(context)));
   }
   if (answered.kind === "not-offered") throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
   const read = answered.rows;
@@ -3933,7 +4074,7 @@ async function runCuratedRead(
  * ordinary repairable path — fenced, on the ledger, and leaving the model free to ask
  * for a different kind.
  */
-function asReadingFailure(error: unknown, provider: DatabaseConnection["type"]): unknown {
+function asReadingFailure(error: unknown, provider: DatabaseType | undefined): unknown {
   if (error instanceof DatabaseError) return error;
   return new QueryError(error instanceof Error ? error.message : String(error), provider);
 }
@@ -3986,9 +4127,10 @@ export async function inspectPlanTool(
 ): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(REFERENCE_STATEMENT_DEFINITIONS.inspect_plan.inputSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
+  const type = legacyRunType(context);
   let plan: AgentEstimatingExplain;
   try {
-    plan = composeEstimatingExplain(context.connection.type, parsed.value.sql);
+    plan = composeEstimatingExplain(type, parsed.value.sql);
   } catch (error) {
     return composedSqlOutcome(error);
   }
@@ -4206,13 +4348,14 @@ export function planTableProfile(
   // for the next batch — without it, columns past the first bound could never be
   // assessed while the run still counted as having profiled the table.
   const columns = target.entry.columns.slice(from, from + MAX_PROFILE_COLUMNS);
+  const type = legacyRunType(context);
 
   try {
     // Composed from what was RESOLVED, never from what was asked for.
     return {
       kind: "planned",
       plan: {
-        sql: composeTableProfile(context.connection.type, { ...target, depth }, columns),
+        sql: composeTableProfile(type, { ...target, depth }, columns),
         target,
         depth,
         columns,
@@ -4267,9 +4410,9 @@ export async function profileTableTool(
         label: "profiled table name",
         operationId: "sql.table.profile",
         reference: outcome.artifact.correlationId,
-        relayedBy: providerAuthor(context.connection.type),
+        relayedBy: runAuthor(context),
       }),
-      describeFindings(findings, "sql.table.profile", providerAuthor(context.connection.type)),
+      describeFindings(findings, "sql.table.profile", runAuthor(context)),
     ].join(" "),
   };
 }
@@ -4388,7 +4531,7 @@ export function recommendChangeTool(
       unverifiableCitation(run.events, [{ evidence: parsed.value.evidence }]),
     );
   }
-  return card.record(run.events, parsed.value, providerAuthor(context.connection.type));
+  return card.record(run.events, parsed.value, runAuthor(context));
 }
 
 /**
@@ -4777,7 +4920,7 @@ function refuseChartSpec(
   const columns = new Set(artifact.summary.columnNames);
   const named = [spec.x, ...spec.y];
   if (named.some((column) => !columns.has(column))) {
-    return chartColumnRefusal(artifact, providerAuthor(context.connection.type));
+    return chartColumnRefusal(artifact, runAuthor(context));
   }
   if (artifact.summary.rowCount < 2) return unavailable("CHART_TOO_FEW_ROWS");
   if (spec.type === "pie" && spec.y.length !== 1) return unavailable("CHART_SHAPE_MISMATCH");

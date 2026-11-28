@@ -21,6 +21,7 @@ import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /**
  * What a run reads off its persisted statement language. Pinned as it was before the run resolver: the truth table of
@@ -147,6 +148,7 @@ async function firstError(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider: async () => provider,
       },
     });
@@ -192,6 +194,7 @@ function sqlContext(modelId: string): AgentToolContext {
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS["query-optimization"].runDeadlineMs, () => 10_000),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => {
       throw new Error("a recommendation reaches no database");
     },

@@ -288,7 +288,7 @@ describe("the declaration has one reader (#1147)", () => {
   // It parses every file under src/ with the TypeScript compiler, so it grows with the tree: 2.3 s for this whole file
   // on linux-x64, and this one test took 5.1 s on macos-latest (CI job 114799679624), past bun's 5 s default.
   test(
-    "object-kinds.ts is the only file under src/ that reads the field to decide on it, and it reads it once, beside the legacy bridge's projection that copies it",
+    "object-kinds.ts is the only file under src/ that reads the field to decide on it, and it reads it once, beside the two projections that copy it, the legacy bridge's and the agent's engine view",
     () => {
       const readers: Array<[string, number]> = [];
       for (const file of sourceFiles(SRC)) {
@@ -298,6 +298,9 @@ describe("the declaration has one reader (#1147)", () => {
       // `readdirSync` answers in the file system's own order, so the pin is compared sorted.
       readers.sort(([a], [b]) => a.localeCompare(b));
       expect(readers).toEqual([
+        // The agent's engine view (`agentEngineDeclarations`) copies a provider package's declared model member into
+        // the view the agent's tools hand to object-kinds.ts, and decides nothing on it: one read for the copy.
+        ["src/lib/agent/engine-view.ts", 1],
         ["src/lib/db/object-kinds.ts", 1],
         // The legacy bridge's projection (`declaredObjectModel`) copies a provider's field into the declaration's form,
         // absent written as `exact`, the reading `acceptedContainerShapes()` gives, and decides nothing on it: one read

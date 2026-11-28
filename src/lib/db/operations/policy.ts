@@ -28,9 +28,9 @@
  */
 
 import type { Role } from "@/lib/auth";
-import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ExecutionBudget, ExecutionUsage } from "./budgets";
 import type { OperationRegistry } from "./registry";
+import type { BooleanProviderCapability } from "./types";
 
 /**
  * Execution modes this layer serves today. The normal editor path is
@@ -89,7 +89,11 @@ export interface PolicyEvaluationParams {
   readonly actor: ExecutionActor;
   readonly scope: TargetScope;
   readonly request: OperationRequest;
-  readonly capabilities: ProviderCapabilities;
+  /**
+   * The engine's boolean affordance flags the capability stage reads, a provider's `ProviderCapabilities` or any view
+   * holding the flags it states (the agent's `AgentEngineCapabilities`); a flag left out reads as not offered.
+   */
+  readonly capabilities: Readonly<Partial<Record<BooleanProviderCapability, boolean>>>;
   readonly usage: ExecutionUsage;
 }
 
@@ -304,7 +308,7 @@ export function evaluateOperation(params: PolicyEvaluationParams): PolicyDecisio
   if (!parsed.success) return deny("INPUT_VALIDATION_FAILED");
 
   // Stage 4 — provider capability (fast deny; never the security boundary).
-  const capabilityView: Partial<ProviderCapabilities> = capabilities ?? {};
+  const capabilityView: Readonly<Partial<Record<BooleanProviderCapability, boolean>>> = capabilities ?? {};
   if (!descriptor.requiredCapabilities.every((key) => capabilityView[key] === true)) {
     return deny("CAPABILITY_UNSUPPORTED");
   }

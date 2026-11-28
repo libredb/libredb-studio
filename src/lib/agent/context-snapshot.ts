@@ -87,6 +87,7 @@ import {
   readCatalogForGrounding,
   readObjectInventoryForGrounding,
   refusedErrorKind,
+  runEngine,
 } from "./tools";
 import type {
   AgentContextSnapshot,
@@ -100,9 +101,10 @@ import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } f
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
 import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
-import type { ProviderCapabilities } from "@/lib/db/types";
-import { quoteObjectPath } from "@/lib/query-generators";
-import type { ColumnSchema, DatabaseConnection, DatabaseType } from "@/lib/types";
+import { languageGenerators } from "@/lib/db/query-generators";
+import { type EngineConnection, legacyProviderType } from "@/lib/db/server-catalog";
+import type { ColumnSchema, DatabaseType } from "@/lib/types";
+import type { AgentEngineCapabilities } from "./engine-view";
 
 /**
  * How much of a catalog a refused capture asked for, against how much it may have.
@@ -738,7 +740,7 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
   const inventory = addressInventory(
     read.inventory,
     read.defaultContainer,
-    context.connection.type,
+    legacyProviderType(runEngine(context)),
     context.capabilities,
   );
   return {
@@ -782,8 +784,8 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
 function addressInventory(
   inventory: AgentInventory,
   defaultContainer: readonly string[] | undefined,
-  type: DatabaseType,
-  capabilities: ProviderCapabilities,
+  type: DatabaseType | undefined,
+  capabilities: AgentEngineCapabilities,
 ): AgentInventory {
   const objects = inventory.objects.map((object) => {
     const name = qualifiedName(object, { type, capabilities });
@@ -803,19 +805,26 @@ function addressInventory(
 }
 
 /**
- * An object's segments as one qualified name: the dotted segments, except for an InfluxQL measurement,
- * whose `[database, measurement]` path is written `"db".."m"`: the dotted spelling reads as a retention
- * policy, so a run that copied it wrote a statement the server refuses. Any other path is no InfluxQL
- * measurement address and keeps the dotted spelling every engine shares.
+ * An object's segments as one qualified name: the dotted segments, except for an InfluxQL measurement of a legacy
+ * engine, whose `[database, measurement]` path is written `"db".."m"` by its language's own address rule
+ * (`languageGenerators(...).quotePath`): the dotted spelling reads as a retention policy, so a run that copied it wrote
+ * a statement the server refuses. Any other path is no InfluxQL measurement address and keeps the dotted spelling every
+ * engine shares, as does a provider package's engine, `type` undefined, whose own language is not read here yet.
  */
 function qualifiedName(
   object: AgentInventoryObject,
-  declaration?: { readonly type: DatabaseType; readonly capabilities: ProviderCapabilities },
+  declaration?: { readonly type: DatabaseType | undefined; readonly capabilities: AgentEngineCapabilities },
 ): string {
   if (object.path === undefined) return object.name;
-  return declaration?.capabilities.queryLanguage === "influxql" && object.path.length === 2
-    ? quoteObjectPath(object.path, declaration.type, declaration.capabilities)
-    : object.path.join(".");
+  if (
+    declaration?.type !== undefined &&
+    declaration.capabilities.queryLanguage === "influxql" &&
+    object.path.length === 2
+  ) {
+    const address = languageGenerators(declaration.capabilities)?.quotePath;
+    if (address !== undefined) return address(object.path);
+  }
+  return object.path.join(".");
 }
 
 /**
@@ -881,6 +890,8 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "This engine is read only under an agent credential of the connection's own, and its seed entry sets none, so nothing was sent to the database. Set agentUser and agentPassword on the seed entry to a read credential.",
   READ_ROOTS_REQUIRED:
     "This connection declares no read roots, so agent mode cannot read it. An operator adds agentReadRoots to its seed entry; plan mode still drafts requests for the editor.",
+  AGENT_CREDENTIAL_NOT_TAKEN:
+    "The connection configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, so the agent credential cannot be applied and nothing was read.",
 });
 
 /**
@@ -989,7 +1000,7 @@ const heldSnapshots = new Map<string, AgentContextSnapshot>();
  * Hashed rather than concatenated because `connectionString` can carry a password, and a
  * process-lifetime map should not hold one as a key.
  */
-export function connectionIdentity(connection: DatabaseConnection): string {
+export function connectionIdentity(connection: EngineConnection): string {
   // `apiKeyId` below is the identifier of WHICH pre-configured key is used (this
   // function's analogue of `user`, see #708 comment below), not the credential;
   // `apiKeySecret` is the actual secret and is excluded from this hash. This builds

@@ -149,7 +149,10 @@ import {
   inspectOperationsTool,
   presentAnswerTool,
   recommendChangeTool,
+  runAuthor,
+  runEngine,
   runReadQueryTool,
+  runTextScrub,
   selectAgentTools,
   presentableArtifact,
 } from "./tools";
@@ -189,11 +192,11 @@ import {
   quoteIdentifierForPrompt,
 } from "./untrusted-content";
 import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
-import { providerAuthor, providerTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
+import { scrubProviderText } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import { type EngineConnection, legacyProviderType } from "@/lib/db/server-catalog";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
-import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import type { AgentEngineCapabilities } from "./engine-view";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
@@ -378,19 +381,20 @@ export const AGENT_REPORT_RESERVE_NOTICE = [
  * new engine fact into three of the five and forget the other two, which is how a
  * grounded Redis plan came to be handed an inventory headed "17 table(s)".
  *
- * Every field is DECLARED by the provider, never inferred from `connection.type` — the
- * rule `CLAUDE.md` states, and the reason `tablesAreDerivedGroupings` exists at all.
- * `type` is here because two sentences legitimately name the engine to the model (the
- * fence tag, and the rule binding a prose plan's readings to this engine); it is a
- * server-side enum in both.
+ * Every field is DECLARED by the engine, its provider's declarations or its package's admitted declaration
+ * (`agentEngineDeclarations`), never inferred from `connection.type`: the rule `CLAUDE.md` states, and the
+ * reason `tablesAreDerivedGroupings` exists at all. `type` is here because two sentences legitimately name the
+ * engine to the model (the fence tag, and the rule binding a prose plan's readings to this engine); it is the id
+ * of an engine the server catalog serves, of the type-id form, in both.
  */
 interface PlanningEngine {
-  readonly type: DatabaseType;
-  readonly language: ProviderCapabilities["queryLanguage"];
+  readonly type: string;
+  readonly language: AgentEngineCapabilities["queryLanguage"];
   /** What this engine calls the rows of its inventory. See `inventory-noun.ts`. */
   readonly noun: AgentInventoryNoun;
   /**
-   * `ProviderCapabilities.tablesAreDerivedGroupings`, already resolved to a boolean.
+   * The engine's `tablesAreDerivedGroupings` (`ProviderCapabilities.tablesAreDerivedGroupings` for a legacy
+   * engine, its object model's member for a provider package's), already resolved to a boolean.
    *
    * Resolved at the edge rather than carried optional, so the `=== true` gate the
    * published-interface default requires is applied once, where the capability is
@@ -399,7 +403,8 @@ interface PlanningEngine {
   readonly derivedGroupings: boolean;
   /**
    * `ProviderLabels.statementLanguage`, and absent on every engine that declares
-   * none — which is all but the two search products. See the contract below.
+   * none, which is all but the two search products, and every provider package's
+   * engine, whose declaration states no such label. See the contract below.
    */
   readonly statementLanguage?: string;
   /**
@@ -418,7 +423,7 @@ interface PlanningEngine {
   readonly toolRules: Readonly<Partial<Record<AgentRunWorkflowType, string>>>;
 }
 
-/** The engine facts a run's prose needs, taken from what its provider declared. */
+/** The engine facts a run's prose needs, taken from what its engine declared (`AgentToolContext.capabilities`). */
 function planningEngine(context: AgentToolContext): PlanningEngine {
   const server = runServerPack(context.statementLanguage, context.connection.type);
   return {
@@ -1514,11 +1519,10 @@ const planningNoSchemaRules = (deliverable: { readonly noun: string }, noun: Age
  *    governs what the plan may CLAIM, and the escape hatch — say what you want to
  *    establish instead — is what a model reaches for when it does not know.
  *
- * The type is a server-side enum, so nothing untrusted is spliced into a sentence the
- * model reads as the server's own; this is the same splice `planningUngroundedNote`
- * makes.
+ * The type is the id of an engine the server catalog serves, of the type-id form, so nothing untrusted is spliced
+ * into a sentence the model reads as the server's own; this is the same splice `planningUngroundedNote` makes.
  */
-const planningProseEngineRule = (type: DatabaseType): string =>
+const planningProseEngineRule = (type: string): string =>
   `This database is ${type} and nothing else, so every reading you name must be one a ${type} engine actually offers: name no view, no counter and no statistic that belongs to a different engine, and where you are unsure whether ${type} exposes a reading, say what you would want to establish rather than naming a mechanism this engine does not have.`;
 
 /**
@@ -1886,13 +1890,13 @@ function packPlanningSnapshotMessage(
  * none. The provider is the only thing that knows, and `CLAUDE.md` forbids asking the
  * connection's type here instead.
  *
- * `relayedBy` names the provider that relayed the inventory the relations are read from (`providerAuthor`).
+ * `relayedBy` names the provider that relayed the inventory the relations are read from (`engineAuthor`).
  */
 function packRelations(
   snapshot: AgentContextSnapshot,
   workflowType: AgentRunWorkflowType,
   mode: AgentRunMode,
-  capabilities: ProviderCapabilities,
+  capabilities: AgentEngineCapabilities,
   noun: AgentInventoryNoun,
   relayedBy: string,
 ): string {
@@ -1930,7 +1934,7 @@ function toolsByStep(events: readonly AgentRunEvent[]): ReadonlyMap<string, stri
  * message passes core's scrub of its credential again, because a ledger written before that scrub existed holds the
  * raw text, and a provider's refusal names the provider that wrote it.
  */
-function describeSettled(event: AgentSettledStepEvent, toolName: string, connection: DatabaseConnection): string {
+function describeSettled(event: AgentSettledStepEvent, toolName: string, connection: EngineConnection): string {
   if (event.kind === "tool-completed") {
     const { correlationId, operationId, summary } = event.artifact;
     // The citation form, not merely the id (#350): a resumed run is told about work
@@ -1959,7 +1963,7 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     // run-loop outcome instead of a refusal.
     return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
-  const message = scrubProviderText(providerTextScrub(connection, "profiled"), refusal.message);
+  const message = scrubProviderText(runTextScrub({ connection }), refusal.message);
   if (refusal.sent === false && refusal.refusedBy === "studio") {
     // This server's own sentence, so said in its voice rather than fenced as the database's.
     const reason = /[.!?]$/.test(message) ? message : `${message}.`;
@@ -1968,7 +1972,7 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
   if (refusal.sent === false) {
     // The provider's own sentence, or one recorded before the ledger said who refused, which is read the conservative
     // way: fenced as the provider's text, naming it, with this server's advice after the fence.
-    const author = providerAuthor(connection.type);
+    const author = runAuthor({ connection });
     const fenced = fenceProviderText(message, {
       label: "refusal before sending",
       operationId: toolName,
@@ -1991,7 +1995,7 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     label: "database error",
     operationId: toolName,
     reference: refusal.statementFingerprint,
-    relayedBy: providerAuthor(connection.type),
+    relayedBy: runAuthor({ connection }),
   });
   return `Step ${event.stepId} (${toolName}) failed at the database.\n${fenced}`;
 }
@@ -2019,7 +2023,7 @@ function describePriorRecommendation(event: Extract<AgentRunEvent, { kind: "reco
  * for a run nobody has driven yet — a fresh run is told nothing about a past it
  * does not have.
  */
-function describePriorProgress(record: AgentRunRecord, connection: DatabaseConnection): string | null {
+function describePriorProgress(record: AgentRunRecord, connection: EngineConnection): string | null {
   const tools = toolsByStep(record.events);
   const lines: string[] = [];
 
@@ -2071,7 +2075,7 @@ function describePriorProgress(record: AgentRunRecord, connection: DatabaseConne
             label: "profile already taken",
             operationId: "sql.table.profile",
             reference: event.artifact.correlationId,
-            relayedBy: providerAuthor(connection.type),
+            relayedBy: runAuthor({ connection }),
           },
         )}`,
       );
@@ -3227,7 +3231,7 @@ export async function runInvestigation(
       // — it moves the connection back to the newest end of the eviction order.
       holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
       // What the prompt is shown: a recorded or held snapshot may predate the walk's scrub of its provider sentences.
-      const packed = scrubSnapshotSentences(snapshot, providerTextScrub(context.connection, "profiled"));
+      const packed = scrubSnapshotSentences(snapshot, runTextScrub(context));
       if (operations) {
         // Names and indexes, and NO relations block: the graph is the most expensive
         // part of the packing and the least useful part of it here (#411). The note
@@ -3235,7 +3239,7 @@ export async function runInvestigation(
         messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(packed, providerAuthor(context.connection.type), {
+          content: packOperationsInventory(packed, runAuthor(context), {
             preface: planningSnapshotPreface(packed, readBy, engine.noun),
             noun: engine.noun,
           }),
@@ -3246,7 +3250,7 @@ export async function runInvestigation(
           content: packPlanningSnapshotMessage(
             packed,
             record.objective,
-            providerAuthor(context.connection.type),
+            runAuthor(context),
             readBy,
             engine.noun,
             runServer.grounding.sampledFields === true,
@@ -3260,7 +3264,7 @@ export async function runInvestigation(
             record.mode,
             context.capabilities,
             engine.noun,
-            providerAuthor(context.connection.type),
+            runAuthor(context),
           ),
         });
       }
@@ -3350,12 +3354,12 @@ export async function runInvestigation(
        */
       const show = (held: AgentContextSnapshot): void => {
         // A recorded snapshot may predate the walk's scrub of its provider sentences, so every packing passes it again.
-        const snapshot = scrubSnapshotSentences(held, providerTextScrub(context.connection, "profiled"));
+        const snapshot = scrubSnapshotSentences(held, runTextScrub(context));
         if (operations) {
           messages.push({ role: "user", content: operationsContextNote(engine.noun) });
           messages.push({
             role: "user",
-            content: packOperationsInventory(snapshot, providerAuthor(context.connection.type), {
+            content: packOperationsInventory(snapshot, runAuthor(context), {
               preface: snapshotHandoverText(snapshot.fingerprint),
               noun: engine.noun,
             }),
@@ -3364,13 +3368,7 @@ export async function runInvestigation(
         }
         messages.push({
           role: "user",
-          content: packSnapshotMessage(
-            snapshot,
-            record.objective,
-            providerAuthor(context.connection.type),
-            engine.noun,
-            languageGrounding,
-          ),
+          content: packSnapshotMessage(snapshot, record.objective, runAuthor(context), engine.noun, languageGrounding),
         });
         if (!languageGrounding.relations) return;
         messages.push({
@@ -3381,7 +3379,7 @@ export async function runInvestigation(
             record.mode,
             context.capabilities,
             engine.noun,
-            providerAuthor(context.connection.type),
+            runAuthor(context),
           ),
         });
       };
@@ -3677,7 +3675,9 @@ export async function runInvestigation(
       // and asking it for one is the impossible ask this file records having paid for before.
       if (planningInventory === null || planningInventory.objects.length === 0) return false;
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
-      if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
+      if (text.length === 0 || readPlanStatement(text, legacyProviderType(runEngine(context))).kind !== "absent") {
+        return false;
+      }
       planStatementAsks += 1;
       messages.push(...assistant);
       messages.push({ role: "user", content: notice(BASELINE_NOTICES.planStatement) });
@@ -3730,8 +3730,10 @@ export async function runInvestigation(
       // The dialect goes IN as well as onto the event (#396 review): the reader needs it
       // to reject a block the model tagged for another engine, because stamping this
       // connection's type onto a fence the model labelled `mysql` would file the run as
-      // having drafted for a database it explicitly did not write for.
-      const draft = readPlanStatement(closing, context.connection.type);
+      // having drafted for a database it explicitly did not write for. A provider package's
+      // engine hands the reader no dialect, so it reads under the compatibility grammar and
+      // no engine's fence tag contradicts the draft; its own fence tags are not read yet.
+      const draft = readPlanStatement(closing, legacyProviderType(runEngine(context)));
       if (draft.kind !== "statement") return;
       await service.recordEvent(runId, {
         kind: "plan-statement-drafted",

@@ -31,7 +31,7 @@ type OperationResourceCost = "light" | "moderate" | "heavy";
  * affordance flags only. Capabilities stay a UI-affordance contract and a fast
  * deny signal — never the security boundary.
  */
-type BooleanProviderCapability = {
+export type BooleanProviderCapability = {
   [K in keyof ProviderCapabilities]-?: ProviderCapabilities[K] extends boolean | undefined ? K : never;
 }[keyof ProviderCapabilities];
 

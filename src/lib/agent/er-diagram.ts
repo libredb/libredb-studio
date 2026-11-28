@@ -281,8 +281,9 @@ function groupByPair(relations: readonly Relation[]): readonly (readonly Relatio
  * construct to decline: any sentence about what this schema does or does not declare is
  * wrong there, and the reader is invited to wonder about a schema decision nobody made.
  *
- * `engineDeclaresForeignKeys` is `ProviderCapabilities.declaresForeignKeys`, and it is
- * a capability rather than an engine check for the rule `CLAUDE.md` states: engine
+ * `engineDeclaresForeignKeys` is the run's `declaresForeignKeys` (`AgentEngineCapabilities`: a legacy
+ * provider's `ProviderCapabilities.declaresForeignKeys`, and absent for a provider package's engine, whose
+ * declaration states none), and it is a capability rather than an engine check for the rule `CLAUDE.md` states: engine
  * behaviour is declared by the provider that has it, and `=== 'mongodb'` outside a
  * provider class is how six of these would have been listed here and the seventh
  * forgotten. The flag is optional on the published interface, so this reads `=== false`

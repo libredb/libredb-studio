@@ -10,6 +10,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 /**
  * Control 3.4 and 3.5: a statement the server composes meets the statement guard on every profile it is sent under.
@@ -100,6 +101,7 @@ function harness(profile: "operations" | "execution", type: DatabaseConnection["
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider,
       clock: frozenClock,
     },

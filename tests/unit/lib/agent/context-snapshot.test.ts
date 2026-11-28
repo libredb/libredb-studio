@@ -80,8 +80,10 @@ import type {
   IndexSchema,
   QueryResult,
 } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 // The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -272,6 +274,7 @@ function harness(
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: mock(async () => provider),
       clock: frozenClock,
     },
@@ -1338,7 +1341,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     // it is the ARGUMENT that is under test: what the run is decides it
     // (`groundsUnderExecutionProfile` in `src/lib/agent/tools.ts`), not the engine.
     const profiles: unknown[] = [];
-    const acquireProvider = mock(async (_connection: DatabaseConnection, profile: unknown) => {
+    const acquireProvider = mock(async (_connection: EngineConnection, profile: unknown) => {
       if (options.acquireThrows) throw options.acquireThrows;
       profiles.push(profile);
       return provider;
@@ -1363,6 +1366,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
           frozenClock,
         ),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider,
         clock: frozenClock,
       },
@@ -2049,7 +2053,8 @@ describe("captureContextSnapshot — the object surface that says what each entr
           frozenClock,
         ),
         repairs: new AgentRepairLedger(),
-        acquireProvider: mock(async (_connection: DatabaseConnection, profile: unknown) => {
+        sessions: LEGACY_RUN_SESSIONS,
+        acquireProvider: mock(async (_connection: EngineConnection, profile: unknown) => {
           profiles.push(profile);
           return provider;
         }),
@@ -3486,6 +3491,7 @@ describe("an inventory that knows what its objects ARE", () => {
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: mock(async () => provider),
       clock: frozenClock,
     });

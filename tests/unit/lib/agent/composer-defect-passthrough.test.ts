@@ -4,6 +4,7 @@ import type { AgentToolContext } from "@/lib/agent/tools";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /**
  * A composer defect leaves as itself, never as a refusal.
@@ -81,6 +82,7 @@ function contextFor(type: DatabaseType): { context: AgentToolContext; queryReadO
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: mock(async () => provider),
       clock: frozenClock,
     },

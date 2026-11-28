@@ -191,6 +191,12 @@ const STATEMENT_LANGUAGE_MEMBERS = ["statementLanguageData"] as const;
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
+    path: "src/lib/agent/engine-view.ts",
+    members: ["objects", "editor.explainFormat", "editor.language"],
+    reason:
+      "the agent's view of a provider package's engine, read from its admitted declaration: the object model its grounding walks, the query language and explain format its prose and plans name, and its first relation kind's noun; none a claim, and each name held to Studio's tables",
+  },
+  {
     path: "src/lib/agent/languages/client.ts",
     members: STATEMENT_LANGUAGE_MEMBERS,
     reason:

@@ -22,9 +22,11 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { legacyConnection, servedEngineRecord } from "@/lib/db/server-catalog";
 import { chatToolCallStream, type FetchDouble } from "./fixtures/agent-transport";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 // The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -424,11 +426,17 @@ async function driveArc(fixture: Fixture): Promise<Arc> {
     artifacts,
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, Date.now),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     // The production seam, not a stand-in: this is what opens the provider under the
     // read-only profile, so the run really is bounded by the profile's own controls.
     acquireProvider: async (connection, profile) => {
       profiles.push(profile);
-      return acquireExecutionProfileProvider(connection, profile, {}, editorExecutionContext(ACTOR, connection));
+      return acquireExecutionProfileProvider(
+        legacyConnection(servedEngineRecord(connection.type), connection),
+        profile,
+        {},
+        editorExecutionContext(ACTOR, connection),
+      );
     },
   };
 

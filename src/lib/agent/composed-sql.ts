@@ -60,7 +60,7 @@ import type { DatabaseType } from "@/lib/types";
  * means "verified: no probe needed", and a dialect nobody has verified has not
  * earned that answer.
  */
-export function composeStatisticsAvailabilityProbe(dialect: DatabaseType): string | null {
+export function composeStatisticsAvailabilityProbe(dialect: string): string | null {
   if (engineServerDialect(dialect).catalogRead === "unsupported") {
     throw new AgentComposedSqlError(
       `no verified statistics composition for provider type "${dialect}"`,

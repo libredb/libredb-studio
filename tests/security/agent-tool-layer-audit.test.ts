@@ -15,6 +15,7 @@ import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../helpers/agent-engine-sessions";
 
 // The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -92,6 +93,7 @@ function context(
     // Two readings past a 1ms total: construction takes the first, `admit` the next.
     deadline: new AgentRunDeadline(1, stubClock(0, 5_000)),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: mock(async () => provider),
     clock: stubClock(1_000, 1_010),
     ...overrides,

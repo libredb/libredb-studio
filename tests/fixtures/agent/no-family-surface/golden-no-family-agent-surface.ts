@@ -42,6 +42,7 @@ import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /**
  * The engine with no statement family on the base commit, frozen here rather than read from the engines' granted
@@ -158,6 +159,7 @@ async function surfaceOf(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
         repairs: new AgentRepairLedger(),
+        sessions: LEGACY_RUN_SESSIONS,
         acquireProvider: async () => providerDouble(engine, capabilities, listedKind),
         clock,
       },
@@ -214,6 +216,7 @@ async function curatedDenial(engine: DatabaseType) {
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.operations.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
+      sessions: LEGACY_RUN_SESSIONS,
       acquireProvider: async () => providerDouble(engine, capabilities, listedKind),
       clock,
     },

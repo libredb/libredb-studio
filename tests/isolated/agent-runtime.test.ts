@@ -36,6 +36,7 @@ import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
+import * as realDb from "@/lib/db";
 import * as realFactory from "@/lib/db/factory";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { AgentToolResources } from "@/lib/agent/investigation";
@@ -83,7 +84,7 @@ const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
   void args;
   return { capabilities: mockGetCapabilities(), labels: mockGetLabels(), supportsQueryCancel: false };
 });
-mock.module("@/lib/db", () => ({ readProviderDeclarations: mockReadProviderDeclarations }));
+mock.module("@/lib/db", () => ({ ...realDb, readProviderDeclarations: mockReadProviderDeclarations }));
 // The profiled seam itself, so what the run's acquirer hands it can be read back.
 const mockAcquireExecutionProfileProvider = mock(async (...args: unknown[]) => {
   void args;
@@ -600,6 +601,7 @@ describe("a drive that fails before the loop", () => {
     CONNECTION_SECRET_UNRESOLVABLE: "connection-unresolvable",
     AGENT_CREDENTIAL_REQUIRED: "agent-credential-unusable",
     READ_ROOTS_REQUIRED: "read-roots-required",
+    AGENT_CREDENTIAL_NOT_TAKEN: "agent-credential-unusable",
   } as const satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>;
 
   test.each(Object.entries(REASON_OF_DENY_CODE) as [ExecutionProfileDenyCode, AgentRunFailureReason][])(

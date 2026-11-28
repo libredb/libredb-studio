@@ -12,6 +12,7 @@ import type { Container, DatabaseConnection, DatabaseProvider, KindCount, QueryR
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, HostCoreBootOrderError, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 // The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -77,6 +78,7 @@ function agentContext(provider: DatabaseProvider): AgentToolContext {
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2, clock),
     repairs: new AgentRepairLedger(),
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider: async () => provider,
     clock,
   };

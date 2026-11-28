@@ -24,10 +24,13 @@ import {
   profileTableTool,
   readCatalogForGrounding,
   readStatementForGrounding,
+  readStatisticsForGrounding,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
 } from "@/lib/agent/tools";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { AGENT_ANSWER_CONTRACT } from "@/lib/agent/tool-contracts";
 import {
   connectionIdentity,
@@ -104,6 +107,8 @@ import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import type { ExecuteRequest, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
+import { admittedFor, admittedManifest, withCatalog } from "../../../helpers/package-catalog";
 
 // The curated readings run through the host core's monitoring calls, so the file installs one for its cases.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -199,6 +204,7 @@ function harness(
     artifacts,
     deadline,
     repairs,
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider,
     clock: stubClock(1_000, 1_012),
     ...overrides,
@@ -5993,6 +5999,7 @@ function curatedHarness(
     artifacts,
     deadline,
     repairs,
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider,
     clock: () => {
       tick += 3;
@@ -8439,5 +8446,26 @@ describe("Studio's own refusal of a sent statement's answer", () => {
     expect(refusal.refusedBy).toBe("studio");
     expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
     expect(outcome.modelText).toContain(refusal.message);
+  });
+});
+
+describe("a statement path on a provider package's engine", () => {
+  test("a statement path reached on a package engine's run is Studio's defect, before any acquisition", async () => {
+    // A provider package's engine composes no statement and acquires no profiled provider, so the drive never sends a
+    // run of one down these paths; one that arrives is a host defect, named before anything is acquired.
+    const catalog = composeServerCatalog(
+      [admittedFor("acme-agent-defect", admittedManifest("acmeagentdefect"))],
+      [],
+      STUDIO_GRANT_REGISTER,
+    );
+    await withCatalog(catalog, async () => {
+      const defect =
+        'The engine "acmeagentdefect" offers no legacy provider, and this caller reads its connection as a legacy provider\'s: a host defect.';
+      const h = harness({ connection: { ...connection, type: "acmeagentdefect" } });
+      await expect(inspectPlanTool(h.context, { sql: "SELECT 1" })).rejects.toThrow(defect);
+      await expect(inspectSchemaTool(h.context, { kind: "columns" })).rejects.toThrow(defect);
+      await expect(readStatisticsForGrounding(h.context, "estimates")).rejects.toThrow(defect);
+      expect(h.acquireProvider).not.toHaveBeenCalled();
+    });
   });
 });

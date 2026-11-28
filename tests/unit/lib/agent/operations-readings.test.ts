@@ -24,6 +24,7 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import { legacyRegisterTable } from "../../../helpers/legacy-register";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
+import { LEGACY_RUN_SESSIONS } from "../../../helpers/agent-engine-sessions";
 
 /**
  * The curated readings agent mode is offered (FND-4 slice 3): `inspect_operations` offers each run exactly the kinds
@@ -169,6 +170,7 @@ function readingHarness(engine: DatabaseType | undefined, type: DatabaseType) {
     artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxTotalRunMs * 2, () => 1_000),
     repairs,
+    sessions: LEGACY_RUN_SESSIONS,
     acquireProvider,
     clock: () => 1_000,
   };

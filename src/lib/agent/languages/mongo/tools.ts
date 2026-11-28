@@ -30,7 +30,6 @@
  *   one-statement-per-table contract is not something to trade silently.
  */
 import type { z } from "zod";
-import { providerAuthor, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { ReadOnlyCatalogReading, ReadOnlyCatalogSelector } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
@@ -45,8 +44,10 @@ import {
   type AgentToolContext,
   type AgentToolOutcome,
   executeAgentOperation,
+  legacyRunReading,
   readOnlyBudgetFor,
   runAuditedAgentCall,
+  runAuthor,
 } from "../../tools";
 import {
   capturedSnapshot,
@@ -141,8 +142,7 @@ export async function mongoInspectSchemaTool(
       const target = catalogTarget(snapshot, schema, table);
       const handed = readOnlyBudgetFor(context, budget);
       reading = await runReadOnlyReading({
-        type: context.connection.type,
-        scrub: providerTextScrub(context.connection, "profiled"),
+        ...legacyRunReading(context),
         statement: JSON.stringify(target),
         budget: handed,
         holdUntilSettled,
@@ -411,7 +411,7 @@ export async function runMongoProfile(
     kind: "profiled",
     artifact: outcome.artifact,
     profile,
-    modelText: mongoProfileModelText(profile, outcome.artifact, plan, providerAuthor(context.connection.type)),
+    modelText: mongoProfileModelText(profile, outcome.artifact, plan, runAuthor(context)),
   };
 }
 
