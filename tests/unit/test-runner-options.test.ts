@@ -68,6 +68,47 @@ describe("runner command line", () => {
     expect(() => parseRunnerArgs(["--file-timeout=nope"], defaults)).toThrow(/--file-timeout/);
   });
 
+  test("--test-timeout is seconds, and must be a positive whole number", () => {
+    expect(parseRunnerArgs(["--test-timeout=60"], defaults).testTimeoutMs).toBe(60_000);
+    expect(parseRunnerArgs([], defaults).testTimeoutMs).toBeNull();
+    for (const refused of ["0", "-1", "1.5", "nope"]) {
+      expect(() => parseRunnerArgs([`--test-timeout=${refused}`], defaults)).toThrow(/--test-timeout/);
+    }
+    expect(() => parseRunnerArgs(["--test-timeout", "60"], defaults)).toThrow(/--test-timeout=60/);
+  });
+
+  test("--shard takes I/N with 1 <= I <= N", () => {
+    expect(parseRunnerArgs(["--shard=2/4"], defaults).shard).toEqual({ index: 2, count: 4 });
+    expect(parseRunnerArgs(["--shard=1/1"], defaults).shard).toEqual({ index: 1, count: 1 });
+    expect(parseRunnerArgs([], defaults).shard).toBeNull();
+    for (const refused of ["0/4", "5/4", "1/0", "a/b", "2", "1/4/x", "1.5/4", "-1/4"]) {
+      expect(() => parseRunnerArgs([`--shard=${refused}`], defaults)).toThrow(
+        `--shard needs I/N, whole numbers with 1 <= I <= N, as --shard=2/4, got "${refused}".`,
+      );
+    }
+    expect(() => parseRunnerArgs(["--shard", "2/4"], defaults)).toThrow(/--shard=2\/4/);
+  });
+
+  test("--merge-shards needs --merge-into and refuses --shard and --list", () => {
+    const options = parseRunnerArgs(["--merge-shards=4", "--merge-into=coverage/lcov.info"], defaults);
+    expect(options.mergeShards).toBe(4);
+    expect(parseRunnerArgs([], defaults).mergeShards).toBeNull();
+    expect(() => parseRunnerArgs(["--merge-shards=4"], defaults)).toThrow(
+      "--merge-shards merges into the report --merge-into names, and none was given.",
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--shard=1/4"], defaults)).toThrow(
+      "--merge-shards runs no test, so it takes no --shard, --list or arguments for bun test.",
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--list"], defaults)).toThrow(
+      /--merge-shards runs no test/,
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--", "--bail"], defaults)).toThrow(
+      /--merge-shards runs no test/,
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=0", "--merge-into=a.lcov"], defaults)).toThrow(/--merge-shards/);
+    expect(() => parseRunnerArgs(["--merge-shards", "4"], defaults)).toThrow(/--merge-shards=4/);
+  });
+
   test("--list asks what would run", () => {
     expect(parseRunnerArgs(["--list"], defaults).list).toBe(true);
   });
@@ -81,6 +122,12 @@ describe("runner command line", () => {
 
   test("an unknown option is refused by name, never ignored", () => {
     expect(() => parseRunnerArgs(["--parallel"], defaults)).toThrow(/--parallel/);
+  });
+
+  test("the refusal of an unknown option names every option the runner has", () => {
+    expect(() => parseRunnerArgs(["--parallel"], defaults)).toThrow(
+      /--jobs, --coverage, --coverage-dir, --merge-into, --file-timeout, --test-timeout, --shard, --merge-shards and --list;/,
+    );
   });
 
   test("a bun flag that arrived without its -- is told why, and given the form that works", () => {
@@ -117,15 +164,23 @@ describe("runner command line", () => {
 
 describe("the per-test timeout the children are given", () => {
   test("Windows children are given a raised timeout, because bun's 5000ms default is not enough there", () => {
-    expect(perTestTimeoutArgs("win32")).toEqual([`--timeout=${WINDOWS_PER_TEST_TIMEOUT_MS}`]);
+    expect(perTestTimeoutArgs("win32", null)).toEqual([`--timeout=${WINDOWS_PER_TEST_TIMEOUT_MS}`]);
   });
 
   test("Linux and macOS children are given nothing, so bun's own default still applies", () => {
     // The paired control. Without it the case above would pass just as well for a
     // function that raised the timeout everywhere, which is the thing not wanted:
     // Linux is where a real slowdown has to stay visible.
-    expect(perTestTimeoutArgs("linux")).toEqual([]);
-    expect(perTestTimeoutArgs("darwin")).toEqual([]);
+    expect(perTestTimeoutArgs("linux", null)).toEqual([]);
+    expect(perTestTimeoutArgs("darwin", null)).toEqual([]);
+  });
+
+  test("--test-timeout replaces the Windows default and applies on every platform", () => {
+    // The main-only cross-platform legs pass it: one measured budget on both of them,
+    // given explicitly rather than read from the platform.
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      expect(perTestTimeoutArgs(platform, 60_000)).toEqual(["--timeout=60000"]);
+    }
   });
 
   test("the raised timeout is well clear of bun's default and well under the runner's per-file budget", () => {

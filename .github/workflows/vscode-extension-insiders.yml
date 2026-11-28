@@ -8,7 +8,7 @@
 # The coexistence job runs the e2e leg's coexistence subset on the pinned
 # builds, with ms-mssql.mssql installed beside LibreDB (part 3 criterion 21).
 # It downloads mssql from the Marketplace, so it runs here, daily and on manual
-# dispatch, and never in the pull request job.
+# dispatch, and never in ci.yml's job.
 name: VS Code Extension Insiders
 
 on:

@@ -518,16 +518,16 @@ Published by [`.github/workflows/docker-build-push.yml`](../.github/workflows/do
 | `<version>` (e.g. `0.9.41`) | GitHub release (or manual dispatch) only | pinned, never overwritten by branch pushes |
 | `latest` | GitHub release only | moves on each release |
 | `main` | every push to `main` (including PR merges) | moving pre-release tag |
-| `dev` | every push to a `feat/**` / `fix/**` branch | moving development tag |
 | `sha-<commit>` | every build | immutable |
 
-Use `<version>` or `sha-<commit>` for reproducible deployments; `main` / `dev` are for testing
+Use `<version>` or `sha-<commit>` for reproducible deployments; `main` is for testing
 unreleased code.
+The `dev` tags that `feat/**` and `fix/**` pushes used to move are no longer published, and the last one no longer moves.
 
 **Variants.** Every tag above is published three times, once per base image (#840). The suffix is
 appended to whatever the tag would otherwise be, so `0.16.2`, `0.16.2-alpine` and
-`0.16.2-alpine-slim` are the same release on three bases, and `latest-alpine` and `dev-alpine` exist
-for the same reason `latest` and `dev` do.
+`0.16.2-alpine-slim` are the same release on three bases, and `latest-alpine` and `main-alpine` exist
+for the same reason `latest` and `main` do.
 
 | Suffix | Dockerfile | Base | Engines | Use |
 |---|---|---|---|---|
@@ -556,12 +556,8 @@ configs onto `/app`. Each Dockerfile now runs `scripts/lib/prune-standalone-payl
 builder stage — the same deny-list the release tarballs, `.deb`/`.rpm`, snap and the npx cache
 already share (#124) — so a new repo-root file leaves every artifact family through one edit.
 
-**Architectures:** every tag published from `main`, a release or a manual dispatch is a
-`linux/amd64` + `linux/arm64` manifest. Branch previews (`dev` and the `sha-` tag of a
-`feat/**` / `fix/**` push) are `linux/amd64` only — the build job has no native arm64 runner, so
-arm64 goes through QEMU and dominates the job's runtime; spending that on every commit of an open
-PR buys nothing, since the only consumer of `dev` is the amd64 Channel E2E gate. Pull `main` (or a
-released version) when you need arm64 from an unreleased line.
+**Architectures:** every tag is a `linux/amd64` + `linux/arm64` manifest, because images are built
+only from `main`, a release or a manual dispatch.
 
 ## Helm (Kubernetes)
 
@@ -1645,7 +1641,7 @@ A later pre-release takes the next odd minor, 0.3.x, and stays above the release
 
 [`vscode-extension-release.yml`](../.github/workflows/vscode-extension-release.yml) runs on a pushed `vscode-extension-*` tag.
 Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
-Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
+Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every push to `main` runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
 Its `publish` job then uploads that same VSIX with `npm run publish:marketplace` ([`vscode-extension/scripts/publish.mjs`](../vscode-extension/scripts/publish.mjs)), which runs `vsce publish --oidc --packagePath <file>`, plus `--pre-release` on an odd minor; nothing is rebuilt.
 It runs in the `vscode-marketplace` GitHub environment, which only `vscode-extension-*` tags can deploy to, and waits for no approval, like the product's automated channels: pushing the tag publishes the version, and only members with push access can push one.
 Its only credential is the job's GitHub OIDC token (`id-token: write`), which vsce trades for a short-lived Marketplace token against the trusted publisher configured on the `libredb` publisher; no Marketplace token is stored in the repository.
@@ -1844,7 +1840,7 @@ Notes on what is and is not covered:
   `SNAPCRAFT_STORE_CREDENTIALS`); Snap Store installs are verified by the store instead.
 - `SHA256SUMS` and the `.sha256` sidecars are deliberately **not** attested — a signature over a
   checksum file proves nothing about the artifact it describes. The artifacts are the subjects.
-- Images built from branch pushes (the mutable `main` / `dev` tags) are not attested; only
+- Images built from pushes to `main` (the mutable `main` tag) are not attested; only
   release-context builds are.
 - The image attestation is not pushed to GHCR as an OCI referrer, so `cosign`-style registry-only
   verification will not find it — fetch it from GitHub with `gh attestation verify oci://…`.

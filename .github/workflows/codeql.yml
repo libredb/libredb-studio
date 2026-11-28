@@ -8,6 +8,14 @@ on:
   schedule:
     - cron: '20 6 * * 5'
 
+# A newer push supersedes this run: on a pull request the running run is
+# cancelled, and on main only a run still pending is replaced, so a started main
+# run always finishes. Keyed by event too, so a push, a schedule and a dispatch on
+# one ref never cancel each other (tests/unit/workflow-triggers.test.ts).
+concurrency:
+  group: codeql-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})

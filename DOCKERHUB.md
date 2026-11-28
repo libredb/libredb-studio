@@ -90,10 +90,9 @@ The network route is the one to prefer for a real deployment: put Studio and its
 | `latest` | a release | The newest release |
 | `X.Y.Z` | a release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.16.2` (recommended for production) |
 | `main` | every push to `main` | Unreleased work on `main` |
-| `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview (`linux/amd64` only) |
 | `sha-<commit>` | every build | Exact immutable commit |
 
-Every one of those tags is published on three bases, and the suffix is appended to the tag it would otherwise be (`0.16.2`, `0.16.2-alpine`, `0.16.2-alpine-slim`; likewise `latest-alpine`, `dev-alpine`):
+Every one of those tags is published on three bases, and the suffix is appended to the tag it would otherwise be (`0.16.2`, `0.16.2-alpine`, `0.16.2-alpine-slim`; likewise `latest-alpine`, `main-alpine`):
 
 | Suffix | Base | Engines | Use |
 |-----|-------------|-----|-----|
@@ -103,7 +102,7 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 `-alpine` is the same product as the default image. `-alpine-slim` is the only variant that trades features for size: opening a DuckDB connection on it answers with a message naming the tags that do ship that driver. Oracle Thick mode needs Oracle Instant Client, which has no musl build, so it stays on the default tag. None of the three carries the application source.
 
-- **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job.
+- **Architectures:** every tag is a multi-arch manifest of `linux/amd64` and `linux/arm64`. The `dev` tags are no longer published, and the last one no longer moves.
 - **Primary registry:** `ghcr.io/libredb/libredb-studio`, where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
 
 ---

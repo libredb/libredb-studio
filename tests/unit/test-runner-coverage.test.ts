@@ -27,6 +27,14 @@ describe("emptying the coverage directory", () => {
     expect(() => assertCoverageDirIsOurs("coverage", ["html"])).toThrow(/holds 1 entry this runner did not write/);
   });
 
+  test("a shard record is the runner's own", () => {
+    expect(unownedCoverageEntries(["shard-1-of-4.txt", "shard-12-of-12.txt"])).toEqual([]);
+    expect(unownedCoverageEntries(["shard-1-of-4.txt.bak", "shard-x-of-4.txt"])).toEqual([
+      "shard-1-of-4.txt.bak",
+      "shard-x-of-4.txt",
+    ]);
+  });
+
   test("a name that merely looks like ours is not ours", () => {
     // `file-1` is the runner's; `file-one` and `lcov.info.bak` are somebody's work.
     expect(unownedCoverageEntries(["file-1", "file-one", "lcov.info.bak"])).toEqual(["file-one", "lcov.info.bak"]);

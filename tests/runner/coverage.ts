@@ -13,8 +13,11 @@
  * runner put there.
  */
 
-/** What a coverage run leaves behind: one directory per test file, plus the merge's own inputs. */
-const OWNED = /^(file-\d+|lcov\.info|inputs\.txt)$/;
+/**
+ * What a coverage run leaves behind: one directory per test file, the merge's own
+ * inputs, and a passing shard's record of the files it ran (tests/runner/shard.ts).
+ */
+const OWNED = /^(file-\d+|lcov\.info|inputs\.txt|shard-\d+-of-\d+\.txt)$/;
 
 export function unownedCoverageEntries(entries: string[]): string[] {
   return entries.filter((entry) => !OWNED.test(entry)).sort();

@@ -2,7 +2,7 @@
  * The VS Code extension's workflow invariants (docs/TOOLCHAIN.md, "VS Code extension").
  *
  * Each failure here is silent. A cache of the whole `.vscode-test/` also saves the e2e leg's VS Code profile, its
- * `user-data/` and `extensions/`, and restores it into every later run, fork pull requests included. An upload that
+ * `user-data/` and `extensions/`, and restores it into every later run. An upload that
  * finds no VSIX only warns. An npm install without its cache still passes, it just downloads the extension's
  * closure inside the required job on every run.
  */
@@ -77,10 +77,10 @@ describe("vscode-extension.yml", () => {
 });
 
 describe("the coexistence leg", () => {
-  // It downloads ms-mssql.mssql from the Marketplace, so it stays out of the pull request job (PR 14 decision 3).
+  // It downloads ms-mssql.mssql from the Marketplace, so it stays out of ci.yml's job (PR 14 decision 3).
   const subsetOf = (step: Step) => step.env?.LIBREDB_E2E_SUBSET;
 
-  test("never runs in the pull request job", () => {
+  test("never runs in ci.yml's job", () => {
     for (const job of Object.keys(extension.jobs)) {
       const subsets = steps(extension, job).map(subsetOf);
       expect(subsets).not.toContain("coexistence");
@@ -130,7 +130,7 @@ describe("vscode-extension-release.yml", () => {
     expect(job[onMain]?.run).toContain("The tag's commit is not on main.");
   });
 
-  test("gates run the same reusable workflow as every pull request, after verify", () => {
+  test("gates run the same reusable workflow as every push to main, after verify", () => {
     const gates = release().jobs.gates;
     expect(gates?.needs).toBe("verify");
     expect(gates?.uses).toBe("./.github/workflows/vscode-extension.yml");

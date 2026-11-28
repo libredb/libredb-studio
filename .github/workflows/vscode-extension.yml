@@ -1,7 +1,7 @@
 # The VS Code extension's gates (docs/TOOLCHAIN.md, "VS Code extension").
-# A reusable workflow: ci.yml calls it on every push and pull request, and
-# vscode-extension-release.yml calls the same file on a vscode-extension-* tag,
-# so the gates a release passes cannot drift from a pull request's.
+# A reusable workflow: ci.yml calls it on every push to main and on a dispatch,
+# and vscode-extension-release.yml calls the same file on a vscode-extension-*
+# tag, so the gates a release passes cannot drift from main's.
 #
 # vscode-extension/ is its own npm package beside the Bun root. Its bundles and
 # tests resolve React, the drivers and the provider layer from the root's
@@ -69,7 +69,7 @@ jobs:
         with:
           # The builds only: the e2e leg keeps its VS Code profile in
           # .vscode-test/user-data and .vscode-test/extensions, and a cached
-          # profile would reach every later run, fork pull requests included.
+          # profile would reach every later run.
           path: vscode-extension/.vscode-test/vscode-*
           key: vscode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vscode-extension/test/vscode-versions.json') }}
 
@@ -154,7 +154,7 @@ jobs:
         with:
           # The builds only: the e2e leg keeps its VS Code profile in
           # .vscode-test/user-data and .vscode-test/extensions, and a cached
-          # profile would reach every later run, fork pull requests included.
+          # profile would reach every later run.
           path: vscode-extension/.vscode-test/vscode-*
           key: vscode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vscode-extension/test/vscode-versions.json') }}
 

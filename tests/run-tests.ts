@@ -15,8 +15,13 @@
  *   bun tests/run-tests.ts tests/api             one layer
  *   bun tests/run-tests.ts tests/api/db.test.ts  one file
  *   bun tests/run-tests.ts --jobs=4              bound the concurrency
+ *   bun tests/run-tests.ts --file-timeout=600    a file's budget, in seconds
+ *   bun tests/run-tests.ts --test-timeout=60     every test's budget, in seconds
  *   bun tests/run-tests.ts --list                what would run
  *   bun tests/run-tests.ts --coverage --merge-into=coverage/lcov.info
+ *   bun tests/run-tests.ts --shard=2/4 --coverage                 one of CI's four shards
+ *   bun tests/run-tests.ts --merge-shards=4 --merge-into=coverage/lcov.info
+ *                                                the shards' reports, merged (runs no test)
  *   bun tests/run-tests.ts tests/unit -- --bail  pass flags to bun test
  *
  * That last one needs both halves as written: a selector before the `--`, and the
@@ -44,6 +49,7 @@ import { coverageDirFor, type RunFile, runTestFiles, type SpawnOutcome } from ".
 import { parseRunnerArgs, perTestTimeoutArgs, type RunnerOptions } from "./runner/options";
 import { formatFileLine, formatSummary } from "./runner/report";
 import { missingHelm, planRequirements, requiredCapabilities, systemHelmProbe } from "./runner/requirements";
+import { checkShardRecords, formatShardRecord, shardOf, shardRecordName } from "./runner/shard";
 import { exitCodeForSignal, STOP_SIGNALS, type StopSignal } from "./runner/signals";
 
 const root = path.resolve(import.meta.dir, "..");
@@ -214,7 +220,7 @@ function childEnvironment(): Record<string, string | undefined> {
   return wantsColour ? { ...process.env, FORCE_COLOR: "1" } : { ...process.env };
 }
 
-function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
+function spawnTestFile(bunArgs: string[], testTimeoutMs: number | null, junitDir: string): RunFile {
   return async ({ file, index, coverageDir, timeoutMs }): Promise<SpawnOutcome> => {
     const coverageArgs = coverageDir ? ["--coverage", "--coverage-reporter=lcov", `--coverage-dir=${coverageDir}`] : [];
     // Every child writes a junit report, and it is the runner's only source of truth
@@ -233,8 +239,8 @@ function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
       "test",
       // BEFORE the forwarded arguments, so a contributor's own `-- --timeout=...` still
       // decides: bun takes the last of a repeated option, the same rule the reporter
-      // flags below rely on. Empty everywhere but Windows.
-      ...perTestTimeoutArgs(process.platform),
+      // flags below rely on. Empty everywhere but Windows, unless --test-timeout is given.
+      ...perTestTimeoutArgs(process.platform, testTimeoutMs),
       ...bunArgs,
       // AFTER the user's arguments, because bun takes the last of a repeated option:
       // a forwarded `-- --reporter-outfile=x` would otherwise send the report
@@ -292,10 +298,10 @@ function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
   };
 }
 
-function mergeCoverage(options: RunnerOptions, files: string[]): void {
+function mergeCoverage(options: RunnerOptions, files: string[], positions: ReadonlyMap<string, number>): void {
   const reports = files
-    .map((file, index) =>
-      coverageDirFor(file, index, {
+    .map((file) =>
+      coverageDirFor(file, positions, {
         coverage: options.coverage,
         coverageDir: options.coverageDir,
         coverageExempt: COVERAGE_EXEMPT_FILES,
@@ -331,9 +337,44 @@ function mergeCoverage(options: RunnerOptions, files: string[]): void {
   }
 }
 
+/**
+ * `--merge-shards=N`: runs no test and empties nothing. The shards' records in the
+ * coverage directory must account for every selected file exactly once
+ * (tests/runner/shard.ts), and then the one merge an unsharded run would make is made.
+ */
+function mergeShards(options: RunnerOptions, selection: string[], positions: ReadonlyMap<string, number>): void {
+  const coverageDir = path.resolve(root, options.coverageDir);
+  if (!existsSync(coverageDir)) throw new Error(`${options.coverageDir} does not exist, so there is nothing to merge.`);
+  checkShardRecords({
+    count: options.mergeShards as number,
+    directory: options.coverageDir,
+    selection,
+    entries: readdirSync(coverageDir),
+    read: (name) => readFileSync(path.join(coverageDir, name), "utf8"),
+  });
+  const mergeTarget = path.resolve(root, options.mergeInto as string);
+  if (existsSync(mergeTarget)) assertMergeTargetIsOurs(options.mergeInto as string, readFileSync(mergeTarget, "utf8"));
+  rmSync(mergeTarget, { force: true });
+  mergeCoverage(options, selection, positions);
+}
+
 async function main(): Promise<number> {
   const options = parseRunnerArgs(process.argv.slice(2), { cpuCount: availableParallelism() });
-  const files = selectTestFiles(root, options.selectors);
+  const selection = selectTestFiles(root, options.selectors);
+  // A file's position in the whole selection names its coverage directory, in a shard
+  // and in the merge alike (coverageDirFor).
+  const positions = new Map(selection.map((file, position) => [file, position]));
+
+  if (options.mergeShards !== null) {
+    await writtenOrReaderGone(
+      process.stdout,
+      `Merging the coverage of ${options.mergeShards} shards: ${selection.length} files from ${options.coverageDir}\n`,
+    );
+    mergeShards(options, selection, positions);
+    return 0;
+  }
+
+  const files = options.shard === null ? selection : shardOf(selection, options.shard);
 
   if (options.list) {
     await writtenOrReaderGone(process.stdout, `${files.join("\n")}\n`);
@@ -369,12 +410,14 @@ async function main(): Promise<number> {
   const junitDir = mkdtempSync(path.join(tmpdir(), "libredb-test-junit-"));
   runScratch = junitDir;
 
-  const selection = options.selectors.length > 0 ? options.selectors.join(" ") : "tests/ and packages/*/tests/";
+  const from = options.selectors.length > 0 ? options.selectors.join(" ") : "tests/ and packages/*/tests/";
+  const shardNote =
+    options.shard === null ? "" : `, shard ${options.shard.index} of ${options.shard.count} of ${selection.length}`;
   const notRunNote =
     plan.notRun.length > 0 ? ` (${plan.notRun.length} not run on this machine, listed at the end)` : "";
   runStarted = true;
   process.stdout.write(
-    `bun ${Bun.version} on ${process.platform}-${process.arch}: ${plan.run.length} files from ${selection}${notRunNote}, ` +
+    `bun ${Bun.version} on ${process.platform}-${process.arch}: ${plan.run.length} files${shardNote} from ${from}${notRunNote}, ` +
       `${options.jobs} at a time${options.coverage ? ", with coverage" : ""}\n\n`,
   );
 
@@ -385,7 +428,8 @@ async function main(): Promise<number> {
     coverage: options.coverage,
     coverageDir: options.coverageDir,
     coverageExempt: COVERAGE_EXEMPT_FILES,
-    runFile: spawnTestFile(options.bunArgs, junitDir),
+    positions,
+    runFile: spawnTestFile(options.bunArgs, options.testTimeoutMs, junitDir),
     shouldStop: () => stopping,
     onResult: (outcome, position, total) => {
       // Belt and braces. The intent is that what a child has just been killed for is
@@ -417,8 +461,13 @@ async function main(): Promise<number> {
   if (interruption !== null) return interruption;
   if (summary.failures.length > 0) return 1;
 
+  // A passing shard records the files it ran, for --merge-shards to account for.
+  if (options.shard !== null && options.coverage) {
+    writeFileSync(path.resolve(root, options.coverageDir, shardRecordName(options.shard)), formatShardRecord(plan.run));
+  }
+
   if (options.mergeInto) {
-    mergeCoverage(options, plan.run);
+    mergeCoverage(options, plan.run, positions);
     // mergeCoverage is synchronous and merges 500+ reports, so a signal delivered
     // during it is still queued when it returns: measured on bun 1.4.2, the listener
     // has NOT run at that point, and without this turn of the event loop the

@@ -444,6 +444,11 @@ Raising it hides no hang, because a file that genuinely stops is still killed an
 The same thing happened one order of magnitude up, which is why the flag says 60000 and not the 30000 it said first: the runner's own coverage test, which spawns a second runner that spawns bun with coverage and then merges the report, died at 30671ms on windows-latest against 16.3s for that whole file on linux-x64.
 Linux and macOS are left on bun's default on purpose: Linux is the leg the coverage gate and every contributor run on, and it is where a test that really did get slow has to stay visible.
 The flag is placed before the forwarded arguments, so `-- --timeout=...` still wins, bun taking the last of a repeated option; `tests/unit/test-runner-cli.test.ts` measures that precedence against the real bun binary rather than assuming it.
+`--test-timeout=SECONDS` replaces that default with one value on every platform, and `--file-timeout=SECONDS` replaces the 300-second per-file budget.
+The main-only cross-platform CI legs run `bun run test --file-timeout=600 --test-timeout=60` on windows-latest and macos-latest.
+600 seconds is twice the slowest file measured on windows-latest, `tests/unit/lib/agent/language-boundary.test.ts` at 291.8 s and 298.8 s, which timed out at 300.1 s on #2656.
+60 seconds a test is the Windows value above, given on macOS too, where the timing failures measured were 5,031 to 5,522 ms against bun's 5,000.
+The Linux suite passes neither option, so it stays the leg where a slow test shows.
 
 One shape hangs a file on Windows that no per-test timeout catches.
 Measured on windows-latest with Bun 1.4.4 (#2331): a test that awaits a timer (`Bun.sleep`, or a promise around `setTimeout`) and then calls `expect(promise).rejects` or `.resolves` on a promise a later timer settles spins at 100% CPU, no timer fires again, bun's per-test timeout included, and only the runner's 300-second per-file budget ends it.
@@ -639,6 +644,11 @@ coverage produced on Windows merges as the same file as coverage produced on Lin
 second file the source filter then drops.
 The source filter keeps `src/` (minus `src/components/ui/`) and each workspace package's `packages/<name>/src/` ("Workspace packages (`packages/`)" below).
 
+CI runs the suite as four shards, each a job running `bun run test --coverage --shard=I/4`, and the required `Unit & Integration Tests` job waits for all four and merges them.
+A shard is every fourth file of the sorted selection, round-robin, so `bun run test --shard=2/4` reproduces shard 2 and `--list` with `--shard` names its files.
+Each shard ships its raw per-file reports and a `shard-I-of-4.txt` record of the files it ran, and the merge job runs `bun tests/run-tests.ts --merge-shards=4 --merge-into=coverage/lcov.info`, which refuses to merge unless the records list every selected file once, and then makes the one merge an unsharded run makes.
+The shards are merged once from their raw reports, never as four merged reports, because the merge below is not associative: a merge of merges could elect a different authority record and change which lines count as coverable.
+
 Holding 100% honestly requires knowing how bun measures:
 
 1. **Per-function granularity (V8 semantics).** Functions that executed in a process get a precise
@@ -664,7 +674,8 @@ Holding 100% honestly requires knowing how bun measures:
    bare punctuation; these are removed against the actual source before SonarCloud reads the report.
 5. **Diagnosis recipe:** when a file shows stubborn uncovered lines, compare its records across
    `coverage/raw/file-*/lcov.info` - one directory per test file, numbered by that file's position
-   in the sorted selection, so line N of `bun tests/run-tests.ts --list` is what wrote `file-N`. If
+   in the whole sorted selection, so line N of `bun tests/run-tests.ts --list` is what wrote `file-N`,
+   in a shard too. If
    the zero lines are absent from the record with the most hits, they are measurement phantoms (fix
    the merge inputs), not test gaps.
 6. **Mock fidelity over stubs:** hover/portal-dependent branches are closed by making test mocks
@@ -946,7 +957,7 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   `configurationsFor` in `.vscode-test.mjs` gives it one `vscode-<version>-coexistence` configuration per build, whose `--extensions-dir` is `COEXISTENCE_EXTENSIONS_DIR` (`.vscode-test/extensions-coexistence`): `@vscode/test-cli` installs every `installExtensions` entry into the shared `.vscode-test/extensions`, so mssql installed there would load into every other e2e host.
   `scripts/coexistence-extensions.mjs` installs the pinned `COEXISTENCE_EXTENSIONS` into that directory from the Marketplace before `vscode-test` starts, and installs nothing outside the subset.
   mssql declares an extension pack of four more extensions, so `COEXISTENCE_EXTENSIONS` pins each of them beside mssql in the same install call, and `listingViolations` fails the run when the directory then lists anything but that pinned set.
-  Because it downloads from the Marketplace, the subset runs in the daily workflow and by hand, never in the pull request job.
+  Because it downloads from the Marketplace, the subset runs in the daily workflow and by hand, never in the CI job.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
   The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
@@ -1020,13 +1031,13 @@ The build also writes the 128 by 128 Marketplace icon `media/icon.png` from the 
 
 ### The CI job
 
-`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job.
+`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job, on push to `main` and by dispatch, not on a pull request.
 Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, the browser leg, both integration runtimes, the e2e leg, `npm run package` and `npm run test:vsix`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
-`.github/workflows/vscode-extension-release.yml` calls the same file as its `gates` job on a pushed `vscode-extension-*` tag, so a release passes the gates a pull request does; its release runbook is in `docs/DISTRIBUTION.md`, "VS Code extension (Marketplace)".
+`.github/workflows/vscode-extension-release.yml` calls the same file as its `gates` job on a pushed `vscode-extension-*` tag, so a release passes the gates `main` runs; its release runbook is in `docs/DISTRIBUTION.md`, "VS Code extension (Marketplace)".
 The browser leg's Chromium comes from `bunx playwright install --with-deps chromium` at the repository root, because the job does not run in Playwright's image; the root's Playwright is the extension's version, so the extension's own Playwright finds that browser.
 The smoke and Insiders runs have no browser leg: the webview is the same bytes on every OS and VS Code build.
 It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
-The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left, and a fork's pull request restores none.
+The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left.
 `.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
 Its `coexistence` job runs the coexistence subset on the pinned builds on the same schedule.
 Dependabot watches `vscode-extension/` through its own `npm` entry, with `@types/vscode` held at the `engines.vscode` floor.

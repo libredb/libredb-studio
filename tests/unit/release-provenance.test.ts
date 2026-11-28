@@ -142,7 +142,7 @@ describe("docker-build-push.yml attestation", () => {
   });
 
   test("the attestation binds the digest buildx actually pushed", () => {
-    // An image is attested by digest, never by tag: latest/main/dev move, and
+    // An image is attested by digest, never by tag: latest and main move, and
     // the multi-arch manifest list digest is the only stable identity.
     expect(buildPush?.id).toBeTruthy();
     expect(dockerAttest?.with?.["subject-digest"]).toContain(`steps.${buildPush?.id}.outputs.digest`);
@@ -159,7 +159,7 @@ describe("docker-build-push.yml attestation", () => {
   });
 
   test("only release-context builds are attested", () => {
-    // Branch pushes publish the mutable main/dev tags; signing those would fill
+    // main pushes publish the mutable main tag; signing those would fill
     // the transparency log with images no user installs.
     expect(dockerAttest?.if).toContain("github.event_name");
   });

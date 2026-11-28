@@ -183,6 +183,41 @@ function sandboxThatMerges(mergeScript: string): { sandbox: string; markers: str
   };
 }
 
+/**
+ * A sandbox of three test files over two source files, with the real merge script, so a
+ * sharded run and its merge can be held against one unsharded run of the same tree.
+ * Each file covers a different part of the source, so a merge that lost a shard or took
+ * one file's record twice would write a different report.
+ */
+function sandboxOfThreeFiles(): string {
+  const sandbox = sandboxWith(
+    'import { expect, test } from "bun:test";\n' +
+      'import { left } from "../../src/shapes";\n' +
+      'test("left", () => {\n  expect(left(1)).toBe(2);\n});\n',
+  );
+  writeFileSync(
+    path.join(sandbox, "tests/unit/second.test.ts"),
+    'import { expect, test } from "bun:test";\n' +
+      'import { right } from "../../src/shapes";\n' +
+      'test("right", () => {\n  expect(right(1)).toBe(0);\n});\n',
+  );
+  writeFileSync(
+    path.join(sandbox, "tests/unit/third.test.ts"),
+    'import { expect, test } from "bun:test";\n' +
+      'import { other } from "../../src/other";\n' +
+      'test("other", () => {\n  expect(other()).toBe("o");\n});\n',
+  );
+  mkdirSync(path.join(sandbox, "src"), { recursive: true });
+  writeFileSync(
+    path.join(sandbox, "src/shapes.ts"),
+    "export function left(value: number): number {\n  return value + 1;\n}\n\n" +
+      "export function right(value: number): number {\n  return value - 1;\n}\n",
+  );
+  writeFileSync(path.join(sandbox, "src/other.ts"), 'export function other(): string {\n  return "o";\n}\n');
+  cpSync(path.join(root, "scripts/merge-lcov.mjs"), path.join(sandbox, "scripts/merge-lcov.mjs"));
+  return sandbox;
+}
+
 async function waitForFile(file: string, within = 15_000): Promise<void> {
   const deadline = Date.now() + within;
   while (!existsSync(file)) {
@@ -887,6 +922,66 @@ describe("the test runner, end to end", () => {
     }
   });
 
+  test("--list --shard partitions --list", () => {
+    const sandbox = sandboxOfThreeFiles();
+    const all = runInSandbox(sandbox, ["--list"]);
+    expect(all.stdout).toBe("tests/unit/fixture.test.ts\ntests/unit/second.test.ts\ntests/unit/third.test.ts\n");
+
+    expect(runInSandbox(sandbox, ["--list", "--shard=1/2"]).stdout).toBe(
+      "tests/unit/fixture.test.ts\ntests/unit/third.test.ts\n",
+    );
+    expect(runInSandbox(sandbox, ["--list", "--shard=2/2"]).stdout).toBe("tests/unit/second.test.ts\n");
+  });
+
+  test("the shards of a run, merged, are the unsharded run's report byte for byte", () => {
+    const sandbox = sandboxOfThreeFiles();
+    const at = (name: string) => path.join(sandbox, name);
+
+    const whole = runInSandbox(sandbox, [
+      "--coverage",
+      `--coverage-dir=${at("whole")}`,
+      `--merge-into=${at("a.lcov")}`,
+    ]);
+    expect(whole.exitCode).toBe(0);
+
+    const first = runInSandbox(sandbox, ["--shard=1/2", "--coverage", `--coverage-dir=${at("s1")}`]);
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("2 files, shard 1 of 2 of 3 from tests/ and packages/*/tests/");
+    const second = runInSandbox(sandbox, ["--shard=2/2", "--coverage", `--coverage-dir=${at("s2")}`]);
+    expect(second.exitCode).toBe(0);
+    expect(readFileSync(at("s2/shard-2-of-2.txt"), "utf8")).toBe("tests/unit/second.test.ts\n");
+
+    // What the CI fan-in does: both shards' raw reports downloaded into one directory.
+    cpSync(at("s1"), at("m"), { recursive: true });
+    cpSync(at("s2"), at("m"), { recursive: true });
+    const merged = runInSandbox(sandbox, [
+      "--merge-shards=2",
+      `--coverage-dir=${at("m")}`,
+      `--merge-into=${at("b.lcov")}`,
+    ]);
+    expect(merged.exitCode).toBe(0);
+
+    const report = readFileSync(at("a.lcov"), "utf8");
+    expect(report).toContain("SF:src/shapes.ts");
+    expect(report).toContain("SF:src/other.ts");
+    expect(readFileSync(at("b.lcov"), "utf8")).toBe(report);
+  });
+
+  test("a merge with a shard missing exits 2 and names it", () => {
+    const sandbox = sandboxOfThreeFiles();
+    const at = (name: string) => path.join(sandbox, name);
+    expect(runInSandbox(sandbox, ["--shard=1/2", "--coverage", `--coverage-dir=${at("m")}`]).exitCode).toBe(0);
+
+    const merged = runInSandbox(sandbox, [
+      "--merge-shards=2",
+      `--coverage-dir=${at("m")}`,
+      `--merge-into=${at("b.lcov")}`,
+    ]);
+    expect(merged.exitCode).toBe(2);
+    expect(merged.stderr).toContain("holds no shard-2-of-2.txt: shard 2 of 2 recorded no files");
+    expect(existsSync(at("b.lcov"))).toBe(false);
+  });
+
   /*
     The Windows default the runner injects (perTestTimeoutArgs) is placed BEFORE the
     forwarded arguments, so a contributor's own --timeout still decides. That placement
@@ -912,5 +1007,30 @@ describe("the test runner, end to end", () => {
 
     const longLast = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--", "--timeout=50", "--timeout=100000"]);
     expect(longLast.exitCode).toBe(0);
+  });
+
+  /*
+    --test-timeout is the per-test budget the main-only cross-platform legs give every
+    child, on every platform. The fixture sleeps 1.5 s and asserts nothing after the
+    sleep, so it holds on all three platforms (no promise a later timer settles is
+    asserted on, the Windows rule): with bun's own 5 s, or the Windows 60 s, it passes,
+    and with a 1 s budget it fails as a timeout.
+  */
+  test("--test-timeout reaches every child on every platform", () => {
+    const sandbox = sandboxWith(
+      [
+        'import { test } from "bun:test";',
+        'test("sleeps a second and a half", async () => {',
+        "  await Bun.sleep(1500);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+
+    expect(runInSandbox(sandbox).exitCode).toBe(0);
+
+    const short = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--test-timeout=1"]);
+    expect(short.exitCode).toBe(1);
+    expect(`${short.stdout}${short.stderr}`).toContain("timed out after 1000ms");
   });
 });

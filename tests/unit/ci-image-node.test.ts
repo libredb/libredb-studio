@@ -25,11 +25,13 @@ interface Step {
   readonly env?: Readonly<Record<string, unknown>>;
 }
 
-const STEPS = (
+const JOBS = (
   parse(readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8")) as {
-    jobs: { test: { steps: readonly Step[] } };
+    jobs: { test: { steps: readonly Step[] }; "test-shard": { steps: readonly Step[] } };
   }
-).jobs.test.steps;
+).jobs;
+const STEPS = JOBS.test.steps;
+const SHARD_STEPS = JOBS["test-shard"].steps;
 
 const READ = STEPS.find((step) => step.id === "image-node");
 const RUNTIME_FILES = [
@@ -160,10 +162,19 @@ describe("CI runs the runtime cases on the Node release the image ships", () => 
   });
 
   test("the suite, which runs the same files on the node on PATH, runs on Node 24 before the image's Node is set up", () => {
-    const suite = STEPS.findIndex((step) => step.run === "bun run test:coverage");
-    const setups = STEPS.flatMap((step, index) => (step.uses?.startsWith("actions/setup-node@") ? [index] : []));
-    expect(setups.filter((index) => index < suite).map((index) => STEPS[index].with?.["node-version"])).toEqual(["24"]);
-    expect(setups.filter((index) => index > suite).map((index) => STEPS[index].with?.["node-version"])).toEqual([
+    // The suite runs in the shards, on Node 24 alone; the required check merges their
+    // coverage on Node 24 and only then sets up the image's Node for the runtime cases.
+    const setupsOf = (steps: readonly Step[]) =>
+      steps.flatMap((step, index) => (step.uses?.startsWith("actions/setup-node@") ? [index] : []));
+    const suite = SHARD_STEPS.findIndex((step) => step.run?.startsWith("bun run test --coverage --shard="));
+    expect(suite).toBeGreaterThan(-1);
+    expect(setupsOf(SHARD_STEPS).map((index) => SHARD_STEPS[index].with?.["node-version"])).toEqual(["24"]);
+    expect(Math.max(...setupsOf(SHARD_STEPS))).toBeLessThan(suite);
+
+    const merge = STEPS.findIndex((step) => step.run?.includes("--merge-shards="));
+    const setups = setupsOf(STEPS);
+    expect(setups.filter((index) => index < merge).map((index) => STEPS[index].with?.["node-version"])).toEqual(["24"]);
+    expect(setups.filter((index) => index > merge).map((index) => STEPS[index].with?.["node-version"])).toEqual([
       "${{ steps.image-node.outputs.version }}",
     ]);
   });
