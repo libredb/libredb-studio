@@ -351,9 +351,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeoutError }, { status: 400 });
     }
 
-    // The server catalog's record of the connection's engine: its statement language row states the console text bound,
-    // its grammar splits the script, and the confirmation gate below reads the statement under its reading.
+    // The server catalog's record of the connection's engine: its grammar splits the script, its statement language row
+    // states the console text bound, and the confirmation gate below reads the statement under its reading.
     //
+    // An engine whose record states no SQL text has no grammar to split a script under, so it is refused by name before
+    // anything is split or opened (`scriptGrammar`); then a request field the record does not offer, a catalog or an
+    // unbounded page (`assertEditorFieldsOffered`), refused by name the same way. Both come before the console text
+    // bound below, so they hold for an engine whose record also states one (docs/providers/CONTRACT.md, clause C-107);
+    // every legacy record states a grammar and offers every field, so neither refuses a legacy engine.
+    const grammar = scriptGrammar(engine);
+    assertEditorFieldsOffered(engine, {
+      body,
+      explain: false,
+      database: undefined,
+      unlimited: options.unlimited === true,
+    });
+
     // An engine whose statement language row states a console text bound runs one statement per request. The SQL
     // splitter below would turn one console text into several requests, so such an engine is sent to the
     // single-statement route before anything is split or acquired.
@@ -366,17 +379,6 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-
-    // An engine whose record states no SQL text has no grammar to split a script under, so it is refused by name before
-    // anything is split or opened (`scriptGrammar`); then a request field the record does not offer, a catalog or an
-    // unbounded page (`assertEditorFieldsOffered`), refused by name the same way.
-    const grammar = scriptGrammar(engine);
-    assertEditorFieldsOffered(engine, {
-      body,
-      explain: false,
-      database: undefined,
-      unlimited: options.unlimited === true,
-    });
 
     // The resolved engine's grammar, not the compatibility default: this is the
     // one surface that EXECUTES what the splitter returns, so a fragment invented by

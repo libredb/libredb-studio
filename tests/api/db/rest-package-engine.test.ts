@@ -71,6 +71,8 @@ const NOSQL = "acmerestnosql";
 const MODELLED = "acmerestmodelled";
 /** A package whose engine states no SQL text and a console text bound, as NOSQL's does, offering no transaction. */
 const BOUNDED = "acmerestbounded";
+/** A package whose engine states SQL text and a console text bound. */
+const BOUNDED_SQL = "acmerestboundedsql";
 /**
  * A package offering the cancel, the end of a scope and the transaction, and one whose engine states no SQL text and no
  * console text bound.
@@ -142,6 +144,13 @@ beforeAll(async () => {
           members.sqlText = null;
           members.sqlWriting = null;
           members.migrationDdl = null;
+        },
+      },
+      {
+        name: "acme-rest-bounded-sql",
+        engine: BOUNDED_SQL,
+        edit: (engine) => {
+          withStatementLanguageData(engine);
         },
       },
       {
@@ -799,6 +808,31 @@ describe("the multi-query route on a provider package's engine", () => {
       body: { openTransaction: "rolled-back", executedCount: 2 },
     });
 
+    // A non-zero offset on a session that does not honour it: the first unit runs, the last is refused by the core
+    // before its call as that unit's error, and the script's scope is still ended once.
+    const paged = hooksFor(SCRIPTED);
+    const offset = await post("multi-query", {
+      connection,
+      sql: "SELECT 1; SELECT 2",
+      options: { limit: 5, offset: 5 },
+    });
+    expect(offset).toMatchObject({
+      status: 200,
+      body: {
+        executedCount: 2,
+        hasError: true,
+        statements: [
+          { status: "success" },
+          {
+            status: "error",
+            error:
+              "This connection's provider package does not take an offset, so Studio asks for no page after the first.",
+          },
+        ],
+      },
+    });
+    expect(names(paged)).toEqual(["execute", "endScope"]);
+
     // A unit's warnings: Studio's sentence naming their count for a code-only package, logged once each.
     const said = `notice ${randomUUID()}`;
     hooksFor(SCRIPTED, { execute: warned([{ message: said }]) });
@@ -826,26 +860,31 @@ describe("the multi-query route on a provider package's engine", () => {
   test("the multi-query route refuses an engine stating no SQL text, a catalog and an unbounded page its record does not offer, by name, not-sent, before any open", async () => {
     const notext = hooksFor(NOTEXT);
     const bounded = hooksFor(BOUNDED);
+    const boundedSql = hooksFor(BOUNDED_SQL);
     const rest = hooksFor(REST);
     const connection = connectionOf(REST);
+    const noSqlText = notOffered(
+      "This connection's engine states no SQL text, so Studio has no script to split into statements and ran nothing.",
+    );
+    const noCatalog = notOffered(
+      "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+    );
 
-    expect(await post("multi-query", { connection: connectionOf(NOTEXT), sql: "a; b" })).toEqual(
-      notOffered(
-        "This connection's engine states no SQL text, so Studio has no script to split into statements and ran nothing.",
-      ),
-    );
-    expect(await post("multi-query", { connection, sql: "SELECT 1; SELECT 2", catalog: "other" })).toEqual(
-      notOffered(
-        "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
-      ),
-    );
+    // An engine stating no SQL text is refused by that, whether or not its record also states a console text bound.
+    expect(await post("multi-query", { connection: connectionOf(NOTEXT), sql: "a; b" })).toEqual(noSqlText);
+    expect(await post("multi-query", { connection: connectionOf(BOUNDED), sql: "a; b" })).toEqual(noSqlText);
+    expect(await post("multi-query", { connection, sql: "SELECT 1; SELECT 2", catalog: "other" })).toEqual(noCatalog);
     expect(await post("multi-query", { connection, sql: "SELECT 1", options: { unlimited: true } })).toEqual(
       notOffered(
         "This connection's engine does not offer the request field options.unlimited in this LibreDB Studio, so Studio opened nothing.",
       ),
     );
-    // An engine whose record states a console text bound keeps the route's one-statement refusal.
-    expect(await post("multi-query", { connection: connectionOf(BOUNDED), sql: "a; b" })).toEqual({
+    // An engine stating SQL text and a console text bound is refused a field its record does not offer by name, and
+    // answers a script the route's one-statement refusal, the answer a legacy engine with a bound gives.
+    expect(await post("multi-query", { connection: connectionOf(BOUNDED_SQL), sql: "a; b", catalog: "other" })).toEqual(
+      noCatalog,
+    );
+    expect(await post("multi-query", { connection: connectionOf(BOUNDED_SQL), sql: "a; b" })).toEqual({
       status: 400,
       body: {
         error:
@@ -859,7 +898,7 @@ describe("the multi-query route on a provider package's engine", () => {
     });
 
     // Nothing opened, and no answer was 501.
-    expect([names(notext), names(bounded), names(rest)]).toEqual([[], [], []]);
+    expect([names(notext), names(bounded), names(boundedSql), names(rest)]).toEqual([[], [], [], []]);
   });
 
   test("the multi-query route answers a package's open failure as not-sent, a unit's failure by its grant inside the script's answer, logged once, and a malformed end of scope answer as the package's defect", async () => {
