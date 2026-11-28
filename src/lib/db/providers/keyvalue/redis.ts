@@ -96,6 +96,7 @@ import {
   RefusedBeforeSendError,
 } from "../../errors";
 import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
+import { uniqueFieldNames } from "../../utils/result-fields";
 
 /**
  * Redis's identity for the shared container-path renderer.
@@ -683,14 +684,21 @@ const STREAM_ID_FIELD_COLUMN = `${STREAM_ID_COLUMN} (field)`;
  * its own column, so a stream field also called `id` is shown beside it under
  * `id (field)` rather than overwriting the value that addresses the row.
  *
+ * The header is `id`, then each distinct field name in first-seen order, a field
+ * named `id` written `id (field)`, and that list made unique by `uniqueFieldNames`:
+ * Redis accepts an empty field name (measured on 8.10.2, `XADD s * "" v`), which is
+ * shown under `(No column name)`, and a field literally named like a header made
+ * here is numbered rather than sharing a column. Each field name maps to its one
+ * header for every entry of the page.
+ *
  * A malformed entry raises. Redis always answers `[id, [field, value, ...]]` with
  * an even field list, so an entry that is not that shape is a reply this reader
  * cannot describe, and inventing a row for it would report fields the server never
  * sent.
  */
 function streamEntryRows(result: readonly unknown[]): Omit<QueryResult, "executionTime"> {
-  const fields: string[] = [STREAM_ID_COLUMN];
-  const rows: Record<string, unknown>[] = [];
+  const entries: (readonly [string, readonly unknown[]])[] = [];
+  const streamFields = new Set<string>();
   for (const entry of result) {
     if (!Array.isArray(entry) || !Array.isArray(entry[1]) || entry[0] === undefined || entry[0] === null) {
       throw new Error(`Malformed stream entry: expected [id, [field, value, ...]], received ${stringifyReply(entry)}`);
@@ -701,14 +709,21 @@ function streamEntryRows(result: readonly unknown[]): Omit<QueryResult, "executi
         `Malformed stream entry ${String(entry[0])}: its field list has an odd length (${values.length})`,
       );
     }
+    for (let index = 0; index < values.length; index += 2) streamFields.add(String(values[index]));
+    entries.push([String(entry[0]), values]);
+  }
+  const fields = uniqueFieldNames([
+    STREAM_ID_COLUMN,
+    ...[...streamFields].map((field) => (field === STREAM_ID_COLUMN ? STREAM_ID_FIELD_COLUMN : field)),
+  ]);
+  const headerOf = new Map([...streamFields].map((field, index) => [field, fields[index + 1]]));
+  const rows: Record<string, unknown>[] = [];
+  for (const [id, values] of entries) {
     const row: Record<string, unknown> = Object.create(null);
     for (let index = 0; index < values.length; index += 2) {
-      const field = String(values[index]);
-      const header = field === STREAM_ID_COLUMN ? STREAM_ID_FIELD_COLUMN : field;
-      if (!fields.includes(header)) fields.push(header);
-      row[header] = String(values[index + 1]);
+      row[headerOf.get(String(values[index])) as string] = String(values[index + 1]);
     }
-    row[STREAM_ID_COLUMN] = String(entry[0]);
+    row[STREAM_ID_COLUMN] = id;
     rows.push(row);
   }
   for (const row of rows) {

@@ -17,6 +17,8 @@ import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators"
 import { describeConsequence, renderSegments, userPositionOf, EDIT_CHARACTER_LIMIT } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { ObjectEditOutcome } from "@/lib/db/types";
+import { runEditorQuery } from "@/lib/api/editor-query";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -833,6 +835,11 @@ const { logger } = await import("@/lib/logger");
 const { providerMonitoring, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
+
+// The panel reads and the stream cases below go through the process's host core
+// (src/lib/provider-host/instance.ts), so this file composes its own, once.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ============================================================================
 // Test Config
@@ -1954,6 +1961,57 @@ describe("RedisProvider", () => {
       }
     });
 
+    /** `statement` run the way the editor runs it: through the host core's execute call. */
+    function runThroughCore(statement: string) {
+      return runEditorQuery(
+        { form: "provider", provider },
+        {
+          statement,
+          options: {},
+          signal: new AbortController().signal,
+          route: "test",
+          scrub: providerTextScrub(provider.config, "any"),
+        },
+      );
+    }
+
+    test("a stream field with an empty name is shown under (No column name) through the host core", async () => {
+      // Measured on redis 8.10.2: `XADD s * "" v1 a v2` is accepted and XRANGE answers the
+      // empty field name, which no column can take.
+      const original = mockCallResults.XRANGE;
+      mockCallResults.XRANGE = [["1-0", ["", "v1", "a", "v2"]]];
+      try {
+        const { body } = await runThroughCore("XRANGE events:stream - +");
+        expect(body.fields).toEqual(["id", "(No column name)", "a"]);
+        expect(body.rows).toEqual([{ id: "1-0", "(No column name)": "v1", a: "v2" }]);
+      } finally {
+        mockCallResults.XRANGE = original;
+      }
+    });
+
+    test("a stream field named like a generated header keeps its own column", async () => {
+      const original = mockCallResults.XRANGE;
+      try {
+        mockCallResults.XRANGE = [
+          ["1-0", ["", "empty", "(No column name)", "literal"]],
+          ["2-0", ["(No column name)", "second"]],
+        ];
+        const unnamed = await runThroughCore("XRANGE events:stream - +");
+        expect(unnamed.body.fields).toEqual(["id", "(No column name) (2)", "(No column name)"]);
+        expect(unnamed.body.rows).toEqual([
+          { id: "1-0", "(No column name) (2)": "empty", "(No column name)": "literal" },
+          { id: "2-0", "(No column name) (2)": "", "(No column name)": "second" },
+        ]);
+
+        mockCallResults.XRANGE = [["3-0", ["id", "field", "id (field)", "literal"]]];
+        const named = await runThroughCore("XRANGE events:stream - +");
+        expect(named.body.fields).toEqual(["id", "id (field)", "id (field) (2)"]);
+        expect(named.body.rows).toEqual([{ id: "3-0", "id (field)": "field", "id (field) (2)": "literal" }]);
+      } finally {
+        mockCallResults.XRANGE = original;
+      }
+    });
+
     test("a malformed stream entry raises instead of inventing a row", async () => {
       const original = mockCallResults.XRANGE;
       try {
@@ -2978,9 +3036,6 @@ describe("RedisProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("the sessions and slow queries panels read through the bridge and the host core", () => {
-    beforeAll(() => installHostCore(createHostCore(), "test"));
-    afterAll(forgetHostCore);
-
     beforeEach(async () => {
       // 60 connected clients: more than the dashboard's default session limit of 50.
       mockClientList = Array.from(
