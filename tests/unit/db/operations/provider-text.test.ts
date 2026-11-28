@@ -75,6 +75,7 @@ import type {
   ObjectEditPreimage,
   ObjectEditRefusal,
   ObjectSourceDocument,
+  ObjectSourcePart,
 } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 
@@ -542,6 +543,35 @@ describe("the object read sentences", () => {
   test("scrubSourceDocument answers a document with no parts as given, for the source route's bound to refuse", () => {
     const empty = { path: ["report"], kind: "view", parts: [] } as unknown as ObjectSourceDocument;
     expect(scrubSourceDocument(scrub, empty)).toBe(empty);
+  });
+
+  test("scrubSourceDocument reads a part's form by value, so a readable part with its own undefined unavailable has its truncation and refused edit sentences scrubbed", () => {
+    const part = {
+      id: "body",
+      label: "Body",
+      text: "SELECT 1",
+      language: "sql",
+      form: "partial",
+      origin: "stored",
+      truncated: { limit: 10, reason: `cut for ${password}` },
+      edit: { offered: false, reason: `owned by ${password}` },
+      unavailable: undefined,
+    } as unknown as ObjectSourcePart;
+    const document: ObjectSourceDocument = { path: ["public", "report"], kind: "function", parts: [part] };
+
+    const scrubbed = scrubSourceDocument(scrub, document);
+
+    expect(scrubbed.parts[0]).toEqual({
+      id: "body",
+      label: "Body",
+      text: "SELECT 1",
+      language: "sql",
+      form: "partial",
+      origin: "stored",
+      truncated: { limit: 10, reason: PROVIDER_TEXT_WITHHELD },
+      edit: { offered: false, reason: PROVIDER_TEXT_WITHHELD },
+    } as ObjectSourcePart);
+    expect(JSON.stringify(scrubbed)).not.toContain(password);
   });
 
   test("a value none of whose sentences holds a form answers deep-equal to the value given, and the value given is not changed", () => {

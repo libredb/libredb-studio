@@ -40,7 +40,12 @@ import {
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
-import { isCountSampled, isCountUnavailable, isIndexesUnavailable } from "@/lib/db/object-kinds";
+import {
+  isCountSampled,
+  isCountUnavailable,
+  isIndexesUnavailable,
+  isSourcePartUnavailable,
+} from "@/lib/db/object-kinds";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
@@ -200,9 +205,12 @@ export function scrubObjectDetail(words: ProviderWords, detail: ObjectDetail): O
   return { ...detail, indexes: { unavailable: providerSentence(words, detail.indexes.unavailable) } };
 }
 
-/** One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. */
+/**
+ * One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. Its
+ * form is read by the value of its `unavailable`, as the host core's check read it (`isSourcePartUnavailable`).
+ */
 function scrubSourcePart(scrub: ProviderTextScrub, part: ObjectSourcePart): ObjectSourcePart {
-  if ("unavailable" in part) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
+  if (isSourcePartUnavailable(part)) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
   return {
     ...part,
     ...(part.truncated === undefined
