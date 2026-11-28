@@ -27,11 +27,11 @@
  * every execute to the read-only policy its session was opened under (`checkReadOnlyRequest`, clause C-78), read from
  * the open context's `policy` and kept with the session,
  * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
- * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers
- * (`checkMonitoringPanelRequest`), every tree request to the object model the session's engine states
- * (`checkTreeRequest`, clause M-89) and every source request to it (`checkSourceRequest`, clause C-115), reads
- * `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine
- * the open context names, which it refuses before any frame when the module's manifest does not declare it,
+ * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers and its
+ * limit to its list's bound (`checkMonitoringPanelRequest`), every tree request to the object model the session's
+ * engine states (`checkTreeRequest`, clause M-89) and every source request to it (`checkSourceRequest`, clause C-115),
+ * reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the
+ * engine the open context names, which it refuses before any frame when the module's manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
