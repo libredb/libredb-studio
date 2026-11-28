@@ -77,6 +77,38 @@ describe("runner command line", () => {
     expect(() => parseRunnerArgs(["--test-timeout", "60"], defaults)).toThrow(/--test-timeout=60/);
   });
 
+  test("--shard takes I/N with 1 <= I <= N", () => {
+    expect(parseRunnerArgs(["--shard=2/4"], defaults).shard).toEqual({ index: 2, count: 4 });
+    expect(parseRunnerArgs(["--shard=1/1"], defaults).shard).toEqual({ index: 1, count: 1 });
+    expect(parseRunnerArgs([], defaults).shard).toBeNull();
+    for (const refused of ["0/4", "5/4", "1/0", "a/b", "2", "1/4/x", "1.5/4", "-1/4"]) {
+      expect(() => parseRunnerArgs([`--shard=${refused}`], defaults)).toThrow(
+        `--shard needs I/N, whole numbers with 1 <= I <= N, as --shard=2/4, got "${refused}".`,
+      );
+    }
+    expect(() => parseRunnerArgs(["--shard", "2/4"], defaults)).toThrow(/--shard=2\/4/);
+  });
+
+  test("--merge-shards needs --merge-into and refuses --shard and --list", () => {
+    const options = parseRunnerArgs(["--merge-shards=4", "--merge-into=coverage/lcov.info"], defaults);
+    expect(options.mergeShards).toBe(4);
+    expect(parseRunnerArgs([], defaults).mergeShards).toBeNull();
+    expect(() => parseRunnerArgs(["--merge-shards=4"], defaults)).toThrow(
+      "--merge-shards merges into the report --merge-into names, and none was given.",
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--shard=1/4"], defaults)).toThrow(
+      "--merge-shards runs no test, so it takes no --shard, --list or arguments for bun test.",
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--list"], defaults)).toThrow(
+      /--merge-shards runs no test/,
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=4", "--merge-into=a.lcov", "--", "--bail"], defaults)).toThrow(
+      /--merge-shards runs no test/,
+    );
+    expect(() => parseRunnerArgs(["--merge-shards=0", "--merge-into=a.lcov"], defaults)).toThrow(/--merge-shards/);
+    expect(() => parseRunnerArgs(["--merge-shards", "4"], defaults)).toThrow(/--merge-shards=4/);
+  });
+
   test("--list asks what would run", () => {
     expect(parseRunnerArgs(["--list"], defaults).list).toBe(true);
   });
@@ -94,7 +126,7 @@ describe("runner command line", () => {
 
   test("the refusal of an unknown option names every option the runner has", () => {
     expect(() => parseRunnerArgs(["--parallel"], defaults)).toThrow(
-      /--jobs, --coverage, --coverage-dir, --merge-into, --file-timeout, --test-timeout and --list;/,
+      /--jobs, --coverage, --coverage-dir, --merge-into, --file-timeout, --test-timeout, --shard, --merge-shards and --list;/,
     );
   });
 

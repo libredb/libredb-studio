@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SpawnOutcome } from "../runner/execute";
-import { runTestFiles } from "../runner/execute";
+import { coverageDirFor, runTestFiles } from "../runner/execute";
 
 /** A junit report in the shape bun 1.4.2 writes, with these counts. */
 function junit({ pass = 0, fail = 0, skip = 0 }: { pass?: number; fail?: number; skip?: number }): string {
@@ -46,6 +46,7 @@ async function run(overrides: Partial<Parameters<typeof runTestFiles>[0]> = {}) 
     coverage: false,
     coverageDir: "coverage/raw",
     coverageExempt: [],
+    positions: new Map(files.map((file, index) => [file, index])),
     runFile: async () => passed(),
     ...overrides,
   });
@@ -234,6 +235,33 @@ describe("running the files", () => {
     });
 
     expect(given.sort()).toEqual([null, "out/raw/file-1", "out/raw/file-3"]);
+  });
+
+  test("a file's coverage directory is numbered by its position in the whole selection, not in the shard", async () => {
+    // Shard 2 of 3 of a selection of six runs its second and fifth files. Their
+    // directories are file-2 and file-5, so the shards' reports never collide and a
+    // merge of all of them names the directories one unsharded run would have.
+    const selection = ["a", "b", "c", "d", "e", "f"].map((name) => `tests/unit/${name}.test.ts`);
+    const given: Array<string | null> = [];
+
+    await run({
+      files: [selection[1] as string, selection[4] as string],
+      positions: new Map(selection.map((file, index) => [file, index])),
+      coverage: true,
+      coverageDir: "out/raw",
+      runFile: async ({ coverageDir }) => {
+        given.push(coverageDir);
+        return passed();
+      },
+    });
+
+    expect(given.sort()).toEqual(["out/raw/file-2", "out/raw/file-5"]);
+  });
+
+  test("a file the selection does not hold is refused rather than given a directory by guess", () => {
+    expect(() =>
+      coverageDirFor("tests/unit/z.test.ts", new Map(), { coverage: true, coverageDir: "out/raw", coverageExempt: [] }),
+    ).toThrow("tests/unit/z.test.ts has no position in the selection, so it has no coverage directory.");
   });
 
   test("without --coverage no child is given a coverage directory", async () => {

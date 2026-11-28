@@ -74,6 +74,11 @@ export type RunTestFilesInput = {
   coverage: boolean;
   coverageDir: string;
   coverageExempt: readonly string[];
+  /**
+   * Each file's position in the whole selection, before a shard or a missing
+   * capability took any file out of the run. It names the file's coverage directory.
+   */
+  positions: ReadonlyMap<string, number>;
   runFile: RunFile;
   /**
    * Asked before a worker picks up a file: true stops the run where it is.
@@ -142,17 +147,23 @@ function toOutcome(file: string, spawned: SpawnOutcome): FileOutcome {
 /**
  * The per-file coverage directory, or null for a file that must not be measured.
  *
- * The index is the file's position in the sorted selection, which is what makes the
- * directory names stable and collision-free for `scripts/merge-lcov.mjs` to read
- * back.
+ * It is numbered by the file's position in the whole sorted selection, so line N of
+ * `--list` wrote `file-N`, whichever files a shard or a missing capability left out of
+ * the run. That keeps the names stable and collision-free for `scripts/merge-lcov.mjs`
+ * to read back, and lets the shards of one run be downloaded into one directory. The
+ * run and the merge both name the directory here, so the two cannot disagree.
  */
 export function coverageDirFor(
   file: string,
-  index: number,
+  positions: ReadonlyMap<string, number>,
   { coverage, coverageDir, coverageExempt }: Pick<RunTestFilesInput, "coverage" | "coverageDir" | "coverageExempt">,
 ): string | null {
   if (!coverage || coverageExempt.includes(file)) return null;
-  return `${coverageDir}/file-${index + 1}`;
+  const position = positions.get(file);
+  if (position === undefined) {
+    throw new Error(`${file} has no position in the selection, so it has no coverage directory.`);
+  }
+  return `${coverageDir}/file-${position + 1}`;
 }
 
 export async function runTestFiles(input: RunTestFilesInput): Promise<RunSummary> {
@@ -173,7 +184,12 @@ export async function runTestFiles(input: RunTestFilesInput): Promise<RunSummary
       next += 1;
       const file = files[index] as string;
       // oxlint-disable-next-line no-await-in-loop -- one file at a time per worker; the jobs come from the workers.
-      const spawned = await runFile({ file, index, coverageDir: coverageDirFor(file, index, input), timeoutMs });
+      const spawned = await runFile({
+        file,
+        index,
+        coverageDir: coverageDirFor(file, input.positions, input),
+        timeoutMs,
+      });
       const outcome = toOutcome(file, spawned);
       finished += 1;
       onResult?.(outcome, finished, files.length);
