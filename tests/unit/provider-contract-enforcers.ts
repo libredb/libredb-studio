@@ -2626,6 +2626,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-66": {
     tests: {
+      "tests/api/db/monitoring-package-engine.test.ts": [
+        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+      ],
       "tests/isolated/factory-package-engines.test.ts": [
         "a package engine's metadata session opens once per key through its package, beside its editor session",
         "a package engine's metadata session opens with a pool of at most two that opens none until asked, shared and owned, and a one-session package reads on its editor session",
@@ -3152,6 +3155,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-107": {
     tests: {
+      "tests/api/db/monitoring-package-engine.test.ts": [
+        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+        "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
+      ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "each tree route answers a package engine's tree through its package",
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
@@ -3159,7 +3166,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit and key scan routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health and pool statistics routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3220,6 +3227,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-111": {
     tests: {
+      "tests/api/db/monitoring-package-engine.test.ts": [
+        "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
+      ],
       "tests/unit/lib/api/object-tree.test.ts": [
         "the tree facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each read on the entry",
         "a target whose session does not offer objects.tree is refused when the facade is built, before any read",
@@ -3255,6 +3265,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "tests/api/db/monitoring-package-engine.test.ts": [
+        "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
+      ],
       "tests/unit/db/operations/provider-text.test.ts": [
         "a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once",
       ],

@@ -7,6 +7,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
 import { providerMonitoringTarget } from "@/lib/api/session-target";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -120,10 +121,8 @@ export async function POST(request: Request) {
           const provider = await getOrCreateMetadataProvider(resolved, {}, execution);
           const monitoring = providerMonitoring(
             providerMonitoringTarget(provider),
-            servedEngineRecord(resolved.type),
-            scrub,
+            packageAnswers(servedEngineRecord(resolved.type), scrub, "api/admin/fleet-health"),
             request.signal,
-            "api/admin/fleet-health",
           );
           const health = await monitoring.readHealth();
           const latencyMs = Date.now() - start;

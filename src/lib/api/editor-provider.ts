@@ -8,9 +8,16 @@ import {
   getOrCreateMetadataProvider,
   getOrCreateMetadataSession,
 } from "@/lib/db/factory";
-import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
+import { type DeclaredFacet, FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import { type EngineConnection, type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { entryTreeTarget, type TreeTarget } from "@/lib/api/session-target";
+import {
+  entryMonitoringTarget,
+  entryTreeTarget,
+  type MonitoringTarget,
+  providerMonitoringTarget,
+  type TreeTarget,
+} from "@/lib/api/session-target";
 import { HostDefectError } from "@/lib/provider-host/access";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
@@ -24,8 +31,9 @@ import type { DatabaseConnection } from "@/lib/types";
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
  * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
- * same way, for the reads and the kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
- * the object tree's session of any record. Routes that act on the whole
+ * same way, for the maintenance kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
+ * the object tree's session of any record and `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring
+ * reads' sessions of any record. Routes that act on the whole
  * connection rather than in one database, such as cancel, which finds a statement in whichever session runs it, call
  * `getOrCreateProvider` directly.
  *
@@ -77,8 +85,9 @@ export async function editorTarget(
  * The connection's metadata session (docs/providers/CONTRACT.md, clause C-66), opened under the session's editor
  * posture as `editorProvider` opens the editor's provider: the same connection, credentials, grant and owner, through
  * the same checks, and in `catalog` through the same `scopeToCatalog`. On a connection that serves one session it is
- * the editor's own provider. The monitoring route reads its panels, the health route its health and the maintenance
- * route runs a kill on it, so none of them waits for a connection the editor's statements hold.
+ * the editor's own provider. The maintenance route runs a kill on it, so a kill never waits for a connection the
+ * editor's statements hold; the monitoring and health routes read any record's metadata session through
+ * `metadataMonitoringTarget`.
  */
 export async function metadataProvider(
   session: { role: string; idpSubject?: string },
@@ -105,6 +114,68 @@ export async function metadataTreeTarget(
 ): Promise<TreeTarget> {
   const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection));
   return entryTreeTarget(entry, connection);
+}
+
+/**
+ * Refuses `catalog` for `engine` when its record offers no catalog session, before any open: `FacetNotOfferedError` of
+ * `facet`, the route's, naming the catalog, outcome not-sent. A record that offers catalog sessions, every legacy
+ * record's, has its provider scoped to the catalog after the open (`scopeToCatalog`), which refuses a connection whose
+ * provider declares none.
+ *
+ * @throws {FacetNotOfferedError} Not-sent, when a catalog is named and the record offers no catalog session.
+ */
+function assertCatalogOffered(engine: EngineRecord, catalog: string | undefined, facet: DeclaredFacet): void {
+  if (catalog === undefined || engine.offers.catalog) return;
+  const error = new FacetNotOfferedError(
+    "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+    legacyProviderType(engine),
+    facet,
+    "catalog",
+  );
+  markNotSent(error);
+  throw error;
+}
+
+/**
+ * The monitoring target of `connection`'s metadata session of `engine`, for any record the server serves
+ * (docs/providers/CONTRACT.md, clause C-66): the entry `getOrCreateMetadataSession` answers (src/lib/db/factory.ts),
+ * opened under the session's editor posture as `editorProvider` opens the editor's provider, with the same owner, read
+ * by its form (`entryMonitoringTarget` in ./session-target): a legacy provider scoped to `catalog` through
+ * `scopeToCatalog`, or a provider package's session with its declared environment, the connection's own statement
+ * timeout and each read counted on the entry. The monitoring and health routes read on it, so neither waits for the
+ * editor's statements, except on a connection that serves one session. A catalog the record does not offer is refused
+ * before any open (`assertCatalogOffered`).
+ */
+export async function metadataMonitoringTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+  catalog: string | undefined,
+): Promise<MonitoringTarget> {
+  assertCatalogOffered(engine, catalog, "monitoring");
+  const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection));
+  const { opened } = entry;
+  if (opened.form === "provider") return providerMonitoringTarget(await scopeToCatalog(opened.provider, catalog));
+  return entryMonitoringTarget(entry, connection);
+}
+
+/**
+ * The monitoring target of `connection`'s editor session of `engine`, for any record the server serves: the entry
+ * `getOrCreateEditorSession` answers with no wait of the request's own, opened and read by its form as
+ * `metadataMonitoringTarget` reads the metadata session's. The pool statistics route reads on it, since the pool it
+ * reports is the editor's. A catalog the record does not offer is refused before any open (`assertCatalogOffered`).
+ */
+export async function editorMonitoringTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+  catalog: string | undefined,
+): Promise<MonitoringTarget> {
+  assertCatalogOffered(engine, catalog, "monitoring");
+  const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection));
+  const { opened } = entry;
+  if (opened.form === "provider") return providerMonitoringTarget(await scopeToCatalog(opened.provider, catalog));
+  return entryMonitoringTarget(entry, connection);
 }
 
 /**

@@ -75,6 +75,8 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "editorTarget",
     "metadataProvider",
     "metadataTreeTarget",
+    "metadataMonitoringTarget",
+    "editorMonitoringTarget",
     "cachedEditorProvider",
   ],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
@@ -147,12 +149,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/admin/fleet-health/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/cancel/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/disconnect/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/health/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/maintenance/preview/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/maintenance/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/monitoring/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/multi-query/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/pool-stats/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_ROUTE,
@@ -165,6 +164,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the source read's connection here before it builds",
   },
   resolveServedConnection: {
+    "src/app/api/db/health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/monitoring/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/pool-stats/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/lib/api/object-route.ts":
@@ -267,7 +269,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
-      "metadataTreeTarget opens for the connection its caller hands it, and its one caller, handleObjectRequest, resolved it through resolveServedConnection first",
+      "metadataTreeTarget and metadataMonitoringTarget open for the connection their caller hands them, and every caller, handleObjectRequest or a route listed under metadataMonitoringTarget here, resolved it through resolveServedConnection first",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -278,7 +280,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateEditorSession: {
     "src/lib/api/editor-provider.ts":
-      "editorTarget opens for the connection its caller hands it, and its one caller, POST /api/db/query, resolved it through resolveServedConnection first",
+      "editorTarget and editorMonitoringTarget open for the connection their caller hands them, and every caller, POST /api/db/query or a route listed under editorMonitoringTarget here, resolved it through resolveServedConnection first",
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
@@ -297,7 +299,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/maintenance/preview/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/pool-stats/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
   },
@@ -305,9 +306,14 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   metadataProvider: {
-    "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/monitoring/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+  },
+  metadataMonitoringTarget: {
+    "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/app/api/db/monitoring/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+  },
+  editorMonitoringTarget: {
+    "src/app/api/db/pool-stats/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   metadataTreeTarget: {
     "src/lib/api/object-route.ts":
@@ -1403,7 +1409,7 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(17);
+    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(15);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

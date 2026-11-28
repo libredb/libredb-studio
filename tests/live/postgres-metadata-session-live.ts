@@ -38,6 +38,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
 import { providerMaintenanceTarget, providerMonitoringTarget } from "@/lib/api/session-target";
@@ -248,10 +249,8 @@ async function heldEditorKill(
   const started = performance.now();
   const outcome = await providerMaintenance(
     providerMaintenanceTarget(metadata, declared),
-    servedEngineRecord(connection.type),
-    providerTextScrub(connection, "any"),
+    packageAnswers(servedEngineRecord(connection.type), providerTextScrub(connection, "any"), "live"),
     new AbortController().signal,
-    "live",
   ).run("kill", String(target));
   const ms = Math.round(performance.now() - started);
   const ends = await Promise.all(holders);
@@ -322,10 +321,8 @@ async function heldEditorMonitoring(
   const monitoringOf = (provider: DatabaseProvider) =>
     providerMonitoring(
       providerMonitoringTarget(provider),
-      servedEngineRecord(connection.type),
-      providerTextScrub(connection, "any"),
+      packageAnswers(servedEngineRecord(connection.type), providerTextScrub(connection, "any"), "live"),
       new AbortController().signal,
-      "live",
     );
   const monitoring = monitoringOf(metadata);
   const dashboard = await timedRead(() => monitoring.readDashboard({}));

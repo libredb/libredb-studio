@@ -62,17 +62,20 @@
  * availability (src/lib/mcp/availability.ts), which `list_connections` and every MCP tool answer before any open, reads
  * `legacyProviderRefusal`'s message. A refused package's engine is refused there as `ProviderUnavailableError`, an
  * engine whose record offers no legacy provider as `PackageEngineUnsupportedError` until the request serves package
- * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection, the query route and
- * the object tree's reads serve an engine whose record offers no legacy provider in this Studio: each resolves its
- * connection with its record through `resolveServedConnection` (src/lib/seed/resolve-connection.ts), which reads the
- * type through `servedEngineRecord`; Test Connection then runs one test for every record, which reads what differs from
- * the record's offers and grants (`testConnection` in src/lib/api/test-connection.ts), the query route opens every
- * record's cached editor session and runs a statement on it with one run (`editorTarget` in
- * src/lib/api/editor-provider.ts, `runEditorQuery` in src/lib/api/editor-query.ts), and the six tree routes read every
- * record's metadata session through one tree facade (`metadataTreeTarget` in src/lib/api/editor-provider.ts,
- * `objectTree` in src/lib/api/object-tree.ts), all over the provider factory's opens of any record (`openEngineOnce`,
- * `getOrCreateEditorSession` and `getOrCreateMetadataSession` in ./factory). The object edit and key scan requests
- * resolve through it too and refuse a package's engine by the record's offer (`objectEdit`, `keyScan`).
+ * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection, the query route, the
+ * object tree's reads and the monitoring, health and pool statistics reads serve an engine whose record offers no
+ * legacy provider in this Studio: each resolves its connection with its record through `resolveServedConnection`
+ * (src/lib/seed/resolve-connection.ts), which reads the type through `servedEngineRecord`; Test Connection then runs
+ * one test for every record, which reads what differs from the record's offers and grants (`testConnection` in
+ * src/lib/api/test-connection.ts), the query route opens every record's cached editor session and runs a statement on
+ * it with one run (`editorTarget` in src/lib/api/editor-provider.ts, `runEditorQuery` in src/lib/api/editor-query.ts),
+ * the six tree routes read every record's metadata session through one tree facade (`metadataTreeTarget` in
+ * src/lib/api/editor-provider.ts, `objectTree` in src/lib/api/object-tree.ts), and the monitoring and health routes
+ * read every record's metadata session, and the pool statistics route its editor session, through one monitoring
+ * facade (`metadataMonitoringTarget` and `editorMonitoringTarget` in src/lib/api/editor-provider.ts,
+ * `providerMonitoring` in src/lib/api/provider-monitoring.ts), all over the provider factory's opens of any record
+ * (`openEngineOnce`, `getOrCreateEditorSession` and `getOrCreateMetadataSession` in ./factory). The object edit and key
+ * scan requests resolve through it too and refuse a package's engine by the record's offer (`objectEdit`, `keyScan`).
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
@@ -191,15 +194,16 @@ export interface EngineSource {
  */
 export interface EngineOffers {
   /**
-   * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection, the
-   * query route and the object tree's reads reads one, through `assertLegacyProvider`.
+   * A legacy `DatabaseProvider` the provider factory builds (./factory), which every request reads through
+   * `assertLegacyProvider` except Test Connection, the query route, the object tree's reads and the monitoring, health
+   * and pool statistics reads.
    */
   readonly legacyProvider: boolean;
   /** A plan of a statement (`explain`), built by the connected provider's strategy. */
   readonly explain: boolean;
   /** A key-space `database` on a query, read from a legacy provider's declarations. */
   readonly database: boolean;
-  /** A server-level `catalog` on a query, a legacy catalog session. */
+  /** A server-level `catalog` on a query or a monitoring read, a legacy catalog session. */
   readonly catalog: boolean;
   /** An unbounded page (`options.unlimited`); the provider contract always pumps a bounded one. */
   readonly unboundedPage: boolean;
@@ -302,7 +306,7 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: "begun" | "un
 /** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
-    "This request is served for an engine of a provider package only by Test Connection, the query route and the object tree's reads in this LibreDB Studio, and this is another request.",
+    "This request is served for an engine of a provider package only by Test Connection, the query route, the object tree's reads and the monitoring, health and pool statistics reads in this LibreDB Studio, and this is another request.",
   open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 

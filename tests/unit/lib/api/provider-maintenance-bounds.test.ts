@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import type { packageAnswers } from "@/lib/api/package-errors";
 import type { providerMaintenance } from "@/lib/api/provider-maintenance";
 import type { providerMaintenanceTarget } from "@/lib/api/session-target";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
@@ -22,6 +23,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 interface ChildDeps {
   readonly EXECUTE_SLACK_MS: typeof EXECUTE_SLACK_MS;
   readonly providerMaintenance: typeof providerMaintenance;
+  readonly packageAnswers: typeof packageAnswers;
   readonly providerMaintenanceTarget: typeof providerMaintenanceTarget;
   readonly servedEngineRecord: typeof servedEngineRecord;
   readonly providerTextScrub: typeof providerTextScrub;
@@ -38,6 +40,7 @@ const child = boundedChild({
   imports: [
     { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["EXECUTE_SLACK_MS"] },
     { from: path.join(SOURCE, "lib", "api", "provider-maintenance.ts"), names: ["providerMaintenance"] },
+    { from: path.join(SOURCE, "lib", "api", "package-errors.ts"), names: ["packageAnswers"] },
     { from: path.join(SOURCE, "lib", "api", "session-target.ts"), names: ["providerMaintenanceTarget"] },
     { from: path.join(SOURCE, "lib", "db", "server-catalog.ts"), names: ["servedEngineRecord"] },
     { from: path.join(SOURCE, "lib", "db", "operations", "provider-text.ts"), names: ["providerTextScrub"] },
@@ -59,10 +62,8 @@ const child = boundedChild({
     } as never;
     const maintenance = deps.providerMaintenance(
       deps.providerMaintenanceTarget(provider, declared as never),
-      deps.servedEngineRecord("postgres"),
-      deps.providerTextScrub(config, "any"),
+      deps.packageAnswers(deps.servedEngineRecord("postgres"), deps.providerTextScrub(config, "any"), "bounds"),
       new AbortController().signal,
-      "bounds",
       // The run's deadline, the statement timeout plus the slack, ends 50 ms from now.
       () => Date.now() - queryTimeout - deps.EXECUTE_SLACK_MS + 50,
     );

@@ -22,7 +22,7 @@ import {
   type MaintenanceRunRequest,
 } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
-import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
+import { PACKAGE_DEFECT_PREFIX, packageAnswers } from "@/lib/api/package-errors";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
 import { type MaintenanceTarget, providerMaintenanceTarget } from "@/lib/api/session-target";
 import { errorCode, errorOutcome } from "@/lib/db/error-record";
@@ -89,10 +89,8 @@ function maintenanceOf(
 ) {
   return providerMaintenance(
     providerMaintenanceTarget(provider, declared),
-    servedEngineRecord(provider.type),
-    providerTextScrub(provider.config, "any"),
+    packageAnswers(servedEngineRecord(provider.type), providerTextScrub(provider.config, "any"), route),
     caller,
-    route,
     clock,
   );
 }
@@ -559,10 +557,8 @@ describe("the maintenance facade on a session target", () => {
       async () => {
         const maintenance = providerMaintenance(
           target,
-          engineOf(false, "code-only"),
-          packageScrub(),
+          packageAnswers(engineOf(false, "code-only"), packageScrub(), ROUTE),
           new AbortController().signal,
-          ROUTE,
           () => start,
         );
         expect(maintenance.previewOffered).toBe(true);
@@ -587,10 +583,8 @@ describe("the maintenance facade on a session target", () => {
     Object.assign(failed.target.session, { run: () => Promise.reject(thrown) });
     const legacy = providerMaintenance(
       failed.target,
-      engineOf(true, "code-only"),
-      packageScrub(),
+      packageAnswers(engineOf(true, "code-only"), packageScrub(), ROUTE),
       new AbortController().signal,
-      ROUTE,
     );
     expect(await failure(() => legacy.run("vacuum"))).toBe(thrown);
     expect(failed.marks).toEqual(["started", "ended undefined"]);
@@ -601,10 +595,8 @@ describe("the maintenance facade on a session target", () => {
     expect(bridged.timeout()).toBe(4_000);
     const onBridge = providerMaintenance(
       bridged,
-      servedEngineRecord("postgres"),
-      providerTextScrub(provider.config, "any"),
+      packageAnswers(servedEngineRecord("postgres"), providerTextScrub(provider.config, "any"), ROUTE),
       new AbortController().signal,
-      ROUTE,
     );
     expect((await onBridge.run("vacuum")).kind).toBe("answered");
     await onBridge.preview("release", ["orders"]);
@@ -633,10 +625,8 @@ describe("the maintenance facade on a session target", () => {
     const logged = await errorsOf(async () => {
       const failingFacade = providerMaintenance(
         failing.target,
-        codeOnly,
-        packageScrub(),
+        packageAnswers(codeOnly, packageScrub(), ROUTE),
         new AbortController().signal,
-        ROUTE,
       );
       caught.push(
         await failure(() => failingFacade.run("vacuum")),
@@ -644,10 +634,8 @@ describe("the maintenance facade on a session target", () => {
       );
       const unreadableFacade = providerMaintenance(
         unreadable.target,
-        codeOnly,
-        packageScrub(),
+        packageAnswers(codeOnly, packageScrub(), ROUTE),
         new AbortController().signal,
-        ROUTE,
       );
       caught.push(
         await failure(() => unreadableFacade.run("vacuum")),
@@ -673,10 +661,8 @@ describe("the maintenance facade on a session target", () => {
       raised = await failure(() =>
         providerMaintenance(
           failing.target,
-          engineOf(false, "scrubbed"),
-          packageScrub(),
+          packageAnswers(engineOf(false, "scrubbed"), packageScrub(), ROUTE),
           new AbortController().signal,
-          ROUTE,
         ).run("vacuum"),
       );
     });
@@ -695,14 +681,16 @@ describe("the maintenance facade on a session target", () => {
     });
     const studio: unknown[] = [];
     const studioLogged = await errorsOf(async () => {
-      const left = providerMaintenance(packageMaintenanceTarget().target, codeOnly, packageScrub(), gone.signal, ROUTE);
+      const left = providerMaintenance(
+        packageMaintenanceTarget().target,
+        packageAnswers(codeOnly, packageScrub(), ROUTE),
+        gone.signal,
+      );
       studio.push(errorOf(await left.run("vacuum"), "not-sent"), await failure(() => left.preview("release", ["a"])));
       const refused = providerMaintenance(
         unnarrowed.target,
-        codeOnly,
-        packageScrub(),
+        packageAnswers(codeOnly, packageScrub(), ROUTE),
         new AbortController().signal,
-        ROUTE,
       );
       studio.push(errorOf(await refused.run("vacuum"), "not-sent"));
       const stopped = await withCore(
@@ -718,10 +706,8 @@ describe("the maintenance facade on a session target", () => {
           errorOf(
             await providerMaintenance(
               packageMaintenanceTarget().target,
-              codeOnly,
-              packageScrub(),
+              packageAnswers(codeOnly, packageScrub(), ROUTE),
               new AbortController().signal,
-              ROUTE,
             ).run("vacuum"),
             "stopped",
           ),
@@ -732,10 +718,8 @@ describe("the maintenance facade on a session target", () => {
       try {
         const unbooted = providerMaintenance(
           packageMaintenanceTarget().target,
-          codeOnly,
-          packageScrub(),
+          packageAnswers(codeOnly, packageScrub(), ROUTE),
           new AbortController().signal,
-          ROUTE,
         );
         studio.push(errorOf(await unbooted.run("vacuum"), "not-sent"));
         studio.push(await failure(() => unbooted.preview("release", ["a"])));

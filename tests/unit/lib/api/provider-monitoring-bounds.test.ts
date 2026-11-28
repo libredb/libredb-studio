@@ -14,6 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import type { packageAnswers } from "@/lib/api/package-errors";
 import type { providerMonitoring, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import type { providerMonitoringTarget } from "@/lib/api/session-target";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
@@ -25,6 +26,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 
 interface ChildDeps {
   readonly providerMonitoring: typeof providerMonitoring;
+  readonly packageAnswers: typeof packageAnswers;
   readonly readGrantedPanel: typeof readGrantedPanel;
   readonly readGrantedHealth: typeof readGrantedHealth;
   readonly providerMonitoringTarget: typeof providerMonitoringTarget;
@@ -46,6 +48,7 @@ const child = boundedChild({
       from: path.join(SRC, "lib", "api", "provider-monitoring.ts"),
       names: ["providerMonitoring", "readGrantedPanel", "readGrantedHealth"],
     },
+    { from: path.join(SRC, "lib", "api", "package-errors.ts"), names: ["packageAnswers"] },
     { from: path.join(SRC, "lib", "api", "session-target.ts"), names: ["providerMonitoringTarget"] },
     { from: path.join(SRC, "lib", "db", "server-catalog.ts"), names: ["servedEngineRecord"] },
     { from: path.join(SRC, "lib", "db", "operations", "provider-text.ts"), names: ["providerTextScrub"] },
@@ -98,10 +101,12 @@ const child = boundedChild({
       }
       const monitoring = deps.providerMonitoring(
         target,
-        deps.servedEngineRecord("postgres"),
-        deps.providerTextScrub(provider.config, "any"),
+        deps.packageAnswers(
+          deps.servedEngineRecord("postgres"),
+          deps.providerTextScrub(provider.config, "any"),
+          "bounds",
+        ),
         new AbortController().signal,
-        "bounds",
         clock,
       );
       await (name === "health" ? monitoring.readHealth() : monitoring.readDashboard({}));

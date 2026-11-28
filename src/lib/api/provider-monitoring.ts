@@ -11,14 +11,13 @@ import {
   type PoolStats,
 } from "@libredb/provider-sdk/calls";
 import { callContext, contextOn, EXECUTE_SLACK_MS, executeDeadlineFor } from "@/lib/api/editor-query";
-import { packageFailureAnswer } from "@/lib/api/package-errors";
+import type { PackageAnswers } from "@/lib/api/package-errors";
 import { markedCall, type MonitoringTarget } from "@/lib/api/session-target";
 import { memberOf, type PanelMember, readDeclaredPanels } from "@/lib/db/engine-facets/monitoring";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { waitedSeconds } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
-import { type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
+import { legacyProviderType } from "@/lib/db/server-catalog";
 import type { MonitoringData, MonitoringOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import {
@@ -49,8 +48,9 @@ import { hostCore } from "@/lib/provider-host/instance";
  * `FacetNotOfferedError` outcome not-sent (clause C-111), while its health is still read.
  *
  * An overview read is one panel call for the overview, made only where the session's engine offers the overview panel,
- * and its answer is held to the overview panel's form by `memberOf`, the check the dashboard's orchestration makes; it
- * answers `undefined` with no call where the engine does not offer it.
+ * and its answer is held to the overview panel's form by `memberOf`, the check the dashboard's orchestration makes,
+ * inside the read's answered span, so an answer of another form is answered as the read's failure; it answers
+ * `undefined` with no call where the engine does not offer it.
  *
  * `readSessionHealthWithin` is Test Connection's health read (src/lib/api/test-connection.ts): one health call on the
  * session the test holds, on the test's own deadline and its deadline signal by reference (`contextOn`), so the
@@ -64,8 +64,8 @@ import { hostCore } from "@/lib/provider-host/instance";
  * panels failed with several sentences answers `mapDatabaseError` of the joined sentences for the engine's legacy type,
  * which is what every provider's own `mapError` does: no provider overrides it, which
  * tests/isolated/monitoring-panels-census.test.ts holds. For a record with no legacy type, a provider package's, the
- * joined sentences are answered as the plain `Error` the orchestration built, since each is already
- * `packageFailureAnswer`'s.
+ * joined sentences are answered as the plain `Error` the orchestration built, since each is already the answer the
+ * request's `PackageAnswers` gave.
  *
  * Deadlines. Each read waits until its own deadline, `executeDeadlineFor` taken at that read's start, the target's
  * statement timeout plus `EXECUTE_SLACK_MS`, and until the caller's signal, the request's: the rule each tree read
@@ -88,10 +88,12 @@ import { hostCore } from "@/lib/provider-host/instance";
  * (`checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, clause C-112), and throws every refusal and stop as
  * the accessor's error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its
  * deadline, outcome not-sent when refused before the call and unknown once the provider was called, or a defect of
- * Studio's bridge. A route facade's read passes every failure through `packageFailureAnswer` (./package-errors, clause
- * C-112) for the engine record it was handed: a legacy record's provider error and Studio's own error pass as the same
- * object, and a provider package's failure is logged once and answered by the record's grant, a failed panel of a
- * dashboard holding that answer's sentence. A read's failure after its wait ended is logged by route, facet, panel,
+ * Studio's bridge. A route facade's read passes every failure through the request's `PackageAnswers` (./package-errors,
+ * clause C-112), the record of the engine's failures the route handed it, which answers each as `packageFailureAnswer`
+ * does and remembers what it logged: a legacy record's provider error and Studio's own error pass as the same object,
+ * and a provider package's failure is logged once and answered by the record's grant, a failed panel of a dashboard
+ * holding that answer's sentence. A failure raised outside the answered span, such as a read before the host core's
+ * install, is not the record's, so the route logs it as Studio's own. A read's failure after its wait ended is logged by route, facet, panel,
  * kind and code, never its text, and a later answer is dropped, since nothing waits on it.
  */
 
@@ -139,6 +141,11 @@ function monitoringLate(route: string, facet: MonitoringRead, panel?: string): (
   };
 }
 
+/** A read's answer as it was answered: the member reader of every read but the overview's. */
+function asAnswered<Answer>(answer: Answer): Answer {
+  return answer;
+}
+
 /** A record's answer, or the accessor's error for a refusal or a stop, read under `view`. */
 function answerOf<Answer>(
   record: RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: Answer },
@@ -150,20 +157,19 @@ function answerOf<Answer>(
 }
 
 /**
- * The monitoring and health of `target`'s session, `engine`'s, each panel read, pool statistics read and health read a
- * host core call under its own deadline, taken from `clock` at its start and the target's timeout, the target's
- * environment and `caller`, counted on the target's entry while it runs; a failure of each answered through
- * `packageFailureAnswer` under core's scrub `scrub`, and its failures after the caller left logged under `route`.
+ * The monitoring and health of `target`'s session, the engine's of `answers`, each panel read, pool statistics read and
+ * health read a host core call under its own deadline, taken from `clock` at its start and the target's timeout, the
+ * target's environment and `caller`, counted on the target's entry while it runs; a failure of each answered through
+ * the request's `answers`, and its failures after the caller left logged under its route.
  */
 export function providerMonitoring(
   target: MonitoringTarget,
-  engine: EngineRecord,
-  scrub: ProviderTextScrub,
+  answers: PackageAnswers,
   caller: AbortSignal,
-  route: string,
   clock: () => number = Date.now,
 ): ProviderMonitoring {
   const { session } = target;
+  const { engine, route } = answers;
   /** The caller's view of a read, under its deadline sentence. */
   function viewOf(read: MonitoringRead): CallerView {
     return {
@@ -173,28 +179,36 @@ export function providerMonitoring(
   }
 
   /**
-   * One host core call `call` of `read` under a fresh context, marked on the target, its record's answer; what the call
-   * or its record raises is thrown as `packageFailureAnswer` answers a failure of `noun`.
+   * One host core call `call` of `read` under a fresh context, marked on the target, its record's answer read by
+   * `member`; what the call, its record or `member` raises is thrown as `answers` answers a failure of `noun`.
    */
-  async function readOf<Answer>(
+  async function readOf<Answer, Member>(
     read: MonitoringRead,
     noun: "panel read" | "pool statistics read" | "health",
     call: (
       ctx: CallContext,
     ) => Promise<RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: Answer }>,
-  ): Promise<Answer> {
+    member: (answer: Answer) => Member,
+  ): Promise<Member> {
     const ctx = callContext(executeDeadlineFor(target.timeout(), clock()), caller, target.env);
     try {
-      return answerOf(await markedCall(target, () => call(ctx)), viewOf(read));
+      return member(answerOf(await markedCall(target, () => call(ctx)), viewOf(read)));
     } catch (error) {
-      throw packageFailureAnswer(engine, noun, error, scrub, route);
+      throw answers.answer(noun, error);
     }
   }
 
-  /** One panel read of the session through `core`, under its own deadline and `caller`. */
-  function readPanelOf(core: HostCore, request: MonitoringPanelRequest): Promise<MonitoringPanelAnswer> {
-    return readOf("panel", "panel read", (ctx) =>
-      core.panelCall(session, request, ctx, { late: monitoringLate(route, "panel", request.panel) }),
+  /** One panel read of the session through `core`, under its own deadline and `caller`, its answer read by `member`. */
+  function readPanelOf<Member>(
+    core: HostCore,
+    request: MonitoringPanelRequest,
+    member: (answer: MonitoringPanelAnswer) => Member,
+  ): Promise<Member> {
+    return readOf(
+      "panel",
+      "panel read",
+      (ctx) => core.panelCall(session, request, ctx, { late: monitoringLate(route, "panel", request.panel) }),
+      member,
     );
   }
 
@@ -205,9 +219,9 @@ export function providerMonitoring(
       // A session that does not offer panels is refused by name before any call (clause C-111).
       const refusals = checkMonitoringFacet(session.calls, "panel");
       if (refusals.length > 0) throw refusalError({ kind: "refused", called: false, refusals }, viewOf("panel"));
-      const read = (request: MonitoringPanelRequest) => readPanelOf(core, request);
+      const read = (request: MonitoringPanelRequest) => readPanelOf(core, request, asAnswered);
       // Several sentences joined are mapped for a legacy engine as its provider maps them; a package's are each already
-      // `packageFailureAnswer`'s, which a legacy driver's text rules have nothing to read in.
+      // the answer `answers` gave, which a legacy driver's text rules have nothing to read in.
       const type = legacyProviderType(engine);
       return readDeclaredPanels(read, session.panels, options, (error) =>
         type === undefined ? error : mapDatabaseError(error, type),
@@ -215,21 +229,29 @@ export function providerMonitoring(
     },
     readPoolStats: async () => {
       const core = hostCore();
-      return readOf("poolStats", "pool statistics read", (ctx) =>
-        core.poolStatsCall(session, ctx, { late: monitoringLate(route, "poolStats") }),
+      return readOf(
+        "poolStats",
+        "pool statistics read",
+        (ctx) => core.poolStatsCall(session, ctx, { late: monitoringLate(route, "poolStats") }),
+        asAnswered,
       );
     },
     readHealth: async () => {
       const core = hostCore();
-      return readOf("health", "health", (ctx) =>
-        core.healthCall(session, ctx, { late: monitoringLate(route, "health") }),
+      return readOf(
+        "health",
+        "health",
+        (ctx) => core.healthCall(session, ctx, { late: monitoringLate(route, "health") }),
+        asAnswered,
       );
     },
     readOverview: async () => {
       const core = hostCore();
       if (session.panels.overview !== "offered") return undefined;
       const request = { panel: "overview" } as const;
-      return memberOf(request, await readPanelOf(core, request));
+      // The overview's form is checked inside the read's answered span, so a package's answer of another form is
+      // answered as its panel read's failure.
+      return readPanelOf(core, request, (answer) => memberOf(request, answer));
     },
   };
 }

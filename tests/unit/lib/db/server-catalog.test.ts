@@ -210,7 +210,7 @@ describe("the accessor", () => {
     const route = thrown(() => assertLegacyProvider("acmeserved", "route"));
     expect(route).toBeInstanceOf(PackageEngineUnsupportedError);
     expect((route as Error).message).toBe(
-      "This request is served for an engine of a provider package only by Test Connection, the query route and the object tree's reads in this LibreDB Studio, and this is another request.",
+      "This request is served for an engine of a provider package only by Test Connection, the query route, the object tree's reads and the monitoring, health and pool statistics reads in this LibreDB Studio, and this is another request.",
     );
     const open = thrown(() => assertLegacyProvider("acmeserved", "open"));
     expect((open as Error).message).toBe(

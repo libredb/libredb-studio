@@ -10,6 +10,7 @@ import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/re
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMaintenanceTarget } from "@/lib/api/session-target";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -194,10 +195,8 @@ export async function POST(request: Request) {
     );
     const maintenance = providerMaintenance(
       providerMaintenanceTarget(provider, declared),
-      servedEngineRecord(connection.type),
-      scrub,
+      packageAnswers(servedEngineRecord(connection.type), scrub, "POST /api/db/maintenance"),
       request.signal,
-      "POST /api/db/maintenance",
     );
 
     // The engine principal this connection acts as, for a provider that can name one (spec 3.11): a user name, never

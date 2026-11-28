@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { metadataProvider } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget } from "@/lib/api/editor-provider";
 import { livenessResponse } from "@/lib/api/liveness";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
-import { providerMonitoringTarget } from "@/lib/api/session-target";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { legacyProviderType } from "@/lib/db/server-catalog";
+
+const ROUTE = "api/db/health";
 
 /**
  * GET /api/db/health
@@ -25,8 +27,11 @@ export function GET() {
  * POST /api/db/health
  * Detailed health check for a specific database connection. The health is read through the monitoring facade and the
  * host core's health call (docs/providers/CONTRACT.md, clause C-75), under its own deadline, the statement timeout
- * plus 10 s, and the request's signal, on the connection's metadata session (clause C-66), never behind the editor's
- * statements.
+ * plus 10 s, and the request's signal, on the record's metadata session (clause C-66), never behind the editor's
+ * statements, for any engine the server serves: a legacy provider's bridged session or a provider package's own
+ * (clause C-107). A catalog the record does not offer is refused by name before any open (clause C-111). A package's
+ * failure, of its open or of the read, is answered and logged once through the request's `PackageAnswers` (clause
+ * C-112), so the route writes no second line for it.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -34,9 +39,10 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/health", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
-  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
-  // provider ran.
+  // Core's scrub of the resolved connection and the request's record of a package's failures, held out here for the
+  // `catch` below: before the connection resolves no provider ran.
   let scrub: ProviderTextScrub | undefined;
+  let answers: PackageAnswers | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -44,26 +50,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
-    const connection = await resolveConnection(body, guard.session);
-    scrub = providerTextScrub(connection, "any");
+    const { connection, engine } = await resolveServedConnection(body, guard.session);
+    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    answers = packageAnswers(engine, scrub, ROUTE);
+    const opening = answers;
 
-    if (!connection.type) {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
-    }
-
-    // The health read runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so the
-    // connection pulse never waits for a connection the editor's statements hold.
-    const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
-    const health = await providerMonitoring(
-      providerMonitoringTarget(provider),
-      servedEngineRecord(connection.type),
-      scrub,
-      req.signal,
-      "api/db/health",
-    ).readHealth();
+    // The health read runs on the record's metadata session (docs/providers/CONTRACT.md, clause C-66), so the
+    // connection pulse never waits for a connection the editor's statements hold. A failure of the open is the
+    // package's open's.
+    const target = await metadataMonitoringTarget(guard.session, connection, engine, requestCatalog(body)).catch(
+      (error: unknown) => {
+        throw opening.answer("open", error);
+      },
+    );
+    const health = await providerMonitoring(target, answers, req.signal).readHealth();
 
     return NextResponse.json(health);
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/health", scrub });
+    return createErrorResponse(error, { route: ROUTE, scrub, logged: answers?.logged(error) === true });
   }
 }

@@ -8,6 +8,7 @@ import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/re
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMaintenanceTarget } from "@/lib/api/session-target";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
@@ -116,10 +117,8 @@ export async function POST(request: Request) {
     );
     const maintenance = providerMaintenance(
       providerMaintenanceTarget(provider, declared),
-      servedEngineRecord(connection.type),
-      scrub,
+      packageAnswers(servedEngineRecord(connection.type), scrub, ROUTE),
       request.signal,
-      ROUTE,
     );
 
     // A provider that declares a preview and holds no `previewMaintenance`: the bridged session does not offer one.

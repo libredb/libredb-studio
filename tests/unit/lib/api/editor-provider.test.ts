@@ -4,7 +4,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { isStudioFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, FacetNotOfferedError } from "@/lib/db/errors";
+import { errorOutcome } from "@/lib/db/error-record";
 import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
@@ -71,9 +72,15 @@ mock.module("@/lib/db/factory", () => ({
   },
 }));
 
-const { cachedEditorProvider, editorProvider, editorTarget, metadataProvider, metadataTreeTarget } = await import(
-  "@/lib/api/editor-provider"
-);
+const {
+  cachedEditorProvider,
+  editorMonitoringTarget,
+  editorProvider,
+  editorTarget,
+  metadataMonitoringTarget,
+  metadataProvider,
+  metadataTreeTarget,
+} = await import("@/lib/api/editor-provider");
 const { providerTreeTarget } = await import("@/lib/api/session-target");
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
@@ -301,6 +308,75 @@ describe("metadataTreeTarget", () => {
       [packageConnection, packageEngine, { allowExternalFileAccess: false }, []],
       [{ ...packageConnection, queryTimeout: undefined }, packageEngine, { allowExternalFileAccess: false }, []],
     ]);
+  });
+});
+
+/** The monitoring reads' session of any record: the metadata session for the dashboard and health, the editor's for pool statistics. */
+describe("the monitoring openers", () => {
+  const legacyEngine = {
+    id: connection.type,
+    offers: { legacyProvider: true, catalog: true },
+  } as unknown as EngineRecord;
+  const packageEngine = { id: "acmemon", offers: { legacyProvider: false, catalog: false } } as unknown as EngineRecord;
+  const packageConnection = { id: "p", name: "p", type: "acmemon", queryTimeout: 1234 } as unknown as EngineConnection;
+  /** A provider package's session entry, its session and environment stand-ins read back by reference. */
+  function sessionEntry() {
+    const packageSession = { calls: { maintenance: { run: "not-offered" } }, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session: packageSession, env }, running: 0, lastUsed: 0 } as unknown;
+    return { entry: entry as CachedSession, packageSession, env };
+  }
+
+  test("the monitoring openers open any record's metadata or editor session, scope a legacy provider to the request's catalog, and refuse a catalog the record does not offer before any open", async () => {
+    // A legacy record: the metadata session for the dashboard and health, the editor's for pool statistics, each
+    // scoped to the request's catalog through the same `scopeToCatalog`.
+    const shop = providerOf({ supportsMaintenance: true, maintenanceOperations: ["vacuum"] });
+    const server = providerOf({ catalogSessions: true }, { shop });
+    metadataEntry = { opened: { form: "provider", provider: server } } as unknown as CachedSession;
+    editorEntry = { opened: { form: "provider", provider: server } } as unknown as CachedSession;
+    openedMetadataSessions.length = 0;
+    openedEditor.length = 0;
+    const metadata = await metadataMonitoringTarget(session("admin"), connection, legacyEngine, "shop");
+    const editor = await editorMonitoringTarget(session("user"), connection, legacyEngine, "shop");
+    const whole = await metadataMonitoringTarget(session("user"), connection, legacyEngine, undefined);
+    expect([metadata.accepted(), editor.accepted()]).toEqual([shop.getCapabilities(), shop.getCapabilities()]);
+    expect(whole.accepted()).toEqual(server.getCapabilities());
+    expect(openedMetadataSessions.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: true }, []],
+      [connection, legacyEngine, { allowExternalFileAccess: false }, []],
+    ]);
+    // The editor's session with no wait of the request's own, as pool statistics opened it before.
+    expect(openedEditor.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: false }, []],
+    ]);
+
+    // A provider package's entry: its session with its declared environment and the connection's timeout.
+    const { entry, packageSession, env } = sessionEntry();
+    metadataEntry = entry;
+    editorEntry = entry;
+    for (const open of [metadataMonitoringTarget, editorMonitoringTarget]) {
+      const target = await open(session("user"), packageConnection, packageEngine, undefined);
+      expect([target.session as unknown, target.env as unknown, target.timeout()]).toEqual([packageSession, env, 1234]);
+    }
+
+    // A catalog the record does not offer is refused by name, not-sent, before any open.
+    openedMetadataSessions.length = 0;
+    openedEditor.length = 0;
+    for (const open of [metadataMonitoringTarget, editorMonitoringTarget]) {
+      const refused = await open(session("user"), packageConnection, packageEngine, "shop").catch(
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(FacetNotOfferedError);
+      const { message, facet, operation, provider } = refused as FacetNotOfferedError;
+      expect([message, facet, operation, provider]).toEqual([
+        "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+        "monitoring",
+        "catalog",
+        undefined,
+      ]);
+      expect(errorOutcome(refused)).toBe("not-sent");
+    }
+    expect([openedMetadataSessions, openedEditor]).toEqual([[], []]);
   });
 });
 
