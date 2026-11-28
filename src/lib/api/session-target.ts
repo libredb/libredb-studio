@@ -4,8 +4,9 @@
  *
  * Every builder of a legacy provider's session target lives here, the object tree's (`providerTreeTarget`), the object
  * source's (`providerSourceTarget`), the monitoring and health reads' (`providerMonitoringTarget`), the maintenance
- * calls' (`providerMaintenanceTarget`) and the console cancel's (`providerConsoleTarget`), so this is the one module of
- * the caller facades that builds a bridged session for them (`bridgedConsole` and `bridgedMaintenance` in
+ * calls' (`providerMaintenanceTarget`) and the console's, of the cancel, the editor's statements and the transaction
+ * calls (`providerConsoleTarget`), so this is the one module of the caller facades that builds a bridged session for
+ * them (`bridgedConsole` and `bridgedMaintenance` in
  * src/lib/provider-host/legacy-bridge.ts), and every builder of a target from a cache entry of the provider factory, by
  * the entry's form, so no facade and no route forks on who serves an engine. This module value-imports no provider
  * factory module (src/lib/db/factory.ts), so the VS Code backend, which is handed the factory's functions and imports
@@ -16,8 +17,13 @@
  *
  * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
- * settled; a legacy provider's target marks nothing, since its provider reports its own runs in flight
- * (`hasRunsInFlight`), as it did before targets.
+ * settled, a statement and a unit of a script inside a transaction among its calls; a legacy provider's target marks
+ * nothing, since its provider reports its own runs in flight (`hasRunsInFlight`), as it did before targets.
+ *
+ * A console target also states how a statement and a unit of a script inside a transaction run on its session
+ * (`StatementForm`, `ScriptUnitForm`): through the legacy bridge for a legacy provider, on the session itself for a
+ * provider package's, so `runEditorQuery`, the transaction calls and the script inside a transaction run on a target and
+ * none of them forks on who serves the engine.
  *
  * A caller that answers a provider package's failure by its record (`packageFailureAnswer` in ./package-errors), the
  * object routes and MCP's `inspect_schema`, answers so only what the package's own tree or source read raised: it
@@ -26,31 +32,64 @@
  * for the object routes, which answer it as the read that raised it), so a failure Studio raised after the open is
  * answered as Studio's own, never as the package's.
  */
-import { type CallContext, type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
+import {
+  BATCH_MAX_BYTES,
+  type CallContext,
+  type Column,
+  type EngineMaintenance,
+  type EnvReader,
+  type ExecuteAnswer,
+  envReader,
+  PAGE_MAX_BYTES,
+  type PageBound,
+  type PumpLimits,
+} from "@libredb/provider-sdk/calls";
 import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
-import { statementTimeout } from "@/lib/api/editor-query";
+import { encodeValue } from "@libredb/provider-sdk/values";
+import {
+  type EditorQueryAnswer,
+  type EditorQueryRun,
+  editorPageBody,
+  packagePageBody,
+  pageBound,
+  statementTimeout,
+} from "@/lib/api/editor-query";
 import type { CachedSession } from "@/lib/db/factory";
+import { StudioByteBudgetRefusal } from "@/lib/db/errors";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { EngineConnection } from "@/lib/db/server-catalog";
 import {
   DEFAULT_QUERY_TIMEOUT,
   type DatabaseProvider,
+  isTransactionProvider,
   type MaintenanceDeclaration,
   type MaintenanceOperation,
   type MaintenanceOperationSpec,
   type ObjectReadOptions,
   type ProviderCapabilities,
 } from "@/lib/db/types";
-import type { ConsoleSession, StoppedRecord } from "@/lib/provider-host/core/console";
+import type { ConsoleSession, PageRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import { HostDefectError } from "@/lib/provider-host/access";
-import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
+import {
+  bridgedConsole,
+  bridgedMaintenance,
+  bridgedTransactionScriptUnit,
+  type TransactionScriptUnitOpen,
+} from "@/lib/provider-host/legacy-bridge";
 import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 
-/** How a call on a target ended, as its marks read it: undefined for a call that threw, which has settled. */
-export type CallEnd = { readonly kind: "answered" | "refused" } | Pick<StoppedRecord, "kind" | "settled"> | undefined;
+/**
+ * How a call on a target ended, as its marks read it: an execute's page among the answers; undefined for a call that
+ * threw, which has settled.
+ */
+export type CallEnd =
+  | { readonly kind: "answered" | "refused" | "page" }
+  | Pick<StoppedRecord, "kind" | "settled">
+  | undefined;
 
 /** A session a caller facade runs its calls on, and what each call of it is given. */
 export interface SessionTarget<Session> {
@@ -121,8 +160,48 @@ export interface MaintenanceOpening {
   target(): Promise<MaintenanceTarget>;
 }
 
-/** A session target of the console cancel (`cancelEditorRun` in src/lib/api/editor-query.ts). */
-export type ConsoleTarget = SessionTarget<ConsoleSession>;
+/**
+ * What a statement's run form reads of the request: its page options, core's scrub of its connection, and the route a
+ * provider package's warnings are logged under.
+ */
+export type StatementRun = Pick<EditorQueryRun, "options" | "scrub" | "route">;
+
+/**
+ * How one statement runs on a console target: the session its execute is sent to, the page it asks for, the pump's
+ * limits, whether the run's cancel was sent, and the answer body of the page a record holds, which releases the record.
+ */
+export interface StatementForm {
+  readonly session: ConsoleSession;
+  readonly page: PageBound;
+  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
+  readonly cancelSent: () => boolean;
+  readonly body: (record: PageRecord) => EditorQueryAnswer;
+}
+
+/**
+ * How one unit of a script inside a transaction runs on a console target: its session, the pump's limits, and the
+ * unit's result read from the page its execute answered; the caller releases the record.
+ */
+export interface ScriptUnitForm {
+  readonly session: ConsoleSession;
+  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
+  /** @throws {StudioByteBudgetRefusal} For a provider package's page the host cut by bytes. */
+  readonly answered: (record: PageRecord) => QueryResult;
+}
+
+/**
+ * A session target of the console's calls: the cancel (`cancelEditorRun` in src/lib/api/editor-query.ts), the editor's
+ * statement (`runEditorQuery`), and the transaction calls and the script inside a transaction
+ * (src/lib/api/editor-transaction.ts, `openTransactionScript` in src/lib/api/editor-script.ts).
+ */
+export interface ConsoleTarget extends SessionTarget<ConsoleSession> {
+  /** How the statement `run` names runs on the target, built when asked, once per statement. */
+  statement(run: StatementRun): StatementForm;
+  /** How the unit `open` names, of a script inside a transaction, runs on the target, built when asked, once per unit. */
+  transactionScriptUnit(open: TransactionScriptUnitOpen): ScriptUnitForm;
+  /** The plan the target's session supports, read when asked: whether it explains a statement, and in which format. */
+  explainSupport(): Pick<ProviderCapabilities, "supportsExplain" | "explainFormat">;
+}
 
 /** A legacy provider reads no declared environment, so its calls get a reader of none. */
 const NO_ENVIRONMENT = envReader([], () => undefined);
@@ -215,26 +294,135 @@ export function providerMaintenanceTarget(
 
 /**
  * The console target of `provider`: one bridged session of it, built when this is called, whose `console.cancel` is
- * offered exactly where the provider can cancel; no environment, no marks, and, when asked, the provider's statement
- * timeout.
+ * offered exactly where the provider can cancel and `console.transaction` exactly where it holds a transaction session;
+ * no environment, no marks, and, when asked, the provider's statement timeout and its capabilities as the plan it
+ * supports.
+ *
+ * Each statement runs on a bridged session of its own, built with the run's page options (`bridgedConsole`): it asks
+ * the page as the request bounds it, the bridge adding the probe row in its prepare, with the bridge's pump limits and
+ * cancel, and its body is built from the legacy result (`editorPageBody`). Each unit of a script inside a transaction
+ * runs on the bridge's transaction script unit session (`bridgedTransactionScriptUnit`, clause C-50) where the provider
+ * holds a transaction session, and otherwise on its bridged console session, whose calls do not offer
+ * `console.transaction`, so the host core refuses the unit's request before the call, not-sent, as it refuses that
+ * request for every session that does not offer it.
  */
 export function providerConsoleTarget(provider: DatabaseProvider): ConsoleTarget {
-  return { session: bridgedConsole(provider, {}).session, ...providerFields(provider) };
+  return {
+    session: bridgedConsole(provider, {}).session,
+    ...providerFields(provider),
+    statement: (run) => {
+      const bridged = bridgedConsole(provider, run.options);
+      return {
+        session: bridged.session,
+        page: pageBound(run.options),
+        pumpLimits: bridged.pumpLimits,
+        cancelSent: () => bridged.run.cancelSent,
+        body: (record) => editorPageBody(record, bridged.answered, run.scrub),
+      };
+    },
+    transactionScriptUnit: (open) => {
+      if (isTransactionProvider(provider)) return bridgedTransactionScriptUnit(provider, open);
+      const bridged = bridgedConsole(provider, {});
+      return { session: bridged.session, pumpLimits: bridged.pumpLimits, answered: () => bridged.answered().result };
+    },
+    explainSupport: () => provider.getCapabilities(),
+  };
 }
+
+/**
+ * The page a statement on a provider package's session asks for, and its pump's limits: one row past the page
+ * (#1440), whether or not the package applies the page, so a next page is known to exist; the host pumps the first
+ * result within that row count and the page's 32 MiB, and the first result's columns are kept from the answer the pump
+ * reads, since a page record carries none. The body is `packagePageBody`'s (src/lib/api/editor-query.ts): the page's
+ * rows as records keyed by their column names, each cell in the value codec's wire form, a next page offered only
+ * where the session honours `offset`, and the warnings by how the entry's engine record grants the package its own
+ * words.
+ */
+function packageStatement(entry: CachedSession, session: ConsoleSession, run: StatementRun): StatementForm {
+  const limit = run.options.limit ?? DEFAULT_QUERY_LIMIT;
+  const offset = run.options.offset ?? 0;
+  let columns: readonly Column[] = [];
+  return {
+    session,
+    page: { limit: limit + 1, offset },
+    pumpLimits: (answer) => {
+      columns = answer.results[0]?.columns ?? [];
+      return { maxRows: limit + 1, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
+    },
+    cancelSent: () => false,
+    body: (record) => {
+      const honoursOffset = session.calls.console.execute.honours.includes("offset");
+      const { ownWords } = entry.engine.grants;
+      return packagePageBody(record, columns, { limit, offset, honoursOffset }, ownWords, run.scrub, run.route);
+    },
+  };
+}
+
+/** Studio's sentence for a unit of a script inside a transaction whose page the host cut by bytes. */
+const UNIT_OVER_PAGE_SENTENCE = `The unit's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, and a script's answer has no field to say where a page ends, so Studio answers none of its rows.`;
+
+/**
+ * A unit of a script inside a transaction on a provider package's session: the session itself, whose unit's rows exist
+ * only in its page, so the pump takes every row of a unit but the last, and the request's page for the last
+ * (`lastUnitOptions`), no row past it, since a script's answer carries no pagination. Its result is the page's rows as
+ * records keyed by their column names, each cell in the value codec's wire form, its fields, the declared types of the
+ * columns that state one, the package's own row count where the page holds every row and the package stated one, and
+ * the rows answered otherwise, and the package's execution time; it carries no warnings, which the transaction route's
+ * answer does not read. A page the host cut by bytes is `StudioByteBudgetRefusal`, outcome unknown, since the
+ * statement ran, naming none of its rows: never a shorter result. The unit's text is the facade's request; the form
+ * reads nothing else of `open`.
+ */
+function packageScriptUnit(session: ConsoleSession, open: TransactionScriptUnitOpen): ScriptUnitForm {
+  const page = open.lastUnitOptions === undefined ? undefined : pageBound(open.lastUnitOptions);
+  const maxRows = page === undefined || "unlimited" in page ? Number.MAX_SAFE_INTEGER : page.limit;
+  let columns: readonly Column[] = [];
+  return {
+    session,
+    pumpLimits: (answer) => {
+      columns = answer.results[0]?.columns ?? [];
+      return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
+    },
+    answered: (record) => {
+      if (record.page.end === "byte-limit") throw new StudioByteBudgetRefusal(UNIT_OVER_PAGE_SENTENCE);
+      const fields = columns.map((column) => column.name);
+      const rows = record.page.rows.map((row) =>
+        Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])),
+      );
+      const typed = columns.filter((column) => typeof column.type === "string");
+      return {
+        rows,
+        fields,
+        ...(typed.length > 0 && {
+          columnTypes: Object.fromEntries(typed.map((column) => [column.name, column.type as string])),
+        }),
+        rowCount: record.page.end === "done" && record.rowCount !== undefined ? record.rowCount : rows.length,
+        executionTime: record.executionTimeMs,
+      };
+    },
+  };
+}
+
+/** The plan a provider package's session supports: none, since the provider contract has no plan call. */
+const NO_PLAN = Object.freeze({ supportsExplain: false });
 
 /**
  * The console target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
  * provider's through `providerConsoleTarget`; a provider package's session with its declared environment, the
- * connection's own statement timeout or Studio's default, and the marks of each call on the entry.
+ * connection's own statement timeout or Studio's default, the marks of each call on the entry, its statements and the
+ * units of a script inside a transaction on the session itself (`packageStatement`, `packageScriptUnit`), and no plan.
  */
 export function entryConsoleTarget(entry: CachedSession, connection: EngineConnection): ConsoleTarget {
   const { opened } = entry;
   if (opened.form === "provider") return providerConsoleTarget(opened.provider);
+  const { session } = opened;
   return {
-    session: opened.session,
+    session,
     env: opened.env,
     timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
     ...entryMarks(entry),
+    statement: (run) => packageStatement(entry, session, run),
+    transactionScriptUnit: (open) => packageScriptUnit(session, open),
+    explainSupport: () => NO_PLAN,
   };
 }
 

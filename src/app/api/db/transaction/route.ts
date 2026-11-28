@@ -3,12 +3,7 @@ import { pageOptionError } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import {
-  type DatabaseProvider,
-  isTransactionProvider,
-  type QueryPrepareOptions,
-  type TransactionProvider,
-} from "@/lib/db/types";
+import { isTransactionProvider, type QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -17,6 +12,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { cachedEditorProvider, editorProvider } from "@/lib/api/editor-provider";
+import { type ConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -196,7 +192,7 @@ async function rollBackOnProvider(
   try {
     const session = await cachedEditorProvider(providerKey, catalog);
     if (session === null || !isTransactionProvider(session)) return "none-open";
-    const answer = await rollBackAfterCredentialChange(session, ROUTE);
+    const answer = await rollBackAfterCredentialChange(providerConsoleTarget(session), ROUTE);
     if (answer.kind !== "unconfirmed") return answer.kind;
     failure = answer.error;
   } catch (error) {
@@ -320,7 +316,8 @@ function failedCommitEnd(error: unknown): TransactionEnd {
 
 /** What a script of the owner's inside the transaction runs with, and what its answer and its event are read from. */
 interface ScriptCall {
-  readonly provider: DatabaseProvider & TransactionProvider;
+  /** The console target of the provider whose transaction the script runs in. */
+  readonly target: ConsoleTarget;
   readonly units: ExecutionUnit[];
   readonly options: QueryPrepareOptions;
   readonly caller: TransactionCaller;
@@ -343,7 +340,7 @@ interface ScriptCall {
  * unresolved, and the answer still reports their results.
  */
 async function answerScriptInTransaction(call: ScriptCall): Promise<NextResponse> {
-  const script = openTransactionScript(call.provider, {
+  const script = openTransactionScript(call.target, {
     units: call.units,
     options: call.options,
     signal: call.caller.signal,
@@ -364,7 +361,7 @@ async function answerScriptInTransaction(call: ScriptCall): Promise<NextResponse
   if (call.owner !== null) {
     recordTransactionStatement(call.owner, { ...call.event, status: answer.hasError ? "error" : "success" });
   }
-  const stillOpen = await readTransactionStateOrUnknown(call.provider, call.caller);
+  const stillOpen = await readTransactionStateOrUnknown(call.target, call.caller);
   recordEndFound(settleTransaction(call.owned, stillOpen, call.ownCall.mark));
   return NextResponse.json({ ...answer, inTransaction: inTransactionAnswer(stillOpen), ...call.confirmation });
 }
@@ -513,12 +510,13 @@ export async function POST(req: NextRequest) {
     // drives it, so the caller's right to act on it is decided here, before any action runs. See
     // src/lib/api/transaction-ownership.ts for what was measured. Every call on the session below, this state read
     // included, runs through the provider host under a deadline the host owns and the request's signal
-    // (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clause C-59).
+    // (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clause C-59), on the provider's console target.
+    const target = providerConsoleTarget(provider);
     const caller: TransactionCaller = { signal: req.signal, route: ROUTE };
     // The record as it was before the read: a read that answers after another request of the owner's claimed, changed or
     // ended it is not about it, so it neither releases nor settles it (`resolveTransaction`).
     const readMark = markTransaction(owned);
-    const sessionState = await readTransactionState(provider, caller);
+    const sessionState = await readTransactionState(target, caller);
     // Whether the record changed while the read ran, taken before this request's own resolve changes it.
     const readChanged = recordChangedSince(owned, readMark);
     let owner = transactionOwner(owned);
@@ -609,11 +607,11 @@ export async function POST(req: NextRequest) {
           );
           // The timer's read is Studio's own, under no request.
           const watcher: TransactionCaller = { signal: new AbortController().signal, route: ROUTE };
-          watchTransactionTimeout(owned, claimed, () => readTransactionStateOrUnknown(provider, watcher));
+          watchTransactionTimeout(owned, claimed, () => readTransactionStateOrUnknown(target, watcher));
         };
         // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
         // server that never says whether a transaction is open is refused rather than trusted.
-        const opened = await beginInTransaction(provider, body.requireReportedState === true, caller);
+        const opened = await beginInTransaction(target, body.requireReportedState === true, caller);
         if (opened.kind === "failed" || opened.kind === "not-sent") throw opened.error;
         if (opened.kind === "unanswered") {
           // Studio stopped waiting for a BEGIN that may have opened a transaction only its caller can own: it is
@@ -641,7 +639,7 @@ export async function POST(req: NextRequest) {
 
       case "commit": {
         const started = queryEventStart();
-        const ended = await endTransaction(provider, "commit", caller);
+        const ended = await endTransaction(target, "commit", caller);
         if (ended.kind !== "answered") {
           settleFailure(
             owned,
@@ -666,7 +664,7 @@ export async function POST(req: NextRequest) {
 
       case "rollback": {
         const started = queryEventStart();
-        const ended = await endTransaction(provider, "rollback", caller);
+        const ended = await endTransaction(target, "rollback", caller);
         if (ended.kind !== "answered") {
           settleFailure(
             owned,
@@ -719,7 +717,7 @@ export async function POST(req: NextRequest) {
             // Each statement runs through the provider host, and the state after them is read through it too
             // (`answerScriptInTransaction`; docs/providers/CONTRACT.md, clause C-84).
             return await answerScriptInTransaction({
-              provider,
+              target,
               units,
               options,
               caller,
@@ -737,7 +735,7 @@ export async function POST(req: NextRequest) {
         // One statement runs through the provider host, its page held to the host's page budget as on
         // POST /api/db/query, and answers the session state after it (`runInTransaction`).
         const ran = await runInTransaction(
-          provider,
+          target,
           { statement: statementSql, params: bound.params, options, scrub: connectionScrub },
           caller,
         );

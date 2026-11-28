@@ -10,6 +10,7 @@ import {
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
 import { EXECUTE_SLACK_MS, runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import type { TreeRequest } from "@libredb/provider-sdk/calls";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -1061,17 +1062,14 @@ describe("query/run", () => {
       pagination: { limit: 2, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
     };
     assert.deepEqual(answer, body);
-    const route = await runEditorQuery(
-      { form: "provider", provider: fakeProvider() },
-      {
-        statement: "SELECT n FROM t",
-        options: { limit: 2, offset: 0 },
-        queryId: "q-1",
-        signal: new AbortController().signal,
-        route: "test",
-        scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
-      },
-    );
+    const route = await runEditorQuery(providerConsoleTarget(fakeProvider()), {
+      statement: "SELECT n FROM t",
+      options: { limit: 2, offset: 0 },
+      queryId: "q-1",
+      signal: new AbortController().signal,
+      route: "test",
+      scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
+    });
     assert.deepEqual(route.body, body);
     assert.equal("explainFormat" in answer, false);
     assert.equal("resultSetCount" in answer, false);
@@ -1080,8 +1078,10 @@ describe("query/run", () => {
   it("calls the provider as the query route calls it, handing it the run's id only when it can cancel", async () => {
     const plain = await openedOn();
     await plain.handlers.runQuery(RUN, idle);
-    // The bridge reads the provider's object model when it builds the session, before the run prepares anything.
-    const [model, prepare, probe, query] = plain.provider.calls;
+    // The bridge reads the provider's object model when it builds a session, before the run prepares anything: once for
+    // the console target's session, and once for the statement's own session.
+    const [target, model, prepare, probe, query] = plain.provider.calls;
+    assert.deepEqual(target, ["getCapabilities"]);
     assert.deepEqual(model, ["getCapabilities"]);
     assert.deepEqual(prepare, ["prepareQuery", "SELECT n FROM t", { limit: 2, offset: 0 }]);
     assert.deepEqual(probe, ["prepareQuery", "SELECT n FROM t", { limit: 3, offset: 0, unlimited: false }]);
@@ -1090,8 +1090,14 @@ describe("query/run", () => {
 
     const cancelling = await openedOn(fakeProvider({ cancelQuery: async () => true }));
     await cancelling.handlers.runQuery(RUN, idle);
-    assert.deepEqual(methodsOf(cancelling.provider), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
-    assert.deepEqual(cancelling.provider.calls[3].slice(0, 4), [
+    assert.deepEqual(methodsOf(cancelling.provider), [
+      "getCapabilities",
+      "getCapabilities",
+      "prepareQuery",
+      "prepareQuery",
+      "query",
+    ]);
+    assert.deepEqual(cancelling.provider.calls[4].slice(0, 4), [
       "query",
       "SELECT n FROM t LIMIT 3 OFFSET 0",
       undefined,
@@ -1119,12 +1125,13 @@ describe("query/run", () => {
     assert.equal("openTransaction" in page, false);
     assert.deepEqual(methodsOf(ending.provider), [
       "getCapabilities",
+      "getCapabilities",
       "prepareQuery",
       "prepareQuery",
       "query",
       "endOpenQueryTransaction",
     ]);
-    const [, , , query, end] = ending.provider.calls;
+    const [, , , , query, end] = ending.provider.calls;
     assert.equal(typeof query[4], "string");
     assert.deepEqual(end, ["endOpenQueryTransaction", query[4]]);
 
@@ -1148,7 +1155,7 @@ describe("query/run", () => {
     const scoped = await openedOn(server);
     await scoped.handlers.runQuery({ ...RUN, catalog: "sales" }, idle);
     assert.deepEqual(server.calls, [["getCapabilities"], ["forCatalog", "sales"]]);
-    assert.deepEqual(methodsOf(sales), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
+    assert.deepEqual(methodsOf(sales), ["getCapabilities", "getCapabilities", "prepareQuery", "prepareQuery", "query"]);
 
     const { handlers } = await openedOn();
     await answeredAs(
@@ -1249,7 +1256,13 @@ describe("query/run", () => {
     const source = new CancellationTokenSource();
     const run = handlers.runQuery(RUN, source.token);
     await settled();
-    assert.deepEqual(methodsOf(provider), ["getCapabilities", "prepareQuery", "prepareQuery", "query"]);
+    assert.deepEqual(methodsOf(provider), [
+      "getCapabilities",
+      "getCapabilities",
+      "prepareQuery",
+      "prepareQuery",
+      "query",
+    ]);
     source.cancel();
     source.cancel();
     // The host answers the run at the cancellation, outcome unknown, and has sent the engine's cancel once by then.

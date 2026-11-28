@@ -145,23 +145,31 @@ describe("editorTarget", () => {
   }
 
   test("editorTarget opens any record's editor session under the session's editor posture: a legacy provider in the request's catalog, and a package's session with its entry and the connection's statement timeout", async () => {
-    const shop = providerOf({});
-    const server = providerOf({ catalogSessions: true }, { shop });
+    const shopCapabilities = {};
+    const serverCapabilities = { catalogSessions: true };
+    const shop = providerOf(shopCapabilities);
+    const server = providerOf(serverCapabilities, { shop });
     editorEntry = { opened: { form: "provider", provider: server }, engine: legacyEngine } as unknown as CachedSession;
     openedEditor.length = 0;
     const wait = { signal: new AbortController().signal };
 
+    // A legacy provider's console target reads the provider it was built from: the catalog's session, or the server's.
     const legacy = await editorTarget(session("admin"), connection, legacyEngine, "shop", wait);
-    expect(legacy.form).toBe("provider");
-    expect(legacy.form === "provider" && legacy.provider).toBe(shop);
+    expect(legacy.explainSupport()).toBe(shopCapabilities as never);
     const whole = await editorTarget(session("user"), connection, legacyEngine, undefined);
-    expect(whole.form === "provider" && whole.provider).toBe(server);
+    expect(whole.explainSupport()).toBe(serverCapabilities as never);
 
+    // A package's: its session, its declared environment, the connection's statement timeout, each call on the entry.
     const { entry, session: packageSession, env } = sessionEntry();
     editorEntry = entry;
     const target = await editorTarget(session("user"), packageConnection, packageEngine, undefined, wait);
-    expect(target as unknown).toEqual({ form: "session", session: packageSession, env, entry, queryTimeout: 1234 });
-    expect(target.form === "session" && target.entry).toBe(entry);
+    expect(target.session as unknown).toBe(packageSession);
+    expect(target.env as unknown).toBe(env);
+    expect(target.timeout()).toBe(1234);
+    target.started();
+    expect(entry.running).toBe(1);
+    target.ended({ kind: "page" });
+    expect(entry.running).toBe(0);
 
     // One open per call, of the record handed, under the editor posture of the session, with the request's own wait.
     expect(openedEditor.map((open) => [open.connection, open.engine, open.context])).toEqual([

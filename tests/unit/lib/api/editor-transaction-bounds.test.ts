@@ -11,6 +11,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import type { providerConsoleTarget } from "@/lib/api/session-target";
 import type {
   CREDENTIAL_CHANGE_ROLLBACK_MS,
   endTransaction,
@@ -23,6 +24,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 
 interface ChildDeps {
   readonly EXECUTE_SLACK_MS: typeof EXECUTE_SLACK_MS;
+  readonly providerConsoleTarget: typeof providerConsoleTarget;
   readonly CREDENTIAL_CHANGE_ROLLBACK_MS: typeof CREDENTIAL_CHANGE_ROLLBACK_MS;
   readonly endTransaction: typeof endTransaction;
   readonly rollBackAfterCredentialChange: typeof rollBackAfterCredentialChange;
@@ -38,6 +40,7 @@ const child = boundedChild({
   label: "editor-transaction-bounds",
   imports: [
     { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["EXECUTE_SLACK_MS"] },
+    { from: path.join(SOURCE, "lib", "api", "session-target.ts"), names: ["providerConsoleTarget"] },
     {
       from: path.join(SOURCE, "lib", "api", "editor-transaction.ts"),
       names: ["CREDENTIAL_CHANGE_ROLLBACK_MS", "endTransaction", "rollBackAfterCredentialChange"],
@@ -66,7 +69,7 @@ const child = boundedChild({
       `${(error as Error).name} ${deps.errorKind(error)} ${deps.errorOutcome(error)} ${(error as Error).message}`;
     if (name === "credential-rollback-never-answers") {
       const answer = await deps.rollBackAfterCredentialChange(
-        provider,
+        deps.providerConsoleTarget(provider),
         "bounds",
         // The allowance ends 50 ms from now.
         Date.now() - deps.CREDENTIAL_CHANGE_ROLLBACK_MS + 50,
@@ -74,7 +77,7 @@ const child = boundedChild({
       return answer.kind === "unconfirmed" ? `unconfirmed ${describeError(answer.error)}` : answer.kind;
     }
     const outcome = await deps.endTransaction(
-      provider,
+      deps.providerConsoleTarget(provider),
       "commit",
       { signal: new AbortController().signal, route: "bounds" },
       // The execute deadline, the statement timeout plus the slack, ends 50 ms from now.

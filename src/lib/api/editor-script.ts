@@ -8,28 +8,26 @@ import {
   callContext,
   endEditorScope,
   executeDeadline,
+  executeDeadlineFor,
   executeViews,
+  executeViewsFor,
   hostPorts,
   lateScopeEnd,
   pageBound,
 } from "@/lib/api/editor-query";
 import type { UnansweredCall } from "@/lib/api/editor-transaction";
 import {
-  type DatabaseProvider,
-  newQueryCallScope,
-  type QueryPrepareOptions,
-  type TransactionProvider,
-} from "@/lib/db/types";
+  type ConsoleTarget,
+  providerConsoleTarget,
+  type ScriptUnitForm,
+  type SessionTarget,
+} from "@/lib/api/session-target";
+import { type DatabaseProvider, newQueryCallScope, type QueryPrepareOptions } from "@/lib/db/types";
 import { refusalError, stopError } from "@/lib/provider-host/access";
-import type { HostCallPorts, RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
+import type { ExecuteRecord, HostCallPorts, RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { hostCore } from "@/lib/provider-host/instance";
-import {
-  type BridgedReadOnlyStatements,
-  bridgedConsole,
-  bridgedScriptUnit,
-  bridgedTransactionScriptUnit,
-} from "@/lib/provider-host/legacy-bridge";
+import { bridgedScriptUnit } from "@/lib/provider-host/legacy-bridge";
 import type { ExecutionUnit } from "@/lib/sql/statement-splitter";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 
@@ -72,8 +70,12 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  *
  * THE EDITOR'S SCRIPT INSIDE A TRANSACTION (clause C-84). `openTransactionScript` is the caller facade of a script of
  * `POST /api/db/transaction`: every unit runs through one host core console execute sent with `transaction`, one unit at
- * a time, each on a transaction script unit session of its own (`bridgedTransactionScriptUnit`, clause C-50), which
- * sends the unit's text as the transaction route always sent it. The core is read when the script opens, as above.
+ * a time, each on the unit form its console target states (`ConsoleTarget.transactionScriptUnit` in ./session-target):
+ * the bridge's transaction script unit session for a legacy provider (`bridgedTransactionScriptUnit`, clause C-50),
+ * which sends the unit's text as the transaction route always sent it, and the session itself for a provider package's,
+ * whose unit's rows exist only in its page, so a page the host cut by bytes is the unit's `StudioByteBudgetRefusal`.
+ * Each unit is counted on the cache entry its session lives in until its page record was released. The core is read
+ * when the script opens, as above.
  * Each request is fresh: the unit's text, every row for every unit but the last and the request's page for the last,
  * and `transaction`, with no run id, since Studio sends no cancel inside a transaction, and no scope, since a
  * transaction is ended by its own COMMIT or ROLLBACK. Each context is fresh, the unit's own deadline and a signal that
@@ -138,10 +140,14 @@ interface ScriptProgress {
   stopped?: StoppedRecord;
 }
 
-/** What every unit of one script runs with: the host core, the provider, the script, its scope and its progress. */
+/**
+ * What every unit of one script runs with: the host core, the provider, the marks of the entry its sessions live in,
+ * the script, its scope and its progress.
+ */
 interface ScriptRunState {
   readonly core: HostCore;
   readonly provider: DatabaseProvider;
+  readonly marks: UnitMarks;
   readonly script: EditorScriptRun;
   readonly scope: string | undefined;
   readonly progress: ScriptProgress;
@@ -150,35 +156,45 @@ interface ScriptRunState {
 /** The answer of a unit's execute: the record of a refusal or a stop, or the builder's value or the unit's error. */
 type UnitCall<T> = RefusedRecord | StoppedRecord | ScriptUnitOutcome<T>;
 
+/** The marks of a unit's call on the cache entry its session lives in. */
+type UnitMarks = Pick<SessionTarget<unknown>, "started" | "ended">;
+
 /**
- * Runs one unit's execute through `core` on `bridged`'s session and builds its answer with `build` from the provider's
- * result by reference, releasing the page record once after the builder ran or threw. A refusal or a stop is answered
- * as its record, and the execute's or the builder's throw as the unit's error, by reference.
+ * Runs one unit's execute through `core` on `unit`'s session and builds its answer with `build` from the unit's result
+ * (`unit.answered`), releasing the page record once after the builder ran or threw. The call is counted on the entry
+ * its session lives in (`marks`) from its start until its page record was released, or until the call a stop answered
+ * has settled, so the entry is not swept while its page is read. A refusal or a stop is answered as its record, and
+ * the execute's, the result's or the builder's throw as the unit's error, by reference.
  */
 async function callUnit<T>(
   core: HostCore,
-  bridged: BridgedReadOnlyStatements,
+  unit: ScriptUnitForm,
+  marks: UnitMarks,
   request: ExecuteRequest,
   ctx: CallContext,
   ports: HostCallPorts,
   build: (result: QueryResult) => T,
 ): Promise<UnitCall<T>> {
+  marks.started();
+  let record: ExecuteRecord | undefined;
   try {
-    const record = await core.executeCall(bridged.session, request, ctx, bridged.pumpLimits, ports);
+    record = await core.executeCall(unit.session, request, ctx, unit.pumpLimits, ports);
     if (record.kind !== "page") return record;
     try {
-      return { kind: "answered", value: build(bridged.answered()) };
+      return { kind: "answered", value: build(unit.answered(record)) };
     } finally {
       record.release();
     }
   } catch (error) {
     return { kind: "failed", error };
+  } finally {
+    marks.ended(record);
   }
 }
 
 /** Runs unit `index` of the script through the host core on a script unit session of its own. */
 async function runScriptUnit<T>(
-  { core, provider, script, scope, progress }: ScriptRunState,
+  { core, provider, marks, script, scope, progress }: ScriptRunState,
   index: number,
   build: (result: QueryResult) => T,
   now: number,
@@ -199,6 +215,7 @@ async function runScriptUnit<T>(
   const call = await callUnit(
     core,
     bridged,
+    marks,
     request,
     callContext(executeDeadline(provider, now), script.signal),
     hostPorts(script.route, bridged.cancelSent),
@@ -221,10 +238,11 @@ async function runScriptUnit<T>(
  */
 export function openEditorScript(provider: DatabaseProvider, script: EditorScriptRun): EditorScript {
   const core = hostCore();
-  const ends = checkConsoleFacet(bridgedConsole(provider, {}).session.calls, "endScope").length === 0;
+  const target = providerConsoleTarget(provider);
+  const ends = checkConsoleFacet(target.session.calls, "endScope").length === 0;
   const scope = ends ? newQueryCallScope() : undefined;
   const progress: ScriptProgress = { called: false };
-  const state: ScriptRunState = { core, provider, script, scope, progress };
+  const state: ScriptRunState = { core, provider, marks: target, script, scope, progress };
   return {
     runUnit(index, build, now = Date.now()) {
       if (script.units[index] === undefined) {
@@ -281,10 +299,10 @@ export interface TransactionScript {
   runUnit<T>(index: number, build: (result: QueryResult) => T, now?: number): Promise<TransactionUnitOutcome<T>>;
 }
 
-/** Runs unit `index` of `run` through `core` on a transaction script unit session of its own. */
+/** Runs unit `index` of `run` through `core` on the unit form `target` states for it. */
 async function runTransactionUnit<T>(
   core: HostCore,
-  provider: DatabaseProvider & TransactionProvider,
+  target: ConsoleTarget,
   run: TransactionScriptRun,
   index: number,
   build: (result: QueryResult) => T,
@@ -292,18 +310,20 @@ async function runTransactionUnit<T>(
 ): Promise<TransactionUnitOutcome<T>> {
   const unit = run.units[index] as ExecutionUnit;
   const last = index === run.units.length - 1;
-  const bridged = bridgedTransactionScriptUnit(provider, last ? { unit, lastUnitOptions: run.options } : { unit });
+  const form = target.transactionScriptUnit(last ? { unit, lastUnitOptions: run.options } : { unit });
   const request: ExecuteRequest = {
     statement: unit.sql,
     page: last ? pageBound(run.options) : { unlimited: true },
     transaction: true,
   };
-  const views = executeViews(provider, run.signal);
+  const timeout = target.timeout();
+  const views = executeViewsFor(timeout, run.signal);
   const call = await callUnit(
     core,
-    bridged,
+    form,
+    target,
     request,
-    callContext(executeDeadline(provider, now), run.signal),
+    callContext(executeDeadlineFor(timeout, now), run.signal, target.env),
     hostPorts(run.route),
     build,
   );
@@ -318,15 +338,12 @@ async function runTransactionUnit<T>(
 }
 
 /**
- * Opens `run` inside the transaction `provider` holds, a provider the caller opened under the editor's posture: reads
- * the host core.
+ * Opens `run` inside the transaction `target`'s session holds, a console target the caller opened under the editor's
+ * posture: reads the host core.
  *
  * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any call.
  */
-export function openTransactionScript(
-  provider: DatabaseProvider & TransactionProvider,
-  run: TransactionScriptRun,
-): TransactionScript {
+export function openTransactionScript(target: ConsoleTarget, run: TransactionScriptRun): TransactionScript {
   const core = hostCore();
   return {
     runUnit(index, build, now = Date.now()) {
@@ -335,7 +352,7 @@ export function openTransactionScript(
           `The editor's script inside a transaction was asked for its unit at index ${index}, and it holds ${run.units.length}, a defect of the caller.`,
         );
       }
-      return runTransactionUnit(core, provider, run, index, build, now);
+      return runTransactionUnit(core, target, run, index, build, now);
     },
   };
 }

@@ -18,6 +18,7 @@ import { describeConsequence, renderSegments, userPositionOf, EDIT_CHARACTER_LIM
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { ObjectEditOutcome } from "@/lib/db/types";
 import { runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { packageAnswers } from "@/lib/api/package-errors";
 
@@ -1966,16 +1967,13 @@ describe("RedisProvider", () => {
 
     /** `statement` run the way the editor runs it: through the host core's execute call. */
     function runThroughCore(statement: string) {
-      return runEditorQuery(
-        { form: "provider", provider },
-        {
-          statement,
-          options: {},
-          signal: new AbortController().signal,
-          route: "test",
-          scrub: providerTextScrub(provider.config, "any"),
-        },
-      );
+      return runEditorQuery(providerConsoleTarget(provider), {
+        statement,
+        options: {},
+        signal: new AbortController().signal,
+        route: "test",
+        scrub: providerTextScrub(provider.config, "any"),
+      });
     }
 
     test("a stream field with an empty name is shown under (No column name) through the host core", async () => {

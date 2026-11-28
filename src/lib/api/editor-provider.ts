@@ -1,4 +1,3 @@
-import type { EditorRunTarget } from "@/lib/api/editor-query";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
@@ -25,6 +24,7 @@ import {
   type MaintenanceOpening,
   type MonitoringTarget,
   packageMaintenanceOpening,
+  providerConsoleTarget,
   providerMaintenanceTarget,
   providerMonitoringTarget,
   type SessionTarget,
@@ -68,9 +68,11 @@ export async function editorProvider(
  * `connection` in the provider factory's editor cache (`getOrCreateEditorSession` in src/lib/db/factory.ts), opened
  * under the session's editor posture as `editorProvider` opens it, with the same owner. A record that offers a legacy
  * provider opens through `getOrCreateProvider`'s body with the same arguments, and its provider is scoped to `catalog`
- * through the same `scopeToCatalog`; a provider package's session is answered with its declared environment, the
- * entry, which counts the run while its call runs, and the connection's own statement timeout. `wait` is the request's
- * own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it is.
+ * through the same `scopeToCatalog`, as its console target (`providerConsoleTarget` in ./session-target); a provider
+ * package's session is answered as its entry's console target (`entryConsoleTarget`), as `editorConsoleTarget` reads
+ * it: its declared environment, each call counted on the entry, and the connection's own statement timeout. `wait` is
+ * the request's own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it
+ * is.
  * `POST /api/db/query` opens every engine through it.
  *
  * @throws {HostDefectError} Studio's own defect, when a provider package's session is handed a catalog: the query route
@@ -84,12 +86,12 @@ export async function editorTarget(
   engine: EngineRecord,
   catalog: string | undefined,
   wait?: OpenWait,
-): Promise<EditorRunTarget> {
+): Promise<ConsoleTarget> {
   const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait);
   const { opened } = entry;
-  if (opened.form === "provider") return { form: "provider", provider: await scopeToCatalog(opened.provider, catalog) };
+  if (opened.form === "provider") return providerConsoleTarget(await scopeToCatalog(opened.provider, catalog));
   assertNoSessionCatalog(catalog);
-  return { form: "session", session: opened.session, env: opened.env, entry, queryTimeout: connection.queryTimeout };
+  return entryConsoleTarget(entry, connection);
 }
 
 /**

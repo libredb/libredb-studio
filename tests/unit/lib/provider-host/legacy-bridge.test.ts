@@ -49,6 +49,7 @@ import {
 } from "@/lib/db/types";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import { hostPorts, runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { errorRecord, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
@@ -1231,7 +1232,7 @@ describe("bridgedConsole", () => {
     expect(bridged.run.result?.rows[1]).toBe(clean);
 
     const { body } = await runEditorQuery(
-      { form: "provider", provider: fake(resultOf([row, clean], { fields: ["a", "b", "c", "d"] })) },
+      providerConsoleTarget(fake(resultOf([row, clean], { fields: ["a", "b", "c", "d"] }))),
       {
         statement: "SELECT * FROM t LIMIT 5",
         options: {},

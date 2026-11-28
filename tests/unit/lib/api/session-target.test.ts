@@ -4,9 +4,21 @@
  * cache entry. A legacy provider's target is one bridged session of it, with no environment, its provider's statement
  * timeout and marks that count nothing; `markedCall` brackets one call with a target's marks.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { CallRefusalError } from "@libredb/provider-sdk/calls";
+import {
+  BATCH_MAX_BYTES,
+  CallRefusalError,
+  type Column,
+  envReader,
+  type ExecuteAnswer,
+  type ExecuteRequest,
+  PAGE_MAX_BYTES,
+  rowsSource,
+} from "@libredb/provider-sdk/calls";
+import type { Calls } from "@libredb/provider-sdk/manifest";
+import { encodeValue } from "@libredb/provider-sdk/values";
+import { hostPorts } from "@/lib/api/editor-query";
 import {
   entryConsoleTarget,
   entryMonitoringTarget,
@@ -19,11 +31,25 @@ import {
   type SessionTarget,
 } from "@/lib/api/session-target";
 import type { CachedSession } from "@/lib/db/factory";
+import { StudioByteBudgetRefusal } from "@/lib/db/errors";
+import { errorOutcome } from "@/lib/db/error-record";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { EngineConnection } from "@/lib/db/server-catalog";
-import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type MaintenanceDeclaration } from "@/lib/db/types";
+import {
+  DEFAULT_QUERY_TIMEOUT,
+  type DatabaseProvider,
+  type MaintenanceDeclaration,
+  type PreparedQuery,
+  type QueryPrepareOptions,
+} from "@/lib/db/types";
+import { logger } from "@/lib/logger";
+import type { ConsoleSession, PageRecord } from "@/lib/provider-host/core/console";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
-import type { DatabaseConnection } from "@/lib/types";
+import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 
 /** A declaration with vacuum on a row and whole, and analyze on a row. */
@@ -359,5 +385,348 @@ describe("the maintenance opening of a provider package's cache entry", () => {
       maintenanceOperations: [],
       maintenanceOperationSpecs: {},
     });
+  });
+});
+
+describe("the console target's run forms", () => {
+  const core = createHostCore();
+  const ROUTE = "session-target-test";
+  const scrub = providerTextScrub(
+    { id: "c1", name: "Prod", type: "postgres", host: "db.internal" } as DatabaseConnection,
+    "any",
+  );
+  /** A context an hour out on a signal no one aborts, with no environment. */
+  const contextOf = () => ({
+    deadline: Date.now() + 3_600_000,
+    signal: new AbortController().signal,
+    env: envReader([], () => undefined),
+  });
+
+  /** The limiter's rule as a SQL provider applies it: a bound of ours on every statement. */
+  function limited(sql: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    const limit = options.limit ?? 500;
+    const offset = options.offset ?? 0;
+    return { query: `${sql} LIMIT ${limit} OFFSET ${offset}`, wasLimited: true, limit, offset };
+  }
+
+  const resultOf = (rows: Record<string, unknown>[]): QueryResult => ({
+    rows,
+    fields: ["n"],
+    rowCount: rows.length,
+    executionTime: 3,
+  });
+
+  /** A session's calls: execute honouring `offset`, and the transaction facet offered or not. */
+  function callsOf(transaction: boolean): Calls {
+    return {
+      console: {
+        execute: { honours: ["offset"] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: transaction ? "offered" : "not-offered",
+      },
+      objects: { tree: "not-offered", source: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    };
+  }
+
+  /** A provider package's cache entry over a session whose execute answers `answer`, recording each request. */
+  function packageEntryOf(
+    answer: (request: ExecuteRequest) => ExecuteAnswer,
+    ownWords: "scrubbed" | "code-only" = "scrubbed",
+  ) {
+    const requests: ExecuteRequest[] = [];
+    const session: ConsoleSession = {
+      calls: callsOf(true),
+      readOnlyStatements: false,
+      execute: async (request) => {
+        requests.push(request);
+        return answer(request);
+      },
+    };
+    const env = envReader([], () => undefined);
+    const entry = {
+      opened: { form: "session", session, env },
+      engine: { grants: { ownWords } },
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    return { entry, session, requests, target: entryConsoleTarget(entry, connection) };
+  }
+  const connection = { id: "p", name: "p", type: "acmerun", queryTimeout: 1234 } as unknown as EngineConnection;
+  const COLUMNS: readonly Column[] = [{ name: "n", type: "int8" }, { name: "label" }];
+
+  test("a provider's console target runs each statement on a bridged session of its own built with the run's page options, and answers the body the editor builds from the legacy result", async () => {
+    const query = mock(async (_sql: string) => resultOf([{ n: 1 }, { n: 2 }, { n: 3 }]));
+    const provider = Object.assign(providerOf(), { prepareQuery: mock(limited), query });
+    const target = providerConsoleTarget(provider);
+    const run = { options: { limit: 2, offset: 4 }, scrub, route: ROUTE };
+
+    const form = target.statement(run);
+    // A session of its own per statement, so one run's legacy result is never another's.
+    expect(target.statement(run).session).not.toBe(form.session);
+    expect(form.page).toEqual({ limit: 2, offset: 4 });
+    expect(target.statement({ ...run, options: { unlimited: true } }).page).toEqual({ unlimited: true });
+    expect(form.cancelSent()).toBe(false);
+
+    const record = await core.executeCall(
+      form.session,
+      { statement: "SELECT n FROM t", page: form.page },
+      contextOf(),
+      form.pumpLimits,
+      hostPorts(ROUTE, form.cancelSent),
+    );
+    expect(record.kind).toBe("page");
+    const { body, resultSetCount } = form.body(record as PageRecord);
+
+    // The bridge adds the probe row in its prepare, and the body cuts it back off (#1440).
+    expect(query.mock.calls.map((call) => call[0])).toEqual(["SELECT n FROM t LIMIT 3 OFFSET 4"]);
+    expect(body.rows).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(body.pagination).toEqual({ limit: 2, offset: 4, hasMore: true, totalReturned: 2, wasLimited: true });
+    expect(resultSetCount).toBe(1);
+  });
+
+  test("a package entry's console target runs each statement on its session, asking one row past the page, and answers its page under the record's grant of its own words", async () => {
+    const said = `notice ${randomUUID()}`;
+    const answer = (): ExecuteAnswer => ({
+      results: [
+        rowsSource(
+          COLUMNS,
+          [
+            [BigInt(1), "a"],
+            [BigInt(2), "b"],
+            [BigInt(3), "c"],
+          ],
+          3,
+        ),
+      ],
+      warnings: [{ message: said }],
+      executionTimeMs: 7,
+      pageApplied: true,
+    });
+    const scrubbed = packageEntryOf(answer);
+    const form = scrubbed.target.statement({ options: { limit: 2, offset: 4 }, scrub, route: ROUTE });
+    expect(form.session).toBe(scrubbed.session);
+    expect(form.page).toEqual({ limit: 3, offset: 4 });
+    expect(form.cancelSent()).toBe(false);
+
+    const record = await core.executeCall(
+      form.session,
+      { statement: "SELECT n, label FROM t", page: form.page },
+      contextOf(),
+      form.pumpLimits,
+      hostPorts(ROUTE),
+    );
+    const limits = scrubbed.target.statement({ options: { limit: 2 }, scrub, route: ROUTE });
+    expect(limits.pumpLimits({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false })).toEqual({
+      maxRows: 3,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+    const { body } = form.body(record as PageRecord);
+    expect(scrubbed.requests.map((request) => request.page)).toEqual([{ limit: 3, offset: 4 }]);
+    expect(body).toEqual({
+      rows: [
+        { n: encodeValue(BigInt(1)), label: "a" },
+        { n: encodeValue(BigInt(2)), label: "b" },
+      ],
+      fields: ["n", "label"],
+      columnTypes: { n: "int8" },
+      rowCount: 2,
+      executionTime: 7,
+      warnings: [{ message: said }],
+      pagination: { limit: 2, offset: 4, hasMore: true, totalReturned: 2, wasLimited: true },
+    });
+
+    // A record that grants the package no words of its own answers Studio's sentence naming their count.
+    const codeOnly = packageEntryOf(answer, "code-only");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const own = codeOnly.target.statement({ options: { limit: 2 }, scrub, route: ROUTE });
+      const ownRecord = await core.executeCall(
+        own.session,
+        { statement: "SELECT n, label FROM t", page: own.page },
+        contextOf(),
+        own.pumpLimits,
+        hostPorts(ROUTE),
+      );
+      expect(own.body(ownRecord as PageRecord).body.warnings).toEqual([
+        { message: "The provider package returned 1 warning; the server's log holds their words." },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a provider's transaction script unit is the bridge's where the provider holds a transaction session, and its bridged console, which offers no transaction, where it does not", async () => {
+    const [unit] = splitExecutionUnits("SELECT n FROM t", resolveSqlGrammar("postgres"));
+    if (unit === undefined) throw new Error("the splitter answered no unit");
+    const result = resultOf([{ n: 1 }]);
+    const queryInTransaction = mock(async (_sql: string) => result);
+    const transactional = Object.assign(providerOf(), {
+      prepareQuery: mock(limited),
+      beginTransaction: mock(async () => undefined),
+      commitTransaction: mock(async () => undefined),
+      rollbackTransaction: mock(async () => undefined),
+      isInTransaction: mock(() => true),
+      queryInTransaction,
+    });
+
+    const form = providerConsoleTarget(transactional).transactionScriptUnit({ unit, lastUnitOptions: { limit: 5 } });
+    expect(form.session.calls.console.transaction).toBe("offered");
+    const record = await core.executeCall(
+      form.session,
+      { statement: unit.sql, page: { limit: 5, offset: 0 }, transaction: true },
+      contextOf(),
+      form.pumpLimits,
+      hostPorts(ROUTE),
+    );
+    expect(record.kind).toBe("page");
+    // The legacy result by reference, the unit's text bounded by the provider's prepare and never probed.
+    expect(form.answered(record as PageRecord)).toBe(result);
+    expect(queryInTransaction.mock.calls.map((call) => call[0])).toEqual(["SELECT n FROM t LIMIT 5 OFFSET 0"]);
+    (record as PageRecord).release();
+
+    // A provider without a transaction session: its bridged console, which the host core refuses a unit before the call.
+    const plain = Object.assign(providerOf(), { prepareQuery: mock(limited), query: mock(async () => result) });
+    const bare = providerConsoleTarget(plain).transactionScriptUnit({ unit });
+    expect(bare.session.calls.console.transaction).toBe("not-offered");
+    const refused = await core.executeCall(
+      bare.session,
+      { statement: unit.sql, page: { unlimited: true }, transaction: true },
+      contextOf(),
+      bare.pumpLimits,
+      hostPorts(ROUTE),
+    );
+    expect(refused).toMatchObject({ kind: "refused", called: false });
+    expect(plain.query).not.toHaveBeenCalled();
+  });
+
+  test("a package entry's transaction script unit is its session, every row for a unit but the last and the request's limit for the last, its result the page's rows keyed by column name in the value codec's wire form", async () => {
+    const [unit] = splitExecutionUnits("SELECT n, label FROM t", resolveSqlGrammar("postgres"));
+    if (unit === undefined) throw new Error("the splitter answered no unit");
+    const { target, session, requests } = packageEntryOf(() => ({
+      results: [
+        rowsSource(
+          COLUMNS,
+          [
+            [BigInt(1), "a"],
+            [BigInt(2), "b"],
+            [BigInt(3), "c"],
+          ],
+          9,
+        ),
+      ],
+      warnings: [],
+      executionTimeMs: 4,
+      pageApplied: false,
+      sessionState: "in-transaction",
+    }));
+    const empty: ExecuteAnswer = { results: [], warnings: [], executionTimeMs: 0, pageApplied: false };
+
+    const middle = target.transactionScriptUnit({ unit });
+    expect(middle.session).toBe(session);
+    expect(middle.pumpLimits(empty).maxRows).toBe(Number.MAX_SAFE_INTEGER);
+    expect(target.transactionScriptUnit({ unit, lastUnitOptions: { unlimited: true } }).pumpLimits(empty)).toEqual({
+      maxRows: Number.MAX_SAFE_INTEGER,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+
+    // Every row of a unit but the last: the page holds them all, and the row count is the package's own.
+    const whole = await core.executeCall(
+      session,
+      { statement: unit.sql, page: { unlimited: true }, transaction: true },
+      contextOf(),
+      middle.pumpLimits,
+      hostPorts(ROUTE),
+    );
+    expect(middle.answered(whole as PageRecord)).toEqual({
+      rows: [
+        { n: encodeValue(BigInt(1)), label: "a" },
+        { n: encodeValue(BigInt(2)), label: "b" },
+        { n: encodeValue(BigInt(3)), label: "c" },
+      ],
+      fields: ["n", "label"],
+      columnTypes: { n: "int8" },
+      rowCount: 9,
+      executionTime: 4,
+    });
+    (whole as PageRecord).release();
+
+    // The last unit asks the request's page and no row past it: its row count is the rows answered.
+    const last = target.transactionScriptUnit({ unit, lastUnitOptions: { limit: 2 } });
+    const paged = await core.executeCall(
+      session,
+      { statement: unit.sql, page: { limit: 2, offset: 0 }, transaction: true },
+      contextOf(),
+      last.pumpLimits,
+      hostPorts(ROUTE),
+    );
+    expect(last.answered(paged as PageRecord)).toMatchObject({ rowCount: 2, fields: ["n", "label"] });
+    expect((last.answered(paged as PageRecord) as QueryResult).rows).toHaveLength(2);
+    (paged as PageRecord).release();
+    expect(requests.map((request) => request.page)).toEqual([{ unlimited: true }, { limit: 2, offset: 0 }]);
+  });
+
+  test("a package transaction script unit whose page the host cut by bytes is the unit's StudioByteBudgetRefusal, never a shorter result", () => {
+    const value = randomUUID();
+    const [unit] = splitExecutionUnits("SELECT n FROM t", resolveSqlGrammar("postgres"));
+    if (unit === undefined) throw new Error("the splitter answered no unit");
+    const { target } = packageEntryOf(() => {
+      throw new Error("the form's answer reads the page record alone");
+    });
+    const form = target.transactionScriptUnit({ unit });
+    form.pumpLimits({ results: [rowsSource(COLUMNS, [])], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const record = {
+      kind: "page",
+      page: { rows: [[BigInt(1), value]], bytes: PAGE_MAX_BYTES, end: "byte-limit" },
+      resultCount: 1,
+      pageApplied: false,
+      executionTimeMs: 1,
+      warnings: [],
+      sessionState: "in-transaction",
+      release: () => undefined,
+    } as PageRecord;
+
+    let caught: unknown;
+    try {
+      form.answered(record);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect((caught as Error).message).toBe(
+      `The unit's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, and a script's answer has no field to say where a page ends, so Studio answers none of its rows.`,
+    );
+    expect(errorOutcome(caught)).toBe("unknown");
+    expect((caught as Error).message).not.toContain(value);
+  });
+
+  test("a console target answers the plan its session supports, a provider's read from its capabilities when asked and none for a provider package's session", () => {
+    const provider = providerOf();
+    const capabilities = mockOf(provider.getCapabilities);
+    capabilities.mockImplementation(() => ({ supportsExplain: true, explainFormat: "postgres-json" }));
+    const target = providerConsoleTarget(provider);
+    const built = capabilities.mock.calls.length;
+    const support = target.explainSupport();
+    expect(capabilities.mock.calls.length).toBe(built + 1);
+    expect([support.supportsExplain, support.explainFormat]).toEqual([true, "postgres-json"]);
+
+    const untouched = {
+      calls: callsOf(false),
+      readOnlyStatements: false,
+      execute: () => {
+        throw new Error("a plan read called the session");
+      },
+    };
+    const entry = {
+      opened: { form: "session", session: untouched, env: envReader([], () => undefined) },
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    expect(entryConsoleTarget(entry, connection).explainSupport()).toEqual({ supportsExplain: false });
+    expect(entry.running).toBe(0);
   });
 });

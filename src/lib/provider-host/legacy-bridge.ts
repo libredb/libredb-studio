@@ -1,10 +1,11 @@
 /**
  * The legacy bridge (docs/providers/CONTRACT.md, clause C-50): a legacy `DatabaseProvider` served as one session of
  * console execute, cancel, endScope and transaction, so today's providers run through the host core's console calls. It lives in
- * the calling bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` in
- * src/lib/api/editor-query.ts, the transaction calls in src/lib/api/editor-transaction.ts) or by the session target a
- * facade runs on (src/lib/api/session-target.ts, the cancel's `providerConsoleTarget` among them); the bridge and the
- * facades leave together, once every provider is a contract provider.
+ * the calling bundle, beside the accessor, and is built per call by the session target a facade runs on
+ * (src/lib/api/session-target.ts: `providerConsoleTarget` for the cancel, the editor's statement in
+ * src/lib/api/editor-query.ts and the transaction calls in src/lib/api/editor-transaction.ts, built per statement for a
+ * statement) or by a facade itself (`endEditorScope` in src/lib/api/editor-query.ts, `openProfileReads` in
+ * src/lib/api/profile-reads.ts); the bridge and the facades leave together, once every provider is a contract provider.
  *
  * Its calls are declared once: execute honours `params` and `offset` for every engine, so each provider answers both as
  * it always has, its own `OffsetUnsupportedError` included; `console.cancel` is offered exactly when the provider can
@@ -134,7 +135,8 @@
  * them; it answers through the same result record, `pageApplied` exactly when the prepare bounded the unit.
  *
  * Each unit of a script of `POST /api/db/transaction` is served by `bridgedTransactionScriptUnit`, a session of its own
- * built per unit by `openTransactionScript` in src/lib/api/editor-script.ts: its execute takes only a statement sent
+ * built per unit by the legacy provider's console target (`providerConsoleTarget` in src/lib/api/session-target.ts),
+ * whose units `openTransactionScript` in src/lib/api/editor-script.ts runs: its execute takes only a statement sent
  * with `transaction`, sends the unit's text as the transaction route always sent it, every unit as written but a last
  * unit of one statement, which the provider's prepare bounds whole, never probed, through `queryInTransaction` with
  * that text alone, and answers the session state read after it. Its calls offer execute honouring `offset` and the
@@ -1066,7 +1068,8 @@ const TRANSACTION_SCRIPT_UNIT_CALLS: Calls = sessionCalls(
 
 /**
  * One unit of a script of `POST /api/db/transaction` served as a transaction script unit session (clause C-50), built
- * per unit by `openTransactionScript` in src/lib/api/editor-script.ts. Its execute takes only the unit's own text as
+ * per unit by a legacy provider's console target (`providerConsoleTarget` in src/lib/api/session-target.ts) for
+ * `openTransactionScript` in src/lib/api/editor-script.ts. Its execute takes only the unit's own text as
  * the request's statement, and only sent with `transaction`, either other request a host defect thrown by name before
  * anything is called, and sends the text as the transaction route always sent it: as written, or, for a unit opened
  * with `lastUnitOptions` that holds exactly one statement, the query the provider's `prepareQuery` answers for it on a

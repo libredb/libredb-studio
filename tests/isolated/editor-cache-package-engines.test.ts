@@ -67,6 +67,7 @@ const { HostDefectError, refusalError } = await import("@/lib/provider-host/acce
 const { logger } = await import("@/lib/logger");
 const { installHostCore } = await import("@/lib/provider-host/instance");
 const { runEditorQuery } = await import("@/lib/api/editor-query");
+const { entryConsoleTarget } = await import("@/lib/api/session-target");
 const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
 const { encodeValue } = await import("@libredb/provider-sdk/values");
 type EngineRecord = import("@/lib/db/server-catalog").EngineRecord;
@@ -359,10 +360,7 @@ describe("the sessions of a provider package's engine", () => {
         },
       });
       const queryId = randomUUID();
-      const { body } = await runEditorQuery(
-        { form: "session", ...openedSession(cached.opened), entry: cached, queryTimeout: undefined },
-        run(queryId),
-      );
+      const { body } = await runEditorQuery(entryConsoleTarget(cached, connectionOf(id)), run(queryId));
       expect(body).toEqual({
         rows: [
           { key: "alpha", value: 1 },
@@ -412,7 +410,7 @@ describe("the sessions of a provider package's engine", () => {
       route: "test",
       scrub: providerTextScrub(connectionOf(SCOPE) as never, "any"),
     };
-    const target = { form: "session", ...openedSession(cached.opened), entry: cached, queryTimeout: 30_000 } as const;
+    const target = entryConsoleTarget(cached, connectionOf(SCOPE, { queryTimeout: 30_000 }));
     const { body } = await runEditorQuery(target, run);
     expect(body).toMatchObject({ rows: [], fields: ["key"], openTransaction: "rolled-back" });
     const { scope } = argsOf(hooks, "execute")[1] as { scope: string };

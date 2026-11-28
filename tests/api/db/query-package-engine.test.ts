@@ -58,10 +58,12 @@ mock.module("@/lib/auth", () => ({
 
 /*
  * What the route opens, gates and runs, recorded by name around the real functions: the editor's one open of any record,
- * the one gate, and the one run, by the form the open answered. Neither of the legacy provider's own entry points is
- * reached: each rejects by name.
+ * the one gate, and the one run, by the form the open answered: `session` for a run on the session a provider package's
+ * open answered, `provider` for a run on any other, a legacy provider's bridged session. Neither of the legacy
+ * provider's own entry points is reached: each rejects by name.
  */
 const opens: string[] = [];
+const packageSessions = new Set<unknown>();
 const gates: string[] = [];
 const runs: string[] = [];
 const unreached = () => Promise.reject(new Error("the factory's getOrCreateProvider was reached"));
@@ -74,7 +76,10 @@ mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: unreached,
   getOrCreateEditorSession: (...args: Parameters<typeof openEditorSession>) => {
     opens.push(args[1].id);
-    return openEditorSession(...args);
+    return openEditorSession(...args).then((entry) => {
+      if (entry.opened.form === "session") packageSessions.add(entry.opened.session);
+      return entry;
+    });
   },
 }));
 const realDb = { ...(await import("@/lib/db")) };
@@ -93,7 +98,7 @@ const runEditorQuery = realRun.runEditorQuery;
 mock.module("@/lib/api/editor-query", () => ({
   ...realRun,
   runEditorQuery: (...args: Parameters<typeof runEditorQuery>) => {
-    runs.push(args[0].form);
+    runs.push(packageSessions.has(args[0].session) ? "session" : "provider");
     return runEditorQuery(...args);
   },
 }));
