@@ -290,6 +290,8 @@ describe("the server's client facts of a statement language", () => {
     expect(runHeaderRefusal({ mode: "planning", statementLanguage: "sql" })).toBeNull();
   });
 
+  // The scan parses every source file under src, which takes seconds on a slow runner and outran bun's five-second
+  // test timeout on CI, so it takes the timeout of the other whole-tree scans, as language-boundary.test.ts does.
   test("no server module reads the browser's composition of the statement languages", () => {
     const BROWSER_COMPOSITION: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
       "src/lib/agent/languages/client": new Set([
@@ -376,5 +378,5 @@ describe("the server's client facts of a statement language", () => {
     expect(readsIn(investigation, `export * from "@/lib/agent/languages/client";\n`)).toEqual([
       `${investigation}: export *`,
     ]);
-  });
+  }, 60_000);
 });
