@@ -77,6 +77,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  // The maintenance openings read a legacy provider's declarations through the barrel; no request here opens one.
+  readProviderDeclarations: () => Promise.reject(new Error("no request of this suite reads a provider's declarations")),
   createDatabaseProvider: mock(),
   removeProvider: mock(),
   clearProviderCache: mock(),

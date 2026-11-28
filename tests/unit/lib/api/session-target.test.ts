@@ -11,6 +11,7 @@ import {
   entryConsoleTarget,
   entryMonitoringTarget,
   markedCall,
+  packageMaintenanceOpening,
   providerConsoleTarget,
   providerMaintenanceTarget,
   providerMonitoringTarget,
@@ -21,6 +22,7 @@ import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection } from "@/lib/db/server-catalog";
 import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type MaintenanceDeclaration } from "@/lib/db/types";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
+import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 
@@ -102,6 +104,15 @@ describe("the session targets of a legacy provider", () => {
     } as unknown as MaintenanceDeclaration;
     const built = providerMaintenanceTarget(provider, unreadable);
     expect(() => built.maintenance()).toThrow(CallRefusalError);
+
+    // The engine user is the provider's, read when asked: none for a provider that names none.
+    expect(maintenance.engineUser()).toBeUndefined();
+    const engineUser = `user-${randomUUID()}`;
+    const named = providerMaintenanceTarget(
+      { ...provider, engineUser: () => engineUser } as DatabaseProvider,
+      DECLARED,
+    );
+    expect(named.engineUser()).toBe(engineUser);
   });
 
   test("markedCall marks a call started before it runs and ended as its record once it answered, and ended undefined for a call that threw, passing the error as the same object", async () => {
@@ -286,5 +297,67 @@ describe("the console target", () => {
     await settled.promise;
     await Promise.resolve();
     expect(entry.running).toBe(0);
+  });
+});
+
+describe("the maintenance opening of a provider package's cache entry", () => {
+  /** A session offering `maintenance.run` or not, its narrowed maintenance one vacuum spec. */
+  function packageOpened(run: "offered" | "not-offered", engineUser?: string) {
+    const maintenance = {
+      maintenance: ["vacuum"],
+      maintenanceSpecs: [
+        {
+          operation: "vacuum",
+          label: "Vacuum",
+          perEntity: false,
+          global: true,
+          title: null,
+          description: null,
+          confirmation: null,
+          preview: false,
+          kinds: null,
+        },
+      ],
+    };
+    const session = { calls: { maintenance: { run, preview: "not-offered" } }, maintenance, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const opened = { session, env, ...(engineUser === undefined ? {} : { engineUser }) };
+    const entry = { opened: { form: "session", ...opened }, running: 0, lastUsed: 0 } as unknown as CachedSession;
+    return { entry, opened: opened as unknown as OpenedPackageSession, session, env, maintenance };
+  }
+  const connection = { id: "p", name: "p", type: "acmemaint", queryTimeout: 1234 } as unknown as EngineConnection;
+
+  test("a package entry's maintenance opening accepts the session's narrowed maintenance and its target is the session under its environment and timeout, marked on the entry, with the engine user its open answered", async () => {
+    const engineUser = `user-${randomUUID()}`;
+    const { entry, opened, session, env, maintenance } = packageOpened("offered", engineUser);
+    const opening = packageMaintenanceOpening(entry, opened, connection);
+    expect(opening.accepted()).toEqual({
+      supportsMaintenance: true,
+      maintenanceOperations: ["vacuum"],
+      maintenanceOperationSpecs: { vacuum: { label: "Vacuum", perEntity: false, global: true } },
+    });
+    const target = await opening.target();
+    expect(target.session as unknown).toBe(session);
+    expect(target.env as unknown).toBe(env);
+    expect(target.timeout()).toBe(1234);
+    expect(target.maintenance() as unknown).toBe(maintenance);
+    expect(target.engineUser()).toBe(engineUser);
+    await markedCall(target, async () => {
+      expect(entry.running).toBe(1);
+      return { kind: "answered" as const };
+    });
+    expect([entry.running, entry.lastUsed > 0]).toEqual([0, true]);
+    const untimed = await packageMaintenanceOpening(entry, opened, { ...connection, queryTimeout: undefined }).target();
+    expect(untimed.timeout()).toBe(DEFAULT_QUERY_TIMEOUT);
+
+    // An open that answered no engine user names none; a session that does not offer `maintenance.run` accepts none.
+    const unnamed = packageOpened("not-offered");
+    const refusing = packageMaintenanceOpening(unnamed.entry, unnamed.opened, connection);
+    expect((await refusing.target()).engineUser()).toBeUndefined();
+    expect(refusing.accepted()).toEqual({
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      maintenanceOperationSpecs: {},
+    });
   });
 });

@@ -244,6 +244,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+    "src/lib/api/editor-provider.ts":
+      "editorMaintenanceOpening and metadataMaintenanceOpening read a legacy provider's declarations for the connection their caller hands them, which the route resolved before",
   },
   openEngine: {
     "src/lib/db/factory.ts":

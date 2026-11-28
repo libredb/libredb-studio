@@ -9,12 +9,17 @@ import { errorOutcome } from "@/lib/db/error-record";
 import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, MaintenanceDeclaration } from "@/lib/db/types";
 import { HOST_DEFECT_PREFIX, HostDefectError } from "@/lib/provider-host/access";
+import { bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseConnection } from "@/lib/types";
+import { createMockProvider } from "../../../helpers/mock-provider";
 
 const opened: { connection: DatabaseConnection; context: unknown; wait: unknown[] }[] = [];
 let connected: DatabaseProvider;
+/** Every read of a legacy provider's declarations, as `readProviderDeclarations` receives it, and what it answers. */
+const declarationReads: { connection: DatabaseConnection; context: unknown }[] = [];
+let declared: MaintenanceDeclaration = { maintenanceOperations: [], maintenanceOperationSpecs: {} };
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mock(
@@ -23,6 +28,10 @@ mock.module("@/lib/db", () => ({
       return connected;
     },
   ),
+  readProviderDeclarations: async (connection: DatabaseConnection, context: unknown) => {
+    declarationReads.push({ connection, context });
+    return { capabilities: declared };
+  },
 }));
 
 /** The writable cache by key, as `findCachedProvider` reads it. */
@@ -74,9 +83,11 @@ mock.module("@/lib/db/factory", () => ({
 
 const {
   cachedEditorProvider,
+  editorMaintenanceOpening,
   editorMonitoringTarget,
   editorProvider,
   editorTarget,
+  metadataMaintenanceOpening,
   metadataMonitoringTarget,
   metadataProvider,
   metadataTreeTarget,
@@ -377,6 +388,158 @@ describe("the monitoring openers", () => {
       expect(errorOutcome(refused)).toBe("not-sent");
     }
     expect([openedMetadataSessions, openedEditor]).toEqual([[], []]);
+  });
+});
+
+/** What a maintenance request opens, for any record: the editor's session, or the metadata session for a kill (C-66). */
+describe("the maintenance openings", () => {
+  const legacyEngine = {
+    id: connection.type,
+    offers: { legacyProvider: true, catalog: true },
+  } as unknown as EngineRecord;
+  const packageEngine = {
+    id: "acmemaint",
+    offers: { legacyProvider: false, catalog: false },
+  } as unknown as EngineRecord;
+  const packageConnection = {
+    id: "p",
+    name: "p",
+    type: "acmemaint",
+    queryTimeout: 1234,
+  } as unknown as EngineConnection;
+  const DECLARED: MaintenanceDeclaration = {
+    maintenanceOperations: ["vacuum", "kill"],
+    maintenanceOperationSpecs: { vacuum: { label: "Vacuum", perEntity: false, global: true } },
+  };
+
+  test("the maintenance openings open any record's editor or metadata session, read the accepted maintenance after the open and the target after the checks, and refuse a catalog the record does not offer before any open", async () => {
+    // A legacy record: the editor's session, or the metadata session, each with no wait of the request's own and
+    // scoped to the request's catalog through the same `scopeToCatalog`.
+    const shop = providerOf({ supportsMaintenance: true, maintenanceOperations: ["vacuum"] });
+    const server = providerOf({ catalogSessions: true }, { shop });
+    metadataEntry = { opened: { form: "provider", provider: server } } as unknown as CachedSession;
+    editorEntry = { opened: { form: "provider", provider: server } } as unknown as CachedSession;
+    openedMetadataSessions.length = 0;
+    openedEditor.length = 0;
+    declarationReads.length = 0;
+    const editor = await editorMaintenanceOpening(session("admin"), connection, legacyEngine, "shop");
+    const metadata = await metadataMaintenanceOpening(session("user"), connection, legacyEngine, "shop");
+    expect([editor.accepted(), metadata.accepted()]).toEqual([shop.getCapabilities(), shop.getCapabilities()]);
+    expect(openedEditor.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: true }, []],
+    ]);
+    expect(openedMetadataSessions.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: false }, []],
+    ]);
+    // Nothing of the declarations is read until the target is asked for, after the route's checks.
+    expect(declarationReads).toEqual([]);
+
+    // The target reads the provider's declarations once, under the editor posture, and is the provider's maintenance
+    // target: its maintenance the declaration narrowed by what the provider accepts, its engine user the provider's.
+    const engineUser = `user-${randomUUID()}`;
+    const provider = createMockProvider({
+      config: connection,
+      capabilities: { supportsMaintenance: true, ...DECLARED },
+    });
+    const named = { ...provider, engineUser: () => engineUser } as DatabaseProvider;
+    editorEntry = { opened: { form: "provider", provider: named } } as unknown as CachedSession;
+    declared = DECLARED;
+    const opening = await editorMaintenanceOpening(session("admin"), connection, legacyEngine, undefined);
+    const capabilities = provider.getCapabilities as unknown as ReturnType<typeof mock>;
+    capabilities.mockClear();
+    expect(opening.accepted()).toEqual(provider.getCapabilities());
+    expect(capabilities.mock.calls.length).toBe(2);
+    const target = await opening.target();
+    expect(declarationReads).toEqual([{ connection, context: { allowExternalFileAccess: true } }]);
+    expect(declarationReads[0]?.connection).toBe(connection);
+    expect(target.maintenance()).toEqual(bridgedMaintenance(named, DECLARED));
+    expect(target.engineUser()).toBe(engineUser);
+    expect(target.session.calls.maintenance.run).toBe("offered");
+
+    // A provider package's entry: its session's opening, the session's narrowed maintenance accepted.
+    const packageSession = {
+      calls: { maintenance: { run: "offered" } },
+      maintenance: { maintenance: ["vacuum"], maintenanceSpecs: [] },
+      marker: randomUUID(),
+    };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session: packageSession, env }, running: 0 } as unknown as CachedSession;
+    metadataEntry = entry;
+    editorEntry = entry;
+    declarationReads.length = 0;
+    for (const open of [editorMaintenanceOpening, metadataMaintenanceOpening]) {
+      const packaged = await open(session("user"), packageConnection, packageEngine, undefined);
+      expect(packaged.accepted()).toEqual({
+        supportsMaintenance: true,
+        maintenanceOperations: ["vacuum"],
+        maintenanceOperationSpecs: {},
+      });
+      const packageTarget = await packaged.target();
+      expect([packageTarget.session as unknown, packageTarget.env as unknown, packageTarget.timeout()]).toEqual([
+        packageSession,
+        env,
+        1234,
+      ]);
+      expect(packageTarget.engineUser()).toBeUndefined();
+    }
+    // A package's target reads no declarations: its session states its maintenance.
+    expect(declarationReads).toEqual([]);
+
+    // A catalog the record does not offer is refused by name, not-sent, before any open.
+    openedMetadataSessions.length = 0;
+    openedEditor.length = 0;
+    for (const open of [editorMaintenanceOpening, metadataMaintenanceOpening]) {
+      const refused = await open(session("user"), packageConnection, packageEngine, "shop").catch(
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(FacetNotOfferedError);
+      const { message, facet, operation, provider: refusedProvider } = refused as FacetNotOfferedError;
+      expect([message, facet, operation, refusedProvider]).toEqual([
+        "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+        "maintenance",
+        "catalog",
+        undefined,
+      ]);
+      expect(errorOutcome(refused)).toBe("not-sent");
+    }
+    expect([openedMetadataSessions, openedEditor]).toEqual([[], []]);
+  });
+
+  test("a provider package's session handed a catalog by a record that offers one is Studio's host defect on every monitoring and maintenance opener, never ignored", async () => {
+    // No real package record offers a catalog session, so the record here is planted: its offer lets the catalog past
+    // the check before the open, and the session-form entry is then refused by name after the open.
+    const catalogEngine = {
+      id: "acmecatalog",
+      offers: { legacyProvider: false, catalog: true },
+    } as unknown as EngineRecord;
+    const entry = {
+      opened: { form: "session", session: { calls: {} }, env: {} },
+      running: 0,
+    } as unknown as CachedSession;
+    metadataEntry = entry;
+    editorEntry = entry;
+    const refusal = { rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" } as const;
+    const openers = [
+      metadataMonitoringTarget,
+      editorMonitoringTarget,
+      editorMaintenanceOpening,
+      metadataMaintenanceOpening,
+    ];
+    for (const open of openers) {
+      openedMetadataSessions.length = 0;
+      openedEditor.length = 0;
+      const raised = await (open as typeof metadataMonitoringTarget)(
+        session("user"),
+        packageConnection,
+        catalogEngine,
+        "shop",
+      ).catch((error: unknown) => error);
+      expect(raised).toBeInstanceOf(HostDefectError);
+      expect((raised as HostDefectError).refusals).toEqual([refusal]);
+      expect(isStudioFailure(raised)).toBe(true);
+      // Refused after the open, of the one session the opener opens.
+      expect(openedMetadataSessions.length + openedEditor.length).toBe(1);
+    }
   });
 });
 
