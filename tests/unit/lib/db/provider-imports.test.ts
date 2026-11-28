@@ -489,7 +489,7 @@ describe("a provider directory's record of its core imports", () => {
     );
   });
 
-  test("a provider directory's record of its core imports fails on an unrecorded import, a stale row, an SDK row the directory does not import from that subpath, a duplicate row and an unknown source", () => {
+  test("a provider directory's record of its core imports fails on an unrecorded core import, an unrecorded SDK import, a stale row, an SDK row the directory does not import from that subpath, a duplicate row and an unknown source", () => {
     const imports = {
       directory: ACME,
       core: [
@@ -497,7 +497,11 @@ describe("a provider directory's record of its core imports", () => {
         { module: "src/lib/db/types.ts", symbol: "Row" },
         { module: "src/lib/db/types.ts", symbol: "Shape" },
       ],
-      sdk: [{ module: "@libredb/provider-sdk/calls", symbol: "applyBound" }],
+      sdk: [
+        { module: "@libredb/provider-sdk", symbol: "encodeValue" },
+        { module: "@libredb/provider-sdk/calls", symbol: "applyBound" },
+        { module: "@libredb/provider-sdk/values", symbol: "measure" },
+      ],
     };
     const rows = [
       ["src/lib/db/base.ts", "BaseThing", "the record defineProvider makes", LEAVES],
@@ -509,6 +513,8 @@ describe("a provider directory's record of its core imports", () => {
       ["src/lib/db/aaa.ts", "first", "none", "somewhere else"],
     ];
     expect(homeRecordFindings(rows, imports)).toEqual([
+      `@libredb/provider-sdk encodeValue: ${ACME} imports it from the SDK, and the record has no row for it`,
+      `@libredb/provider-sdk/values measure: ${ACME} imports it from the SDK, and the record has no row for it`,
       'src/lib/db/aaa.ts first: "somewhere else" is neither "leaves with the legacy class" nor an @libredb/provider-sdk subpath',
       "src/lib/db/base.ts BaseThing: the record has two rows for it",
       `src/lib/db/gone.ts gone: the record says it leaves with the legacy class, and ${ACME} no longer imports it from core`,
@@ -525,6 +531,8 @@ describe("a provider directory's record of its core imports", () => {
           ["src/lib/db/kinds.ts", "applyBound", "SDK /calls", "@libredb/provider-sdk/calls"],
           ["src/lib/db/types.ts", "Row", "a call type", LEAVES],
           ["src/lib/db/types.ts", "Shape", "a call type", LEAVES],
+          ["src/lib/db/values.ts", "encodeValue", "the SDK's root", "@libredb/provider-sdk"],
+          ["src/lib/db/values.ts", "measure", "SDK /values", "@libredb/provider-sdk/values"],
         ],
         imports,
       ),

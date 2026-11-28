@@ -1,7 +1,8 @@
 /**
  * Kafka's record of its core imports (docs/PROVIDER_IMPORTS.md, "Kafka's core imports"): every symbol Kafka's provider
- * directory imports from core has a row that says it leaves with the legacy class, and every symbol the record sends
- * to an SDK subpath is imported from there and no longer from core.
+ * directory imports from core has a row that says it leaves with the legacy class, every symbol the record sends
+ * to an SDK subpath is imported from there and no longer from core, and every symbol the directory imports from the
+ * SDK has a row that names the specifier it is imported from.
  * So the core modules the directory imports are exactly the modules of the rows that leave, which is what #2623's
  * oracle, the directory's `from "@/..."` specifiers, reads.
  * The mechanism is engine-free, in tests/unit/lib/db/provider-imports/legacy-homes.ts; this case is Kafka's and leaves

@@ -6,7 +6,9 @@
  * it from now. The last cell is either `leaves with the legacy class`, for a symbol the directory imports from core
  * and that leaves with the provider's move, or an `@libredb/provider-sdk` specifier, for a symbol the directory
  * imports from the SDK. The Module cell of an SDK row is the core path the symbol had before it moved, which no
- * longer needs to exist.
+ * longer needs to exist. `homeRecordFindings` holds the record complete both ways: every symbol the directory imports
+ * from core, and every symbol it imports from `@libredb/provider-sdk` or one of its subpaths, needs a row, an SDK
+ * symbol one whose last cell is the specifier the directory imports it from.
  *
  * `directoryImports` parses each listed source file under the directory with the TypeScript compiler's
  * `createSourceFile` and reads every `import` and `export ... from` declaration: a named binding as its exported
@@ -104,6 +106,7 @@ export function homeRecordFindings(rows: readonly string[][], imports: Directory
   const fromCore = new Set(imports.core.map(keyOf));
   const fromSdk = new Set(imports.sdk.map(keyOf));
   const recorded = new Set<string>();
+  const recordedSdk = new Set<string>();
   for (const [module, symbol, , source] of rows) {
     const key = keyOf({ module, symbol });
     const name = `${module} ${symbol}`;
@@ -116,6 +119,7 @@ export function homeRecordFindings(rows: readonly string[][], imports: Directory
         );
       }
     } else if (isSdkSpecifier(source)) {
+      recordedSdk.add(keyOf({ module: source, symbol }));
       if (fromCore.has(key))
         findings.push(`${name}: the record says ${source}, and ${imports.directory} imports it from core`);
       if (!fromSdk.has(keyOf({ module: source, symbol }))) {
@@ -129,6 +133,13 @@ export function homeRecordFindings(rows: readonly string[][], imports: Directory
     if (!recorded.has(keyOf(entry))) {
       findings.push(
         `${entry.module} ${entry.symbol}: ${imports.directory} imports it from core, and the record has no row for it`,
+      );
+    }
+  }
+  for (const entry of imports.sdk) {
+    if (!recordedSdk.has(keyOf(entry))) {
+      findings.push(
+        `${entry.module} ${entry.symbol}: ${imports.directory} imports it from the SDK, and the record has no row for it`,
       );
     }
   }
