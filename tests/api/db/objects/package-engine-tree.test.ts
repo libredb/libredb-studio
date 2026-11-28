@@ -5,8 +5,9 @@
  * on the record's metadata session, opened once per key through the package; a level or a kind its object model does not
  * state is refused before the package is called; a code-only package's sentences in a tree answer reach the client as
  * Studio's sentence and a granted one's through core's scrub; an open failure answers not-sent, and a malformed tree
- * answer the package's defect; a session that offers no tree is refused by its offer, and the edit plan, the edit apply
- * and the key scan by the record's offer before any open, none of them as the route-level 501.
+ * answer the package's defect; the target a tree route is handed keeps every function its session offers, the source
+ * read among them; a session that offers no tree is refused by its offer, and the edit plan, the edit apply and the key
+ * scan by the record's offer before any open, none of them as the route-level 501.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked.
@@ -87,10 +88,20 @@ const TREE_MODEL: ObjectModel = {
   maskedNameKinds: [],
 };
 
-/** A package offering the tree, granted no words; one granted its words; one offering no tree. */
+/** `TREE_MODEL` with its one kind stating source, for a package that offers the source read too. */
+const SOURCE_MODEL: ObjectModel = {
+  ...TREE_MODEL,
+  objectKinds: TREE_MODEL.objectKinds.map((kind) => ({ ...kind, hasSource: true, sourceLanguage: "sql" })),
+};
+
+/**
+ * A package offering the tree, granted no words; one granted its words; one offering no tree; one offering the tree and
+ * the source read.
+ */
 const TREE = "acmetreeroute";
 const WORDS = "acmetreewords";
 const BARE = "acmetreebare";
+const SOURCE = "acmetreesource";
 const withTree = {
   offered: ["objects.tree"],
   edit: (engine: Record<string, unknown>) => (engine.objects = structuredClone(TREE_MODEL) as never),
@@ -105,6 +116,12 @@ beforeAll(async () => {
       { name: "acme-tree-route", engine: TREE, ...withTree },
       { name: "acme-tree-words", engine: WORDS, ...withTree },
       { name: "acme-tree-bare", engine: BARE },
+      {
+        name: "acme-tree-source",
+        engine: SOURCE,
+        offered: ["objects.tree", "objects.source"],
+        edit: (engine: Record<string, unknown>) => (engine.objects = structuredClone(SOURCE_MODEL) as never),
+      },
     ],
     { [WORDS]: { ownWords: "scrubbed" } },
   );
@@ -392,6 +409,51 @@ describe("the object tree's routes on a provider package's engine", () => {
       error.mockRestore();
     }
     expect(names(seen)).toEqual(["open"]);
+  });
+
+  test("the tree arm hands a route every member its session offers, the source read among them, and answers a value it raised as the package's", async () => {
+    // ObjectsSession holds `source` exactly when the session offers objects.source, so the target the tree arm hands a
+    // route keeps it, recording what it raised as the tree function's raises are recorded (`recordingRaised`).
+    const own = `the source read failed ${randomUUID()}`;
+    hooksFor(TREE);
+    setHooks(SOURCE, {
+      open: () => Promise.resolve({ handle: { session: randomUUID() } }),
+      close: () => Promise.resolve(),
+      source: () => Promise.reject(new Error(own)),
+    });
+    const members: Record<string, boolean> = {};
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const probe = (engine: string) =>
+        handleObjectRequest(
+          new Request("http://localhost:3000/api/db/objects/probe", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ connection: connectionOf(engine) }),
+          }) as never,
+          "api/db/objects/probe",
+          async (tree) => {
+            members[engine] = Object.hasOwn(tree.session, "source");
+            const source = tree.session.source;
+            if (source === undefined) return { source: "not-offered" };
+            return source.call(tree.session, { path: ["s1", "thing"], kind: "item" }, {} as never);
+          },
+          { reads: "tree" },
+        );
+      const offered = await probe(SOURCE);
+      expect(await probe(TREE).then((answer) => parseResponseJSON<unknown>(answer))).toEqual({
+        source: "not-offered",
+      });
+      expect(members).toEqual({ [SOURCE]: true, [TREE]: false });
+      // The package's own error, answered by the record in Studio's sentence naming its code, and logged once.
+      expect(offered.status).toBe(500);
+      expect((await parseResponseJSON<{ error: string }>(offered)).error).toMatch(
+        /^The provider package's tree read failed \(.+\); the server's log holds its words\.$/,
+      );
+      expect(error.mock.calls.filter(([line]) => line === "A provider package's tree read failed")).toHaveLength(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("a package engine whose session does not offer objects.tree is refused by the session's offer, not 501", async () => {
