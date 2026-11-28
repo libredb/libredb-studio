@@ -72,6 +72,7 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: false,
   hostFiles: false,
   testCautions: false,
+  columnProfile: false,
   executionProfiles: false,
   objectEdit: false,
   keyScan: false,

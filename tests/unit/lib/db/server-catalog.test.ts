@@ -52,6 +52,7 @@ import {
   servedEngines,
   servedPackage,
   serverEngine,
+  declaredSessionModel,
 } from "@/lib/db/server-catalog";
 import {
   type AdmittedForCatalog,
@@ -108,6 +109,7 @@ const RECORD_KEYS = [
 /** Every offer of an engine record. */
 const OFFER_KEYS = [
   "catalog",
+  "columnProfile",
   "connectionDeclarations",
   "database",
   "executionProfiles",
@@ -659,6 +661,67 @@ describe("one engine record for every engine", () => {
     expect(served.session.panels).toBe(manifest.engines[0]?.facets.monitoring as never);
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
     expect(() => servedPackage(servedRecord(legacyId))).toThrow(
+      `The engine ${JSON.stringify(legacyId)} is served by LibreDB Studio's legacy adapter, which serves no provider package: a caller that reads a package of it is a host defect.`,
+    );
+  });
+
+  test("a record states whether a provider built without connecting answers its per-connection facts and whether it offers a column profile: true for a legacy engine, false for a package's", () => {
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-readers", admittedManifest("acmereaders"))], [], STUDIO_GRANT_REGISTER),
+    );
+    const readers = ({ offers }: EngineRecord) => [offers.connectionDeclarations, offers.columnProfile];
+    for (const id of SHIPPED_DATABASE_TYPES) expect([id, readers(servedRecord(id))]).toEqual([id, [true, true]]);
+    expect(readers(servedRecord("acmereaders"))).toEqual([false, false]);
+  });
+
+  test("the declared session model reader answers a package's declared model, null without one, and refuses a legacy record as a host defect", () => {
+    const modelled = admittedManifest("acmemodelled", (engine) => {
+      (engine as Record<string, unknown>).objects = {
+        containerLevels: [{ id: "schema", label: "Folder", labelPlural: "Folders" }],
+        containerPathShapes: "exact",
+        containerNameSpelling: null,
+        objectKinds: [
+          {
+            id: "item",
+            role: "relation",
+            label: "Item",
+            labelPlural: "Items",
+            hasSource: false,
+            sourceLanguage: null,
+            hasColumns: true,
+            acceptsSourceEdits: false,
+            childKinds: [],
+            attachedTo: null,
+            acceptsRowWrites: false,
+            enumeratedBy: null,
+            countIsListing: false,
+            machineNames: null,
+            group: null,
+          },
+        ],
+        rowActions: [],
+        containersNameKinds: false,
+        tablesNeedContainer: false,
+        tablesAreDerivedGroupings: false,
+        agentWalkScope: null,
+        schemaDiffScope: null,
+        maskedNameKinds: [],
+      };
+    });
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-modelled", modelled), admittedFor("acme-unmodelled", admittedManifest("acmeunmodelled"))],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
+    );
+    const declared = modelled.engines[0]?.objects;
+    expect(declared).toBeDefined();
+    // By reference: the model the declaration states, which the record's declared session holds.
+    expect(declaredSessionModel(servedRecord("acmemodelled"))).toBe(declared as never);
+    expect(declaredSessionModel(servedRecord("acmeunmodelled"))).toBeNull();
+    const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
+    expect(() => declaredSessionModel(servedRecord(legacyId))).toThrow(
       `The engine ${JSON.stringify(legacyId)} is served by LibreDB Studio's legacy adapter, which serves no provider package: a caller that reads a package of it is a host defect.`,
     );
   });

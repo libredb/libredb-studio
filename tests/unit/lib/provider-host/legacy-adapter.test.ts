@@ -251,6 +251,7 @@ describe("the legacy adapter's records", () => {
       sshTunnel: true,
       hostFiles: true,
       testCautions: true,
+      columnProfile: true,
       executionProfiles: true,
       objectEdit: true,
       keyScan: true,

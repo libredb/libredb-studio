@@ -119,6 +119,7 @@
 import type {
   CredentialWarning,
   FieldName,
+  ObjectModel,
   ProviderManifest,
   StatementLanguageData,
   TlsMode,
@@ -227,6 +228,12 @@ export interface EngineOffers {
   readonly hostFiles: boolean;
   /** Test Connection's connect warnings and test-only cautions. */
   readonly testCautions: boolean;
+  /**
+   * A column profile (`POST /api/db/profile`), which reads a legacy provider's capabilities and writes its statements
+   * with Studio's SQL generator row of the engine; a package's engine has none (C-106), so the route refuses it by name
+   * before any open.
+   */
+  readonly columnProfile: boolean;
   /**
    * A provider the execution-profile acquisition opens (`acquireExecutionProfileProvider` in ./factory): the agent's and
    * MCP's profiles, with the seed's agent credential, its read roots and a read-only statement session. A package's
@@ -490,6 +497,19 @@ export function servedPackage(engine: EngineRecord): ServedPackage {
     );
   }
   return engine.source.package;
+}
+
+/**
+ * The object model a package engine's declaration states, by reference, as its declared session holds it, or null where
+ * it states none: the model a session of the engine carries where its package offers `objects.tree` or `objects.source`
+ * (`bindSession` in src/lib/provider-host/core/contract-session.ts), which a refinement never changes (C-10). Read
+ * without opening a session; `POST /api/db/provider-meta` answers it for a package's engine.
+ *
+ * @throws {Error} A host defect, `servedPackage`'s: when `engine` is a legacy engine's record, whose model is its
+ * provider's capabilities.
+ */
+export function declaredSessionModel(engine: EngineRecord): ObjectModel | null {
+  return servedPackage(engine).session.objectModel ?? null;
 }
 
 /**

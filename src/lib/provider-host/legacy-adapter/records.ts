@@ -64,6 +64,7 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: true,
   hostFiles: true,
   testCautions: true,
+  columnProfile: true,
   executionProfiles: true,
   objectEdit: true,
   keyScan: true,
