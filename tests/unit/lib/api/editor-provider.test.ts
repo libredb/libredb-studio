@@ -70,6 +70,7 @@ mock.module("@/lib/db/factory", () => ({
 }));
 
 const {
+  assertEditorFieldsOffered,
   cachedEditorProvider,
   editorMaintenanceOpening,
   editorMonitoringTarget,
@@ -205,6 +206,79 @@ describe("editorTarget", () => {
     expect(isStudioFailure(raised)).toBe(true);
     // Studio's own failure returns before the scrub or the route is read, so neither is a working stand-in here.
     expect(packageFailureAnswer(packageEngine, "open", raised, {} as ProviderTextScrub, "/api/db/query")).toBe(raised);
+  });
+});
+
+/** The request fields of the editor's routes a record may not offer, refused by name before any open. */
+describe("assertEditorFieldsOffered", () => {
+  const offering = (offers: Partial<EngineRecord["offers"]>) =>
+    ({
+      id: "acmefields",
+      offers: {
+        legacyProvider: false,
+        explain: false,
+        database: false,
+        catalog: false,
+        unboundedPage: false,
+        ...offers,
+      },
+    }) as unknown as EngineRecord;
+  const NOTHING = offering({});
+  const EVERYTHING = offering({
+    legacyProvider: true,
+    explain: true,
+    database: true,
+    catalog: true,
+    unboundedPage: true,
+  });
+  const request = (fields: { explain?: boolean; database?: number; unlimited?: boolean; catalog?: unknown }) => ({
+    body: fields.catalog === undefined ? {} : { catalog: fields.catalog },
+    explain: fields.explain === true,
+    database: fields.database,
+    unlimited: fields.unlimited === true,
+  });
+  /** What `assertEditorFieldsOffered` raised for `engine` and `fields`, or undefined when it raised nothing. */
+  const refusalOf = (engine: EngineRecord, fields: Parameters<typeof request>[0]): unknown => {
+    try {
+      assertEditorFieldsOffered(engine, request(fields));
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  };
+  const fieldSentence = (field: string) =>
+    `This connection's engine does not offer the request field ${field} in this LibreDB Studio, so Studio opened nothing.`;
+  const CATALOG_SENTENCE =
+    "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.";
+
+  test("refuses the first field the record does not offer by name, FacetNotOfferedError not-sent, explain before database before catalog before options.unlimited, and reads a catalog only where the record offers none", () => {
+    const all = { explain: true, database: 2, catalog: "shop", unlimited: true };
+    for (const [fields, operation, sentence] of [
+      [all, "explain", fieldSentence("explain")],
+      [{ ...all, explain: false }, "database", fieldSentence("database")],
+      [{ catalog: "shop", unlimited: true }, "catalog", CATALOG_SENTENCE],
+      [{ unlimited: true }, "options.unlimited", fieldSentence("options.unlimited")],
+    ] as const) {
+      const refused = refusalOf(NOTHING, fields);
+      expect(refused).toBeInstanceOf(FacetNotOfferedError);
+      const { message, facet, provider } = refused as FacetNotOfferedError;
+      expect([message, facet, (refused as FacetNotOfferedError).operation, provider]).toEqual([
+        sentence,
+        "console",
+        operation,
+        undefined,
+      ]);
+      expect(errorOutcome(refused)).toBe("not-sent");
+    }
+
+    // A request setting none of them, and a record that offers each field it sets, are refused nothing.
+    expect(refusalOf(NOTHING, {})).toBeUndefined();
+    expect(refusalOf(EVERYTHING, all)).toBeUndefined();
+
+    // A malformed catalog is read where the record offers none, so its 400 comes before any field's refusal; where the
+    // record offers catalogs it is not read here, and keeps its answer where the route reads it.
+    expect(refusalOf(NOTHING, { explain: true, catalog: 7 })).toBeInstanceOf(DatabaseConfigError);
+    expect(refusalOf(EVERYTHING, { catalog: 7 })).toBeUndefined();
   });
 });
 

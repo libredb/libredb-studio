@@ -1,5 +1,5 @@
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { scopeToCatalog } from "@/lib/db/catalog-scope";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import {
   type CachedSession,
@@ -96,8 +96,8 @@ export async function editorTarget(
 
 /**
  * Refuses `catalog` handed with a provider package's session, which serves no catalog session, as Studio's own defect:
- * every caller refuses a catalog for an engine whose record offers none before any open (`assertCatalogOffered`, or the
- * query route's own check), so a catalog reaches a package's session only through a record that offers one, which no
+ * every caller refuses a catalog for an engine whose record offers none before any open (`assertCatalogOffered`, which
+ * `assertEditorFieldsOffered` reads on the query route), so a catalog reaches a package's session only through a record that offers one, which no
  * package's record does. Its one refusal is the request's `catalog` field not honoured, a rule whose author is Studio
  * (`isStudioFailure` in src/lib/api/package-errors.ts), so a route answers it as Studio's own internal error, never as
  * the package's, and never ignores the catalog.
@@ -169,6 +169,53 @@ function assertCatalogOffered(engine: EngineRecord, catalog: string | undefined,
   );
   markNotSent(error);
   throw error;
+}
+
+/** The request fields of an editor route a record may not offer, by the name a refusal gives each. */
+type EditorField = "explain" | "database" | "options.unlimited";
+
+/** The not-sent refusal of `field`, a request field `engine`'s record does not offer, facet `console`. */
+function fieldNotOffered(engine: EngineRecord, field: EditorField): FacetNotOfferedError {
+  const error = new FacetNotOfferedError(
+    `This connection's engine does not offer the request field ${field} in this LibreDB Studio, so Studio opened nothing.`,
+    legacyProviderType(engine),
+    "console",
+    field,
+  );
+  markNotSent(error);
+  return error;
+}
+
+/**
+ * Refuses the first request field of an editor statement that `engine`'s record does not offer, by name, before the
+ * confirmation gate and any open: a plan (`explain`), whose statement is built by the connected provider's strategy,
+ * keyed by a legacy plan format; a key-space `database`, read from a legacy provider's declarations; a server-level
+ * `catalog`, a legacy catalog session, in `assertCatalogOffered`'s sentence; and an unbounded page
+ * (`options.unlimited`), since the provider contract always pumps a bounded one (docs/providers/CONTRACT.md, clause
+ * C-16). Each is `FacetNotOfferedError` of facet `console`, its operation the field's name, outcome not-sent. The query
+ * and the transaction routes read it after every malformed field's 400: the caller reads `explain` and `database`,
+ * and a `catalog` is read here first where the record does not offer catalogs, so a malformed one answers its 400
+ * before any field is refused; where the record offers them it is not read here, and keeps its answer where the route
+ * reads it. A legacy record offers all four, so it is refused nothing.
+ *
+ * @throws {DatabaseConfigError} For a malformed `catalog`, on an engine whose record does not offer catalogs.
+ * @throws {FacetNotOfferedError} Not-sent, for the first field set that the record does not offer.
+ */
+export function assertEditorFieldsOffered(
+  engine: EngineRecord,
+  request: {
+    readonly body: Record<string, unknown>;
+    readonly explain: boolean;
+    readonly database: number | undefined;
+    readonly unlimited: boolean;
+  },
+): void {
+  const { offers } = engine;
+  const catalog = offers.catalog ? undefined : requestCatalog(request.body);
+  if (request.explain && !offers.explain) throw fieldNotOffered(engine, "explain");
+  if (request.database !== undefined && !offers.database) throw fieldNotOffered(engine, "database");
+  assertCatalogOffered(engine, catalog, "console");
+  if (request.unlimited && !offers.unboundedPage) throw fieldNotOffered(engine, "options.unlimited");
 }
 
 /**
