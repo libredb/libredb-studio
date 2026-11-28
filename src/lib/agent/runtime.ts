@@ -27,7 +27,7 @@
  */
 
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
-import { metadataMonitoringTarget, metadataTreeTarget } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget, metadataTreeTarget, readOnlyStatementSession } from "@/lib/api/editor-provider";
 import {
   type EngineConnection,
   type EngineRecord,
@@ -51,13 +51,16 @@ import {
 import { logger } from "@/lib/logger";
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
-import { statementSessionRefusal } from "./agent-manifest";
+import { languageNoLongerGrantedSentence, workflowAvailability } from "./agent-manifest";
 import { AgentRunDeadline } from "./deadline";
 import { agentEngineDeclarations } from "./engine-view";
 import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentInvestigationResult, runInvestigation } from "./investigation";
 import { createAgentModel } from "./model-adapter";
+import { statementFamilyOf } from "./languages/client";
+import { servedAvailabilityTables } from "./languages/server";
+import { startRefusalSentence } from "./posture";
 import { AgentRepairLedger } from "./repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "./run-service";
 import { AgentRunStore, resolveAgentLedgerWorld } from "./run-store";
@@ -234,16 +237,40 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
   // providers from the agent's, and a provider package's session opens with the connection's own credential.
   const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
   try {
-    // An agent-mode run whose workflow sends statements on an engine whose record offers no execution profiles (a
-    // provider package's) is refused by name before its first model turn and before anything opens: agent mode opens no
-    // read-only statement session through a package yet, and the start route refuses such a run before it exists, so
-    // only a run recorded before is refused here. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
+    // An agent-mode run whose workflow sends statements on a provider package's engine is decided by the start route's
+    // availability again, over the record as the installed catalog serves it now, so one decision answers at both ends:
+    // a package's grants and offers can change between the start and the drive (its package removed, its row changed),
+    // where a legacy record's are compiled in and were read at the start. A closed answer is refused by name, in the
+    // start route's sentence, before its first model turn and before anything opens; only a run recorded before the
+    // change reaches it. An open answer in a language other than the one the run was recorded in (absent reads as sql)
+    // is refused by name the same way, since the run's statements are written in the language it was recorded in and
+    // the package now speaks another. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
     if (
       report.record.mode === "agent" &&
       AGENT_WORKFLOW_SENDS_STATEMENTS[report.record.workflowType] &&
-      !engine.offers.executionProfiles
+      !engine.offers.legacyProvider
     ) {
-      throw new StudioProfileRefusal(statementSessionRefusal(engine.displayName), "PROFILE_UNSUPPORTED_BY_PROVIDER");
+      const availability = workflowAvailability(
+        "agent",
+        report.record.workflowType,
+        engine,
+        servedAvailabilityTables(),
+      );
+      if (!availability.open) {
+        throw new StudioProfileRefusal(
+          startRefusalSentence(availability, engine),
+          availability.cause === "not-reviewed" ? "PROFILE_ENGINE_NOT_REVIEWED" : "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+      }
+      const recorded = statementFamilyOf(report.record.statementLanguage);
+      if (availability.statementLanguage !== recorded) {
+        throw new StudioProfileRefusal(
+          // Non-null: an open answer holds a null language only in plan mode and the operations workflow, neither of
+          // which reaches this arm (`AgentWorkflowAvailability`).
+          languageNoLongerGrantedSentence(engine.displayName, recorded, availability.statementLanguage!),
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+      }
     }
 
     // The engine's capabilities and labels are read from its record without connecting
@@ -308,10 +335,13 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
           ),
         // The record's metadata session under the run's persisted actor, the session the tree and monitoring routes
         // read; the grounding walk and the curated readings open it on a provider package's engine only, whose run
-        // holds no catalog (refused above where it was recorded with one).
+        // holds no catalog (refused above where it was recorded with one). The package's read-only statement session
+        // under the same actor: the grounding walk of a statement-sending run and its statements open it on a provider
+        // package's engine only.
         sessions: {
           metadataTree: () => metadataTreeTarget({ role: actor.role }, connection, engine),
           monitoring: () => metadataMonitoringTarget({ role: actor.role }, connection, engine, undefined),
+          readOnlyStatements: () => readOnlyStatementSession({ role: actor.role }, connection, engine),
         },
       },
     });

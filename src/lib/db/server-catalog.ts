@@ -98,8 +98,8 @@
  * by the record's offer (`objectEdit`, `keyScan`, `columnProfile`, `connectionDeclarations`) or its statement grammar.
  * Agent mode's classify, runs and hand-over routes and an agent run's drive resolve through `resolveServedConnection`
  * too: a run grounds and takes its curated readings on the record's metadata session (`metadataTreeTarget`,
- * `metadataMonitoringTarget`), and a run whose workflow sends statements, which needs a read-only statement session, is
- * refused where the record offers no execution profiles.
+ * `metadataMonitoringTarget`), and a run whose workflow sends statements is served through the record's read-only
+ * statement session where it offers `readOnlyStatements`, and refused by availability otherwise.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
@@ -257,16 +257,16 @@ export interface EngineOffers {
    * MCP's profiles, with the seed's agent credential, its read roots and a read-only statement session. A package's
    * session is opened through its package, with neither the agent credential nor the read roots (C-109), and a
    * read-only statement session through its package only where it offers `readOnlyStatements`. MCP's statement tools
-   * serve only an engine whose record offers it (src/lib/mcp/tools/served-engines.ts), and agent mode sends statements
-   * only to such an engine (`workflowAvailability`'s `no-statement-session` in src/lib/agent/agent-manifest.ts).
+   * serve only an engine whose record offers it (src/lib/mcp/tools/served-engines.ts) until they read
+   * `readOnlyStatements`; agent mode reads `readOnlyStatements`.
    */
   readonly executionProfiles: boolean;
   /**
    * A read-only statement session (docs/providers/CONTRACT.md, clause C-78) statements are sent through: a legacy
    * record's through the execution-profile acquisition (`acquireExecutionProfileProvider` in ./factory), a provider
    * package's through its package, opened read-only (`getOrCreateReadOnlyStatementSession` in ./factory), offered
-   * exactly where its manifest's console execute honours `readOnly`. A session a refinement narrowed so it no longer
-   * honours `readOnly` is refused each read-only execute by the host core before the call.
+   * exactly where its manifest's console execute honours `readOnly`. A session whose open's refinement withdrew
+   * `readOnly` is closed and refused by name before it is cached (`getOrCreateReadOnlyStatementSession`).
    */
   readonly readOnlyStatements: boolean;
   /**

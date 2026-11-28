@@ -1913,7 +1913,9 @@ export interface AgentRunRecord {
    *
    * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run. A header
    * naming a language this build does not hold is refused when the ledger is read (`runHeaderRefusal`),
-   * so a folded record only ever carries an id this build holds.
+   * so a folded record only ever carries an id this build holds. An agent-mode run that sends statements on a
+   * provider package's engine whose record now grants another language is refused by name at its drive
+   * (`driveAgentRunOutcome` in runtime.ts).
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**

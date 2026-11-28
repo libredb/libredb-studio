@@ -7,8 +7,10 @@
  * package's words;
  * any other value is the package's own error, logged once through core's scrub on both grants and answered by its
  * record's grant: an open's as a not-sent `ConnectionError`, an execute's and a tree read's as Studio's sentence naming
- * its code or as raised. A package's warnings reach the client only as Studio's sentence naming their count. The refused records are
- * built by hand and read by the real accessor (`refusalError`).
+ * its code or as raised. A statement a read-only statement session was sent that fails is a `QueryError` in the
+ * same words (`packageStatementFailure`), and a `StudioProfileRefusal` is Studio's own. A package's warnings reach the
+ * client only as Studio's sentence naming their count. The refused records are built by hand and read by the real
+ * accessor (`refusalError`).
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -19,10 +21,11 @@ import {
   PACKAGE_DEFECT_PREFIX,
   packageAnswers,
   packageFailureAnswer,
+  packageStatementFailure,
   packageWarnings,
 } from "@/lib/api/package-errors";
-import { ConnectionError, StudioOffsetRefusal } from "@/lib/db/errors";
-import { errorOutcome } from "@/lib/db/error-record";
+import { ConnectionError, QueryError, StudioOffsetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
+import { errorCode, errorOutcome } from "@/lib/db/error-record";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
@@ -522,6 +525,82 @@ describe("packageFailureAnswer", () => {
     expect(answered).not.toBe(posing);
     expect((answered as Error).message).not.toContain("the package wrote this");
     expect(lines).toEqual(["A provider package's execute failed"]);
+  });
+
+  test("a Studio profile refusal is Studio's own failure, answered as raised and logged as no package's", () => {
+    const refusal = new StudioProfileRefusal(randomUUID(), "PROFILE_UNSUPPORTED_BY_PROVIDER");
+    const answered: unknown[] = [];
+    const lines = errorLines(() => {
+      for (const engine of [CODE_ONLY, GRANTED]) {
+        answered.push(packageFailureAnswer(engine, "open", refusal, scrub, ROUTE));
+        answered.push(packageFailureAnswer(engine, "execute", refusal, scrub, ROUTE));
+      }
+    });
+    expect(answered).toEqual([refusal, refusal, refusal, refusal]);
+    expect(answered.every((answer) => answer === refusal)).toBe(true);
+    expect(lines).toEqual([]);
+    expect([isPackageFailure(CODE_ONLY, refusal), isPackageFailure(GRANTED, refusal)]).toEqual([false, false]);
+  });
+});
+
+describe("packageStatementFailure", () => {
+  /** What `packageStatementFailure` answers for `error` of `engine`, and the error lines it logged. */
+  function statementAnswer(engine: EngineRecord, error: unknown): { answered: unknown; lines: string[] } {
+    let answered: unknown;
+    const lines = errorLines(() => {
+      answered = packageStatementFailure(engine, error, scrub, ROUTE);
+    });
+    return { answered, lines };
+  }
+  const sentence = (value: unknown) =>
+    `The provider package's execute failed (${errorCode(value)}); the server's log holds its words.`;
+
+  test("a provider package's failure of a statement it was sent is a statement failure in the words its record grants, logged once", () => {
+    const marker = randomUUID();
+    // Code-only: Studio's sentence naming its code, for an error and for a value that is no error.
+    const codeOnly = statementAnswer(CODE_ONLY, new Error(`${marker} ${secret}`));
+    expect(codeOnly.answered).toBeInstanceOf(QueryError);
+    expect((codeOnly.answered as Error).message).toBe(sentence(new Error(marker)));
+    expect(errorOutcome(codeOnly.answered)).toBe("unknown");
+    expect(codeOnly.lines).toEqual(["A provider package's execute failed"]);
+    const plain = statementAnswer(CODE_ONLY, marker);
+    expect(plain.answered).toBeInstanceOf(QueryError);
+    expect((plain.answered as Error).message).toBe(sentence(marker));
+
+    // Scrubbed: the error's own words through core's scrub, withheld where they hold a credential of the connection.
+    const words = statementAnswer(GRANTED, new Error(marker));
+    expect(words.answered).toBeInstanceOf(QueryError);
+    expect((words.answered as Error).message).toBe(marker);
+    expect(words.lines).toHaveLength(1);
+    const withheld = statementAnswer(GRANTED, new Error(`${marker} ${secret}`));
+    expect((withheld.answered as Error).message).toBe(PROVIDER_TEXT_WITHHELD);
+    // A value that is no error has no words: Studio's sentence naming its code.
+    const value = statementAnswer(GRANTED, marker);
+    expect(value.answered).toBeInstanceOf(QueryError);
+    expect((value.answered as Error).message).toBe(sentence(marker));
+    expect(value.lines).toHaveLength(1);
+
+    // A refusal of what the package answered: the package-defect words its grant gives.
+    const defect = statementAnswer(CODE_ONLY, refused([{ rule: "batch-malformed", pointer: "/rows" }]));
+    expect(defect.answered).toBeInstanceOf(QueryError);
+    expect((defect.answered as Error).message).toBe(codeOnlyDefectSentence("batch-malformed"));
+    expect(defect.lines).toHaveLength(1);
+  });
+
+  test("Studio's own failure and a legacy record's failure are answered as raised, and logged as no package's", () => {
+    const studio = new StudioOffsetRefusal(randomUUID());
+    const studioDefect = refused([{ rule: "request-scope-not-offered", pointer: "/scope" }]);
+    const legacy = new Error(randomUUID());
+    const answers = [
+      statementAnswer(CODE_ONLY, studio),
+      statementAnswer(GRANTED, studioDefect),
+      statementAnswer(LEGACY, legacy),
+    ];
+    expect(answers.map(({ answered }) => answered)).toEqual([studio, studioDefect, legacy]);
+    expect(answers[0]?.answered).toBe(studio);
+    expect(answers[1]?.answered).toBe(studioDefect);
+    expect(answers[2]?.answered).toBe(legacy);
+    expect(answers.flatMap(({ lines }) => lines)).toEqual([]);
   });
 });
 

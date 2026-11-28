@@ -2,9 +2,12 @@
  * An agent run on an engine an admitted provider package serves, driven from its ledger by the composition root
  * (`driveAgentRunOutcome` in src/lib/agent/runtime.ts): the drive resolves the run's connection through the served
  * resolve under the run's persisted actor, grounds a plan-mode run through the package's metadata session, refuses by
- * name before its first model turn an agent-mode run whose workflow sends statements and a run recorded with a database
- * its engine offers no catalog session for, and reads the operations workflow's granted readings on the package's
- * metadata session, a reading's failure answered by the engine's record and logged once.
+ * name before its first model turn an agent-mode run whose workflow sends statements where availability closes it or
+ * where its record now grants another language than the run was recorded in, and a run recorded with a database its
+ * engine offers no catalog session for, grounds and sends the statements of an agent-mode run in the package's own
+ * declared language through the package's read-only statement session, a failure of its statement repairable as a
+ * legacy engine's, and reads the operations workflow's granted readings on the package's metadata session, a reading's
+ * failure answered by the engine's record and logged once.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts), each function calling the hook a case sets; the ledger is a local world in
@@ -18,10 +21,16 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { TreeRequest } from "@libredb/provider-sdk/calls";
+import type { CallContext, ExecuteRequest, OpenContext, TreeRequest } from "@libredb/provider-sdk/calls";
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { createLocalWorld } from "@workflow/world-local";
-import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
+import {
+  languageNoLongerGrantedSentence,
+  noStatementSessionSentence,
+  notReviewedSentence,
+} from "@/lib/agent/agent-manifest";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { noAdapterSentence } from "@/lib/agent/posture";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -45,6 +54,7 @@ import {
   callsTool,
   modelOver,
   promptText,
+  reportCitingWhatWasOffered,
   reportOnAll,
   type ScriptedTurn,
   scriptedModel,
@@ -135,13 +145,16 @@ const TREE_MODEL: ObjectModel = {
  * A package whose row grants the health reading; the same with its words granted; one with no register row; one whose
  * row grants `sql` and agent execution and reviews no grammar (its manifest states SQL text, its row no digest); and one
  * declaring the crafted language `acmeread` (tests/helpers/declared-agent-language.ts), its row granting it under the
- * digest of its data and agent execution.
+ * digest of its data and agent execution, its package honouring `readOnly` and its row reading no read roots, so the
+ * factory opens its read-only statement session; and one declaring the same language whose row grants none, so Studio
+ * has not reviewed its statement path.
  */
 const READS = "acmedrivereads";
 const WORDS = "acmedrivewords";
 const BARE = "acmedrivebare";
 const EXEC = "acmedriveexec";
 const LANG = "acmedrivelang";
+const UNREVIEWED = "acmedriveunreviewed";
 const LANGUAGE_DATA = acmereadData();
 const withModel = (engine: EditableEngine) => {
   (engine as Record<string, unknown>).objects = structuredClone(TREE_MODEL);
@@ -185,7 +198,20 @@ beforeAll(async () => {
       },
       { name: "acme-drive-bare", engine: BARE, offered: ["objects.tree"], edit: withModel },
       { name: "acme-drive-exec", engine: EXEC, offered: ["objects.tree", "monitoring.panel"], edit: withLoosestClaims },
-      { name: "acme-drive-lang", engine: LANG, offered: ["objects.tree"], edit: withModelAndLanguage },
+      {
+        name: "acme-drive-lang",
+        engine: LANG,
+        offered: ["objects.tree"],
+        honours: ["readOnly"],
+        edit: withModelAndLanguage,
+      },
+      {
+        name: "acme-drive-unreviewed",
+        engine: UNREVIEWED,
+        offered: ["objects.tree"],
+        honours: ["readOnly"],
+        edit: withModelAndLanguage,
+      },
     ],
     {
       [READS]: HEALTH,
@@ -196,7 +222,9 @@ beforeAll(async () => {
         statementLanguage: LANGUAGE_DATA.name,
         languageSha256: languageDataSha256(LANGUAGE_DATA),
         agentExecution: true,
+        readRootsRequired: false,
       },
+      [UNREVIEWED]: { ...OPEN, readRootsRequired: false },
     },
   );
 });
@@ -249,16 +277,29 @@ function treeAnswer(request: TreeRequest): unknown {
 /** The names of the package's functions a case's hooks were called by, in order. */
 type Seen = string[];
 
-/** Hooks for `engine`'s package: `open`'s answer or a fresh handle per open, the two-collection tree, and `health`. */
+/**
+ * Hooks for `engine`'s package: `open`'s answer or a fresh handle per open, handed the open's context, the
+ * two-collection tree, `health`, and `execute`'s answer, handed the request and the call's context, where a case sets
+ * one.
+ */
 function hooksFor(
   engine: string,
-  options: { open?: () => Promise<unknown>; health?: () => Promise<unknown> } = {},
+  options: {
+    open?: (ctx: OpenContext) => Promise<unknown>;
+    health?: () => Promise<unknown>;
+    execute?: (request: ExecuteRequest, ctx: CallContext) => Promise<unknown>;
+  } = {},
 ): Seen {
   const seen: Seen = [];
   setHooks(engine, {
-    open: () => {
+    open: (ctx: unknown) => {
       seen.push("open");
-      return (options.open ?? (() => Promise.resolve({ handle: { session: randomUUID() } })))();
+      return (options.open ?? (() => Promise.resolve({ handle: { session: randomUUID() } })))(ctx as OpenContext);
+    },
+    execute: (_handle: unknown, request: unknown, ctx: unknown) => {
+      seen.push("execute");
+      if (options.execute === undefined) throw new Error("this case's package answers no execute");
+      return options.execute(request as ExecuteRequest, ctx as CallContext);
     },
     close: () => Promise.resolve(),
     tree: (_handle: unknown, request: unknown) => {
@@ -382,7 +423,13 @@ describe("an agent run's drive on a provider package's engine", () => {
     expect(finishedOf(run.events)).toMatchObject({ status: "succeeded" });
   });
 
-  test("an agent-mode run whose workflow sends statements on a package engine is refused by name before its first model turn, and its package never opens", async () => {
+  test("an agent-mode run whose workflow sends statements on a package engine its availability closes is refused by name before its first model turn, and its package never opens", async () => {
+    // A package that requests no language, and one granted sql whose package takes no read-only execute: each refused
+    // in the start route's sentence.
+    const sentences: Record<string, (label: string) => string> = {
+      [BARE]: (label) => noAdapterSentence(label, false),
+      [EXEC]: (label) => noStatementSessionSentence(label, false),
+    };
     for (const engine of [BARE, EXEC]) {
       const seen = hooksFor(engine);
       // oxlint-disable-next-line no-await-in-loop -- one drive at a time, each reading the recorders the one before cleared.
@@ -392,7 +439,9 @@ describe("an agent run's drive on a provider package's engine", () => {
       const error = run.outcome?.kind === "failed" ? run.outcome.error : undefined;
       expect(error, engine).toBeInstanceOf(StudioProfileRefusal);
       expect((error as StudioProfileRefusal).reasonCode, engine).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
-      expect((error as Error).message, engine).toBe(statementSessionRefusal(servedEngineRecord(engine).displayName));
+      expect((error as Error).message, engine).toBe(
+        (sentences[engine] as (label: string) => string)(servedEngineRecord(engine).displayName),
+      );
       expect(finishedOf(run.events), engine).toMatchObject({ status: "failed", reason: "engine-unsupported" });
       expect(createAgentModel, engine).not.toHaveBeenCalled();
       expect(run.turns, engine).toEqual([]);
@@ -414,29 +463,45 @@ describe("an agent run's drive on a provider package's engine", () => {
     }
   });
 
-  test("a package engine whose row reviews no grammar reaches neither the fence nor a query event while agent mode sends it no statement", async () => {
-    const record = servedEngineRecord(EXEC);
-    // Vacuity: the row grants the language and agent execution, and reviews no grammar.
-    expect(record.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true, reviewedGrammar: false });
-    expect(record.offers.executionProfiles).toBe(false);
-    const seen = hooksFor(EXEC);
-    const select = callsTool("run_read_query", { sql: "SELECT * FROM main.orders" }, "call_read");
-    for (const workflowType of [
-      "investigation",
-      "query-optimization",
-      "database-assessment",
-      "data-analysis",
-    ] as const) {
-      // oxlint-disable-next-line no-await-in-loop -- one drive at a time.
-      const run = await drive(connectionOf(EXEC), "agent", workflowType, [select, answersProse("No report.")]);
-      expect(run.outcome?.kind, workflowType).toBe("failed");
-      expect(finishedOf(run.events), workflowType).toMatchObject({ status: "failed", reason: "engine-unsupported" });
-      expect(run.turns, workflowType).toEqual([]);
-    }
-    expect(inspected).not.toHaveBeenCalled();
-    expect(built).not.toHaveBeenCalled();
-    expect(recorded).not.toHaveBeenCalled();
+  test("an agent-mode run whose workflow sends statements on a package engine that requests a language its row does not grant is refused as not reviewed before its first model turn, and its package never opens", async () => {
+    // Vacuity: the declaration requests the crafted language, the row grants none.
+    expect(servedEngineRecord(UNREVIEWED).grants).toMatchObject({
+      requestsStatementLanguage: true,
+      statementLanguage: null,
+    });
+    const seen = hooksFor(UNREVIEWED);
+    const run = await drive(connectionOf(UNREVIEWED), "agent", "investigation", [answersProse("No report.")]);
+
+    expect(run.outcome?.kind).toBe("failed");
+    const error = run.outcome?.kind === "failed" ? run.outcome.error : undefined;
+    expect(error).toBeInstanceOf(StudioProfileRefusal);
+    expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+    expect((error as Error).message).toBe(notReviewedSentence(servedEngineRecord(UNREVIEWED).displayName, false));
+    expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "engine-unsupported" });
+    expect(createAgentModel).not.toHaveBeenCalled();
+    expect(run.turns).toEqual([]);
     expect(seen).toEqual([]);
+    expect(acquired).not.toHaveBeenCalled();
+  });
+
+  test("an agent-mode run recorded in a statement language its package engine's record no longer grants is refused by name before its first model turn, and its package never opens", async () => {
+    // A run recorded with no language, sql, as it was where the row granted sql when it started; the row now grants the
+    // crafted language, and availability is open on it.
+    const seen = hooksFor(LANG);
+    const run = await drive(connectionOf(LANG), "agent", "investigation", [answersProse("No report.")]);
+
+    expect(run.outcome?.kind).toBe("failed");
+    const error = run.outcome?.kind === "failed" ? run.outcome.error : undefined;
+    expect(error).toBeInstanceOf(StudioProfileRefusal);
+    expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((error as Error).message).toBe(
+      languageNoLongerGrantedSentence(servedEngineRecord(LANG).displayName, "sql", LANGUAGE_DATA.name),
+    );
+    expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "engine-unsupported" });
+    expect(createAgentModel).not.toHaveBeenCalled();
+    expect(run.turns).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(acquired).not.toHaveBeenCalled();
   });
 
   test("a plan-mode run on a package engine whose row grants its own declared language is driven in that language from its ledger, reaching no fence, query event or execution profile", async () => {
@@ -469,6 +534,113 @@ describe("an agent run's drive on a provider package's engine", () => {
     expect(built).not.toHaveBeenCalled();
     expect(recorded).not.toHaveBeenCalled();
     expect(acquired).not.toHaveBeenCalled();
+  });
+
+  test("an agent-mode run in a package's own declared language is driven from its ledger, grounds and sends its statements through the package's read-only statement session", async () => {
+    const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+    const opens: OpenContext[] = [];
+    const executes: ExecuteRequest[] = [];
+    /** One row under one column, answered for every execute. */
+    const answered = () =>
+      Promise.resolve({
+        results: [
+          {
+            columns: [{ name: "topic" }],
+            next: () => Promise.resolve({ rows: [["orders"]], done: true }),
+            close: () => Promise.resolve(),
+          },
+        ],
+        warnings: [],
+        executionTimeMs: 1,
+        pageApplied: false,
+      });
+    const seen = hooksFor(LANG, {
+      open: (ctx) => {
+        opens.push(ctx);
+        return Promise.resolve({ handle: { session: randomUUID() } });
+      },
+      execute: (request) => {
+        executes.push(request);
+        return answered();
+      },
+    });
+    const run = await drive(
+      connectionOf(LANG),
+      "agent",
+      "investigation",
+      [
+        callsTool("run_read_query", { statement: '{"read":"topics"}' }, "call_read"),
+        reportCitingWhatWasOffered("The engine holds one topic."),
+      ],
+      undefined,
+      LANGUAGE_DATA.name,
+    );
+
+    expect(run.thrown).toBeUndefined();
+    expect(run.outcome?.kind).toBe("finished");
+    expect(finishedOf(run.events)).toMatchObject({ status: "succeeded" });
+    // One read-only statement session, opened once through the package, for the walk and the statement alike.
+    expect(seen.filter((call) => call === "open")).toEqual(["open"]);
+    expect(opens.map(({ policy }) => policy)).toEqual([
+      expect.objectContaining({ readOnly: true, sendsStatements: true }),
+    ]);
+    expect(run.events.find((event) => event.kind === "context-captured")).toMatchObject({
+      tableCount: 2,
+      snapshot: { readVia: "provider-inventory" },
+    });
+    // The statement reaches the package as admitted, under the investigation's budget, one row past it as its page.
+    expect(executes).toEqual([
+      {
+        statement: '{"read":"topics"}',
+        page: { limit: budgets.maxResultRows + 1, offset: 0 },
+        readOnly: { budget: { maxRows: budgets.maxResultRows, maxBytes: budgets.maxResultBytes } },
+      },
+    ]);
+    expect(run.events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool-completed",
+        artifact: expect.objectContaining({ operationId: "acmeread.query.read" }),
+      }),
+    );
+    for (const recorder of [acquired, inspected, built, recorded]) expect(recorder).not.toHaveBeenCalled();
+
+    // A package's failure of the statement is a repairable statement failure in Studio's sentence, its words in the
+    // log only; the run repairs it with a differently written request and reports.
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const marker = randomUUID();
+      let calls = 0;
+      hooksFor(LANG, {
+        execute: () => {
+          calls += 1;
+          return calls === 1 ? Promise.reject(new Error(`the read lost ${marker}`)) : answered();
+        },
+      });
+      const repaired = await drive(
+        connectionOf(LANG),
+        "agent",
+        "investigation",
+        [
+          callsTool("run_read_query", { statement: '{"read":"topics"}' }, "call_read"),
+          callsTool("run_read_query", { statement: '{"read":"topics","limit":1}' }, "call_again"),
+          reportCitingWhatWasOffered("The engine holds one topic."),
+        ],
+        undefined,
+        LANGUAGE_DATA.name,
+      );
+      expect(repaired.thrown).toBeUndefined();
+      expect(finishedOf(repaired.events)).toMatchObject({ status: "succeeded" });
+      expect(calls).toBe(2);
+      const told = transcriptOf(repaired.turns);
+      expect(told).toContain(
+        `The provider package's execute failed (${ApiErrorCode.INTERNAL_ERROR}); the server's log holds its words.`,
+      );
+      expect(told).not.toContain(marker);
+      expect(JSON.stringify(repaired.events)).not.toContain(marker);
+      expect(linesOf(error, "A provider package's execute failed")).toHaveLength(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("a run recorded with a database on an engine whose record offers no catalog session no longer resolves, refused by name before anything opens", async () => {

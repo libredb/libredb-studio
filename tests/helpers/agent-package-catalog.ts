@@ -12,7 +12,9 @@
  * `agentPackageLanguageCatalog` is Studio's engines beside one more package engine, `AGENT_PACKAGE_LANGUAGE`, whose
  * declaration states the crafted language `acmeread` (tests/helpers/declared-agent-language.ts) and requests it with the
  * `health` reading, its row granting that language under the digest of the data it declares, agent execution and the
- * reading.
+ * reading. Its package's console execute honours the request fields a case names (none by default), and where it
+ * honours `readOnly` its row also grants `readRootsRequired: false`, so the factory opens its read-only statement
+ * session; a case may name the digest its row grants the language under (`offByOneByte` of the declared one).
  *
  * No file is written and no package is imported; ids are fixture ids no bundled engine serves.
  */
@@ -57,22 +59,43 @@ export function agentPackageCatalog(): ServerCatalog {
 /** The package engine of `agentPackageLanguageCatalog`, granted its own declared language `acmeread`. */
 export const AGENT_PACKAGE_LANGUAGE = "acmeagentlanguage";
 
+/** `digest`, a hex SHA-256, with its last byte's low bit flipped: a digest one byte off. */
+export function offByOneByte(digest: string): string {
+  const last = Number.parseInt(digest.slice(-2), 16) ^ 1;
+  return `${digest.slice(0, -2)}${last.toString(16).padStart(2, "0")}`;
+}
+
+/** What `agentPackageLanguageCatalog` is built with. */
+export interface AgentPackageLanguageOptions {
+  /** The request fields its package's console execute honours; none by default. */
+  readonly honours?: readonly string[];
+  /** The digest its row grants the language under, from the declared one; the declared one by default. */
+  readonly digest?: (declared: string) => string;
+}
+
 /** The catalog of Studio's engines and `AGENT_PACKAGE_LANGUAGE`, its row granting its own declared language. */
-export function agentPackageLanguageCatalog(): ServerCatalog {
+export function agentPackageLanguageCatalog(options: AgentPackageLanguageOptions = {}): ServerCatalog {
   const data = acmereadData();
-  const manifest = admittedManifest(AGENT_PACKAGE_LANGUAGE, (declared) => {
-    declared.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
-    declared.facets = { ...declared.facets, agentReadings: ["health"] };
-    withStatementLanguageData(declared, data);
-  });
+  const honours = options.honours ?? [];
+  const manifest = admittedManifest(
+    AGENT_PACKAGE_LANGUAGE,
+    (declared) => {
+      declared.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
+      declared.facets = { ...declared.facets, agentReadings: ["health"] };
+      withStatementLanguageData(declared, data);
+    },
+    honours,
+  );
   const spoken = admittedFor("acme-agent-language", manifest);
+  const declaredDigest = declaredLanguageSha256(manifest);
   const register = parseGrantRegister(
     [
       packageRow(spoken, AGENT_PACKAGE_LANGUAGE, {
         statementLanguage: data.name,
-        languageSha256: declaredLanguageSha256(manifest),
+        languageSha256: options.digest === undefined ? declaredDigest : options.digest(declaredDigest),
         agentExecution: true,
         agentReadings: Object.freeze(["health"] as const),
+        ...(honours.includes("readOnly") && { readRootsRequired: false }),
       }),
     ],
     LEGACY_ENGINE_IDS,

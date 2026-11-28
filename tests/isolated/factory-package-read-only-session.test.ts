@@ -373,4 +373,50 @@ describe("a provider package's read-only statement session", () => {
     expect(profileRefusal(await refusalOf(NEITHER))[0]).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect(profileRefusal(await refusalOf(UNREVIEWED_ROOTS))[0]).toBe("PROFILE_ENGINE_NOT_REVIEWED");
   });
+
+  test("a package's read-only statement session whose open withdrew readOnly from its honours is closed and refused by name, and never cached", async () => {
+    await clearProviderCache();
+    /** Hooks for MAIN whose open answers `honours` as the refinement of execute's request fields. */
+    const refining = (honours: string[]) => {
+      const calls: string[] = [];
+      setHooks(MAIN, {
+        open: () => {
+          calls.push("open");
+          return Promise.resolve({
+            handle: { session: randomUUID() },
+            refine: { calls: { console: { execute: { honours } } } },
+          });
+        },
+        close: () => {
+          calls.push("close");
+          return Promise.resolve();
+        },
+        health: () => Promise.resolve({ databaseSize: "1", cacheHitRatio: "1", slowQueries: [], activeSessions: [] }),
+        execute: () => Promise.resolve({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false }),
+      });
+      return calls;
+    };
+    const connection = connectionOf(MAIN);
+    const withdrawn = refining([]);
+    for (const round of [1, 2]) {
+      const error = await rejection(getOrCreateReadOnlyStatementSession(connection, engineOf(MAIN), ADMIN));
+      expect(error).toBeInstanceOf(StudioProfileRefusal);
+      expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+      expect(errorOutcome(error)).toBe("not-sent");
+      expect((error as Error).message).toBe(
+        `The provider package of ${engineOf(MAIN).displayName} withdrew readOnly from the request fields its session honours when it opened, so Studio opens no read-only statement session on it.`,
+      );
+      // Each call opens again, closes what it opened, and caches nothing.
+      expect([round, withdrawn]).toEqual([round, Array.from({ length: round }, () => ["open", "close"]).flat()]);
+      expect(getExecutionProfileCacheStats()).toEqual({ size: 0, connections: [] });
+    }
+
+    // A refinement that keeps readOnly is admitted and cached.
+    const kept = refining(["readOnly"]);
+    const entry = await getOrCreateReadOnlyStatementSession(connection, engineOf(MAIN), ADMIN);
+    expect(kept).toEqual(["open"]);
+    expect(entry.opened.form).toBe("session");
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [connection.id] });
+    await clearProviderCache();
+  });
 });

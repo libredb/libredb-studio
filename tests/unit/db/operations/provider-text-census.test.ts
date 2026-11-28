@@ -538,10 +538,11 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [editorQuery, "packagePageBody", "packageWarningsByGrant"],
   [editorQuery, "packageWarningsByGrant", "scrubProviderWarnings"],
   [editorQuery, "packageWarningsByGrant", "packageWarnings"],
-  // A provider package's read-only statement session: its failure is answered by its record's grant of its own words,
-  // its warnings as the editor's are, each through core's scrub of the connection over every field the package receives.
+  // A provider package's read-only statement session: its failure is a statement failure in the words its record
+  // grants, its warnings as the editor's are, each through core's scrub of the connection over every field the
+  // package receives.
   [editorProvider, "readOnlyStatementSession", "connectionTextScrub"],
-  [readOnlyExecute, "packageAnswer", "packageFailureAnswer"],
+  [readOnlyExecute, "packageAnswer", "packageStatementFailure"],
   [readOnlyExecute, "readOnlySessionPage", "scrubProviderWarnings"],
   [readOnlyExecute, "readOnlySessionPage", "packageWarnings"],
   [routeEvents, "failure", "connectionTextScrub"],

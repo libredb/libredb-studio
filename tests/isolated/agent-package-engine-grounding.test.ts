@@ -5,8 +5,10 @@
  * record's metadata session, opened once through the package's own `open` in the provider factory's real metadata
  * cache. The run's acquirer, which opens a legacy provider only, fails the case if called. A sentence the package wrote
  * reaches the run only as its record grants the package its words; a failure of its open or of its tree read is answered
- * by the record and logged once; a Studio error is Studio's own; and an agent credential or a grounding under the
- * execution profile is refused by name before the package opens.
+ * by the record and logged once; a Studio error is Studio's own; an agent credential is refused by name before the
+ * package opens; and a statement-sending run grounds on its read-only statement session
+ * (`sessions.readOnlyStatements` over the real `readOnlyStatementSession`), whose opener refuses by name, before the
+ * package opens, a package that takes no read-only execute.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts), each function calling the hook a case sets; the ledger is a local world in
@@ -31,7 +33,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
-import { metadataMonitoringTarget, metadataTreeTarget } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget, metadataTreeTarget, readOnlyStatementSession } from "@/lib/api/editor-provider";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { clearProviderCache } from "@/lib/db/factory";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -240,6 +242,7 @@ async function openRun(
     sessions: {
       metadataTree: () => metadataTreeTarget({ role: "user" }, connection, engine),
       monitoring: () => metadataMonitoringTarget({ role: "user" }, connection, engine, undefined),
+      readOnlyStatements: () => readOnlyStatementSession({ role: "user" }, connection, engine),
     },
     acquireProvider,
   };
@@ -396,7 +399,7 @@ describe("an agent run's grounding on a provider package's engine", () => {
     expect(run.turns.length).toBeGreaterThan(0);
   });
 
-  test("a grounding under the execution profile on a package engine is refused by name before its package opens", async () => {
+  test("a statement-sending run's grounding on a package engine that takes no read-only execute is refused by name at its read-only statement session's opener, before its package opens", async () => {
     const seen = hooksFor(TREE);
     const connection = connectionOf(TREE);
     const run = await openRun(connection, "agent", "investigation", { statementLanguage: "mongo" });
@@ -409,7 +412,7 @@ describe("an agent run's grounding on a provider package's engine", () => {
     expect(driven).toBeInstanceOf(StudioProfileRefusal);
     expect((driven as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect((driven as Error).message).toBe(
-      "Agent mode opens no execution profile on an engine served by a provider package: its session opens through its package, and Studio opens no read-only statement session through a package yet.",
+      `The provider package of ${servedEngineRecord(TREE).displayName} takes no read-only execute (it does not list readOnly among the request fields it honours), so Studio opens no read-only statement session on it.`,
     );
     expect(seen).toEqual([]);
     expect(run.acquireProvider).not.toHaveBeenCalled();

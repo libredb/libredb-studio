@@ -59,7 +59,6 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { servedResolveOver } from "../../helpers/served-resolve";
 import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
 import { withCatalog } from "../../helpers/package-catalog";
-import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 // The replay's statement runs through the host core's read-only execute, so this file installs one for its requests.
@@ -887,7 +886,9 @@ describe("the hand-over on a provider package's engine", () => {
             displayName: servedEngineRecord(engine).displayName,
           };
         });
-        expect(body.error, engine).toBe(`${statementSessionRefusal(displayName)} So the hand-over runs nothing.`);
+        expect(body.error, engine).toBe(
+          `The hand-over replays a statement only on a provider bundled with Studio, and ${displayName} is served by a provider package, so the hand-over runs nothing.`,
+        );
         expect({ status: res.status, code: body.code, kind: body.kind, outcome: body.outcome }, engine).toEqual({
           status: legacyRes.status,
           code: legacy.code,

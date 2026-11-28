@@ -5,6 +5,7 @@ import {
   AGENT_PLAN_ESTIMATE_OPERATION,
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
+  type AgentDeclaredLanguageId,
   type AgentStatementArgument,
   type AgentWorkflowAvailability,
   type AgentStatementLanguageId,
@@ -19,9 +20,9 @@ import {
   planDeliverableOf,
   planObjectiveOf,
   requiredVariant,
-  statementSessionRefusal,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
+import { servedAvailabilityTables, servedClientPacks } from "@/lib/agent/languages/server";
 import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/composed-sql";
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
@@ -31,11 +32,17 @@ import { OPERATIONS_VARIANT } from "@/lib/agent/workflow-tool-sets";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import {
+  forgetServerCatalog,
+  installServerCatalog,
+  serverCatalogInstalled,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
+import { AGENT_PACKAGE_LANGUAGE, agentPackageLanguageCatalog } from "../../../helpers/agent-package-catalog";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { admittedFor, admittedManifest, packageRow, withLoosestClaims } from "../../../helpers/package-catalog";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
@@ -487,10 +494,10 @@ describe("workflowAvailability", () => {
     expect(none).toEqual([]);
   });
 
-  test("every legacy engine's availability engine offers execution profiles exactly as its record does", () => {
+  test("every legacy engine's availability engine offers a read-only statement session exactly as its record does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
-      expect(legacyAgentEngine(type).offers.executionProfiles, type).toBe(
-        servedEngineRecord(type).offers.executionProfiles,
+      expect(legacyAgentEngine(type).offers.readOnlyStatements, type).toBe(
+        servedEngineRecord(type).offers.readOnlyStatements,
       );
     }
   });
@@ -1030,9 +1037,14 @@ describe("workflow availability on a package engine's record", () => {
     expect([...openWorkflows("planning", silent)]).toEqual([...WORKFLOWS]);
   });
 
-  test("a package record granted agent execution opens no statement workflow in agent mode while Studio opens no read-only statement session through a package", () => {
+  test("a package record granted agent execution opens no statement workflow in agent mode where its package takes no read-only execute, and its declared language's investigation where it does", () => {
     const executing = admittedFor("acme-executing", admittedManifest("acmeexecuting", withLoosestClaims));
     const unread = admittedFor("acme-executing-unread", admittedManifest("acmeexecutingunread", withLoosestClaims));
+    // Granted sql and agent execution, its package honouring readOnly.
+    const sqlRead = admittedFor(
+      "acme-executing-read",
+      admittedManifest("acmeexecutingread", withLoosestClaims, ["readOnly"]),
+    );
     const register = parseGrantRegister(
       [
         packageRow(executing, "acmeexecuting", {
@@ -1041,18 +1053,23 @@ describe("workflow availability on a package engine's record", () => {
           agentReadings: Object.freeze(["health"] as const),
         }),
         packageRow(unread, "acmeexecutingunread", { statementLanguage: "sql", agentExecution: true }),
+        packageRow(sqlRead, "acmeexecutingread", {
+          statementLanguage: "sql",
+          agentExecution: true,
+          readRootsRequired: false,
+        }),
       ],
       LEGACY_ENGINE_IDS,
     );
-    const { engines } = composeServerCatalog([executing, unread], [], register);
+    const { engines } = composeServerCatalog([executing, unread, sqlRead], [], register);
     const reading = engines.get("acmeexecuting");
     const silent = engines.get("acmeexecutingunread");
     if (reading === undefined || silent === undefined) throw new Error("the catalog holds no record of the packages");
     const statementWorkflows = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
     for (const engine of [reading, silent]) {
-      // Vacuity: the row grants the language and agent execution, and the record offers no execution profiles.
+      // Vacuity: the row grants the language and agent execution, and the record offers no read-only statement session.
       expect(engine.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true });
-      expect(engine.offers.executionProfiles).toBe(false);
+      expect(engine.offers.readOnlyStatements).toBe(false);
       for (const workflow of WORKFLOWS) {
         expect(workflowAvailability("planning", workflow, engine)).toEqual({
           open: true,
@@ -1072,12 +1089,66 @@ describe("workflow availability on a package engine's record", () => {
     expect(openWorkflows("agent", reading)).toEqual(["operations"]);
     expect(workflowAvailability("agent", "operations", silent)).toEqual(AGENT_READINGS_REFUSAL);
     expect(openWorkflows("agent", silent)).toEqual([]);
+
+    // A package granted sql that takes a read-only execute meets the SQL variants' requirements, which hold on legacy
+    // engines alone: every statement workflow is refused by the requirement it lacks.
+    const read = engines.get("acmeexecutingread");
+    if (read === undefined) throw new Error("the catalog holds no record of the package");
+    expect(read.offers.readOnlyStatements).toBe(true);
+    const unmet = new Set([
+      "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+      "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
+    ]);
+    for (const workflow of statementWorkflows) {
+      const answer = workflowAvailability("agent", workflow, read);
+      expect([workflow, answer.open, "cause" in answer && answer.cause]).toEqual([
+        workflow,
+        false,
+        "requirement-unmet",
+      ]);
+      expect(unmet.has("sentence" in answer ? answer.sentence : ""), workflow).toBe(true);
+    }
+
+    // A package granted its own declared language: its investigation opens where its package takes a read-only
+    // execute, under the declared variant of the language the installed catalog composes, and no other statement
+    // workflow, which its language has no variant of; where its package takes none, none opens.
+    expect(serverCatalogInstalled()).toBe(false);
+    for (const honours of [["readOnly"], []]) {
+      installServerCatalog(agentPackageLanguageCatalog({ honours }));
+      try {
+        const spoken = servedEngineRecord(AGENT_PACKAGE_LANGUAGE);
+        const tables = servedAvailabilityTables();
+        expect(spoken.offers.readOnlyStatements).toBe(honours.length > 0);
+        if (honours.length === 0) {
+          for (const workflow of statementWorkflows) {
+            expect(workflowAvailability("agent", workflow, spoken, tables)).toEqual({
+              open: false,
+              cause: "no-statement-session",
+            });
+          }
+          continue;
+        }
+        const acmeread = "acmeread" as AgentDeclaredLanguageId;
+        expect(workflowAvailability("agent", "investigation", spoken, tables)).toEqual({
+          open: true,
+          statementLanguage: acmeread,
+          variant: servedClientPacks()[acmeread].variants.investigation ?? null,
+        });
+        for (const workflow of ["query-optimization", "database-assessment", "data-analysis"] as const) {
+          expect(workflowAvailability("agent", workflow, spoken, tables)).toMatchObject({
+            open: false,
+            cause: "no-variant",
+          });
+        }
+      } finally {
+        forgetServerCatalog();
+      }
+    }
   });
 
   test("the no-statement-session refusal names the engine and the operations workflow only where it opens", () => {
     const refusal =
-      "Agent mode sends statements only through a read-only statement session, and the session of Acme opens through its provider package, which Studio does not open read-only yet.";
-    expect(statementSessionRefusal("Acme")).toBe(refusal);
+      "Agent mode sends statements only through a read-only statement session, and the provider package of Acme takes no read-only execute, so Studio opens none on it.";
     expect(noStatementSessionSentence("Acme", true)).toBe(
       `${refusal} So a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.`,
     );

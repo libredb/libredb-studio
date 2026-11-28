@@ -335,20 +335,19 @@ export type AgentWorkflowAvailability =
    */
   | { readonly open: false; readonly cause: "not-reviewed" }
   /**
-   * The engine's record grants agent execution of its statement language, and its session opens through its provider
-   * package (its record offers no execution profiles), which agent mode opens no read-only statement session through
-   * yet.
+   * The engine's record grants agent execution of its statement language, and its provider package takes no read-only
+   * execute (its record does not offer `readOnlyStatements`), so agent mode opens no read-only statement session on it.
    */
   | { readonly open: false; readonly cause: "no-statement-session" }
   | { readonly open: false; readonly cause: "no-variant" | "requirement-unmet"; readonly sentence: string };
 
 /**
  * The engine availability is decided over: its id, the grants of its engine record availability reads, the statement
- * language granted and requested, agent execution and the curated readings, and whether its record offers execution
- * profiles, the read-only statement session agent mode sends statements through. An engine record (`EngineRecord` in
- * `@/lib/db/server-catalog`) is one, a legacy engine's or a provider package's; in the browser, which holds a legacy
- * connection type and no record until M7, `legacyAgentEngine` answers one. The offer is declared here rather than
- * imported, since this module is loaded by the browser and the record's module is the server's.
+ * language granted and requested, agent execution and the curated readings, and whether its record offers a read-only
+ * statement session (`readOnlyStatements`), the session agent mode sends statements through. An engine record
+ * (`EngineRecord` in `@/lib/db/server-catalog`) is one, a legacy engine's or a provider package's; in the browser,
+ * which holds a legacy connection type and no record until M7, `legacyAgentEngine` answers one. The offer is declared
+ * here rather than imported, since this module is loaded by the browser and the record's module is the server's.
  */
 export interface AgentEngine {
   readonly id: string;
@@ -356,17 +355,20 @@ export interface AgentEngine {
     EngineGrants,
     "statementLanguage" | "requestsStatementLanguage" | "agentExecution" | "agentReadings"
   >;
-  readonly offers: { readonly executionProfiles: boolean };
+  readonly offers: { readonly readOnlyStatements: boolean };
 }
 
-/** What every legacy engine's record offers of what availability reads: execution profiles, through its provider. */
-const LEGACY_AGENT_OFFERS: AgentEngine["offers"] = Object.freeze({ executionProfiles: true });
+/**
+ * What every legacy engine's record offers of what availability reads: a read-only statement session, through the
+ * execution-profile acquisition of its provider.
+ */
+const LEGACY_AGENT_OFFERS: AgentEngine["offers"] = Object.freeze({ readOnlyStatements: true });
 
 /**
  * Legacy engine `type` as availability reads it: its id, the legacy grants its legacy record holds
- * (`legacyEngineGrants`), the very object, so the browser and the server read one grant, and the execution profiles
- * every legacy record offers. A value that is not a type id is refused by name first (FND-1), so no grant answers for
- * it.
+ * (`legacyEngineGrants`), the very object, so the browser and the server read one grant, and the read-only statement
+ * session every legacy record offers. A value that is not a type id is refused by name first (FND-1), so no grant
+ * answers for it.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
@@ -435,17 +437,26 @@ export function notReviewedSentence(engineLabel: string, operationsOpens: boolea
 }
 
 /**
- * Why agent mode sends no statement to an engine whose record grants agent execution and whose session opens through
- * its provider package (`no-statement-session`), naming the engine. Read by the start route's refusal
- * (`noStatementSessionSentence`), the drive's refusal of such a run recorded before it and the hand-over's.
+ * Why the drive sends no statement for an agent-mode run recorded in the language `recorded` on a provider package's
+ * engine whose record now grants `granted`, naming the engine: its register row changed between the run's start and
+ * its drive. Read by the drive (`driveAgentRunOutcome` in runtime.ts).
  */
-export function statementSessionRefusal(engineLabel: string): string {
-  return `Agent mode sends statements only through a read-only statement session, and the session of ${engineLabel} opens through its provider package, which Studio does not open read-only yet.`;
+export function languageNoLongerGrantedSentence(engineLabel: string, recorded: string, granted: string): string {
+  return `This run was started to send its statements in the ${recorded} language, and ${engineLabel} now speaks ${granted} in this LibreDB Studio, so the run sends none. A new run opens in ${granted}.`;
 }
 
 /**
- * The refusal of a statement-sending run on an engine whose record grants agent execution and offers no execution
- * profiles, naming the engine and the ways forward that remain on it as `notReviewedSentence` names them.
+ * Why agent mode sends no statement to an engine whose record grants agent execution and whose provider package takes
+ * no read-only execute (`no-statement-session`), naming the engine. Read by `noStatementSessionSentence`.
+ */
+function statementSessionRefusal(engineLabel: string): string {
+  return `Agent mode sends statements only through a read-only statement session, and the provider package of ${engineLabel} takes no read-only execute, so Studio opens none on it.`;
+}
+
+/**
+ * The refusal of a statement-sending run on an engine whose record grants agent execution and offers no read-only
+ * statement session, naming the engine and the ways forward that remain on it as `notReviewedSentence` names them: the
+ * start route's refusal, and the drive's of such a run recorded before.
  */
 export function noStatementSessionSentence(engineLabel: string, operationsOpens: boolean): string {
   const refusal = `${statementSessionRefusal(engineLabel)} So a run whose workflow sends a statement is not opened on it.`;
@@ -485,13 +496,13 @@ function variantIn(
  * a curated reading (its `agent-readings` requirement), language or not. Only then does the language matter: an engine
  * granted none answers `no-adapter` where it requests none and `not-reviewed` where it requests one Studio's review did
  * not grant. Then whether the engine record grants agent execution (the grant the provider factory and the core read
- * path read again at run time), then whether the record offers execution profiles, the read-only statement session a
- * statement is sent through (`no-statement-session` where its session opens through its provider package), then
- * whether the language has the workflow, then whether the engine holds what the variant needs. Agent execution is read
- * after the language, so an engine with neither keeps the `no-adapter` answer. Every legacy engine requests a language
- * exactly where its row grants one and is executed exactly there (tests/unit/db/claim-grants.test.ts), so no legacy
- * engine reaches `not-reviewed`, and every legacy record offers execution profiles, so none reaches
- * `no-statement-session`.
+ * path read again at run time), then whether the record offers a read-only statement session, the session a statement
+ * is sent through (`readOnlyStatements`; `no-statement-session` where its provider package takes no read-only
+ * execute), then whether the language has the workflow, then whether the engine holds what the variant needs. Agent
+ * execution is read after the language, so an engine with neither keeps the `no-adapter` answer. Every legacy engine
+ * requests a language exactly where its row grants one and is executed exactly there
+ * (tests/unit/db/claim-grants.test.ts), so no legacy engine reaches `not-reviewed`, and every legacy record offers a
+ * read-only statement session, so none reaches `no-statement-session`.
  *
  * `tables` defaults to the browser's composition, for the browser and the tests; the server's routes pass
  * `servedAvailabilityTables()`, so an engine granted a language only the installed catalog composes is answered.
@@ -522,7 +533,7 @@ export function workflowAvailability(
       : { open: false, cause: "no-adapter" };
   }
   if (!engine.grants.agentExecution) return { open: false, cause: "not-reviewed" };
-  if (!engine.offers.executionProfiles) return { open: false, cause: "no-statement-session" };
+  if (!engine.offers.readOnlyStatements) return { open: false, cause: "no-statement-session" };
   const variant = variantIn(tables, language, workflow);
   if (variant === undefined) {
     return { open: false, cause: "no-variant", sentence: noVariantSentence(operationsWorkflowOpens(engine)) };

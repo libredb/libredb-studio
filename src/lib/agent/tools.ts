@@ -81,10 +81,11 @@ import {
   providerReadOnlyTarget,
   providerTreeTarget,
   raisedByTreeRead,
+  type ReadOnlyStatementTarget,
   recordingRaised,
   type TreeTarget,
 } from "@/lib/api/session-target";
-import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
+import { type PackageAnswers, packageAnswers, packageFailureAnswer } from "@/lib/api/package-errors";
 import { hostCore } from "@/lib/provider-host/instance";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runComposedStatement } from "@/lib/api/composed-statement";
@@ -356,12 +357,16 @@ export type AgentProviderAcquirer = (
 /**
  * The sessions of a run's engine a tool opens through the engine's record rather than the acquirer: the record's
  * metadata session, as a tree target (`metadataTreeTarget` in src/lib/api/editor-provider.ts), which the grounding walk
- * reads a provider package's engine on, and as a monitoring target (`metadataMonitoringTarget`), which the curated
- * readings read it on. The drive builds both for every record; only a package engine's walk and readings call them.
+ * of a run that sends no statement reads a provider package's engine on, and as a monitoring target
+ * (`metadataMonitoringTarget`), which the curated readings read it on; and the package's read-only statement session
+ * (`readOnlyStatementSession`), its statements target and its tree target on one entry, which the grounding walk of a
+ * statement-sending run and its statements open. The drive builds all three for every record; only a package engine's
+ * walk, readings and statements call them.
  */
 export interface AgentEngineSessions {
   metadataTree(): Promise<TreeTarget>;
   monitoring(): Promise<MonitoringTarget>;
+  readOnlyStatements(): Promise<{ readonly statements: ReadOnlyStatementTarget; readonly tree: TreeTarget }>;
 }
 
 /**
@@ -1648,6 +1653,11 @@ function isStatementFailure(error: unknown): error is DatabaseError {
  * The drive has no signal of its own, so the statement's caller is a signal that never aborts,
  * made for this call (`driveCaller`): a statement that ended is its deadline's, never the caller
  * leaving.
+ *
+ * A provider package's engine has no profiled provider: its statement is sent on the package's read-only statement
+ * session (`packageStatements`), opened through the engine's record, whose open the factory refuses by name for every
+ * engine it opens none for. A package's failure of the statement reaches the repair loop as a `QueryError` in the words
+ * its record grants (`packageStatementFailure` in src/lib/api/package-errors.ts), as a legacy provider's does.
  */
 async function runStatement(
   context: AgentToolContext,
@@ -1658,7 +1668,10 @@ async function runStatement(
   argument: AgentStatementArgument,
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
-  const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
+  const engine = runEngine(context);
+  const target = engine.offers.legacyProvider
+    ? providerReadOnlyTarget(await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE))
+    : await packageStatements(context, engine);
   const sql = (validatedInput as Readonly<Record<string, string>>)[argument];
   // Set immediately before the statement leaves, and never reset. This flag is the
   // whole phase discriminator: anything that threw while we were still connecting
@@ -1670,8 +1683,8 @@ async function runStatement(
   // Through the host core's read-only execute, which holds the provider's answer to the rows, bytes and time this run
   // handed out, so an over-budget answer is refused before any of it is mapped or rendered. A stopped call keeps this
   // execution counted until it settles, also when the time refusal answered the run first.
-  return runReadOnlyExecute(providerReadOnlyTarget(provider), {
-    type: legacyRunType(context),
+  return runReadOnlyExecute(target, {
+    type: context.connection.type,
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
     ...(mode === undefined ? {} : { mode }),
@@ -1683,6 +1696,19 @@ async function runStatement(
 
 /** The route a statement's late failure is logged under. */
 const AGENT_STATEMENT_ROUTE = "agent/statement";
+
+/**
+ * The statements target of `engine`'s read-only statement session, a provider package's, which the run's statements
+ * are sent on. A failed open sent nothing: Studio's refusal is answered as raised, and the package's own failure as a
+ * not-sent `ConnectionError`, logged once (`packageFailureAnswer`).
+ */
+async function packageStatements(context: AgentToolContext, engine: EngineRecord): Promise<ReadOnlyStatementTarget> {
+  try {
+    return (await context.sessions.readOnlyStatements()).statements;
+  } catch (error) {
+    throw packageFailureAnswer(engine, "open", error, runTextScrub(context), AGENT_STATEMENT_ROUTE);
+  }
+}
 
 /**
  * Runs one canonical operation for this run, with every gate in front of it.
@@ -2968,16 +2994,17 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * A record that offers execution profiles: the provider the run's acquirer opens under the grounding's profile, read
  * through the legacy bridge with the run's read allowance (`providerTreeTarget`).
  *
- * Any other record, a provider package's engine: its metadata session, opened through the record
- * (`context.sessions.metadataTree()`), the same session the tree routes and MCP's `inspect_schema` read, after two
- * refusals by name that no package open precedes. A grounding the run takes under the execution profile is refused,
- * since agent mode opens no read-only statement session through a package yet; and a connection that names an agent
- * credential is refused, since the package's session opens with the connection's own credential
- * (docs/providers/CONTRACT.md, clause C-109), which would read as a login the seed did not name for the agent. A failed
- * open is answered by the record (`answers`), a not-sent `ConnectionError` logged once as the package's where it is one,
- * so the capture is unavailable and the plan run goes on as on a legacy engine it could not reach. The target records
- * every value the session's tree function raises in `raised`, named by the read that raised it, so the walk answers
- * only those as the package's.
+ * Any other record, a provider package's engine, after a refusal by name that no package open precedes: a connection
+ * that names an agent credential is refused, since the package's session opens with the connection's own credential
+ * (docs/providers/CONTRACT.md, clause C-109), which would read as a login the seed did not name for the agent. A
+ * statement-sending run grounds on the read-only statement session its statements are sent through, its own boundary
+ * (`context.sessions.readOnlyStatements()`), whose opener refuses by name every engine it opens none for; a plan-mode
+ * or operations run on its metadata session (`context.sessions.metadataTree()`), the same session the tree routes and
+ * MCP's `inspect_schema` read. A failed open is answered by the record (`answers`): Studio's refusal as raised, so the
+ * drive ends a statement-sending run before its first model turn, and the package's own failure as a not-sent
+ * `ConnectionError` logged once, so the capture is unavailable and the plan run goes on as on a legacy engine it could
+ * not reach. The target records every value the session's tree function raises in `raised`, named by the read that
+ * raised it, so the walk answers only those as the package's.
  */
 async function groundingTreeTarget(
   context: AgentToolContext,
@@ -3003,16 +3030,12 @@ async function groundingTreeTarget(
       context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance },
     );
   }
-  if (groundsUnderExecutionProfile(context)) {
-    throw new StudioProfileRefusal(
-      "Agent mode opens no execution profile on an engine served by a provider package: its session opens through its package, and Studio opens no read-only statement session through a package yet.",
-      "PROFILE_UNSUPPORTED_BY_PROVIDER",
-    );
-  }
   refusePackageAgentCredential(context);
   let target: TreeTarget;
   try {
-    target = await context.sessions.metadataTree();
+    target = groundsUnderExecutionProfile(context)
+      ? (await context.sessions.readOnlyStatements()).tree
+      : await context.sessions.metadataTree();
   } catch (error) {
     throw answers.answer("open", error);
   }

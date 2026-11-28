@@ -9,9 +9,9 @@ import {
   type PumpLimits,
 } from "@libredb/provider-sdk/calls";
 import { contextOn, hostPorts } from "@/lib/api/editor-query";
-import { packageFailureAnswer, packageWarnings } from "@/lib/api/package-errors";
+import { packageStatementFailure, packageWarnings } from "@/lib/api/package-errors";
 import { markedCall, type ReadOnlyStatementTarget, readOnlyPageResult } from "@/lib/api/session-target";
-import { StudioTimeBudgetRefusal } from "@/lib/db/errors";
+import { markNotSent, QueryError, StudioTimeBudgetRefusal } from "@/lib/db/errors";
 import { scrubProviderWarnings } from "@/lib/db/operations/provider-text";
 import { holdReadOnlyRows } from "@/lib/db/operations/read-only-statement";
 import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
@@ -84,8 +84,11 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * again to the budget as the provider arm's, and its warnings answered by the engine record's words grant: as Studio's
  * one sentence naming their count, each logged once through core's scrub (`packageWarnings` in ./package-errors), where
  * the grant is code-only, and through the scrub where it is scrubbed. A failure the package raised, or a refusal of what
- * it answered, is answered by its record (`packageFailureAnswer`, clause C-112), logged once; Studio's own failures pass
- * as raised.
+ * it answered, is a statement failure, a `QueryError` as a legacy provider's statement failure is, in the words its
+ * record grants (`packageStatementFailure` in ./package-errors, clause C-112), logged once; Studio's own failures pass
+ * as raised. A row budget past the largest whose one-row-past page is a safe integer, `Number.MAX_SAFE_INTEGER - 1`, is
+ * refused as a not-sent `QueryError` before anything is sent, on every mode and page, since the arm asks for one row
+ * past the budget and the host's pump takes no page limit past the largest safe integer.
  */
 
 /** One read-only statement for the host core, with the budget its answer is held to. */
@@ -226,12 +229,16 @@ export async function runReadOnlyPage(
   }
 }
 
+/** The largest row budget whose one-row-past page, the session arm's every-row page, is a safe integer. */
+const LARGEST_SESSION_ROW_BUDGET = Number.MAX_SAFE_INTEGER - 1;
+
 /**
  * The session arm of `runReadOnlyPage`: `call` on `target`, a provider package's read-only statement session, through
  * `core`'s one execute call; see the module's last paragraph.
  *
  * @throws {Error} A host defect, for a call that names another engine than the session's.
- * @throws As `runReadOnlyPage` throws, a package's failure as its record answers it (`packageFailureAnswer`).
+ * @throws {QueryError} Not-sent, for a row budget whose one-row-past page is no safe integer.
+ * @throws As `runReadOnlyPage` throws, a package's failure as a statement failure (`packageStatementFailure`).
  */
 async function readOnlySessionPage(
   core: HostCore,
@@ -244,6 +251,13 @@ async function readOnlySessionPage(
     throw new Error(
       `A read-only execute named the engine "${type}" on the read-only statement session of "${engine.id}": a host defect.`,
     );
+  }
+  if (budget.maxResultRows > LARGEST_SESSION_ROW_BUDGET) {
+    const refused = new QueryError(
+      `Read-only execution budget field maxResultRows must be a positive integer <= ${LARGEST_SESSION_ROW_BUDGET} on a provider package's read-only statement session, which Studio asks for one row past it`,
+    );
+    markNotSent(refused);
+    throw refused;
   }
   // Every row of an executing statement is one row past the row budget from the first row, so an answer past the
   // budget is refused, never cut; every row of an estimating plan is every row, held to the page's bytes alone.
@@ -265,7 +279,7 @@ async function readOnlySessionPage(
     const maxRows = "unlimited" in page ? Number.MAX_SAFE_INTEGER : page.limit;
     return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
   };
-  const packageAnswer = (error: unknown) => packageFailureAnswer(engine, "execute", error, scrub, call.route);
+  const packageAnswer = (error: unknown) => packageStatementFailure(engine, error, scrub, call.route);
   const view = budgetViewOf(call, undefined);
   let record: Awaited<ReturnType<HostCore["executeCall"]>>;
   try {

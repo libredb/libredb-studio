@@ -1776,8 +1776,13 @@ function notSentRefusal(sentence: string, code: ExecutionProfileDenyCode): Studi
  * 6. a connection that configures an agent credential, which a package's open does not receive (C-109),
  *    `AGENT_CREDENTIAL_NOT_TAKEN`.
  *
+ * A seventh refusal comes after the open and before the cache: a session whose open's refinement withdrew `readOnly`
+ * from the request fields execute honours, which the record's offer, composed from the manifest, cannot show, is closed
+ * under the teardown's deadlines and refused, `PROFILE_UNSUPPORTED_BY_PROVIDER`, marked not-sent; nothing is cached, so
+ * the next call opens again and is refused again (`openCachedSession`).
+ *
  * @throws {Error} A host defect, for a record that offers a legacy provider.
- * @throws {StudioProfileRefusal} Not-sent, for each refusal above.
+ * @throws {StudioProfileRefusal} Not-sent, for each refusal above, the seventh included.
  * @throws As `getOrCreateEditorSession` throws for a provider package's record.
  */
 export async function getOrCreateReadOnlyStatementSession(
@@ -1889,7 +1894,9 @@ function refused(sentence: string): DatabaseConfigError {
  * `place`'s pool, and admits it into `place`'s cache, unless a removal or a cache close overtook it (`flight.signal`, or a close of the
  * caches still running, `cacheClosesRunning`), in which case it closes what it opened under the teardown's deadlines
  * and fails as overtaken, admitting nothing. A stop of the package's open by the flight's signal fails as overtaken
- * too. Nothing is awaited between the check and the admission. Every failure is marked not-sent (`connectPhase`).
+ * too. Nothing is awaited between the check and the admission. A read-only statement session whose open's refinement
+ * withdrew `readOnly` from execute's honours takes no read-only execute: it is closed under the teardown's deadlines
+ * and refused by name, admitting nothing. Every failure is marked not-sent (`connectPhase`).
  */
 async function openCachedSession(
   connection: EngineConnection,
@@ -1915,6 +1922,14 @@ async function openCachedSession(
     } catch (error) {
       if (flight.signal.aborted && error === flight.signal.reason) throw new ConnectionError(OVERTAKEN_OPEN);
       throw error;
+    }
+    if (opened.session.readOnlyStatements && !opened.session.calls.console.execute.honours.includes("readOnly")) {
+      flightsClosing.add(flight);
+      await teardownSession(connection.id, opened);
+      throw notSentRefusal(
+        `The provider package of ${engine.displayName} withdrew readOnly from the request fields its session honours when it opened, so Studio opens no read-only statement session on it.`,
+        "PROFILE_UNSUPPORTED_BY_PROVIDER",
+      );
     }
     if (!flight.signal.aborted && cacheClosesRunning === 0) {
       admitted = {

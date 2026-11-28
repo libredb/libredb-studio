@@ -11,7 +11,8 @@
  * and in the package-defect words below for a refusal of what the package's open answered. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
  * words, and as raised, through core's scrub, where one does; a tree read, a source read, a health read, a panel read,
  * a pool statistics read, a maintenance run, a maintenance preview, a cancel and a transaction call that fail are
- * answered as an execute is.
+ * answered as an execute is. A statement sent on a read-only statement session that fails is a statement failure, a
+ * `QueryError` in the same words (`packageStatementFailure`).
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
@@ -43,7 +44,7 @@
  */
 import { type CallRefusal, type CallRefusalRule, callRefusalSentence, type Warning } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
-import { ConnectionError, DatabaseError, markNotSent } from "@/lib/db/errors";
+import { ConnectionError, DatabaseError, markNotSent, QueryError, StudioProfileRefusal } from "@/lib/db/errors";
 import {
   PROVIDER_TEXT_WITHHELD,
   type ProviderTextScrub,
@@ -174,12 +175,12 @@ function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub,
 }
 
 /**
- * Whether `error`, a failure of a provider package's call, is Studio's own: Studio's `DatabaseError`, which a package
- * cannot construct, or a host defect of Studio's own (`isStudioDefect`). A caller answers it as itself, never as the
- * package's.
+ * Whether `error`, a failure of a provider package's call, is Studio's own: Studio's `DatabaseError` or
+ * `StudioProfileRefusal`, which a package cannot construct (a profile refusal is one only core constructs), or a host
+ * defect of Studio's own (`isStudioDefect`). A caller answers it as itself, never as the package's.
  */
 export function isStudioFailure(error: unknown): boolean {
-  return error instanceof DatabaseError || isStudioDefect(error);
+  return error instanceof DatabaseError || error instanceof StudioProfileRefusal || isStudioDefect(error);
 }
 
 /**
@@ -256,6 +257,28 @@ export function packageFailureAnswer(
   if (call !== "open") return granted ? error : new Error(packageErrorSentence(call, error));
   return notSentConnectionError(
     granted && error instanceof Error ? scrubProviderText(scrub, error.message) : packageErrorSentence(call, error),
+  );
+}
+
+/**
+ * The answer of a provider package's failure of a statement it was sent on a read-only statement session of `engine`:
+ * a statement failure, a `QueryError`, as a legacy provider's statement failure is (`mapDatabaseError` in
+ * src/lib/db/map-database-error.ts), so the agent's repair loop and MCP's statement answers read one class. It is
+ * `packageFailureAnswer`'s answer of an execute, logged once there, in the words the record grants (clause C-112):
+ * Studio's sentence naming its code, the package-defect words, or the error's own message through core's scrub, and
+ * Studio's sentence naming its code for a value that is no `Error` and has no words. Its outcome is unknown, since the
+ * statement may have run. Studio's own failure and a legacy record's are answered as raised.
+ */
+export function packageStatementFailure(
+  engine: EngineRecord,
+  error: unknown,
+  scrub: ProviderTextScrub,
+  route: string,
+): unknown {
+  const answer = packageFailureAnswer(engine, "execute", error, scrub, route);
+  if (!isPackageFailure(engine, error)) return answer;
+  return new QueryError(
+    answer instanceof Error ? scrubProviderText(scrub, answer.message) : packageErrorSentence("execute", answer),
   );
 }
 
