@@ -22,6 +22,7 @@ import {
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
 import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
@@ -77,6 +78,8 @@ import {
   type EditableEngine,
   generatedDigest,
   packageRow,
+  rawManifest,
+  VALIDATOR,
   withFieldRules,
   withLegacyProviderOffers,
   withLoosestClaims,
@@ -94,6 +97,7 @@ const RECORD_KEYS = [
   "fieldRules",
   "grants",
   "id",
+  "maintenance",
   "offers",
   "source",
   "statementGrammar",
@@ -104,6 +108,7 @@ const RECORD_KEYS = [
 /** Every offer of an engine record. */
 const OFFER_KEYS = [
   "catalog",
+  "connectionDeclarations",
   "database",
   "executionProfiles",
   "explain",
@@ -434,6 +439,41 @@ describe("one engine record for every engine", () => {
     expect(Object.keys(legacy.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(packaged.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
+  });
+
+  test("a record states its engine's maintenance list and whether a provider built without connecting answers its per-connection facts: a legacy engine's facets row and true, a package's declaration and false", () => {
+    for (const id of SHIPPED_DATABASE_TYPES) {
+      const engine = servedRecord(id);
+      expect([id, engine.maintenance, engine.offers.connectionDeclarations]).toEqual([
+        id,
+        ENGINE_FACETS[id].maintenance,
+        true,
+      ]);
+      expect([id, Object.isFrozen(engine.maintenance)]).toEqual([id, true]);
+    }
+    // Vacuity: a legacy engine offers maintenance, and one offers none.
+    expect(SHIPPED_DATABASE_TYPES.some((id) => servedRecord(id).maintenance.length > 0)).toBe(true);
+    expect(SHIPPED_DATABASE_TYPES.some((id) => servedRecord(id).maintenance.length === 0)).toBe(true);
+
+    const raw = rawManifest("acmemaintlist");
+    (raw.calls as { maintenance: Record<string, string> }).maintenance.run = "offered";
+    const declared = raw.engines[0] as EditableEngine;
+    declared.facets.maintenance = ["vacuum", "kill"];
+    declared.facets.maintenanceSpecs = [
+      { operation: "vacuum", label: "Vacuum", perEntity: false, global: true },
+      { operation: "kill", label: "End", perEntity: false, global: false },
+    ].map((spec) => ({ title: null, description: null, confirmation: null, preview: false, kinds: null, ...spec }));
+    const verdict = VALIDATOR.validate(raw);
+    if (!verdict.admitted) throw new Error(JSON.stringify(verdict.refusals.slice(0, 3)));
+    installServerCatalog(
+      composeServerCatalog([admittedFor("acme-maintlist", verdict.manifest)], [], STUDIO_GRANT_REGISTER),
+    );
+    const packaged = servedRecord("acmemaintlist");
+    expect(packaged.maintenance).toEqual(["vacuum", "kill"]);
+    expect(packaged.maintenance as readonly string[]).toBe(
+      verdict.manifest.engines[0]?.facets.maintenance as readonly string[],
+    );
+    expect(packaged.offers.connectionDeclarations).toBe(false);
   });
 
   test("every record carries the statement language data its declaration states, by reference: a legacy engine's projected data, a package's admitted data, null where none is stated", () => {

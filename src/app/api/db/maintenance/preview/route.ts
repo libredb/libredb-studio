@@ -85,12 +85,12 @@ export async function POST(request: Request) {
 
     // The maintenance route's two operation checks: the engine facets row before any provider is built, and the
     // connected server's declaration after, each refused 400 FACET_NOT_OFFERED.
-    assertMaintenanceOffered(connection.type, type);
+    assertMaintenanceOffered(servedEngineRecord(connection.type), type);
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
-    assertMaintenanceAccepted(connection.type, type, capabilities);
+    assertMaintenanceAccepted(servedEngineRecord(connection.type), type, capabilities);
 
     // The maintenance route's placement gate, for the one placement a preview has: a named object. It speaks only
     // where the provider offers the other placement, which is that route's reading of a spec with both halves false.

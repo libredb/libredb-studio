@@ -51,6 +51,8 @@
  *   it (`servedLanguageData` in ./operations/served-language-data);
  * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
  *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
+ * - `maintenance`: the maintenance operations the engine offers before Studio connects, a legacy engine's engine facets
+ *   row's list and a package engine's declared one, which the maintenance routes read before any open;
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *
@@ -125,6 +127,7 @@ import type { DeclaredSession } from "@/lib/provider-host/core/contract-session"
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
+import type { MaintenanceOperation } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import {
   PackageEngineUnsupportedError,
@@ -228,6 +231,12 @@ export interface EngineOffers {
    */
   readonly executionProfiles: boolean;
   /**
+   * A provider built without connecting that answers its per-connection facts (`readProviderDeclarations` in
+   * ./factory): fleet health reads whether a connection resumes billed compute from it before it reads the
+   * connection's health. A package's engine states no per-connection fact (M-63), so its rows are health-checked.
+   */
+  readonly connectionDeclarations: boolean;
+  /**
    * The object edit plan and the edit apply (`POST /api/db/objects/edit-plan` and `/edit-apply`), built by a legacy
    * provider's edit builder; the provider contract has no edit call yet, so a package's engine is refused them by this
    * offer before any open (`handleObjectRequest` in src/lib/api/object-route.ts).
@@ -281,6 +290,13 @@ export interface EngineRecord {
   readonly statementLanguageData: StatementLanguageData;
   /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */
   readonly explainReading: StatementReading["explainReading"];
+  /**
+   * The maintenance operations the engine offers before Studio connects, in its declaration's order: a legacy engine's
+   * `ENGINE_FACETS` row (./engine-facets), which the facets census holds equal to its declaration, and a package
+   * engine's declared `facets.maintenance`. The maintenance routes refuse any other operation by name before any open
+   * (`assertMaintenanceOffered` in ./engine-facets/maintenance).
+   */
+  readonly maintenance: readonly MaintenanceOperation[];
   readonly offers: EngineOffers;
 }
 

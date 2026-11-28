@@ -20,6 +20,7 @@ import type { FieldName } from "@libredb/provider-sdk/manifest";
 import * as grants from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CONNECTION_FORM_FUNCTIONS, type ConnectionFieldRule, packageFieldRules } from "@/lib/db/connection-form";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
   type AuthoredDeclaration,
   projectCatalog,
@@ -226,6 +227,14 @@ describe("the legacy adapter's records", () => {
     }
   });
 
+  test("each legacy record's maintenance is its engine facets row's list, frozen", () => {
+    for (const id of SHIPPED_DATABASE_TYPES) {
+      const { maintenance } = legacyRecord(id);
+      expect([id, maintenance]).toEqual([id, ENGINE_FACETS[id].maintenance]);
+      expect([id, Object.isFrozen(maintenance)]).toEqual([id, true]);
+    }
+  });
+
   test("each legacy record's statement grammar is its sqlGrammarFor row", () => {
     for (const id of SHIPPED_DATABASE_TYPES) {
       expect(legacyRecord(id).statementGrammar).toBe(sqlGrammarFor(id).grammar);
@@ -245,6 +254,7 @@ describe("the legacy adapter's records", () => {
       executionProfiles: true,
       objectEdit: true,
       keyScan: true,
+      connectionDeclarations: true,
     });
     const version = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
     expect([LEGACY_SOURCE_NAME, LEGACY_SOURCE_VERSION]).toEqual(["@libredb/studio", version]);

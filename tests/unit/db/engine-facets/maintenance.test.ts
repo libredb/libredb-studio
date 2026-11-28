@@ -8,8 +8,8 @@ import {
 } from "@/lib/db/engine-facets/maintenance";
 import { FacetNotOfferedError } from "@/lib/db/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
-import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 /** The error `run` throws, failing the test when it throws nothing. */
 function thrownBy(run: () => void): unknown {
@@ -23,12 +23,12 @@ function thrownBy(run: () => void): unknown {
 
 describe("assertMaintenanceOffered: the engine facets row before any provider", () => {
   test("a declared operation passes for its engine", () => {
-    expect(() => assertMaintenanceOffered("postgres", "vacuum")).not.toThrow();
-    expect(() => assertMaintenanceOffered("trino", "kill")).not.toThrow();
+    expect(() => assertMaintenanceOffered(servedEngineRecord("postgres"), "vacuum")).not.toThrow();
+    expect(() => assertMaintenanceOffered(servedEngineRecord("trino"), "kill")).not.toThrow();
   });
 
   test("an operation the engine does not offer is refused by name, with the operations it offers", () => {
-    const error = thrownBy(() => assertMaintenanceOffered("mysql", "vacuum"));
+    const error = thrownBy(() => assertMaintenanceOffered(servedEngineRecord("mysql"), "vacuum"));
     expect(error).toBeInstanceOf(FacetNotOfferedError);
     const refusal = error as FacetNotOfferedError;
     expect(refusal.code).toBe(ApiErrorCode.FACET_NOT_OFFERED);
@@ -44,7 +44,9 @@ describe("assertMaintenanceOffered: the engine facets row before any provider", 
   });
 
   test("an engine that offers no maintenance refuses every operation and says it offers none", () => {
-    const error = thrownBy(() => assertMaintenanceOffered("kafka", "vacuum")) as FacetNotOfferedError;
+    const error = thrownBy(() =>
+      assertMaintenanceOffered(servedEngineRecord("kafka"), "vacuum"),
+    ) as FacetNotOfferedError;
     expect(error).toBeInstanceOf(FacetNotOfferedError);
     expect(error.provider).toBe("kafka");
     expect(error.message).toBe(
@@ -55,7 +57,9 @@ describe("assertMaintenanceOffered: the engine facets row before any provider", 
   test.each(["constructor", "__proto__", "toString"])(
     "a prototype key is not an operation any engine offers: %s",
     (key) => {
-      const error = thrownBy(() => assertMaintenanceOffered("postgres", key)) as FacetNotOfferedError;
+      const error = thrownBy(() =>
+        assertMaintenanceOffered(servedEngineRecord("postgres"), key),
+      ) as FacetNotOfferedError;
       expect(error).toBeInstanceOf(FacetNotOfferedError);
       expect(error.operation).toBe(key);
       expect(error.message.startsWith(`${JSON.stringify(key)} is not a maintenance operation`)).toBe(true);
@@ -64,21 +68,19 @@ describe("assertMaintenanceOffered: the engine facets row before any provider", 
 
   test("a refused operation is quoted on one line", () => {
     const operation = "va\u2028cuum\n";
-    const error = thrownBy(() => assertMaintenanceOffered("postgres", operation)) as FacetNotOfferedError;
+    const error = thrownBy(() =>
+      assertMaintenanceOffered(servedEngineRecord("postgres"), operation),
+    ) as FacetNotOfferedError;
     expect(error.operation).toBe(operation);
     expect(error.message.startsWith(`${quoteTypeId(operation)} is not a maintenance operation`)).toBe(true);
     expect(error.message).not.toMatch(/[\n\u2028]/);
-  });
-
-  test.each(OUTSIDE_THE_UNION)("a type that is not a type id is refused by name: %s", (_label, value) => {
-    expect(refusalThrownBy(() => assertMaintenanceOffered(value, "vacuum"))).toEqual(refusalOf(value));
   });
 });
 
 describe("assertMaintenanceAccepted: the connected server's declaration", () => {
   test("after connect, an operation the server accepts passes", () => {
     expect(() =>
-      assertMaintenanceAccepted("postgres", "vacuum", {
+      assertMaintenanceAccepted(servedEngineRecord("postgres"), "vacuum", {
         supportsMaintenance: true,
         maintenanceOperations: ["vacuum", "analyze", "kill"],
       }),
@@ -87,7 +89,7 @@ describe("assertMaintenanceAccepted: the connected server's declaration", () => 
 
   test("after connect, an operation the server does not accept is refused with what it accepts", () => {
     const error = thrownBy(() =>
-      assertMaintenanceAccepted("postgres", "reindex", {
+      assertMaintenanceAccepted(servedEngineRecord("postgres"), "reindex", {
         supportsMaintenance: true,
         maintenanceOperations: ["vacuum", "analyze", "kill"],
       }),
@@ -107,7 +109,7 @@ describe("assertMaintenanceAccepted: the connected server's declaration", () => 
 
   test("after connect, a server that accepts no maintenance is refused saying it accepts none", () => {
     const error = thrownBy(() =>
-      assertMaintenanceAccepted("postgres", "vacuum", {
+      assertMaintenanceAccepted(servedEngineRecord("postgres"), "vacuum", {
         supportsMaintenance: false,
         maintenanceOperations: ["vacuum"],
       }),
@@ -115,6 +117,59 @@ describe("assertMaintenanceAccepted: the connected server's declaration", () => 
     expect(error).toBeInstanceOf(FacetNotOfferedError);
     expect(error.message).toBe(
       '"vacuum" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts none; nothing was run.',
+    );
+  });
+});
+
+/**
+ * A package engine's record as the two checks read it: its display name, its maintenance list and no legacy provider.
+ * Built as a literal, since the checks read nothing else of a record.
+ */
+function packageRecord(maintenance: readonly string[]): EngineRecord {
+  return {
+    id: "acmemaintcheck",
+    displayName: "Acme Maintenance Check",
+    maintenance,
+    offers: { legacyProvider: false },
+  } as unknown as EngineRecord;
+}
+
+describe("both checks read a package engine's record", () => {
+  test("a package record's operation outside its list, or one its session does not accept, is refused naming its display name and no legacy provider", () => {
+    const listed = packageRecord(["vacuum", "kill"]);
+    expect(() => assertMaintenanceOffered(listed, "vacuum")).not.toThrow();
+    const notListed = thrownBy(() => assertMaintenanceOffered(listed, "analyze")) as FacetNotOfferedError;
+    expect(notListed).toBeInstanceOf(FacetNotOfferedError);
+    expect([notListed.provider, notListed.facet, notListed.operation, notListed.code]).toEqual([
+      undefined,
+      "maintenance",
+      "analyze",
+      ApiErrorCode.FACET_NOT_OFFERED,
+    ]);
+    expect(notListed.message).toBe(
+      '"analyze" is not a maintenance operation LibreDB Studio offers on Acme Maintenance Check, which offers vacuum, kill; no connection was opened and nothing was run.',
+    );
+    const none = thrownBy(() => assertMaintenanceOffered(packageRecord([]), "vacuum")) as FacetNotOfferedError;
+    expect(none.message).toBe(
+      '"vacuum" is not a maintenance operation LibreDB Studio offers on Acme Maintenance Check, which offers none; no connection was opened and nothing was run.',
+    );
+    const prototypeKey = thrownBy(() => assertMaintenanceOffered(listed, "constructor")) as FacetNotOfferedError;
+    expect(prototypeKey.operation).toBe("constructor");
+
+    expect(() =>
+      assertMaintenanceAccepted(listed, "vacuum", { supportsMaintenance: true, maintenanceOperations: ["vacuum"] }),
+    ).not.toThrow();
+    const notAccepted = thrownBy(() =>
+      assertMaintenanceAccepted(listed, "kill", { supportsMaintenance: false, maintenanceOperations: [] }),
+    ) as FacetNotOfferedError;
+    expect(notAccepted).toBeInstanceOf(FacetNotOfferedError);
+    expect([notAccepted.provider, notAccepted.facet, notAccepted.operation]).toEqual([
+      undefined,
+      "maintenance",
+      "kill",
+    ]);
+    expect(notAccepted.message).toBe(
+      '"kill" is not a maintenance operation the Acme Maintenance Check server this connection reaches accepts, which accepts none; nothing was run.',
     );
   });
 });

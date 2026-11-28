@@ -75,6 +75,7 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   executionProfiles: false,
   objectEdit: false,
   keyScan: false,
+  connectionDeclarations: false,
 });
 
 /** An admitted package as boot hands it to the composer. */
@@ -333,6 +334,8 @@ export function composeServerCatalog(
         statementLanguageData: engine.statementLanguageData,
         // Neither explain value is the restrictive one, so the gate reads a package's statements under both (S-8).
         explainReading: "either",
+        // The frozen manifest's list, the one the session's declared maintenance above holds by reference.
+        maintenance: engine.facets.maintenance,
         offers: PACKAGE_OFFERS,
       }) as EngineRecord,
     );

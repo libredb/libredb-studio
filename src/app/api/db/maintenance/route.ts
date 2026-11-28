@@ -119,7 +119,7 @@ export async function POST(request: Request) {
 
     // The engine facets row (FND-4), read before any provider is built: an operation the engine does not offer is
     // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
-    assertMaintenanceOffered(connection.type, type);
+    assertMaintenanceOffered(servedEngineRecord(connection.type), type);
 
     // A kill runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so it never waits for
     // a connection the editor's statements hold; every other operation runs on the editor's provider.
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
 
     // The connected server may accept fewer operations than its engine's row (PostgreSQL and MySQL narrow at
     // connect), so the provider's own declaration is read again, and a refusal answers the same code.
-    assertMaintenanceAccepted(connection.type, type, capabilities);
+    assertMaintenanceAccepted(servedEngineRecord(connection.type), type, capabilities);
 
     // `maintenanceOperations` above says only that the operation EXISTS here. What KIND of
     // target it takes is a separate declaration - `maintenanceOperationSpecs` - and until
