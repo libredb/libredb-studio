@@ -1,6 +1,7 @@
 import {
   ANSWER_LIST_MAX,
   type CallContext,
+  checkMonitoringFacet,
   type DatabaseOverview,
   deadlineSignal,
   type HealthInfo,
@@ -9,12 +10,16 @@ import {
   type MonitoringPanelRequest,
   type PoolStats,
 } from "@libredb/provider-sdk/calls";
-import { callContext, contextOn, EXECUTE_SLACK_MS, executeDeadline, statementTimeout } from "@/lib/api/editor-query";
+import { callContext, contextOn, EXECUTE_SLACK_MS, executeDeadlineFor } from "@/lib/api/editor-query";
+import { packageFailureAnswer } from "@/lib/api/package-errors";
+import { markedCall, type MonitoringTarget } from "@/lib/api/session-target";
 import { memberOf, type PanelMember, readDeclaredPanels } from "@/lib/db/engine-facets/monitoring";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { waitedSeconds } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import type { DatabaseProvider, MonitoringData, MonitoringOptions } from "@/lib/db/types";
+import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
+import type { MonitoringData, MonitoringOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import {
   type BudgetView,
@@ -27,9 +32,8 @@ import {
 } from "@/lib/provider-host/access";
 import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
-import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
+import type { HealthSession } from "@/lib/provider-host/core/monitoring";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
 /*
  * MONITORING AND HEALTH ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-74, C-75 and C-76).
@@ -37,16 +41,19 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * `providerMonitoring` is the caller facade of the monitoring and pool-stats routes, `POST /api/db/monitoring` and
  * `POST /api/db/pool-stats`, of the health route, `POST /api/db/health`, and of fleet health's health and overview
  * reads, `POST /api/admin/fleet-health`. Each panel read, each pool statistics read and each health read is one host
- * core call on the legacy bridge's session of the provider the route resolved, built as `objectTree` builds it. The
- * core is the one the process's composition root installed, read before anything else, so a read made before the
- * install fails by name and reaches no provider.
+ * core call on the session of the target the route hands it (`MonitoringTarget` in src/lib/api/session-target.ts), a
+ * legacy provider's bridged session (`providerMonitoringTarget`) or a provider package's, under the target's
+ * environment, counted on the target's entry while it runs (`markedCall`). The core is the one the process's
+ * composition root installed, read before anything else, so a read made before the install fails by name and reaches
+ * no provider. A dashboard read on a session that does not offer `monitoring.panel` is refused by name before any call,
+ * `FacetNotOfferedError` outcome not-sent (clause C-111), while its health is still read.
  *
  * An overview read is one panel call for the overview, made only where the session's engine offers the overview panel,
  * and its answer is held to the overview panel's form by `memberOf`, the check the dashboard's orchestration makes; it
  * answers `undefined` with no call where the engine does not offer it.
  *
- * `readHealthWithin` is Test Connection's health read (src/lib/api/test-connection.ts): one health call on the session
- * of the provider the test holds, on the test's own deadline and its deadline signal by reference (`contextOn`), so the
+ * `readSessionHealthWithin` is Test Connection's health read (src/lib/api/test-connection.ts): one health call on the
+ * session the test holds, on the test's own deadline and its deadline signal by reference (`contextOn`), so the
  * test keeps one deadline. It answers the health, or that the test's wait ended, which the test answers in its own
  * error, since its deadline is its connect budget and its error class its own.
  *
@@ -54,39 +61,46 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * here over the core's panel calls: it asks only the panels the session's engine offers and the caller requests, each
  * through one fresh panel request, holds each answer to the requested panel's form, and answers the four panel states.
  * It runs in the calling bundle, since the core holds no Studio class and no `mapDatabaseError`. A dashboard whose
- * panels failed with several sentences answers `mapDatabaseError` of the joined sentences for the session's engine,
+ * panels failed with several sentences answers `mapDatabaseError` of the joined sentences for the engine's legacy type,
  * which is what every provider's own `mapError` does: no provider overrides it, which
- * tests/isolated/monitoring-panels-census.test.ts holds.
+ * tests/isolated/monitoring-panels-census.test.ts holds. For a record with no legacy type, a provider package's, the
+ * joined sentences are answered as the plain `Error` the orchestration built, since each is already
+ * `packageFailureAnswer`'s.
  *
- * Deadlines. Each read waits until its own deadline, `executeDeadline` taken at that read's start, the statement
- * timeout plus `EXECUTE_SLACK_MS`, and until the caller's signal, the request's: the rule each tree read follows. The
- * orchestration starts every panel read of a dashboard in one turn, within 0.06 ms of each other as measured on
- * PostgreSQL on the editor's pool and on a pool of two (2026-11-24), so a per-read deadline is the dashboard's to within
- * that, and the dashboard has no deadline of its own.
+ * Deadlines. Each read waits until its own deadline, `executeDeadlineFor` taken at that read's start, the target's
+ * statement timeout plus `EXECUTE_SLACK_MS`, and until the caller's signal, the request's: the rule each tree read
+ * follows. The orchestration starts every panel read of a dashboard in one turn, within 0.06 ms of each other as
+ * measured on PostgreSQL on the editor's pool and on a pool of two (2026-11-24), so a per-read deadline is the
+ * dashboard's to within that, and the dashboard has no deadline of its own.
  *
  * `readGrantedPanel` and `readGrantedHealth` are the agent's curated readings' reads (src/lib/agent/tools.ts, clause
- * C-76): one panel call or one health call on the session of the provider the run acquired, under the deadline its call
- * was granted and, as its caller's signal, one that never aborts (`driveCaller`), since the agent's drive has none.
- * Each reads the core and builds the session synchronously, so a read made before the install throws
+ * C-76): one panel call or one health call on the session of the target the run built for the provider it acquired,
+ * under the deadline its call was granted and, as its caller's signal, one that never aborts (`driveCaller`), since the
+ * agent's drive has none. Each reads the core synchronously, so a read made before the install throws
  * `HostCoreBootOrderError` before any promise, and builds a fresh request copy and a fresh context of the grant's
- * deadline, its deadline signal and the empty environment. A panel the session does not offer answers `not-offered`
- * with no call. A read its deadline stopped hands the stopped call's settlement to the grant's `holdUntilSettled`, so
- * the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the grant's sentence.
+ * deadline, its deadline signal and the target's environment, the call counted on the target's entry. Their failures
+ * are answered as raised: the agent acquires only a legacy provider. A panel the session does not offer answers
+ * `not-offered` with no call. A read its deadline stopped hands the stopped call's settlement to the grant's
+ * `holdUntilSettled`, so the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the
+ * grant's sentence.
  *
  * Answers. A read answers the provider's own answer by reference, which the host core read with its call's SDK check
  * (`checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, clause C-112), and throws every refusal and stop as
- * the accessor's error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
- * not-sent when refused before the call and unknown once the provider was called, or a defect of Studio's bridge. A
- * provider's error passes as the same object. A read's failure after its wait ended is logged by route, facet, panel,
+ * the accessor's error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its
+ * deadline, outcome not-sent when refused before the call and unknown once the provider was called, or a defect of
+ * Studio's bridge. A route facade's read passes every failure through `packageFailureAnswer` (./package-errors, clause
+ * C-112) for the engine record it was handed: a legacy record's provider error and Studio's own error pass as the same
+ * object, and a provider package's failure is logged once and answered by the record's grant, a failed panel of a
+ * dashboard holding that answer's sentence. A read's failure after its wait ended is logged by route, facet, panel,
  * kind and code, never its text, and a later answer is dropped, since nothing waits on it.
  */
 
 /**
- * The monitoring and health of one provider as the monitoring, pool-stats, health and fleet health routes reach them.
+ * The monitoring and health of one session as the monitoring, pool-stats, health and fleet health routes reach them.
  * The calls hold no `this`.
  */
 export interface ProviderMonitoring {
-  /** Whether the bridged session offers `monitoring.poolStats`: the provider reads its pool statistics. */
+  /** Whether the session offers `monitoring.poolStats`: it reads its pool statistics. */
   readonly poolStatsOffered: boolean;
   readDashboard(options: MonitoringOptions): Promise<MonitoringData>;
   readPoolStats(): Promise<PoolStats>;
@@ -136,100 +150,98 @@ function answerOf<Answer>(
 }
 
 /**
- * The monitoring and health of `provider`, each panel read, pool statistics read and health read a host core call
- * under its own deadline, taken from `clock` at its start, and `caller`, its failures after the caller left logged
- * under `route`.
+ * The monitoring and health of `target`'s session, `engine`'s, each panel read, pool statistics read and health read a
+ * host core call under its own deadline, taken from `clock` at its start and the target's timeout, the target's
+ * environment and `caller`, counted on the target's entry while it runs; a failure of each answered through
+ * `packageFailureAnswer` under core's scrub `scrub`, and its failures after the caller left logged under `route`.
  */
 export function providerMonitoring(
-  provider: DatabaseProvider,
+  target: MonitoringTarget,
+  engine: EngineRecord,
+  scrub: ProviderTextScrub,
   caller: AbortSignal,
   route: string,
   clock: () => number = Date.now,
 ): ProviderMonitoring {
+  const { session } = target;
   /** The caller's view of a read, under its deadline sentence. */
   function viewOf(read: MonitoringRead): CallerView {
     return {
       caller,
-      deadlineSentence: `${READ_NAME[read]} did not answer within the statement timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
+      deadlineSentence: `${READ_NAME[read]} did not answer within the statement timeout of ${waitedSeconds(target.timeout())} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
     };
   }
 
-  /** One panel read of `session` through `core`, under its own deadline and `caller`. */
-  async function readPanelOf(
-    core: HostCore,
-    session: MonitoringSession,
-    request: MonitoringPanelRequest,
-  ): Promise<MonitoringPanelAnswer> {
-    const ctx = callContext(executeDeadline(provider, clock()), caller);
-    const record = await core.panelCall(session, request, ctx, {
-      late: monitoringLate(route, "panel", request.panel),
-    });
-    return answerOf(record, viewOf("panel"));
+  /**
+   * One host core call `call` of `read` under a fresh context, marked on the target, its record's answer; what the call
+   * or its record raises is thrown as `packageFailureAnswer` answers a failure of `noun`.
+   */
+  async function readOf<Answer>(
+    read: MonitoringRead,
+    noun: "panel read" | "pool statistics read" | "health",
+    call: (
+      ctx: CallContext,
+    ) => Promise<RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: Answer }>,
+  ): Promise<Answer> {
+    const ctx = callContext(executeDeadlineFor(target.timeout(), clock()), caller, target.env);
+    try {
+      return answerOf(await markedCall(target, () => call(ctx)), viewOf(read));
+    } catch (error) {
+      throw packageFailureAnswer(engine, noun, error, scrub, route);
+    }
+  }
+
+  /** One panel read of the session through `core`, under its own deadline and `caller`. */
+  function readPanelOf(core: HostCore, request: MonitoringPanelRequest): Promise<MonitoringPanelAnswer> {
+    return readOf("panel", "panel read", (ctx) =>
+      core.panelCall(session, request, ctx, { late: monitoringLate(route, "panel", request.panel) }),
+    );
   }
 
   return {
-    poolStatsOffered: bridgedConsole(provider, {}).session.calls.monitoring.poolStats === "offered",
+    poolStatsOffered: session.calls.monitoring.poolStats === "offered",
     readDashboard: async (options) => {
       const core = hostCore();
-      const { session } = bridgedConsole(provider, {});
-      const read = (request: MonitoringPanelRequest) => readPanelOf(core, session, request);
-      return readDeclaredPanels(read, session.panels, options, (error) => mapDatabaseError(error, provider.type));
+      // A session that does not offer panels is refused by name before any call (clause C-111).
+      const refusals = checkMonitoringFacet(session.calls, "panel");
+      if (refusals.length > 0) throw refusalError({ kind: "refused", called: false, refusals }, viewOf("panel"));
+      const read = (request: MonitoringPanelRequest) => readPanelOf(core, request);
+      // Several sentences joined are mapped for a legacy engine as its provider maps them; a package's are each already
+      // `packageFailureAnswer`'s, which a legacy driver's text rules have nothing to read in.
+      const type = legacyProviderType(engine);
+      return readDeclaredPanels(read, session.panels, options, (error) =>
+        type === undefined ? error : mapDatabaseError(error, type),
+      );
     },
     readPoolStats: async () => {
       const core = hostCore();
-      const { session } = bridgedConsole(provider, {});
-      const ctx = callContext(executeDeadline(provider, clock()), caller);
-      const record = await core.poolStatsCall(session, ctx, { late: monitoringLate(route, "poolStats") });
-      return answerOf(record, viewOf("poolStats"));
+      return readOf("poolStats", "pool statistics read", (ctx) =>
+        core.poolStatsCall(session, ctx, { late: monitoringLate(route, "poolStats") }),
+      );
     },
     readHealth: async () => {
       const core = hostCore();
-      const { session } = bridgedConsole(provider, {});
-      const ctx = callContext(executeDeadline(provider, clock()), caller);
-      const record = await core.healthCall(session, ctx, { late: monitoringLate(route, "health") });
-      return answerOf(record, viewOf("health"));
+      return readOf("health", "health", (ctx) =>
+        core.healthCall(session, ctx, { late: monitoringLate(route, "health") }),
+      );
     },
     readOverview: async () => {
       const core = hostCore();
-      const { session } = bridgedConsole(provider, {});
       if (session.panels.overview !== "offered") return undefined;
       const request = { panel: "overview" } as const;
-      return memberOf(request, await readPanelOf(core, session, request));
+      return memberOf(request, await readPanelOf(core, request));
     },
   };
-}
-
-/**
- * Test Connection's health read of `provider`, the provider the test holds: one host core health call on the bridged
- * session, its context's deadline `deadline` and its signal `signal` itself, the test's own wait
- * (docs/providers/CONTRACT.md, clauses C-56 and C-75). The promise answers the provider's health by reference, or
- * `ended` when the wait ended before the call or while it was pending; a health answer the host core refused
- * (`checkHealthAnswer`, clause C-112) rejects as the `HostDefectError` naming its refusals, whose author the caller reads
- * (`packageFailureAnswer` in ./package-errors); a failure after the wait ended is logged under `route` by kind and code.
- *
- * The host core is read and the session built before the call starts, synchronously, so a read made before the core
- * is installed throws `HostCoreBootOrderError` at once rather than as the promise's rejection: the caller starts the
- * read outside the code that answers a provider's health error, and the defect is never taken for one.
- *
- * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed.
- * @returns A promise that rejects with the provider's error as the same object.
- */
-export function readHealthWithin(
-  provider: DatabaseProvider,
-  deadline: number,
-  signal: AbortSignal,
-  route: string,
-): Promise<HealthWithin> {
-  const core = hostCore();
-  const { session } = bridgedConsole(provider, {});
-  return readSessionHealthWithin(core, session, contextOn(deadline, signal), route);
 }
 
 /**
  * Test Connection's health read of `session`, a session the test holds, a legacy provider's bridged one or a provider
  * package's own (docs/providers/CONTRACT.md, clause C-75; `testConnection` in ./test-connection): one health
  * call of `core` with the context `ctx`, the test's own deadline, its signal and the environment the session's calls
- * are given. Answers as `readHealthWithin` answers.
+ * are given. The promise answers the session's health by reference, or `ended` when the wait ended before the call or
+ * while it was pending; a health answer the host core refused (`checkHealthAnswer`, clause C-112) rejects as the
+ * `HostDefectError` naming its refusals, whose author the caller reads (`packageFailureAnswer` in ./package-errors); a
+ * failure after the wait ended is logged under `route` by kind and code.
  *
  * @returns A promise that rejects with the session's error as the same object.
  */
@@ -264,9 +276,9 @@ export type GrantedPanel<P extends MonitoringPanelRequest["panel"]> =
   | { readonly kind: "answered"; readonly member: PanelMember<P> }
   | { readonly kind: "not-offered" };
 
-/** A granted read's context: the grant's deadline, a signal that aborts at it alone, and the empty environment. */
-function grantedContext(grant: GrantedRead) {
-  return contextOn(grant.deadline, deadlineSignal(grant.deadline));
+/** A granted read's context: the grant's deadline, a signal that aborts at it alone, and the target's environment. */
+function grantedContext(grant: GrantedRead, target: MonitoringTarget) {
+  return contextOn(grant.deadline, deadlineSignal(grant.deadline), target.env);
 }
 
 /**
@@ -323,8 +335,9 @@ function panelNotOffered(record: RefusedRecord): boolean {
 }
 
 /**
- * One panel read of `provider` for the agent, on a fresh copy of `request`, within `grant`: one host core panel call on
- * the bridged session, its context the grant's deadline and that deadline's signal alone.
+ * One panel read of `target`'s session for the agent, on a fresh copy of `request`, within `grant`: one host core panel
+ * call on it, its context the grant's deadline, that deadline's signal alone and the target's environment, counted on
+ * the target's entry while it runs.
  *
  * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed.
  * @returns A promise of the panel's member by reference, or `not-offered` with no call where the session does not
@@ -332,32 +345,35 @@ function panelNotOffered(record: RefusedRecord): boolean {
  * after handing the stopped call's settlement to the grant's hold, and with the provider's error as the same object.
  */
 export function readGrantedPanel<R extends MonitoringPanelRequest>(
-  provider: DatabaseProvider,
+  target: MonitoringTarget,
   request: R,
   grant: GrantedRead,
 ): Promise<GrantedPanel<R["panel"]>> {
   const core = hostCore();
-  const { session } = bridgedConsole(provider, {});
   const ownRequest: R = { ...request };
   const late = monitoringLate(grant.route, "panel", request.panel);
-  return core.panelCall(session, ownRequest, grantedContext(grant), { late }).then((record) => {
+  const ctx = grantedContext(grant, target);
+  return markedCall(target, () => core.panelCall(target.session, ownRequest, ctx, { late })).then((record) => {
     if (record.kind === "refused" && panelNotOffered(record)) return { kind: "not-offered" };
     return { kind: "answered", member: memberOf(request, grantedAnswer(record, grant)) };
   });
 }
 
 /**
- * One health read of `provider` for the agent within `grant`: one host core health call on the bridged session, its
- * context the grant's deadline and that deadline's signal alone.
+ * One health read of `target`'s session for the agent within `grant`: one host core health call on it, its context the
+ * grant's deadline, that deadline's signal alone and the target's environment, counted on the target's entry while it
+ * runs.
  *
  * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed.
  * @returns A promise of the provider's health by reference; it rejects as `readGrantedPanel`'s does.
  */
-export function readGrantedHealth(provider: DatabaseProvider, grant: GrantedRead): Promise<HealthInfo> {
+export function readGrantedHealth(target: MonitoringTarget, grant: GrantedRead): Promise<HealthInfo> {
   const core = hostCore();
-  const { session } = bridgedConsole(provider, {});
   const late = monitoringLate(grant.route, "health");
-  return core.healthCall(session, grantedContext(grant), { late }).then((record) => grantedAnswer(record, grant));
+  const ctx = grantedContext(grant, target);
+  return markedCall(target, () => core.healthCall(target.session, ctx, { late })).then((record) =>
+    grantedAnswer(record, grant),
+  );
 }
 
 /** The list each monitoring limit option bounds, whose `ANSWER_LIST_MAX` bound is the most that limit may be. */

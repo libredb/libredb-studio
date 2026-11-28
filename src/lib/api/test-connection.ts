@@ -5,8 +5,10 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import { contextOn } from "@/lib/api/editor-query";
 import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import { type HealthWithin, readHealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
+import { type HealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, waitedSeconds } from "@/lib/db/errors";
@@ -165,16 +167,17 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *   `"code-only"`, a package's is answered with Studio's sentence naming its code, or, for a health answer the host
  *   core refused (`checkHealthAnswer`), naming the rules it broke as the package's defect, while Studio's own failure
  *   is raised as itself.
- * The health read is one host core health call on the session the test holds, a legacy provider's bridged one
- * (`readHealthWithin`, src/lib/api/provider-monitoring.ts; clause C-75) or a package's own (`readSessionHealthWithin`),
- * on the test's own deadline and its deadline signal; a health failure after that deadline is logged by kind and
- * code. At that deadline it rejects with a `ConnectionError` naming the budget, never a caution or a degraded
- * success: a one-shot tunnel closes at once, a provider this test built is closed once its connect settles, since no
- * provider promises a disconnect during its connect, and one measured there (PostgreSQL, SQL Server) frees nothing
- * sooner, a provider already connected is closed at once, and a package's session the package answers after the stop
- * is closed by the host core. A package's session is closed under a cleanup context, waited for at most the
- * teardown's close deadline (`teardownContractSession` in src/lib/provider-host/core/contract-session.ts), a close
- * that fails or is cut logged by kind and code and never changing the answer.
+ * The health read is one host core health call (`readSessionHealthWithin`, src/lib/api/provider-monitoring.ts; clause
+ * C-75) on the session the test holds, a legacy provider's bridged one (`providerMonitoringTarget`,
+ * src/lib/api/session-target.ts) or a package's own, on the test's own deadline and its deadline signal; a health
+ * failure after that deadline is logged by kind and code. At that deadline it rejects with a `ConnectionError` naming
+ * the budget, never a caution or a degraded success: a one-shot tunnel closes at once, a provider this test built is
+ * closed once its connect settles, since no provider promises a disconnect during its connect, and one measured there
+ * (PostgreSQL, SQL Server) frees nothing sooner, a provider already connected is closed at once, and a package's
+ * session the package answers after the stop is closed by the host core. A package's session is closed under a cleanup
+ * context, waited for at most the teardown's close deadline (`teardownContractSession` in
+ * src/lib/provider-host/core/contract-session.ts), a close that fails or is cut logged by kind and code and never
+ * changing the answer.
  *
  * Every provider text the answer carries passes core's scrub of `connection` (`connectionTextScrub`): a caution field
  * and the health failure's sentence that hold a credential of the connection are withheld.
@@ -321,16 +324,11 @@ export async function testConnection(
         is omitted with it: the elapsed time of a read that failed is not a round trip.
       */
       const startTime = Date.now();
-      // Started outside the `try` below: a host core not yet installed throws here by name, never a degraded success.
-      const reading =
-        held.form === "provider"
-          ? readHealthWithin(held.provider, now + budget, deadline, route)
-          : readSessionHealthWithin(
-              hostCore(),
-              held.session,
-              { deadline: now + budget, signal: deadline, env: held.env },
-              route,
-            );
+      // Started outside the `try` below: a host core not yet installed throws here by name, never a degraded success,
+      // and before any session is built.
+      const core = hostCore();
+      const { session, env } = held.form === "provider" ? providerMonitoringTarget(held.provider) : held;
+      const reading = readSessionHealthWithin(core, session, contextOn(now + budget, deadline, env), route);
       let health: HealthWithin;
       try {
         health = await reading;

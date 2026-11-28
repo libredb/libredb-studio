@@ -21,20 +21,24 @@ import {
   type HealthInfo,
   type MonitoringPanelRequest,
 } from "@libredb/provider-sdk/calls";
-import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
+import { contextOn, EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
+import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import {
   type GrantedRead,
   monitoringOptionsRefusal,
   providerMonitoring,
   readGrantedHealth,
   readGrantedPanel,
-  readHealthWithin,
+  readSessionHealthWithin,
 } from "@/lib/api/provider-monitoring";
+import { type MonitoringTarget, providerMonitoringTarget } from "@/lib/api/session-target";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
-import { errorOutcome } from "@/lib/db/error-record";
-import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
+import { errorCode, errorOutcome } from "@/lib/db/error-record";
+import { FacetNotOfferedError, QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
@@ -68,6 +72,31 @@ function providerOf(queryTimeout?: number, extra: Record<string, unknown> = {}):
     config: { id: "c1", name: "Prod", type: "postgres", host: "db.internal", queryTimeout } as DatabaseConnection,
   });
   return Object.assign(provider, extra);
+}
+
+/**
+ * The monitoring facade of `provider` as a legacy route builds it: its bridged target, its engine's legacy record and
+ * core's scrub of its connection.
+ */
+function monitoringOf(provider: DatabaseProvider, caller: AbortSignal, route: string, clock?: () => number) {
+  return providerMonitoring(
+    providerMonitoringTarget(provider),
+    servedEngineRecord(provider.type),
+    providerTextScrub(provider.config, "any"),
+    caller,
+    route,
+    clock,
+  );
+}
+
+/** Test Connection's health read of `provider`'s bridged session within the wait of `deadline` and `signal`. */
+function healthWithin(provider: DatabaseProvider, deadline: number, signal: AbortSignal, route: string) {
+  return readSessionHealthWithin(
+    hostCore(),
+    providerMonitoringTarget(provider).session,
+    contextOn(deadline, signal),
+    route,
+  );
 }
 
 /** An overview panel's figures, of the SDK's `DatabaseOverview`, its text generated at run time. */
@@ -158,7 +187,7 @@ describe("providerMonitoring", () => {
         },
       }),
       async () => {
-        const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE, steppedClock);
+        const monitoring = monitoringOf(provider, new AbortController().signal, ROUTE, steppedClock);
         await monitoring.readDashboard({ includeStorage: false, slowQueryLimit: 3 });
         await monitoring.readPoolStats();
       },
@@ -196,10 +225,10 @@ describe("providerMonitoring", () => {
     mockOf(provider.getActiveSessions).mockImplementation(async () => {
       throw failed;
     });
-    const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
+    const monitoring = monitoringOf(provider, new AbortController().signal, ROUTE);
 
     const data = await monitoring.readDashboard({ includeIndexes: false });
-    const cassandra = await providerMonitoring(
+    const cassandra = await monitoringOf(
       createMockProvider({ type: "cassandra" }),
       new AbortController().signal,
       ROUTE,
@@ -216,7 +245,7 @@ describe("providerMonitoring", () => {
     expect(cassandra.notOffered).toHaveLength(4);
     expect(await monitoring.readPoolStats()).toBe(stats);
     expect(monitoring.poolStatsOffered).toBe(true);
-    expect(providerMonitoring(providerOf(), new AbortController().signal, ROUTE).poolStatsOffered).toBe(false);
+    expect(monitoringOf(providerOf(), new AbortController().signal, ROUTE).poolStatsOffered).toBe(false);
   });
 
   test("an error the provider raises reaches the caller as the same object, and several sentences answer the engine's mapping of them", async () => {
@@ -229,7 +258,7 @@ describe("providerMonitoring", () => {
     void everyMember(one, async () => {
       throw thrown;
     });
-    const monitoring = providerMonitoring(one, new AbortController().signal, ROUTE);
+    const monitoring = monitoringOf(one, new AbortController().signal, ROUTE);
     expect(await failure(() => monitoring.readPoolStats())).toBe(thrown);
     expect(await failure(() => monitoring.readDashboard({}))).toBe(thrown);
 
@@ -241,9 +270,7 @@ describe("providerMonitoring", () => {
       at += 1;
       throw new Error(sentence);
     });
-    const mapped = await failure(() =>
-      providerMonitoring(several, new AbortController().signal, ROUTE).readDashboard({}),
-    );
+    const mapped = await failure(() => monitoringOf(several, new AbortController().signal, ROUTE).readDashboard({}));
     const expected = mapDatabaseError(new Error(sentences.join("; ")), "postgres");
     expect((mapped as Error).constructor).toBe(expected.constructor);
     expect((mapped as Error).message).toBe(expected.message);
@@ -260,7 +287,7 @@ describe("providerMonitoring", () => {
       const provider = providerOf();
       const reached = everyMember(provider, () => pending.promise);
       const caller = new AbortController();
-      const monitoring = providerMonitoring(provider, caller.signal, ROUTE);
+      const monitoring = monitoringOf(provider, caller.signal, ROUTE);
 
       const reading = failure(() => monitoring.readDashboard({}));
       await reached;
@@ -300,7 +327,7 @@ describe("providerMonitoring", () => {
         }),
       });
       const caller = new AbortController();
-      const reading = failure(() => providerMonitoring(provider, caller.signal, ROUTE).readPoolStats());
+      const reading = failure(() => monitoringOf(provider, caller.signal, ROUTE).readPoolStats());
       await reached.promise;
       caller.abort(new DOMException("The request went away.", "AbortError"));
       const left = await reading;
@@ -326,7 +353,7 @@ describe("providerMonitoring", () => {
     const provider = providerOf(undefined, pooled());
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
-    const monitoring = providerMonitoring(provider, caller.signal, ROUTE);
+    const monitoring = monitoringOf(provider, caller.signal, ROUTE);
 
     const dashboard = await failure(() => monitoring.readDashboard({}));
     const pool = await failure(() => monitoring.readPoolStats());
@@ -344,7 +371,7 @@ describe("providerMonitoring", () => {
     const queryTimeout = 2_000;
     const provider = providerOf(queryTimeout, pooled());
     const behind = () => Date.now() - queryTimeout - EXECUTE_SLACK_MS - 1_000;
-    const late = providerMonitoring(provider, new AbortController().signal, ROUTE, behind);
+    const late = monitoringOf(provider, new AbortController().signal, ROUTE, behind);
     const refusedDashboard = await failure(() => late.readDashboard({}));
     const refusedPool = await failure(() => late.readPoolStats());
     const refusedOverview = await failure(() => late.readOverview());
@@ -363,7 +390,7 @@ describe("providerMonitoring", () => {
         }),
       }),
       async () => {
-        const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
+        const monitoring = monitoringOf(provider, new AbortController().signal, ROUTE);
         return [
           await failure(() => monitoring.readDashboard({})),
           await failure(() => monitoring.readPoolStats()),
@@ -407,7 +434,7 @@ describe("providerMonitoring", () => {
         }),
       }),
       async () => {
-        const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
+        const monitoring = monitoringOf(provider, new AbortController().signal, ROUTE);
         return [await failure(() => monitoring.readDashboard({})), await failure(() => monitoring.readPoolStats())];
       },
     );
@@ -428,13 +455,13 @@ describe("providerMonitoring", () => {
     forgetHostCore();
     let caught: unknown[];
     try {
-      const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
+      const monitoring = monitoringOf(provider, new AbortController().signal, ROUTE);
       caught = [
         await failure(() => monitoring.readDashboard({})),
         await failure(() => monitoring.readPoolStats()),
         await failure(() => monitoring.readHealth()),
         await failure(() => monitoring.readOverview()),
-        await failure(() => readHealthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
+        await failure(() => healthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
       ];
     } finally {
       installHostCore(real, "test");
@@ -504,7 +531,7 @@ describe("the health and overview reads", () => {
           return real.healthCall(session, ctx, ports);
         },
       }),
-      () => providerMonitoring(provider, caller.signal, ROUTE, steppedClock).readHealth(),
+      () => monitoringOf(provider, caller.signal, ROUTE, steppedClock).readHealth(),
     );
 
     expect(answered).toBe(health);
@@ -524,9 +551,7 @@ describe("the health and overview reads", () => {
       throw thrown;
     });
 
-    expect(await failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readHealth())).toBe(
-      thrown,
-    );
+    expect(await failure(() => monitoringOf(provider, new AbortController().signal, ROUTE).readHealth())).toBe(thrown);
   });
 
   test("a health read whose caller leaves is answered a stop at once, QueryCancelledError outcome unknown, and its later failure is logged by kind and code, never its text", async () => {
@@ -536,7 +561,7 @@ describe("the health and overview reads", () => {
       const provider = providerOf();
       const reached = healthMember(provider, () => pending.promise);
       const caller = new AbortController();
-      const reading = failure(() => providerMonitoring(provider, caller.signal, ROUTE).readHealth());
+      const reading = failure(() => monitoringOf(provider, caller.signal, ROUTE).readHealth());
       await reached;
       caller.abort(new DOMException("The request went away.", "AbortError"));
       const left = await reading;
@@ -556,7 +581,7 @@ describe("the health and overview reads", () => {
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
 
-    const gone = await failure(() => providerMonitoring(provider, caller.signal, ROUTE).readHealth());
+    const gone = await failure(() => monitoringOf(provider, caller.signal, ROUTE).readHealth());
 
     expect(gone).toBeInstanceOf(QueryCancelledError);
     expect(errorOutcome(gone)).toBe("not-sent");
@@ -574,11 +599,11 @@ describe("the health and overview reads", () => {
           settled: Promise.resolve(),
         }),
       }),
-      () => failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readHealth()),
+      () => failure(() => monitoringOf(provider, new AbortController().signal, ROUTE).readHealth()),
     );
     const behind = () => Date.now() - 60_000 - EXECUTE_SLACK_MS - 1_000;
     const refused = await failure(() =>
-      providerMonitoring(provider, new AbortController().signal, ROUTE, behind).readHealth(),
+      monitoringOf(provider, new AbortController().signal, ROUTE, behind).readHealth(),
     );
 
     expect(refused).toBeInstanceOf(StudioTimeoutRefusal);
@@ -615,8 +640,8 @@ describe("the health and overview reads", () => {
         },
       }),
       async () => [
-        await providerMonitoring(provider, caller.signal, ROUTE, steppedClock).readOverview(),
-        await providerMonitoring(s3, caller.signal, ROUTE, steppedClock).readOverview(),
+        await monitoringOf(provider, caller.signal, ROUTE, steppedClock).readOverview(),
+        await monitoringOf(s3, caller.signal, ROUTE, steppedClock).readOverview(),
       ],
     );
 
@@ -641,7 +666,7 @@ describe("the health and overview reads", () => {
           answer: { performance: { marker: marker() } } as never,
         }),
       }),
-      () => failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readOverview()),
+      () => failure(() => monitoringOf(provider, new AbortController().signal, ROUTE).readOverview()),
     );
 
     expect((wrong as Error).constructor).toBe(Error);
@@ -651,7 +676,7 @@ describe("the health and overview reads", () => {
   });
 });
 
-describe("readHealthWithin", () => {
+describe("readSessionHealthWithin", () => {
   test("a health read within a wait the caller holds runs on that deadline and that signal itself, and answers the provider's health by reference", async () => {
     const provider = providerOf();
     const health = healthOf();
@@ -667,7 +692,7 @@ describe("readHealthWithin", () => {
           return real.healthCall(session, ctx, ports);
         },
       }),
-      () => readHealthWithin(provider, deadline, signal, ROUTE),
+      () => healthWithin(provider, deadline, signal, ROUTE),
     );
 
     expect(within).toEqual({ kind: "answered", health });
@@ -685,12 +710,12 @@ describe("readHealthWithin", () => {
     const warned = await warningsOf(async () => {
       const ended = new AbortController();
       ended.abort(new DOMException("The test's deadline has passed.", "TimeoutError"));
-      expect(await readHealthWithin(before, Date.now() + 60_000, ended.signal, ROUTE)).toEqual({ kind: "ended" });
+      expect(await healthWithin(before, Date.now() + 60_000, ended.signal, ROUTE)).toEqual({ kind: "ended" });
 
       const pending = Promise.withResolvers<never>();
       const reached = healthMember(pendingProvider, () => pending.promise);
       const wait = new AbortController();
-      const reading = readHealthWithin(pendingProvider, Date.now() + 60_000, wait.signal, ROUTE);
+      const reading = healthWithin(pendingProvider, Date.now() + 60_000, wait.signal, ROUTE);
       await reached;
       wait.abort(new DOMException("The test's deadline has passed.", "TimeoutError"));
       expect(await reading).toEqual({ kind: "ended" });
@@ -712,9 +737,9 @@ describe("readHealthWithin", () => {
       throw thrown;
     });
 
-    expect(
-      await failure(() => readHealthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
-    ).toBe(thrown);
+    expect(await failure(() => healthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE))).toBe(
+      thrown,
+    );
   });
 });
 
@@ -760,7 +785,7 @@ describe("granted reads", () => {
           return real.panelCall(session, sent, ctx, ports);
         },
       }),
-      () => readGrantedPanel(provider, request, grant),
+      () => readGrantedPanel(providerMonitoringTarget(provider), request, grant),
     );
 
     expect(read).toEqual({ kind: "answered", member: tables });
@@ -785,8 +810,12 @@ describe("granted reads", () => {
     const grant = minuteGrant();
 
     expect(unoffered).toContain("storage");
-    expect(await readGrantedPanel(cassandra, { panel: "storage" }, grant)).toEqual({ kind: "not-offered" });
-    expect(await readGrantedPanel(lacking, { panel: "storage" }, grant)).toEqual({ kind: "not-offered" });
+    expect(await readGrantedPanel(providerMonitoringTarget(cassandra), { panel: "storage" }, grant)).toEqual({
+      kind: "not-offered",
+    });
+    expect(await readGrantedPanel(providerMonitoringTarget(lacking), { panel: "storage" }, grant)).toEqual({
+      kind: "not-offered",
+    });
     expect(mockOf(cassandra.getStorageStats)).not.toHaveBeenCalled();
     expect(grant.held).toEqual([]);
   });
@@ -795,8 +824,10 @@ describe("granted reads", () => {
     const provider = providerOf();
     const grant = grantOf(Date.now() - 1);
 
-    const panel = await failure(() => readGrantedPanel(provider, { panel: "storage" }, grant));
-    const health = await failure(() => readGrantedHealth(provider, grant));
+    const panel = await failure(() =>
+      readGrantedPanel(providerMonitoringTarget(provider), { panel: "storage" }, grant),
+    );
+    const health = await failure(() => readGrantedHealth(providerMonitoringTarget(provider), grant));
 
     for (const error of [panel, health]) {
       expect(error).toBeInstanceOf(StudioTimeoutRefusal);
@@ -816,7 +847,9 @@ describe("granted reads", () => {
     const grant = grantOf(Date.now() + 30);
     let settledSeen = false;
     const warned = await warningsOf(async () => {
-      const stopped = await failure(() => readGrantedPanel(provider, { panel: "activeSessions", limit: 5 }, grant));
+      const stopped = await failure(() =>
+        readGrantedPanel(providerMonitoringTarget(provider), { panel: "activeSessions", limit: 5 }, grant),
+      );
 
       expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
       expect((stopped as Error).message).toBe(grant.deadlineSentence);
@@ -853,10 +886,12 @@ describe("granted reads", () => {
       throw thrown;
     });
 
-    expect(await failure(() => readGrantedPanel(provider, { panel: "slowQueries", limit: 3 }, minuteGrant()))).toBe(
-      thrown,
-    );
-    expect(await failure(() => readGrantedHealth(provider, minuteGrant()))).toBe(thrown);
+    expect(
+      await failure(() =>
+        readGrantedPanel(providerMonitoringTarget(provider), { panel: "slowQueries", limit: 3 }, minuteGrant()),
+      ),
+    ).toBe(thrown);
+    expect(await failure(() => readGrantedHealth(providerMonitoringTarget(provider), minuteGrant()))).toBe(thrown);
   });
 
   test("a granted read before the host core is installed throws by name before any read", () => {
@@ -865,8 +900,10 @@ describe("granted reads", () => {
     const real = hostCore();
     forgetHostCore();
     try {
-      expect(() => readGrantedPanel(provider, { panel: "storage" }, grant)).toThrow(HostCoreBootOrderError);
-      expect(() => readGrantedHealth(provider, grant)).toThrow(HostCoreBootOrderError);
+      expect(() => readGrantedPanel(providerMonitoringTarget(provider), { panel: "storage" }, grant)).toThrow(
+        HostCoreBootOrderError,
+      );
+      expect(() => readGrantedHealth(providerMonitoringTarget(provider), grant)).toThrow(HostCoreBootOrderError);
     } finally {
       installHostCore(real, "test");
     }
@@ -890,7 +927,7 @@ describe("granted reads", () => {
           return real.healthCall(session, ctx, ports);
         },
       }),
-      () => readGrantedHealth(provider, grant),
+      () => readGrantedHealth(providerMonitoringTarget(provider), grant),
     );
 
     expect(answered).toBe(health);
@@ -903,7 +940,7 @@ describe("granted reads", () => {
     void healthMember(stalled, () => pending.promise);
     const short = grantOf(Date.now() + 30);
     const warned = await warningsOf(async () => {
-      const stopped = await failure(() => readGrantedHealth(stalled, short));
+      const stopped = await failure(() => readGrantedHealth(providerMonitoringTarget(stalled), short));
       expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
       expect((stopped as Error).message).toBe(short.deadlineSentence);
       expect(errorOutcome(stopped)).toBe("unknown");
@@ -954,5 +991,317 @@ describe("monitoringOptionsRefusal", () => {
     expect(monitoringOptionsRefusal({ schemaFilter: "", sessionLimit: 0 })).toBe(limit("sessionLimit"));
     const secret = marker();
     expect(monitoringOptionsRefusal({ schemaFilter: [secret] })).not.toContain(secret);
+  });
+});
+
+/** An engine record holding only what `packageFailureAnswer` reads: whether it offers a legacy provider, and its grant. */
+function engineOf(legacyProvider: boolean, ownWords: "scrubbed" | "code-only"): EngineRecord {
+  return { id: randomUUID(), offers: { legacyProvider }, grants: { ownWords } } as unknown as EngineRecord;
+}
+
+/** Core's scrub of a package connection's providers. */
+const packageScrub = () =>
+  providerTextScrub({ id: "c2", name: "Pkg", type: "postgres", host: "pkg.internal" } as DatabaseConnection, "any");
+
+/** A session's calls with `monitoring.panel` offered or not, pool statistics offered and every other call not. */
+function monitoringCalls(panel: "offered" | "not-offered") {
+  return {
+    console: {
+      execute: { honours: [] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "not-offered",
+    },
+    objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel, poolStats: "offered" },
+  } as unknown as MonitoringTarget["session"]["calls"];
+}
+
+/** The panels of the package session below: the overview and the tables, and no other. */
+const PACKAGE_PANELS = Object.freeze(
+  Object.fromEntries(
+    MONITORING_PANELS.map((panel) => [panel, panel === "overview" || panel === "tables" ? "offered" : "not-offered"]),
+  ),
+) as unknown as MonitoringTarget["session"]["panels"];
+
+/**
+ * A target of a session of the package form: a panel, pool statistics and health function recording each call's facet
+ * and context and answering an answer of its form, the overview and the tables offered, an environment of its own and
+ * run marks counted.
+ */
+function packageMonitoringTarget(panel: "offered" | "not-offered" = "offered", timeout = 2_000) {
+  const calls: { facet: string; ctx: CallContext }[] = [];
+  const marks: string[] = [];
+  const env = { get: () => undefined } as unknown as MonitoringTarget["env"];
+  const target: MonitoringTarget = {
+    session: {
+      calls: monitoringCalls(panel),
+      panels: PACKAGE_PANELS,
+      panel: async (request, ctx) => {
+        calls.push({ facet: request.panel, ctx });
+        return (request.panel === "overview" ? { overview: overviewOf() } : { tables: [] }) as never;
+      },
+      poolStats: async (ctx) => {
+        calls.push({ facet: "poolStats", ctx });
+        return { total: 4, idle: 1, active: 3, waiting: 0 };
+      },
+      health: async (ctx) => {
+        calls.push({ facet: "health", ctx });
+        return healthOf();
+      },
+    },
+    env,
+    timeout: () => timeout,
+    started: () => {
+      marks.push("started");
+    },
+    ended: (record) => {
+      marks.push(`ended ${record?.kind}`);
+    },
+  };
+  return { target, calls, marks, env };
+}
+
+/** The errors logged while `body` runs, `logger.error` restored afterwards. */
+async function errorsOf(body: () => Promise<void>): Promise<unknown[][]> {
+  const logged: unknown[][] = [];
+  const error = spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+    logged.push(args);
+  });
+  try {
+    await body();
+  } finally {
+    error.mockRestore();
+  }
+  return logged;
+}
+
+describe("the monitoring facades on a session target", () => {
+  test("the monitoring facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each call on the entry", async () => {
+    const { target, calls, marks, env } = packageMonitoringTarget("offered", 2_000);
+    const start = Date.now();
+    const engine = engineOf(false, "code-only");
+    const monitoring = providerMonitoring(
+      target,
+      engine,
+      packageScrub(),
+      new AbortController().signal,
+      ROUTE,
+      () => start,
+    );
+    expect(monitoring.poolStatsOffered).toBe(true);
+    const dashboard = await monitoring.readDashboard({});
+    expect(dashboard.tables).toEqual([]);
+    expect(dashboard.notOffered).toEqual(MONITORING_PANELS.filter((panel) => PACKAGE_PANELS[panel] === "not-offered"));
+    await monitoring.readPoolStats();
+    await monitoring.readHealth();
+    expect(await monitoring.readOverview()).toEqual(expect.objectContaining({ tableCount: 0 }));
+    expect(calls.map(({ facet }) => facet)).toEqual(["overview", "tables", "poolStats", "health", "overview"]);
+    for (const { ctx } of calls) {
+      expect(ctx.env).toBe(env);
+      expect(ctx.deadline).toBe(start + 2_000 + EXECUTE_SLACK_MS);
+    }
+    expect(marks).toEqual([
+      "started",
+      "started",
+      "ended answered",
+      "ended answered",
+      ...["poolStats", "health", "overview"].flatMap(() => ["started", "ended answered"]),
+    ]);
+
+    // The granted reads run on the target's session under its environment and the grant's deadline, each marked.
+    calls.length = 0;
+    marks.length = 0;
+    const grant = minuteGrant();
+    expect(await readGrantedPanel(target, { panel: "tables" }, grant)).toEqual({ kind: "answered", member: [] });
+    await readGrantedHealth(target, grant);
+    expect(calls.map(({ facet }) => facet)).toEqual(["tables", "health"]);
+    for (const { ctx } of calls) {
+      expect(ctx.env).toBe(env);
+      expect(ctx.deadline).toBe(grant.deadline);
+    }
+    expect(marks).toEqual(["started", "ended answered", "started", "ended answered"]);
+
+    // A call the session rejects ends its mark too, the granted read passing the failure as the same object.
+    const failed = packageMonitoringTarget();
+    const thrown = new Error(marker());
+    Object.assign(failed.target.session, { health: () => Promise.reject(thrown) });
+    expect(await failure(() => readGrantedHealth(failed.target, minuteGrant()))).toBe(thrown);
+    expect(failed.marks).toEqual(["started", "ended undefined"]);
+
+    // The bridge's session of a legacy provider is read the same way, under the provider's own statement timeout.
+    const provider = providerOf(4_000, pooled());
+    const bridged = providerMonitoringTarget(provider);
+    expect(bridged.timeout()).toBe(4_000);
+    const legacy = providerMonitoring(
+      bridged,
+      servedEngineRecord("postgres"),
+      providerTextScrub(provider.config, "any"),
+      new AbortController().signal,
+      ROUTE,
+    );
+    await legacy.readDashboard({});
+    await legacy.readPoolStats();
+    await legacy.readHealth();
+    for (const member of [...MEMBERS, "getPoolStats" as const, "getHealth" as const]) {
+      expect(mockOf((provider as unknown as Record<string, unknown>)[member])).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test("a package's failure of a panel, pool statistics or health read reaches the caller as packageFailureAnswer answers it, a dashboard's failed panel holding Studio's sentence where the package's words are code-only, and a legacy record's failure as the same object", async () => {
+    const codeOnly = engineOf(false, "code-only");
+    const thrown = new Error(marker());
+    const sentence = (call: string) =>
+      `The provider package's ${call} failed (${errorCode(thrown)}); the server's log holds its words.`;
+    const failing = packageMonitoringTarget();
+    Object.assign(failing.target.session, {
+      panel: async (request: MonitoringPanelRequest) => {
+        if (request.panel === "tables") throw thrown;
+        return { overview: overviewOf() };
+      },
+      poolStats: () => Promise.reject(thrown),
+      health: () => Promise.reject(thrown),
+    });
+    const caught: unknown[] = [];
+    const logged = await errorsOf(async () => {
+      const monitoring = providerMonitoring(
+        failing.target,
+        codeOnly,
+        packageScrub(),
+        new AbortController().signal,
+        ROUTE,
+      );
+      const dashboard = await monitoring.readDashboard({});
+      expect(dashboard.errors).toEqual({ tables: sentence("panel read") });
+      caught.push(await failure(() => monitoring.readPoolStats()), await failure(() => monitoring.readHealth()));
+    });
+    expect((caught[0] as Error).message).toBe(sentence("pool statistics read"));
+    expect((caught[1] as Error).message).toBe(sentence("health"));
+    expect(logged.map(([message]) => message)).toEqual([
+      "A provider package's panel read failed",
+      "A provider package's pool statistics read failed",
+      "A provider package's health failed",
+    ]);
+
+    // A health answer the core refused is the package's defect, named by its rule.
+    const unreadable = packageMonitoringTarget();
+    Object.assign(unreadable.target.session, { health: async () => ({ activeConnections: marker() }) });
+    let defect: unknown;
+    const defectLogged = await errorsOf(async () => {
+      defect = await failure(() =>
+        providerMonitoring(
+          unreadable.target,
+          codeOnly,
+          packageScrub(),
+          new AbortController().signal,
+          ROUTE,
+        ).readHealth(),
+      );
+    });
+    expect((defect as Error).message).toBe(
+      `${PACKAGE_DEFECT_PREFIX} it broke the rule health-answer-unreadable; the server's log names where.`,
+    );
+    expect(defectLogged).toHaveLength(1);
+
+    // A granted record's failure is answered as raised, logged once; several distinct sentences are joined unmapped.
+    const scrubbed = engineOf(false, "scrubbed");
+    const words = [`permission denied ${marker()}`, `permission denied ${marker()}`];
+    const several = packageMonitoringTarget();
+    Object.assign(several.target.session, {
+      panel: async (request: MonitoringPanelRequest) => {
+        throw new Error(request.panel === "overview" ? words[0] : words[1]);
+      },
+      health: () => Promise.reject(thrown),
+    });
+    let joined: unknown;
+    let raised: unknown;
+    const grantedLogged = await errorsOf(async () => {
+      const monitoring = providerMonitoring(
+        several.target,
+        scrubbed,
+        packageScrub(),
+        new AbortController().signal,
+        ROUTE,
+      );
+      joined = await failure(() => monitoring.readDashboard({}));
+      raised = await failure(() => monitoring.readHealth());
+    });
+    expect((joined as Error).constructor).toBe(Error);
+    expect((joined as Error).message).toBe(words.join("; "));
+    expect(raised).toBe(thrown);
+    expect(grantedLogged).toHaveLength(3);
+
+    // A legacy record's failure, and Studio's own failure on a package record, pass as the same object, logged nowhere.
+    const legacy = packageMonitoringTarget();
+    Object.assign(legacy.target.session, { health: () => Promise.reject(thrown) });
+    const gone = new AbortController();
+    gone.abort(new DOMException("The request went away.", "AbortError"));
+    let left: unknown;
+    let unbooted: unknown;
+    const studioLogged = await errorsOf(async () => {
+      const legacyRecord = { ...engineOf(true, "code-only") };
+      expect(
+        await failure(() =>
+          providerMonitoring(
+            legacy.target,
+            legacyRecord,
+            packageScrub(),
+            new AbortController().signal,
+            ROUTE,
+          ).readHealth(),
+        ),
+      ).toBe(thrown);
+      left = await failure(() =>
+        providerMonitoring(packageMonitoringTarget().target, codeOnly, packageScrub(), gone.signal, ROUTE).readHealth(),
+      );
+      const real = hostCore();
+      forgetHostCore();
+      try {
+        unbooted = await failure(() =>
+          providerMonitoring(
+            packageMonitoringTarget().target,
+            codeOnly,
+            packageScrub(),
+            new AbortController().signal,
+            ROUTE,
+          ).readPoolStats(),
+        );
+      } finally {
+        installHostCore(real, "test");
+      }
+    });
+    expect(left).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(left)).toBe("not-sent");
+    expect(unbooted).toBeInstanceOf(HostCoreBootOrderError);
+    expect(studioLogged).toEqual([]);
+  });
+
+  test("a target whose session does not offer monitoring.panel is refused the dashboard by name before any call, not-sent, while its health is still read", async () => {
+    const { target, calls, marks } = packageMonitoringTarget("not-offered");
+    const monitoring = providerMonitoring(
+      target,
+      engineOf(false, "code-only"),
+      packageScrub(),
+      new AbortController().signal,
+      ROUTE,
+    );
+
+    const refused = await failure(() => monitoring.readDashboard({}));
+    expect(refused).toBeInstanceOf(FacetNotOfferedError);
+    expect((refused as FacetNotOfferedError).message).toBe(
+      "This connection's provider package does not offer monitoring.panel, so Studio did not call it.",
+    );
+    expect([(refused as FacetNotOfferedError).facet, (refused as FacetNotOfferedError).operation]).toEqual([
+      "monitoring",
+      "panel",
+    ]);
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect(calls).toEqual([]);
+    expect(marks).toEqual([]);
+
+    await monitoring.readHealth();
+    expect(calls.map(({ facet }) => facet)).toEqual(["health"]);
+    expect(marks).toEqual(["started", "ended answered"]);
   });
 });

@@ -7,6 +7,9 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { providerMonitoring, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import {
@@ -361,7 +364,13 @@ describe("the sessions panel read through the bridge and the host core", () => {
 
   test("a server with more open transactions than the dashboard's default session limit answers that many", async () => {
     const provider = await holding(60);
-    const data = await providerMonitoring(provider, new AbortController().signal, "test").readDashboard({});
+    const data = await providerMonitoring(
+      providerMonitoringTarget(provider),
+      servedEngineRecord("neo4j"),
+      providerTextScrub(provider.config, "any"),
+      new AbortController().signal,
+      "test",
+    ).readDashboard({});
     expect(data.errors?.activeSessions).toBeUndefined();
     expect(data.activeSessions).toHaveLength(50);
   });
@@ -374,7 +383,11 @@ describe("the sessions panel read through the bridge and the host core", () => {
       route: "test",
       holdUntilSettled: () => {},
     };
-    const read = await readGrantedPanel(provider, { panel: "activeSessions", limit: 3 }, grant);
+    const read = await readGrantedPanel(
+      providerMonitoringTarget(provider),
+      { panel: "activeSessions", limit: 3 },
+      grant,
+    );
     expect(read.kind === "answered" ? read.member.map((session) => session.pid) : read.kind).toEqual([
       "neo4j-transaction-0",
       "neo4j-transaction-1",

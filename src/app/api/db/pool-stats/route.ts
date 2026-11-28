@@ -7,6 +7,8 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 /**
  * POST /api/db/pool-stats
@@ -35,7 +37,13 @@ export async function POST(request: NextRequest) {
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
 
-    const monitoring = providerMonitoring(provider, request.signal, "api/db/pool-stats");
+    const monitoring = providerMonitoring(
+      providerMonitoringTarget(provider),
+      servedEngineRecord(connection.type),
+      scrub,
+      request.signal,
+      "api/db/pool-stats",
+    );
     if (monitoring.poolStatsOffered) {
       return NextResponse.json(await monitoring.readPoolStats());
     }

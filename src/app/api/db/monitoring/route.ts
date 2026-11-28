@@ -9,6 +9,8 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { metadataProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
 import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 /**
  * POST /api/db/monitoring
@@ -77,9 +79,13 @@ export async function POST(req: NextRequest) {
     // The panels run on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so a dashboard
     // never waits for a connection the editor's statements hold.
     const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
-    const monitoringData = await providerMonitoring(provider, req.signal, "api/db/monitoring").readDashboard(
-      options ?? {},
-    );
+    const monitoringData = await providerMonitoring(
+      providerMonitoringTarget(provider),
+      servedEngineRecord(connection.type),
+      scrub,
+      req.signal,
+      "api/db/monitoring",
+    ).readDashboard(options ?? {});
     // The maintenance this connected server accepts (#1387). Read here, off the provider the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer
     // the type id's declaration, which offers PostgreSQL's and MySQL's whole sets to every

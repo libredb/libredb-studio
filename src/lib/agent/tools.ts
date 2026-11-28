@@ -74,7 +74,7 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
+import { type MonitoringTarget, providerMonitoringTarget, providerTreeTarget } from "@/lib/api/session-target";
 import { hostCore } from "@/lib/provider-host/instance";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runComposedStatement } from "@/lib/api/composed-statement";
@@ -3559,10 +3559,11 @@ const instant = (value: Date | undefined): string | null => (value === undefined
  * Every reading but `health` is one monitoring panel call through the host core, its
  * panel the one `AGENT_READING_PANELS` names for it, and `health` is the host core's
  * health call (`readGrantedPanel` and `readGrantedHealth` in
- * src/lib/api/provider-monitoring.ts). A panel the provider's session does not offer
- * answers `not-offered` with no call, so a provider that cannot serve a kind is
- * refused by name rather than crashed: the workflow's whole promise is that an engine
- * which cannot answer says so.
+ * src/lib/api/provider-monitoring.ts), each on the monitoring target of the provider the
+ * run acquired (`providerMonitoringTarget` in src/lib/api/session-target.ts). A panel
+ * the provider's session does not offer answers `not-offered` with no call, so a
+ * provider that cannot serve a kind is refused by name rather than crashed: the
+ * workflow's whole promise is that an engine which cannot answer says so.
  *
  * `schemaColumn` is what makes the `schema` selector mean the same thing on every
  * engine. The provider methods are asked to narrow where their signature allows it,
@@ -3589,11 +3590,11 @@ interface CuratedReading {
    */
   readonly scope?: (labels: ProviderLabels) => string | undefined;
   /**
-   * The reading's host call within `grant`, started synchronously, so a read made before the host core is installed
-   * throws by name rather than as the promise's rejection.
+   * The reading's host call on `target`'s session within `grant`, started synchronously, so a read made before the host
+   * core is installed throws by name rather than as the promise's rejection.
    */
   readonly read: (
-    provider: DatabaseProvider,
+    target: MonitoringTarget,
     input: AgentCuratedReadInput,
     limit: number,
     grant: GrantedRead,
@@ -3607,14 +3608,14 @@ type CuratedRows =
 
 const NOT_OFFERED: CuratedRows = Object.freeze({ kind: "not-offered" });
 
-/** One panel call for `request` within `grant`, its member projected by `project`. */
+/** One panel call on `target`'s session for `request` within `grant`, its member projected by `project`. */
 function panelRows<R extends MonitoringPanelRequest>(
-  provider: DatabaseProvider,
+  target: MonitoringTarget,
   request: R,
   grant: GrantedRead,
   project: (member: PanelMember<R["panel"]>) => Record<string, unknown>[],
 ): Promise<CuratedRows> {
-  return readGrantedPanel(provider, request, grant).then((read) =>
+  return readGrantedPanel(target, request, grant).then((read) =>
     read.kind === "answered" ? { kind: "answered", rows: project(read.member) } : NOT_OFFERED,
   );
 }
@@ -3678,8 +3679,8 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "waitEvent",
       "blocked",
     ],
-    read: (provider, _input, limit, grant) =>
-      panelRows(provider, { panel: AGENT_READING_PANELS.sessions, limit }, grant, (sessions) =>
+    read: (target, _input, limit, grant) =>
+      panelRows(target, { panel: AGENT_READING_PANELS.sessions, limit }, grant, (sessions) =>
         sessions.map((session) => ({
           pid: session.pid,
           user: session.user,
@@ -3699,8 +3700,8 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   "slow-queries": {
     label: "slow queries",
     fields: ["queryId", "query", "calls", "totalTime", "avgTime", "minTime", "maxTime", "rows"],
-    read: (provider, _input, limit, grant) =>
-      panelRows(provider, { panel: AGENT_READING_PANELS["slow-queries"], limit }, grant, (entries) =>
+    read: (target, _input, limit, grant) =>
+      panelRows(target, { panel: AGENT_READING_PANELS["slow-queries"], limit }, grant, (entries) =>
         entries.map((entry) => ({
           queryId: entry.queryId ?? null,
           query: entry.query,
@@ -3730,8 +3731,8 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "lastAnalyze",
       "bloatRatio",
     ],
-    read: (provider, input, _limit, grant) =>
-      panelRows(provider, schemaRequest(AGENT_READING_PANELS["table-stats"], input), grant, (tables) =>
+    read: (target, input, _limit, grant) =>
+      panelRows(target, schemaRequest(AGENT_READING_PANELS["table-stats"], input), grant, (tables) =>
         tables.map((table) => ({
           schemaName: table.schemaName,
           tableName: table.tableName,
@@ -3762,8 +3763,8 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "scans",
       "usageRatio",
     ],
-    read: (provider, input, _limit, grant) =>
-      panelRows(provider, schemaRequest(AGENT_READING_PANELS["index-stats"], input), grant, (indexes) =>
+    read: (target, input, _limit, grant) =>
+      panelRows(target, schemaRequest(AGENT_READING_PANELS["index-stats"], input), grant, (indexes) =>
         indexes.map((index) => ({
           schemaName: index.schemaName,
           tableName: index.tableName,
@@ -3781,8 +3782,8 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   storage: {
     label: "storage",
     fields: ["name", "location", "size", "sizeBytes", "usagePercent", "walSizeBytes"],
-    read: (provider, _input, _limit, grant) =>
-      panelRows(provider, { panel: AGENT_READING_PANELS.storage }, grant, (stores) =>
+    read: (target, _input, _limit, grant) =>
+      panelRows(target, { panel: AGENT_READING_PANELS.storage }, grant, (stores) =>
         stores.map((store) => ({
           name: store.name,
           location: store.location ?? null,
@@ -3796,7 +3797,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   health: {
     label: "health",
     fields: ["activeConnections", "databaseSize", "cacheHitRatio"],
-    read: (provider, _input, _limit, grant) => readGrantedHealth(provider, grant).then(healthRows),
+    read: (target, _input, _limit, grant) => readGrantedHealth(target, grant).then(healthRows),
   },
 } satisfies Record<CuratedOperationKind, CuratedReading>);
 
@@ -3869,8 +3870,11 @@ async function runCuratedRead(
   phase.statementSent = true;
 
   // Started outside the `try`, so only the call's own failure is read as the reading's: a host core read before its
-  // install throws here by name and is never taken for a provider's error.
-  const started = reading.read(provider, input, limit, grant);
+  // install throws here by name and is never taken for a provider's error. The boot order is read first, so it is
+  // refused before the reading's bridged session is built, which reads the provider's capabilities, as the walk does.
+  hostCore();
+  const target = providerMonitoringTarget(provider);
+  const started = reading.read(target, input, limit, grant);
   let answered: CuratedRows;
   try {
     answered = await started;

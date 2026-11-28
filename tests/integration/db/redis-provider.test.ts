@@ -833,6 +833,9 @@ const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
 const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
 const { logger } = await import("@/lib/logger");
 const { providerMonitoring, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
+const { providerMonitoringTarget } = await import("@/lib/api/session-target");
+const { servedEngineRecord } = await import("@/lib/db/server-catalog");
+const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 
@@ -3053,19 +3056,33 @@ describe("RedisProvider", () => {
     });
 
     test("a server with more clients than the dashboard's default session limit answers that many", async () => {
-      const data = await providerMonitoring(provider, new AbortController().signal, "test").readDashboard({});
+      const data = await providerMonitoring(
+        providerMonitoringTarget(provider),
+        servedEngineRecord("redis"),
+        providerTextScrub(provider.config, "any"),
+        new AbortController().signal,
+        "test",
+      ).readDashboard({});
       expect(data.errors?.activeSessions).toBeUndefined();
       expect(data.activeSessions).toHaveLength(50);
       expect(data.slowQueries).toHaveLength(2);
     });
 
     test("an agent's sessions reading with a limit below the connected clients answers the limit", async () => {
-      const read = await readGrantedPanel(provider, { panel: "activeSessions", limit: 3 }, grant());
+      const read = await readGrantedPanel(
+        providerMonitoringTarget(provider),
+        { panel: "activeSessions", limit: 3 },
+        grant(),
+      );
       expect(read.kind === "answered" ? read.member.map((session) => session.pid) : read.kind).toEqual(["1", "2", "3"]);
     });
 
     test("an agent's slow queries reading with a limit below the logged entries answers the limit", async () => {
-      const read = await readGrantedPanel(provider, { panel: "slowQueries", limit: 1 }, grant());
+      const read = await readGrantedPanel(
+        providerMonitoringTarget(provider),
+        { panel: "slowQueries", limit: 1 },
+        grant(),
+      );
       expect(read.kind === "answered" ? read.member.map((entry) => entry.queryId) : read.kind).toEqual(["1"]);
     });
   });

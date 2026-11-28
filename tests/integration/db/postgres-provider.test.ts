@@ -327,6 +327,7 @@ mock.module("pg", () => ({
 // Dynamic import AFTER mock is installed
 const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
 const { readGrantedHealth, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
+const { providerMonitoringTarget } = await import("@/lib/api/session-target");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 const { objectTree } = await import("@/lib/api/object-tree");
@@ -3650,7 +3651,7 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
 
-      const health = await readGrantedHealth(provider, grant());
+      const health = await readGrantedHealth(providerMonitoringTarget(provider), grant());
       expect(health.slowQueries).toEqual([{ query: "SELECT 1", calls: 100, avgTime: "12.50ms" }]);
     });
 
@@ -3674,7 +3675,7 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
 
-      const health = await readGrantedHealth(provider, grant());
+      const health = await readGrantedHealth(providerMonitoringTarget(provider), grant());
       expect(health.slowQueries).toEqual([
         { query: "The server did not answer this statement's text.", calls: 7, avgTime: "3.00ms" },
         { query: "SELECT 1", calls: 2, avgTime: "1.00ms" },
@@ -3710,7 +3711,11 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
 
-      const read = await readGrantedPanel(provider, { panel: "slowQueries", limit: 5 }, grant());
+      const read = await readGrantedPanel(
+        providerMonitoringTarget(provider),
+        { panel: "slowQueries", limit: 5 },
+        grant(),
+      );
       expect(read.kind).toBe("answered");
       const [entry] = read.kind === "answered" ? read.member : [];
       expect(entry).toBeDefined();
