@@ -460,7 +460,7 @@ It names no function of the package.
 ### M-87 (normative): A register row reviews an engine's statement language data
 
 A register row states the digest of the statement language data it reviewed, `languageSha256`, or null for an engine that states none, and grants the engine's statement language, the claim that its confirmation reading is the whole answer and `readsSqlText: false` only where that is the digest of the data the engine states, so a changed byte of that data grants none of them until LibreDB reviews it again.
-A package row that grants `readsSqlText: false` or `decidesAlone: true` with a null digest is refused, so a package engine that states no statement language data is never granted either of the two.
+A package row that grants `readsSqlText: false`, `decidesAlone: true` or a statement language other than SQL with a null digest is refused, so a package engine that states no statement language data is never granted any of the three.
 For an engine that states no SQL text, whose register row reviews no grammar, the row's grant of `readsSqlText: false` and of the whole-answer claim under the language digest alone makes the language's confirmation reading the gate's whole answer.
 
 ### M-88 (informative): A package engine's statement language in agent mode and on MCP
@@ -473,6 +473,10 @@ Until then neither agent mode nor MCP sends a package engine a statement, so not
 An engine that offers `objects.tree` states its object model in its declaration's `objects` member: its container levels, the catalog level among them, and the object kinds each level holds, with each kind's columns, source and row actions.
 Studio reads an engine's tree, its source and its row actions only through that model, and refuses before any call, by name and with outcome not-sent, a request naming a level or a kind the model does not state.
 A kind whose names the engine masks for machine readers, and a kind a maintenance spec names, is one the model states.
+
+### M-90 (normative): Declared agent and MCP text keeps to what Studio offers
+
+A workflow's tool rule in an engine's agent text names only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at the rule's pointer.
 
 ## Values
 

@@ -7,6 +7,9 @@ export * from "./manifest-types.generated";
 export {
   AGENT_MCP_TEXT_FILLS,
   AGENT_TEXT_FILLS,
+  AGENT_TOOL_NAMES,
+  AGENT_WORKFLOW_TOOLS,
+  agentToolsNamedIn,
   compileManifestValidator,
   type ContractRefusal,
   type EngineVerdict,

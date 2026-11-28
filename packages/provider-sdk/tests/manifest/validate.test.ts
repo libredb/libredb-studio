@@ -12,6 +12,9 @@ import path from "node:path";
 import {
   AGENT_MCP_TEXT_FILLS,
   AGENT_TEXT_FILLS,
+  AGENT_TOOL_NAMES,
+  AGENT_WORKFLOW_TOOLS,
+  agentToolsNamedIn,
   compileManifestValidator,
   type ManifestRefusal,
   refusalSentence,
@@ -4749,6 +4752,82 @@ describe("rules the schema cannot state", () => {
       refusals: [refusal("agent-text-fill-unknown", "/statementLanguageData/agent/mcp/text/readPast/0/fill")],
     });
     expect(refusalsFor(agentManifest((a) => (a.mcp = null)))).toEqual([]);
+  });
+
+  test("a tool rule naming a tool its workflow does not offer is refused at its pointer", () => {
+    const RULE = `${TEXT}/investigation/toolRule`;
+    const ruled = (rule: unknown) => textManifest((t) => (t.investigation.toolRule = rule));
+
+    // The vocabulary: every tool of Studio's agent, and the tools each workflow of a declared language is offered.
+    expect(AGENT_TOOL_NAMES).toEqual([
+      "inspect_schema",
+      "run_read_query",
+      "inspect_plan",
+      "profile_table",
+      "compare_plans",
+      "recommend_change",
+      "inspect_operations",
+      "inspect_usage",
+      "profile_workloads",
+      "present_answer",
+      "compose_report",
+    ]);
+    expect(AGENT_WORKFLOW_TOOLS).toEqual({
+      investigation: ["run_read_query", "compose_report"],
+      operations: ["inspect_operations", "recommend_change", "compose_report"],
+    });
+    expect(Object.isFrozen(AGENT_TOOL_NAMES)).toBe(true);
+    expect(Object.isFrozen(AGENT_WORKFLOW_TOOLS)).toBe(true);
+    for (const tools of Object.values(AGENT_WORKFLOW_TOOLS)) expect(Object.isFrozen(tools)).toBe(true);
+
+    // A tool is named as a whole word, in the vocabulary's order, except one written as an absence.
+    expect(agentToolsNamedIn("compose_report after run_read_query; there is no inspect_schema")).toEqual([
+      "run_read_query",
+      "compose_report",
+    ]);
+    expect(agentToolsNamedIn("inspect_schemas, xrun_read_query and compose_reports")).toEqual([]);
+
+    expect(refusalsFor(ruled("Call inspect_schema before you read."))).toEqual([
+      refusal("agent-tool-not-offered", RULE),
+    ]);
+    // Two tools the workflow does not offer are one refusal, at the rule's pointer.
+    expect(refusalsFor(ruled("Compare with compare_plans, then answer with present_answer."))).toEqual([
+      refusal("agent-tool-not-offered", RULE),
+    ]);
+    // A rule written as parts is read as its parts joined, and refused at the rule's pointer, not a part's.
+    expect(refusalsFor(ruled(["Read with run_read_query. ", "Then profile with profile_table."]))).toEqual([
+      refusal("agent-tool-not-offered", RULE),
+    ]);
+    // Every tool of the vocabulary the investigation is not offered is refused, a tool added later included.
+    const unoffered = AGENT_TOOL_NAMES.filter(
+      (tool) => !(AGENT_WORKFLOW_TOOLS.investigation as readonly string[]).includes(tool),
+    );
+    expect(unoffered).toHaveLength(AGENT_TOOL_NAMES.length - AGENT_WORKFLOW_TOOLS.investigation.length);
+    for (const tool of unoffered) {
+      expect(refusalsFor(ruled(`Use ${tool}.`)), tool).toEqual([refusal("agent-tool-not-offered", RULE)]);
+    }
+    // Under validateEngine, the pointer is the engine's own.
+    expect(validator.validateEngine(ruled("Use inspect_plan.").engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-tool-not-offered", "/statementLanguageData/agent/text/investigation/toolRule")],
+    });
+    // The refusal and its sentence carry no value of the manifest and no tool name.
+    const marker = `m${randomUUID().replaceAll("-", "")}`;
+    const [refused] = refusalsFor(ruled(`${marker} with inspect_usage.`));
+    expect(refusalSentence(refused as ManifestRefusal)).toBe(
+      `The tool rule at ${RULE} names a tool of Studio's agent that its workflow does not offer.`,
+    );
+    for (const value of [marker, "inspect_usage"]) {
+      expect(JSON.stringify(refused)).not.toContain(value);
+      expect(refusalSentence(refused as ManifestRefusal)).not.toContain(value);
+    }
+
+    // Vacuity: a rule naming only the tools its workflow offers is admitted, and so is one naming a tool as absent or
+    // a word that holds a tool's name inside it.
+    expect(refusalsFor(ruled("Read with run_read_query, then file the answer with compose_report."))).toEqual([]);
+    expect(refusalsFor(ruled("There is no inspect_schema: read with run_read_query."))).toEqual([]);
+    expect(refusalsFor(ruled("Neither inspect_schemas nor xrun_read_query is a tool."))).toEqual([]);
+    expect(refusalsFor(ruled(["Read with ", "run_read_query", "."]))).toEqual([]);
   });
 
   test("an agent text holds no control character and no character that makes text read other than it is written", () => {

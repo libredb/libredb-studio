@@ -7,17 +7,26 @@
  * later joins every one of these by being registered, and fails the one it does not keep.
  */
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { AGENT_TOOL_NAMES, AGENT_WORKFLOW_TOOLS } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_LANGUAGE_COPY,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
+import { composeDeclaredLanguages, declaredClientPack } from "@/lib/agent/languages/client";
+import { composeDeclaredClientPack } from "@/lib/agent/languages/declared-client";
+import { composeDeclaredServerPack } from "@/lib/agent/languages/declared-server";
 import { languageToolArms } from "@/lib/agent/languages/index";
+import type { AgentLanguageClientPack } from "@/lib/agent/languages/pack";
 import { languageServer, workflowToolRules } from "@/lib/agent/languages/server";
-import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
+import { OPERATIONS_TOOL_RULE } from "@/lib/agent/languages/shared";
+import { AGENT_TOOL_DEFINITIONS, type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry, isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import { servedLanguageData } from "@/lib/db/operations/served-language-data";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
+import { acmereadData } from "../../../helpers/declared-agent-language";
 
 const LANGUAGES = Object.keys(AGENT_LANGUAGE_COPY) as AgentStatementLanguageId[];
 
@@ -75,6 +84,50 @@ describe("the tool rules a run is told", () => {
           expect(variant.tools, `${language} ${workflow} names ${tool}`).toContain(tool);
         }
       }
+    }
+  });
+});
+
+describe("the SDK's vocabulary of each workflow's tools", () => {
+  test("Studio's offered tools of each workflow equal the SDK's vocabulary", () => {
+    // The SDK refuses a declared tool rule naming a tool outside its workflow's list, so the lists are Studio's own
+    // offer, and the names a rule text is read against are every tool Studio's agent defines.
+    const vocabulary: readonly string[] = AGENT_TOOL_NAMES;
+    expect([...vocabulary]).toEqual(Object.keys(AGENT_TOOL_DEFINITIONS));
+    expect(new Set(AGENT_TOOL_NAMES).size).toBe(AGENT_TOOL_NAMES.length);
+
+    /** A declared language's offer and rules, held to the SDK's list of each workflow's tools. */
+    const holds = (
+      client: AgentLanguageClientPack,
+      rules: Readonly<Partial<Record<AgentRunWorkflowType, string>>>,
+      label: string,
+    ) => {
+      expect(Object.keys(client.variants), label).toEqual(Object.keys(AGENT_WORKFLOW_TOOLS));
+      expect(Object.keys(rules), label).toEqual(Object.keys(AGENT_WORKFLOW_TOOLS));
+      for (const [workflow, tools] of Object.entries(AGENT_WORKFLOW_TOOLS)) {
+        const variant = client.variants[workflow as AgentRunWorkflowType];
+        expect(variant?.tools, `${label} ${workflow}`).toEqual(tools);
+        expect(variant?.narrowedExtras, `${label} ${workflow}`).toEqual([]);
+        for (const tool of toolsNamedIn(rules[workflow as AgentRunWorkflowType] as string)) {
+          expect(tools as readonly string[], `${label} ${workflow} names ${tool}`).toContain(tool);
+        }
+      }
+    };
+
+    // A language Studio's composers compose from generated data.
+    const name = `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const agent = acmereadData(name).agent as NonNullable<ReturnType<typeof acmereadData>["agent"]>;
+    holds(
+      composeDeclaredClientPack(agent.text),
+      composeDeclaredServerPack(name, agent, "not a data read").workflowToolRules,
+      name,
+    );
+    // Every declared language the server composes now.
+    const served = composeDeclaredLanguages(servedLanguageData());
+    for (const language of served) holds(declaredClientPack(language), workflowToolRules()[language.id], language.id);
+    // The operations rule is Studio's, one text for every language.
+    for (const tool of toolsNamedIn(OPERATIONS_TOOL_RULE)) {
+      expect(AGENT_WORKFLOW_TOOLS.operations as readonly string[], `operations names ${tool}`).toContain(tool);
     }
   });
 });
