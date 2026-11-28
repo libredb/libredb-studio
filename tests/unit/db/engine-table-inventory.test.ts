@@ -5,8 +5,9 @@
  *
  * A per-engine table is a module-level variable outside the provider directory whose declared type, a `satisfies` or
  * `as` type in its initializer, or the type arguments of a `new` expression in its initializer (`new Map<DatabaseType,
- * T>()`), is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`. A table written as an array of rows or as an
- * object whose type is only inferred is not one. A new table that is in neither list fails here by module and name, so
+ * T>()`), is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`, or a `Map` keyed by the served record's
+ * `EngineId`, which a cache of engine facts filled for engines a package may serve too is keyed by. A table written as an
+ * array of rows or as an object whose type is only inferred is not one. A new table that is in neither list fails here by module and name, so
  * the contract cannot fall behind a table without anyone deciding where it goes.
  */
 import { describe, expect, test } from "bun:test";
@@ -17,7 +18,7 @@ import { ENGINE_TABLE_INVENTORY, type InventoryEntry } from "./engine-declaratio
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const PROVIDER_DIRECTORY = "src/lib/db/providers/";
-const KEYED_BY_TYPE = /Record<DatabaseType\b|Map<DatabaseType\b|in DatabaseType\]/;
+const KEYED_BY_TYPE = /Record<DatabaseType\b|Map<(DatabaseType|EngineId)\b|in DatabaseType\]/;
 
 interface SourceText {
   readonly path: string;
@@ -41,7 +42,7 @@ function sourceFiles(): SourceText[] {
 
 /**
  * The per-engine tables of `files`, sorted by module and name. Only a file whose text matches the key pattern is
- * parsed, which skips none: a table's type names `DatabaseType` in its own text.
+ * parsed, which skips none: a table's type names `DatabaseType` or `EngineId` in its own text.
  */
 function perEngineTables(files: readonly SourceText[]): Table[] {
   const tables: Table[] = [];
@@ -127,6 +128,8 @@ describe("the per-engine table inventory", () => {
           "const MEMO = new Map<DatabaseType, number>();",
           "const CAST = Object.freeze({} as Record<DatabaseType, number>);",
           "const NAMES = new Map<string, DatabaseType>();",
+          "const SERVED = new Map<EngineId, number>();",
+          "const IDS = new Map<string, EngineId>();",
           "function local() { const INNER: Record<DatabaseType, boolean> = {}; return INNER; }",
         ].join("\n"),
       },
@@ -140,6 +143,7 @@ describe("the per-engine table inventory", () => {
       "src/lib/planted.ts MEMO",
       "src/lib/planted.ts OTHER",
       "src/lib/planted.ts ROWS",
+      "src/lib/planted.ts SERVED",
     ]);
     expect(
       compareInventory(plantedTables, [
@@ -152,6 +156,7 @@ describe("the per-engine table inventory", () => {
         "src/lib/planted.ts MAPPED",
         "src/lib/planted.ts MEMO",
         "src/lib/planted.ts OTHER",
+        "src/lib/planted.ts SERVED",
       ],
       stale: ["src/lib/planted.ts GONE"],
     });

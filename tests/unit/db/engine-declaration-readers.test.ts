@@ -145,10 +145,12 @@ const CONNECTION_CLAIMS: readonly string[] = [
 ];
 
 /**
- * The agent mode claims a declaration authors and the claim requests carry, M-83, in `AUTHORED_MEMBERS` order: the
- * facets' agent readings and the agent's statement language.
+ * The agent mode members a declaration authors and the claim requests carry, M-83, in `AUTHORED_MEMBERS` order: the
+ * facets' agent readings, the agent's statement language, each a claim, and the agent's overlay, which holds the claim
+ * that its catalog read is a command, `dialect.catalogRead.commandShaped`, the one member of it the claim projection
+ * reads.
  */
-const AGENT_MODE_CLAIMS: readonly string[] = ["facets.agentReadings", "agent.statementLanguage"];
+const AGENT_MODE_CLAIMS: readonly string[] = ["facets.agentReadings", "agent.statementLanguage", "agent.overlay"];
 
 /**
  * The segments and the connection and agent mode members the claim requests are projected from, M-82 and M-83:
@@ -785,7 +787,7 @@ describe("engine declaration readers", () => {
         claim.startsWith("policy.") ||
         claim.startsWith("mcp.") ||
         CONNECTION_CLAIMS.includes(claim) ||
-        AGENT_MODE_CLAIMS.includes(claim),
+        AGENT_MODE_CLAIMS.some((member) => claim === member || claim.startsWith(`${member}.`)),
     );
     const planted: DeclarationReader[] = [
       { path: "src/lib/planted-policy.ts", members: ["policy.writeReach"], reason: "planted" },
@@ -815,9 +817,11 @@ describe("engine declaration readers", () => {
     // which no projection reads: the server catalog's composition hands an admitted declaration's to the grant reader,
     // and a legacy engine's request is its register row's. Any other claim authored still fails.
     expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual(authoredRequests([...requested, "sqlText.redaction"]));
-    expect(authoredClaims([...AUTHORED_MEMBERS, "agent.overlay"], claims)).toEqual([
+    // Vacuity: a whole segment authored holds every claim inside it.
+    expect(authoredClaims([...AUTHORED_MEMBERS, "agent"], claims)).toEqual([
       ...authoredRequests([...requested, "sqlText.redaction"]),
-      `agent.overlay is authored, and it holds the claim agent.overlay.dialect.catalogRead.commandShaped, ${AUTHORED_CLAIM_RULE}`,
+      `agent is authored, and it holds the claim agent.statementLanguage, ${AUTHORED_CLAIM_RULE}`,
+      `agent is authored, and it holds the claim agent.overlay.dialect.catalogRead.commandShaped, ${AUTHORED_CLAIM_RULE}`,
     ]);
     expect(claims).toContain("policy.writeReach");
     expect(claims).toContain("mcp.exposable");
@@ -825,7 +829,8 @@ describe("engine declaration readers", () => {
     expect(claims).toContain("agent.statementLanguage");
     expect(claims).toContain("facets.agentReadings");
     expect(claims).toContain("sqlText.redaction");
-    expect(requested).toHaveLength(18);
+    expect(claims).toContain("agent.overlay.dialect.catalogRead.commandShaped");
+    expect(requested).toHaveLength(19);
     expect(claimReaders(planted, claims)).toEqual([
       `src/lib/planted-policy.ts reads policy.writeReach, which holds the claim policy.writeReach, ${CLAIM_READ_RULE}`,
       `src/lib/planted-connection.ts reads connection.opensLocalFile, which holds the claim connection.opensLocalFile, ${CLAIM_READ_RULE}`,
@@ -835,7 +840,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's statement reader reads by id", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records, the gate's statement reader and the agent manifest's legacy engine read by id", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -861,8 +866,9 @@ describe("engine declaration readers", () => {
       "src/lib/db/sql-grammar/index.ts",
     ]);
     // The gate counts each as its engine's grant: the browser's gate reads a legacy engine's grants by id
-    // (`legacyEngineGrants`), which only the legacy records and the gate's statement reader import, and the server's
-    // gate reads a package engine's from its record. No module imports a review record of the gate's claims.
+    // (`legacyEngineGrants`), which only the legacy records, the gate's statement reader and the agent manifest's
+    // legacy engine (`legacyAgentEngine`, which reads only the agent members) import, and the server's gate reads a
+    // package engine's from its record. No module imports a review record of the gate's claims.
     const vscodeFiles = readdirSync(path.join(ROOT, "vscode-extension/src"), { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
       .map((entry) => path.relative(ROOT, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
@@ -884,7 +890,11 @@ describe("engine declaration readers", () => {
         .filter((entry) => entry.names.includes("legacyEngineGrants"))
         .map((entry) => entry.path)
         .sort(),
-    ).toEqual(["src/lib/provider-host/legacy-adapter/records.ts", "src/lib/sql/dangerous-query.ts"]);
+    ).toEqual([
+      "src/lib/agent/agent-manifest.ts",
+      "src/lib/provider-host/legacy-adapter/records.ts",
+      "src/lib/sql/dangerous-query.ts",
+    ]);
     expect(vscodeFiles.length).toBeGreaterThan(0);
     expect(importsOf("@/lib/db/confirmation-claim-review")).toEqual([]);
   }, 60_000);

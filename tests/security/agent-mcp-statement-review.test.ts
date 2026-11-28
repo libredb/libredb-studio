@@ -1,18 +1,15 @@
 /**
  * Every agent and MCP statement gate reads Studio's review record of the engines statements run on at run time, and a
- * provider's own read-only statement path never opens an engine the record does not list. The server's gates, the
- * factory, the core read paths and the MCP statement tools, read it as each engine record's `agentExecution` grant
- * (`servedEngineRecord` in src/lib/db/server-catalog.ts); the start of a run reads it through the browser-safe agent
- * manifest as the list `GRANTED_AGENT_EXECUTION_ENGINES` (src/lib/db/claim-grants.ts), until M7.
+ * provider's own read-only statement path never opens an engine the record does not list. Every server gate, the start
+ * of a run, the factory, the core read paths and the MCP statement tools, reads it as each engine record's
+ * `agentExecution` grant (`servedEngineRecord` in src/lib/db/server-catalog.ts).
  *
- * The record is narrowed for this one process in both forms: SQLite is dropped from the list and its engine record's
- * grant is false, because its real provider implements `queryReadOnly` and needs only a temporary file, so each gate
- * is shown refusing an engine whose provider claims the path. PostgreSQL, still on the record, is the control in each
- * test. The shipped grant module is copied into a plain object before `mock.module` replaces it (bun patches the
- * namespace in place, so a copy taken afterwards would read the narrowed list), and Studio's own catalog with SQLite's
+ * The record is narrowed for this one process: SQLite's engine record's grant is false, because its real provider
+ * implements `queryReadOnly` and needs only a temporary file, so each gate is shown refusing an engine whose provider
+ * claims the path. PostgreSQL, still on the record, is the control in each test. Studio's own catalog with SQLite's
  * record changed is installed before any module under test is imported, so a module that derives a set from the
- * records as it loads (the MCP statement arms) derives it from the narrowed one. The catalog is forgotten when the
- * file ends. Run in its own process by `tests/run-tests.ts`, so neither substitution reaches another file.
+ * records as it loads (the MCP statement arms) derives it from the narrowed one. The catalog is forgotten when the file
+ * ends. Run in its own process by `tests/run-tests.ts`, so the substitution reaches no other file.
  */
 import { afterAll, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -27,13 +24,6 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
-
-const shippedGrants = { ...(await import("@/lib/db/claim-grants")) };
-const shipped: readonly DatabaseType[] = [...shippedGrants.GRANTED_AGENT_EXECUTION_ENGINES];
-mock.module("@/lib/db/claim-grants", () => ({
-  ...shippedGrants,
-  GRANTED_AGENT_EXECUTION_ENGINES: Object.freeze(shipped.filter((type) => type !== "sqlite")),
-}));
 
 // The server's gates read SQLite's engine record, so Studio's own catalog with that record's grant changed is installed
 // before any of them loads, and forgotten when the file ends.
@@ -112,11 +102,9 @@ function expectNotReviewed(error: unknown, type: DatabaseType): void {
 
 describe("an engine the review record does not list, though its provider implements queryReadOnly", () => {
   test("the record this process reads is the shipped one without SQLite", async () => {
+    // The shipped grant register grants SQLite, so the installed engine record's false grant is this file's narrowing.
     const { GRANTED_AGENT_EXECUTION_ENGINES } = await import("@/lib/db/claim-grants");
-    expect(shipped).toContain("sqlite");
-    expect(GRANTED_AGENT_EXECUTION_ENGINES).not.toContain("sqlite");
-    expect(GRANTED_AGENT_EXECUTION_ENGINES).toContain("postgres");
-    // The server's gates read the installed engine record's grant, the browser-safe manifest the list above.
+    expect(GRANTED_AGENT_EXECUTION_ENGINES).toContain("sqlite");
     expect(serverCatalogInstalled()).toBe(true);
     expect(servedEngineRecord("sqlite").grants.agentExecution).toBe(false);
     expect(servedEngineRecord("postgres").grants.agentExecution).toBe(true);
@@ -124,10 +112,13 @@ describe("an engine the review record does not list, though its provider impleme
   });
 
   test("a statement-sending agent run on SQLite is refused at start as not reviewed, while plan mode, the operations workflow and an engine on the record still open", () => {
-    expect(workflowAvailability("agent", "investigation", "sqlite")).toEqual({ open: false, cause: "not-reviewed" });
-    expect(workflowAvailability("planning", "investigation", "sqlite").open).toBe(true);
-    expect(workflowAvailability("agent", "operations", "sqlite").open).toBe(true);
-    expect(workflowAvailability("agent", "investigation", "postgres").open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", servedEngineRecord("sqlite"))).toEqual({
+      open: false,
+      cause: "not-reviewed",
+    });
+    expect(workflowAvailability("planning", "investigation", servedEngineRecord("sqlite")).open).toBe(true);
+    expect(workflowAvailability("agent", "operations", servedEngineRecord("sqlite")).open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", servedEngineRecord("postgres")).open).toBe(true);
   });
 
   test.each([
@@ -143,7 +134,7 @@ describe("an engine the review record does not list, though its provider impleme
         database: sqliteFile,
         createdAt: new Date(0),
       };
-      expect(workflowAvailability(mode, workflowType, "sqlite").open).toBe(true);
+      expect(workflowAvailability(mode, workflowType, servedEngineRecord("sqlite")).open).toBe(true);
       const acquisitions: Array<[string, unknown]> = [];
       const context: AgentToolContext = {
         runId: `run-grounding-${mode}`,

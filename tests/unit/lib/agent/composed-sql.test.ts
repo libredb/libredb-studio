@@ -11,7 +11,12 @@ import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
 import { trinoAgentStatementRefusal } from "@/lib/db/providers/sql/trino/agent-boundary";
-import { AGENT_REQUIREMENT_ENGINES, AGENT_WORKFLOW_VARIANTS, workflowAvailability } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_REQUIREMENT_ENGINES,
+  AGENT_WORKFLOW_VARIANTS,
+  legacyAgentEngine,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1231,7 +1236,9 @@ describe("the composers are reachable, which is the defect that put this file he
         expect(() => composeEstimatingExplain(dialect, "SELECT 1"), dialect).toThrow(AgentComposedSqlError);
         for (const [workflow, variant] of Object.entries(AGENT_WORKFLOW_VARIANTS.sql)) {
           if (!variant.requires.includes("sql-composers")) continue;
-          expect(workflowAvailability("agent", workflow as AgentRunWorkflowType, dialect)).toMatchObject({
+          expect(
+            workflowAvailability("agent", workflow as AgentRunWorkflowType, legacyAgentEngine(dialect)),
+          ).toMatchObject({
             open: false,
             cause: "requirement-unmet",
           });

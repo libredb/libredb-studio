@@ -65,8 +65,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "DB_UI_CONFIG",
     destination: "planned segment: presentation, the icon as an SVG asset and the colour",
   },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_READINGS", destination: GRANTED_DESTINATION },
-  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_STATEMENT_LANGUAGE", destination: GRANTED_DESTINATION },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SSH_TUNNEL_REFUSAL", destination: GRANTED_DESTINATION },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_WRITE_REACH", destination: GRANTED_DESTINATION },
   {

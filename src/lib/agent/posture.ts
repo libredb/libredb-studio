@@ -19,9 +19,10 @@
  *    title and the body of its arms (`AgentPostureCopy` in `languages/pack.ts`) and cannot write a
  *    tone or a headline; the arm decides both, and the arm is read here from the review record and
  *    from the language's workflow variants, so no pack ranks its own claim.
- *  - **Client-safe imports only** - types, Studio's grants `GRANTED_AGENT_EXECUTION_ENGINES` and
- *    `GRANTED_AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
- *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig`, the type-id guard (`assertDatabaseType`) and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
+ *  - **Client-safe imports only** - types, Studio's grant `GRANTED_AGENT_EXECUTION_ENGINES`, the legacy engine's
+ *    grants through the agent manifest (`legacyAgentEngine`, which also guards the type id), the language packs' client
+ *    facets (`languages/client.ts`, where each language's reads, widened and hand-over words live), the engines' client
+ *    facets (`languages/engines/client.ts`), `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule the review record's docblock in `src/lib/db/claim-grants.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
@@ -35,15 +36,16 @@
  */
 
 import {
+  type AgentEngine,
   type AgentStatementLanguageId,
+  legacyAgentEngine,
   notReviewedSentence,
   operationsWorkflowOpens,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
-import { GRANTED_AGENT_EXECUTION_ENGINES, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
-import { assertDatabaseType } from "@/lib/db/type-id";
+import { GRANTED_AGENT_EXECUTION_ENGINES } from "@/lib/db/claim-grants";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { agentLanguageOfGrant, languageClientPack } from "@/lib/agent/languages/client";
+import { grantedAgentStatementLanguage, languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";
 import type { AgentPostureCopy, StatementBudgets } from "@/lib/agent/languages/pack";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -186,22 +188,26 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
 }
 
 /**
- * Agent mode on an engine whose language would run its statements but which the review record does not list.
+ * Agent mode on an engine whose language would run its statements but whose grants hold no agent execution.
  *
  * The start route refuses such a run with `notReviewedSentence` (`workflowAvailability`'s `not-reviewed`), so the
- * body is that sentence, and the strip and the refusal say one thing. The pill and the qualifier are the unsupported
- * arm's, which are true here too; the title is not, because such an engine may well have a read-only statement path:
- * what it lacks is Studio's review of it. No shipped engine reaches this arm, since an engine has a language exactly
- * when the record lists it (`tests/unit/lib/agent/agent-manifest.test.ts`); a language registered for an engine the
- * record does not list reads as blocked rather than as reads.
+ * body is that sentence, and the strip and the refusal say one thing; both name the operations workflow only where it
+ * opens (`operationsWorkflowOpens`). The pill is the unsupported arm's, which is true here too; the title is not,
+ * because such an engine may well have a read-only statement path: what it lacks is Studio's review of it. No shipped
+ * engine reaches this arm, since an engine has a language exactly when its row grants it agent execution
+ * (`tests/unit/lib/agent/agent-manifest.test.ts`); a language registered for an engine with no such grant reads as
+ * blocked rather than as reads.
  */
-function notReviewedPosture(engineLabel: string): AgentPosture {
+function notReviewedPosture(engine: AgentEngine, engineLabel: string): AgentPosture {
+  const operationsOpens = operationsWorkflowOpens(engine);
   return {
     tone: "blocked",
     headline: `Cannot execute on ${engineLabel}`,
-    qualifier: "plan mode drafts here, and the operations workflow still runs",
+    qualifier: operationsOpens
+      ? "plan mode drafts here, and the operations workflow still runs"
+      : "plan mode drafts here",
     title: `Studio has not reviewed agent mode's read-only statement path on ${engineLabel}`,
-    body: notReviewedSentence(engineLabel),
+    body: notReviewedSentence(engineLabel, operationsOpens),
   };
 }
 
@@ -213,7 +219,7 @@ function notReviewedPosture(engineLabel: string): AgentPosture {
  * say one thing. The operations workflow is named as still running only where it opens (`operationsWorkflowOpens`):
  * an engine that offers agent mode no curated reading does not open it.
  */
-function refusedPosture(engine: DatabaseType, engineLabel: string, refusal: string): AgentPosture {
+function refusedPosture(engine: AgentEngine, engineLabel: string, refusal: string): AgentPosture {
   const title = `Agent mode cannot run on this ${engineLabel} connection as it is configured`;
   if (!operationsWorkflowOpens(engine)) {
     return {
@@ -298,10 +304,10 @@ function readsPosture(language: AgentStatementLanguageId): AgentPosture {
  * Each arm decides its tone and its headline here; a language pack supplies the words of the plan,
  * reads and widened arms and nothing that ranks them.
  *
- * Whether the engine executes is `GRANTED_AGENT_STATEMENT_LANGUAGE`'s answer and then
- * `GRANTED_AGENT_EXECUTION_ENGINES`'s, in the order the start route refuses from them (`workflowAvailability`),
+ * Whether the engine executes is its legacy grants' answer, `statementLanguage` and then `agentExecution`
+ * (`legacyAgentEngine`), in the order the start route refuses from them (`workflowAvailability`),
  * so the strip and the refusal cannot disagree about an engine. Both are read on every call,
- * not folded into a constant at module load, so the copy follows the lists in the process
+ * not folded into a constant at module load, so the copy follows the grants in the process
  * that is running. The language is also what the executing arms speak
  * in, so a cluster's posture names Studio's allowlist and RBAC where a SQL engine's names
  * the database's read-only session.
@@ -319,15 +325,14 @@ export function agentPosture(input: {
   /** The refusal the last run on THIS connection met for the connection itself, if it met one. */
   readonly refusedHere?: string | null;
 }): AgentPosture {
-  if (input.engine !== null) assertDatabaseType(input.engine);
-  const language =
-    input.engine === null ? null : agentLanguageOfGrant(input.engine, GRANTED_AGENT_STATEMENT_LANGUAGE[input.engine]);
+  const engine = input.engine === null ? null : legacyAgentEngine(input.engine);
+  const language = engine === null ? null : grantedAgentStatementLanguage(engine);
   if (input.mode === "planning") return planPosture(language);
-  if (input.engine === null) return unresolvedPosture();
+  if (engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);
-  if (!GRANTED_AGENT_EXECUTION_ENGINES.includes(input.engine)) return notReviewedPosture(input.engineLabel);
+  if (!engine.grants.agentExecution) return notReviewedPosture(engine, input.engineLabel);
   if (typeof input.refusedHere === "string") {
-    return refusedPosture(input.engine, input.engineLabel, input.refusedHere);
+    return refusedPosture(engine, input.engineLabel, input.refusedHere);
   }
   return input.handover && offersHandover(language) ? widenedPosture(language) : readsPosture(language);
 }

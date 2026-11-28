@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import * as realModelAdapter from "@/lib/agent/model-adapter";
 import * as realRunStore from "@/lib/agent/run-store";
@@ -209,7 +209,7 @@ async function drive(
     connection = READER,
   }: { readonly mode?: AgentRunMode; readonly connection?: DatabaseConnection } = {},
 ): Promise<Drive> {
-  const availability = workflowAvailability(mode, workflowType, "mongodb");
+  const availability = workflowAvailability(mode, workflowType, legacyAgentEngine("mongodb"));
   if (!availability.open) throw new Error(`${mode} ${workflowType} does not open on mongodb`);
   runs += 1;
   const runId = `arun_mongo_e2e_${runs}`;

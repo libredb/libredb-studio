@@ -63,10 +63,12 @@
  * schema's comment lines, an SQL writing note, end each line with one; any other control character, and another
  * number, is refused by name.
  *
- * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
- * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, so
- * the projections come first; they read only the members a declaration authors, which the declaration generator writes
- * back unchanged, so one run is exact; and `--check` then admits the whole written set, so the run exits 1 with the
+ * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts, `--write` again after it,
+ * and `--check` last. The declaration generator builds every provider through the factory, which builds only an engine
+ * the catalog holds, so the projections come first; they read only the members a declaration authors, which the
+ * declaration generator writes back unchanged but for `agent.overlay`, which it writes from Studio's agent overlay
+ * registry and whose command flag the claim requests project, so the second `--write` projects the overlay it wrote
+ * and one run is exact; and `--check` then admits the whole written set, so the run exits 1 with the
  * validator's refusal sentences when the authored members leave the declaration inconsistent, such as a placeable field
  * with no placement in the authored dialog, or when they and Studio's tables still disagree, such as a host path field
  * Studio's record lists that the authored seed-only fields no longer hold. A function name Studio holds no function for
@@ -234,6 +236,7 @@ export const AUTHORED_MEMBERS = [
   "facets.maintenanceSpecs",
   "facets.agentReadings",
   "agent.statementLanguage",
+  "agent.overlay",
   "statementLanguageData",
   "editor.commitKeyword",
   "editor.consentDeadline",
@@ -377,6 +380,7 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     },
     agent: {
       statementLanguage: read("agent.statementLanguage") as EngineDeclaration["agent"]["statementLanguage"],
+      overlay: read("agent.overlay") as EngineDeclaration["agent"]["overlay"],
     },
     statementLanguageData: read("statementLanguageData") as EngineDeclaration["statementLanguageData"],
     editor: {

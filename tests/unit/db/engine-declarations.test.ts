@@ -95,6 +95,7 @@ import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
+  legacyAgentEngine,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
@@ -1037,7 +1038,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the statement language data, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language and overlay, the statement language data, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1072,6 +1073,7 @@ describe("the committed declarations", () => {
       "facets.maintenanceSpecs",
       "facets.agentReadings",
       "agent.statementLanguage",
+      "agent.overlay",
       "statementLanguageData",
       "editor.commitKeyword",
       "editor.consentDeadline",
@@ -1125,7 +1127,7 @@ describe("the committed declarations", () => {
         connectBudgetMs: 140_000,
       },
       facets: bigquery.facets,
-      agent: { statementLanguage: null },
+      agent: { statementLanguage: null, overlay: null },
       statementLanguageData: null,
       editor: {
         commitKeyword: "COMMIT",
@@ -1175,13 +1177,17 @@ describe("the committed declarations", () => {
     expect(authored("libredb").connection.agentCredential).toBeNull();
     // The facets are authored whole: the monitoring panels, the maintenance operations and their specs, and the agent
     // readings, a request agent mode reads only as Studio's grant of it. The agent's statement language is a request
-    // too, and the rest of that segment is generated.
+    // too, and so is its overlay's claim that its catalog read is a command, read with the whole overlay, which the
+    // declaration generator writes from Studio's agent overlay registry.
     const facetMembers = ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"];
     expect(differing((type, declaration) => sameValue(authored(type).facets, declaration.facets))).toEqual([]);
     expect(differing((type) => sameList(Object.keys(authored(type).facets), facetMembers))).toEqual([]);
     expect(
       differing((type, declaration) =>
-        sameValue(authored(type).agent, { statementLanguage: declaration.agent.statementLanguage }),
+        sameValue(authored(type).agent, {
+          statementLanguage: declaration.agent.statementLanguage,
+          overlay: declaration.agent.overlay,
+        }),
       ),
     ).toEqual([]);
     // Vacuity: some engine requests a statement language, so the agent census reads a request.
@@ -2003,7 +2009,7 @@ const CLAIM_GRANTS: Readonly<Record<string, readonly string[]>> = {
   "agent.statementLanguage": ["statementLanguage"],
   "facets.agentReadings": ["agentReadings"],
   "sqlText.redaction": ["redaction"],
-  "agent.overlay.dialect.catalogRead.commandShaped": ["grantedCatalogReadCommand"],
+  "agent.overlay.dialect.catalogRead.commandShaped": ["catalogReadCommandShaped"],
   "sqlText.readsSqlText": ["readsSqlText"],
   "sqlText.grammar.confirmExemptForms": ["confirmExemptForms"],
 };
@@ -2016,8 +2022,8 @@ const UNCLAIMED_GRANT_MEMBERS: Readonly<Record<string, string>> = {
   decidesAlone:
     "a host fact the grant reader reads from no declaration yet, a statement vocabulary row's own flag being its request",
   reviewedGrammar: "no grant: whether the row reviewed the grammar the request carries the digest of",
-  catalogReadCommandShaped:
-    "the register row's review of the agent overlay's claim, which only grantedCatalogReadCommand reads with the request",
+  requestsStatementLanguage:
+    "no grant: whether the declaration requests a statement language, whatever the row grants, which workflow availability reads",
 };
 
 /**
@@ -2443,9 +2449,9 @@ describe("the census", () => {
     expect(
       differing((type, d) => {
         const { statementLanguage, overlay } = d.agent;
-        if (engineFamily(type) !== statementLanguage) return false;
+        if (engineFamily(legacyAgentEngine(type)) !== statementLanguage) return false;
         if (statementLanguage === null) return true;
-        const client = engineClientPack(type).dialect;
+        const client = engineClientPack(legacyAgentEngine(type)).dialect;
         const dialect = overlay?.dialect ?? null;
         return dialect === null ? client === undefined : sameValue(client, clientViewOf(dialect));
       }),
@@ -4363,45 +4369,56 @@ describe("the census", () => {
   });
 
   test("agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it", () => {
-    const tables = {
-      languages: declaredRecord((d) => d.agent.statementLanguage) as Readonly<
-        Record<DatabaseType, AgentStatementLanguageId | null>
-      >,
-      variants: AGENT_WORKFLOW_VARIANTS,
-      requirementEngines: {
-        ...AGENT_REQUIREMENT_ENGINES,
-        "agent-readings": SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.agentReadings.length > 0),
-      },
-      reviewed: legacyRegisterEngines("agentExecution"),
-    };
+    const executes = legacyRegisterEngines("agentExecution");
+    const languages = declaredRecord((d) => d.agent.statementLanguage) as Readonly<
+      Record<DatabaseType, AgentStatementLanguageId | null>
+    >;
+    const readings = declaredRecord((d) => d.facets.agentReadings);
     // The SQL record is total over the workflows, so every workflow of every language is among its keys.
     const workflows = Object.keys(AGENT_WORKFLOW_VARIANTS.sql) as AgentRunWorkflowType[];
     const modes: readonly AgentRunMode[] = ["planning", "agent"];
+    // Whether the workflow opens, read from the committed declaration and the register row alone, never from the
+    // availability reader: plan mode opens everything, operations needs a reading, and a statement workflow needs a
+    // declared language, an agent execution grant, the language's variant and every requirement that variant names.
+    const expectedOpen = (type: DatabaseType, mode: AgentRunMode, workflow: AgentRunWorkflowType): boolean => {
+      if (mode === "planning") return true;
+      const reads = readings[type].length > 0;
+      if (workflow === "operations") return reads;
+      const language = languages[type];
+      if (language === null || !executes.includes(type)) return false;
+      const variant = Object.hasOwn(AGENT_WORKFLOW_VARIANTS[language], workflow)
+        ? AGENT_WORKFLOW_VARIANTS[language][workflow]
+        : undefined;
+      if (variant === undefined) return false;
+      return variant.requires.every((requirement) =>
+        requirement === "agent-readings" ? reads : AGENT_REQUIREMENT_ENGINES[requirement].includes(type),
+      );
+    };
     const answers = SHIPPED_DATABASE_TYPES.flatMap((type) =>
       modes.flatMap((mode) =>
         workflows.map((workflow) => ({
           key: `${type} ${mode} ${workflow}`,
-          declared: workflowAvailability(mode, workflow, type, tables),
-          recorded: workflowAvailability(mode, workflow, type),
+          expected: expectedOpen(type, mode, workflow),
+          served: workflowAvailability(mode, workflow, servedEngineRecord(type)).open,
         })),
       ),
     );
 
-    expect(answers.filter(({ declared, recorded }) => !sameValue(declared, recorded)).map(({ key }) => key)).toEqual(
-      [],
-    );
+    expect(answers.filter(({ expected, served }) => expected !== served).map(({ key }) => key)).toEqual([]);
     // Vacuity: some engine opens operations and no statement workflow, and some opens a statement workflow.
-    const opens = (type: DatabaseType, workflow: AgentRunWorkflowType): boolean =>
-      workflowAvailability("agent", workflow, type, tables).open;
     const statementWorkflows = workflows.filter((workflow) => workflow !== "operations");
     expect(
       SHIPPED_DATABASE_TYPES.some(
-        (type) => opens(type, "operations") && !statementWorkflows.some((workflow) => opens(type, workflow)),
+        (type) =>
+          expectedOpen(type, "agent", "operations") &&
+          !statementWorkflows.some((workflow) => expectedOpen(type, "agent", workflow)),
       ),
     ).toBe(true);
-    expect(SHIPPED_DATABASE_TYPES.some((type) => statementWorkflows.some((workflow) => opens(type, workflow)))).toBe(
-      true,
-    );
+    expect(
+      SHIPPED_DATABASE_TYPES.some((type) =>
+        statementWorkflows.some((workflow) => expectedOpen(type, "agent", workflow)),
+      ),
+    ).toBe(true);
   });
 
   test("connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row", () => {

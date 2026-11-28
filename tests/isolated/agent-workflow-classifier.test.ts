@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
-import { AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
+import { AgentManifestError, legacyAgentEngine, openWorkflows } from "@/lib/agent/agent-manifest";
 import { legacyStatementLanguageTable } from "../helpers/legacy-register";
 
 const statementLanguage = legacyStatementLanguageTable();
@@ -255,7 +255,7 @@ describe("classifying an objective into a workflow", () => {
 
       const classification = await classifyAgentWorkflow("why is the broker slow right now", {
         statementLanguage: statementLanguage[type] ?? undefined,
-        workflows: openWorkflows("agent", type),
+        workflows: openWorkflows("agent", legacyAgentEngine(type)),
       });
 
       expect(classification).toEqual({ workflowType: "investigation", outcome: "unclassified" });
@@ -271,7 +271,7 @@ describe("classifying an objective into a workflow", () => {
 
       const classification = await classifyAgentWorkflow("why is the broker slow right now", {
         statementLanguage: statementLanguage[type] ?? undefined,
-        workflows: openWorkflows("planning", type),
+        workflows: openWorkflows("planning", legacyAgentEngine(type)),
       });
 
       expect(classification).toEqual({ workflowType: "operations", outcome: "classified" });
@@ -284,7 +284,7 @@ describe("classifying an objective into a workflow", () => {
 
     const classification = await classifyAgentWorkflow("this select takes 40 seconds", {
       statementLanguage: statementLanguage.oracle ?? undefined,
-      workflows: openWorkflows("agent", "oracle"),
+      workflows: openWorkflows("agent", legacyAgentEngine("oracle")),
     });
 
     expect(classification).toEqual({ workflowType: "investigation", outcome: "unclassified" });

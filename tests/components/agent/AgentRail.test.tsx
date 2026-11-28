@@ -6245,7 +6245,10 @@ describe("AgentRail", () => {
         try {
           mock.module("@/lib/db/claim-grants", () => ({
             ...real,
-            GRANTED_AGENT_STATEMENT_LANGUAGE: { ...real.GRANTED_AGENT_STATEMENT_LANGUAGE, postgres: null },
+            legacyEngineGrants: (id: string) =>
+              id === "postgres"
+                ? { ...real.legacyEngineGrants(id), statementLanguage: null }
+                : real.legacyEngineGrants(id),
           }));
           const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
           fireEvent.click(view.getByTestId("agent-mode-agent"));

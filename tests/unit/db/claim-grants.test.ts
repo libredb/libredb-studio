@@ -27,12 +27,9 @@ import {
   AGENT_READING_NAMES,
   type EngineGrants,
   GRANTED_AGENT_EXECUTION_ENGINES,
-  GRANTED_AGENT_READINGS,
-  GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantEngineClaims,
-  grantedCatalogReadCommand,
   type LanguageDataRequest,
   HOST_PATH_FIELD_NAMES,
   legacyAgentCredentials,
@@ -62,7 +59,7 @@ import {
   legacyRegisterTable,
   legacyStatementLanguageTable,
 } from "../../helpers/legacy-register";
-import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest, packageRow, withLoosestClaims } from "../../helpers/package-catalog";
 import { type Input, moduleOf, valueInputs } from "../../helpers/value-inputs";
 import {
   claim,
@@ -424,12 +421,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
   test("the granted tables are frozen, each row too, keyed exactly by the shipped engines", () => {
     const frozen = (value: unknown): boolean =>
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
-    const tables = [
-      GRANTED_WRITE_REACH,
-      GRANTED_SSH_TUNNEL_REFUSAL,
-      GRANTED_AGENT_STATEMENT_LANGUAGE,
-      GRANTED_AGENT_READINGS,
-    ];
+    const tables = [GRANTED_WRITE_REACH, GRANTED_SSH_TUNNEL_REFUSAL];
 
     for (const table of tables) {
       expect(frozen(table)).toBe(true);
@@ -739,28 +731,27 @@ function schemaAgentModeVocabularies(): { readonly statementLanguageForm: string
 
 describe("Studio's grant of each agent mode claim", () => {
   test("for every shipped engine, each granted agent mode claim is its record's row", () => {
+    const grantedLanguages = legacyGrantTable("statementLanguage");
+    const grantedReadings = legacyGrantTable("agentReadings");
     expect(
-      SHIPPED_DATABASE_TYPES.filter(
-        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== legacyStatementLanguageTable()[type],
-      ),
+      SHIPPED_DATABASE_TYPES.filter((type) => grantedLanguages[type] !== legacyStatementLanguageTable()[type]),
     ).toEqual([]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(legacyStatementLanguageTable());
+    expect(grantedLanguages).toEqual(legacyStatementLanguageTable());
     // Vacuity: the record holds languages and nulls.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] === null)).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => grantedLanguages[type] === null)).toEqual([
       "bigquery",
       "databend",
       "snowflake",
       "spark",
     ]);
-    expect(GRANTED_AGENT_STATEMENT_LANGUAGE.mongodb).toBe("mongo");
+    expect(grantedLanguages.mongodb).toBe("mongo");
     expect(
       SHIPPED_DATABASE_TYPES.filter(
-        (type) =>
-          JSON.stringify(GRANTED_AGENT_READINGS[type]) !== JSON.stringify(legacyRegisterTable("agentReadings")[type]),
+        (type) => JSON.stringify(grantedReadings[type]) !== JSON.stringify(legacyRegisterTable("agentReadings")[type]),
       ),
     ).toEqual([]);
     // Vacuity: the legacy rows hold full, partial and empty readings.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_READINGS[type].length === 0)).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => grantedReadings[type].length === 0)).toEqual([
       "mqtt",
       "mtconnect",
       "opcua",
@@ -768,11 +759,11 @@ describe("Studio's grant of each agent mode claim", () => {
     ]);
     expect(
       SHIPPED_DATABASE_TYPES.some((type) => {
-        const readings = GRANTED_AGENT_READINGS[type];
+        const readings = grantedReadings[type];
         return readings.length > 0 && readings.length < CURATED_OPERATION_KINDS.length;
       }),
     ).toBe(true);
-    expect(GRANTED_AGENT_READINGS.postgres).toEqual([...CURATED_OPERATION_KINDS]);
+    expect(grantedReadings.postgres).toEqual([...CURATED_OPERATION_KINDS]);
   });
 
   const STATEMENT_LANGUAGE_CASES = [
@@ -1367,56 +1358,111 @@ describe("Studio's grant of the agent overlay's command-shaped catalog read", ()
   /** The claim's dotted member, as a refusal names it. */
   const CLAIM = "agent.overlay.dialect.catalogRead.commandShaped";
 
-  /** Whether `type`'s server overlay requests its catalog read as a command: the request the fence hands the grant. */
-  const requested = (type: DatabaseType): boolean => {
+  /** Whether `type`'s server overlay requests its catalog read as a command: the census of its declaration's request. */
+  const overlayRequests = (type: DatabaseType): boolean => {
     const read = engineServerDialect(type).catalogRead;
     return read !== "unsupported" && read.commandShaped === true;
   };
 
-  test("the command-shaped catalog read is granted only where the request and the engine's register row both are, and a request that is not a boolean is refused by name", () => {
-    const granting = grantOf("postgres", request(), rowWith("postgres", { catalogReadCommandShaped: true }));
-    const refusing = grantOf("postgres", request(), rowWith("postgres", { catalogReadCommandShaped: false }));
-    const rowless = grantOf(UNRECORDED, request(), null);
+  /** A package engine `id` whose declaration requests its catalog read as a command where `asked` is true. */
+  const commandShapedManifest = (id: string, asked: boolean) =>
+    admittedManifest(id, (engine) => {
+      withLoosestClaims(engine);
+      const agent = engine.agent as { overlay: { dialect: { catalogRead: { commandShaped: boolean } } } };
+      agent.overlay.dialect.catalogRead.commandShaped = asked;
+    });
 
-    // The grants carry the row's review of the claim, false where no row exists.
-    expect([granting, refusing, rowless].map((grants) => grants.catalogReadCommandShaped)).toEqual([
-      true,
-      false,
-      false,
-    ]);
+  test("catalogReadCommandShaped is granted only where the declaration requests it and the row reviews it", () => {
     const cases = [
-      [true, granting, true],
-      [false, granting, false],
-      [true, refusing, false],
-      [false, refusing, false],
-      [true, rowless, false],
-      [false, rowless, false],
+      [true, true, true],
+      [true, false, false],
+      [false, true, false],
+      [false, false, false],
     ] as const;
-    for (const [asked, grants, granted] of cases) {
-      expect({
-        asked,
-        row: grants.catalogReadCommandShaped,
-        granted: grantedCatalogReadCommand("postgres", asked, grants),
-      }).toEqual({ asked, row: grants.catalogReadCommandShaped, granted });
+    for (const [asked, row, granted] of cases) {
+      const grants = grantOf(
+        "postgres",
+        request({}, {}, {}, {}, { catalogReadCommandShaped: asked }),
+        rowWith("postgres", { catalogReadCommandShaped: row }),
+      );
+      expect({ asked, row, granted: grants.catalogReadCommandShaped }).toEqual({ asked, row, granted });
+    }
+    // No row: the claim's restrictive value, whatever the request.
+    for (const asked of [true, false]) {
+      expect(
+        grantOf(UNRECORDED, request({}, {}, {}, {}, { catalogReadCommandShaped: asked }), null)
+          .catalogReadCommandShaped,
+      ).toBe(false);
     }
     for (const value of [undefined, "yes", 1, null]) {
-      expect(() => grantedCatalogReadCommand("postgres", value, granting)).toThrow(
+      expect(() => grantOf("postgres", request({}, {}, {}, {}, { catalogReadCommandShaped: value as never }))).toThrow(
         `postgres requests ${CLAIM} ${JSON.stringify(value)}, which is not a value of the claim`,
       );
     }
+
+    // A package's request is its admitted declaration's, granted against its register row.
+    const asking = admittedFor("acme-asking", commandShapedManifest("acmeasking", true));
+    const silent = admittedFor("acme-silent", commandShapedManifest("acmesilent", false));
+    const bare = admittedFor("acme-bare", commandShapedManifest("acmebare", true));
+    const register = parseGrantRegister(
+      [
+        packageRow(asking, "acmeasking", { catalogReadCommandShaped: true }),
+        packageRow(silent, "acmesilent", { catalogReadCommandShaped: true }),
+      ],
+      SHIPPED_DATABASE_TYPES,
+    );
+    const catalog = composeServerCatalog([asking, silent, bare], [], register);
+    expect(
+      ["acmeasking", "acmesilent", "acmebare"].map((id) => catalog.engines.get(id)?.grants.catalogReadCommandShaped),
+    ).toEqual([true, false, false]);
   });
 
-  test("for every shipped engine, the granted command-shaped catalog read is its server overlay's request, and its register row grants it exactly where the overlay requests it", () => {
-    const granted = SHIPPED_DATABASE_TYPES.filter((type) =>
-      grantedCatalogReadCommand(type, requested(type), legacyEngineGrants(type)),
-    );
-    const asked = SHIPPED_DATABASE_TYPES.filter(requested);
+  test("for every shipped engine, the granted catalogReadCommandShaped is its declaration's request and its register row's review", () => {
+    const asked = SHIPPED_DATABASE_TYPES.filter((type) => BUNDLED_CLAIM_REQUESTS[type].agent.catalogReadCommandShaped);
+    const reviewed = SHIPPED_DATABASE_TYPES.filter((type) => legacyRow(type).grants.catalogReadCommandShaped);
+    const granted = SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).catalogReadCommandShaped);
 
     expect(granted).toEqual(asked);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).catalogReadCommandShaped)).toEqual(asked);
+    expect(reviewed).toEqual(asked);
+    // The declaration's request is its engine's server overlay's, which the declaration is generated from.
+    expect(SHIPPED_DATABASE_TYPES.filter(overlayRequests)).toEqual(asked);
     // Vacuity: the claim is granted on some shipped engines and not on others.
     expect(granted).toEqual(["elasticsearch", "opensearch"]);
-    expect(requested("postgres")).toBe(false);
+    expect(BUNDLED_CLAIM_REQUESTS.postgres.agent.catalogReadCommandShaped).toBe(false);
+  });
+});
+
+describe("the statement language an engine requests", () => {
+  test("requestsStatementLanguage is the request whatever the row, and every legacy engine requests a language exactly where its row grants one", () => {
+    for (const row of [
+      rowWith("postgres", { statementLanguage: "sql" }),
+      rowWith("postgres", { statementLanguage: null }),
+      null,
+    ]) {
+      expect(
+        grantOf("postgres", request({}, {}, {}, {}, { statementLanguage: "sql" }), row).requestsStatementLanguage,
+      ).toBe(true);
+      expect(
+        grantOf("postgres", request({}, {}, {}, {}, { statementLanguage: null }), row).requestsStatementLanguage,
+      ).toBe(false);
+    }
+    // A request the row does not grant: requested, and no language granted.
+    const ungranted = grantOf("postgres", request({}, {}, {}, {}, { statementLanguage: "acmeql" }));
+    expect([ungranted.requestsStatementLanguage, ungranted.statementLanguage]).toEqual([true, null]);
+
+    const mismatched = SHIPPED_DATABASE_TYPES.filter((type) => {
+      const grants = legacyEngineGrants(type);
+      const granted = grants.statementLanguage !== null;
+      return grants.requestsStatementLanguage !== granted || grants.agentExecution !== granted;
+    });
+    expect(mismatched).toEqual([]);
+    // Vacuity: some legacy engines request a language and some do not.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !legacyEngineGrants(type).requestsStatementLanguage)).toEqual([
+      "bigquery",
+      "databend",
+      "snowflake",
+      "spark",
+    ]);
   });
 });
 
@@ -1454,6 +1500,7 @@ describe("the claims of an admitted provider package's engine", () => {
       servesOneSession: null,
       agentExecution: false,
       catalogReadCommandShaped: false,
+      requestsStatementLanguage: true,
       redaction: { kind: "none" },
       readsSqlText: true,
       confirmExemptForms: [],

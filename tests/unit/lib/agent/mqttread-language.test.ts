@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AGENT_LANGUAGE_COPY,
   AGENT_WORKFLOW_VARIANTS,
+  legacyAgentEngine,
   planDeliverableOf,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
@@ -139,11 +140,11 @@ describe("the prompt texts", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.mqttread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.mqttread.investigation?.canAutoExecute).toBe(false);
     expect(planDeliverableOf("mqttread", "investigation")).toEqual({ kind: "prose" });
-    expect(workflowAvailability("agent", "investigation", "mqtt").open).toBe(true);
+    expect(workflowAvailability("agent", "investigation", legacyAgentEngine("mqtt")).open).toBe(true);
     // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
     // curated reading (its legacy row in the grant register lists none).
-    expect(workflowAvailability("agent", "operations", "mqtt").open).toBe(false);
-    expect(workflowAvailability("agent", "data-analysis", "mqtt").open).toBe(false);
+    expect(workflowAvailability("agent", "operations", legacyAgentEngine("mqtt")).open).toBe(false);
+    expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("mqtt")).open).toBe(false);
   });
 });
 

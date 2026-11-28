@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import {
   connectionIdentity,
   fingerprintInventory,
@@ -147,7 +147,7 @@ async function startRun(
   mode: AgentRunMode = "agent",
   workflowType: AgentRunWorkflowType = "investigation",
 ) {
-  const availability = workflowAvailability(mode, workflowType, connection.type);
+  const availability = workflowAvailability(mode, workflowType, legacyAgentEngine(connection.type));
   if (!availability.open) throw new Error(`a ${mode} ${workflowType} run does not open on postgres`);
   return service.start({
     mode,
@@ -448,7 +448,7 @@ describe("the run read allowance", () => {
     const { provider } = billingProvider(() => 1);
     forgetHeldSnapshots();
     const { service, resources } = boot(freshDataDir(), provider);
-    const availability = workflowAvailability("agent", "investigation", connection.type);
+    const availability = workflowAvailability("agent", "investigation", legacyAgentEngine(connection.type));
     if (!availability.open) throw new Error("an agent investigation does not open on postgres");
     const run = await service.start({
       mode: "agent",

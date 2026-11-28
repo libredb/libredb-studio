@@ -9,24 +9,26 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `facets` its
- * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage`, the whole
- * `statementLanguageData`, of `editor` its `commitKeyword`, `consentDeadline`,
+ * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage` and
+ * `overlay`, the whole `statementLanguageData`, of `editor` its `commitKeyword`, `consentDeadline`,
  * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `redaction`, `updateTarget`
  * and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
  * written in the declaration itself: this script reads them from the committed file of the engine in
  * src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
  * (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id` is not its file name,
- * and writes them back unchanged. Every other member is built from the tables. The engine catalog, the connection
- * tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab
- * type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms and the
- * claim requests (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80,
- * M-81, M-82 and M-83) project the authored members, and `bun run engines:generate` runs that command's `--write` first
- * and its `--check` last: this script builds every provider through the factory, which builds only an engine the
- * catalog holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse
- * by name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with
- * no placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored
- * members written for the new engine; the catalog generator projects it, this script writes every other member, and the
- * catalog generator then admits it.
+ * and writes them back unchanged, but for `agent.overlay`, which it writes from Studio's agent overlay registry as
+ * below, so the catalog generator reads in it the request the registry states. Every other member is built from the
+ * tables. The engine catalog, the connection tables, the connection forms, the connection strings, the execution UI
+ * and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the
+ * migration DDL, the SQL generator forms and the claim requests (scripts/generate-engine-catalog.ts, clauses M-70,
+ * M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83) project the authored members, and
+ * `bun run engines:generate` runs that command's `--write` first, again after this script, and its `--check` last:
+ * this script builds every provider through the factory, which builds only an engine the catalog holds, the second
+ * `--write` projects the overlay this script wrote into the claim requests, and `--check` admits every declaration
+ * this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or a field
+ * rule for a field the engine does not take and a placeable field with no placement. A new engine's declaration
+ * therefore starts as a copy of another engine's file with its authored members written for the new engine; the
+ * catalog generator projects it, this script writes every other member, and the catalog generator then admits it.
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
  * the statement language agent mode sends it, its statement language data, its editor facts that are data with the
@@ -96,9 +98,10 @@
  * its declaration, or a declaration without its record, fails there by claim and engine. An engine's grant of
  * `readOnlyEnforced` has no member, since Studio derives it from the granted write reach, and
  * `connection.readsTrustMaterial`, which is no claim, is authored too.
- * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of the agent
- * segment is written from Studio's tables. The SQL text claim, the redaction, is authored as the engine's request, which
- * the engine's register row grants (docs/providers/CONTRACT.md, clause M-54).
+ * The agent mode claims are the facets' `agentReadings`, the agent's `statementLanguage` and its overlay's
+ * `dialect.catalogRead.commandShaped`, which the claim requests carry as `agent.catalogReadCommandShaped`; the overlay
+ * is written from Studio's agent overlay registry. The SQL text claim, the redaction, is authored as the engine's
+ * request, which the engine's register row grants (docs/providers/CONTRACT.md, clause M-54).
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
  * (clause M-67): null where the declaration authors no statement language; otherwise its dialect, null where the

@@ -7,12 +7,13 @@
  * total over `AgentEngineType` and declared in the order postgres, sqlite, duckdb, mssql, mysql, mongodb, kubernetes,
  * and like the server registry it copies only `dialect` out of each engine module.
  *
- * An engine whose granted language its declaration states as data (`DECLARED_AGENT_LANGUAGES`) has no row: its family
- * is its grant (`grantedAgentStatementLanguage`), and its client facet is the family's own object.
+ * Each reader takes an engine, its id and `statementLanguage` grant, and finds its row by id. An engine with no row (a
+ * language declared as data, or a provider package's) has its grant as its family, and the family's own client facet.
  */
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
-import { DECLARED_AGENT_LANGUAGES, grantedAgentStatementLanguage, languageClientPack } from "../client";
+import { grantedAgentStatementLanguage, languageClientPack } from "../client";
 import { INFLUXDB_CLIENT_OVERLAY } from "../influxql/engines/client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
 import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
@@ -97,32 +98,28 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   sparkplug: Object.freeze({ family: "sparkplugread", overlay: dialectOnly(SPARKPLUG_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
+/** An engine as the client facets read it: its id, and its `statementLanguage` grant. */
+type AgentClientEngine = { readonly id: string; readonly grants: Pick<EngineGrants, "statementLanguage"> };
+
 /**
- * The language `type` is granted where its declaration states that language as data, or null for every other type and
- * for a name that is no own key (`toString`).
+ * The family `engine` speaks, read from the registry beside its overlay by its id, or its granted language where it has
+ * no row (`grantedAgentStatementLanguage`), or null for an engine with no statement language.
  */
-function declaredFamily(type: DatabaseType): AgentStatementLanguageId | null {
-  const granted = grantedAgentStatementLanguage(type);
-  return DECLARED_AGENT_LANGUAGES.find(({ id }) => id === granted)?.id ?? null;
+export function engineFamily(engine: AgentClientEngine): AgentStatementLanguageId | null {
+  return Object.hasOwn(CLIENT_OVERLAYS, engine.id)
+    ? CLIENT_OVERLAYS[engine.id as AgentEngineType].family
+    : grantedAgentStatementLanguage(engine);
 }
 
 /**
- * The family `type` speaks, read from the registry beside its overlay, or its granted language declared as data
- * (`declaredFamily`), or null for a type with no statement language and for a name that is no own key (`toString`).
- */
-export function engineFamily(type: DatabaseType): AgentStatementLanguageId | null {
-  return Object.hasOwn(CLIENT_OVERLAYS, type) ? CLIENT_OVERLAYS[type as AgentEngineType].family : declaredFamily(type);
-}
-
-/**
- * The client facet of `type`: its family's, with the engine's overlay applied, which is the family's own object while
- * the overlay is empty, and always for a language declared as data, which has no overlay. A type that speaks no
+ * The client facet of `engine`: its family's, with the engine's overlay applied, which is the family's own object while
+ * the overlay is empty, and always for a language declared as data, which has no overlay. An engine that speaks no
  * statement language has none, and asking is a named error.
  */
-export function engineClientPack(type: DatabaseType): AgentEnginePack["client"] {
-  const entry = Object.hasOwn(CLIENT_OVERLAYS, type) ? CLIENT_OVERLAYS[type as AgentEngineType] : undefined;
-  const family = entry?.family ?? declaredFamily(type);
-  if (family === null) throw new Error(`no engine pack for ${type}`);
+export function engineClientPack(engine: AgentClientEngine): AgentEnginePack["client"] {
+  const entry = Object.hasOwn(CLIENT_OVERLAYS, engine.id) ? CLIENT_OVERLAYS[engine.id as AgentEngineType] : undefined;
+  const family = entry?.family ?? grantedAgentStatementLanguage(engine);
+  if (family === null) throw new Error(`no engine pack for ${engine.id}`);
   const overlay: { readonly dialect?: AgentEngineClientDialect } | undefined = entry?.overlay;
   return defineOverlay(languageClientPack(family), overlay);
 }

@@ -1083,7 +1083,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         agentCredential: declaration.connection.agentCredential,
       },
       facets: { agentReadings: declaration.facets.agentReadings },
-      agent: { statementLanguage: declaration.agent.statementLanguage },
+      agent: {
+        statementLanguage: declaration.agent.statementLanguage,
+        catalogReadCommandShaped: declaration.agent.overlay?.dialect?.catalogRead?.commandShaped === true,
+      },
     });
 
     expect(Object.keys(requests)).toEqual([
@@ -1103,10 +1106,11 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(JSON.stringify(requests[declaration.id])).toBe(JSON.stringify(expected(declaration)));
       expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp", "connection", "facets", "agent"]);
     }
-    // The agent mode claims as the declaration states them: a statement language or null, and the curated readings,
-    // the empty list included.
-    expect(requests.postgres?.agent).toEqual({ statementLanguage: "sql" });
-    expect(requests.bigquery?.agent).toEqual({ statementLanguage: null });
+    // The agent mode claims as the declaration states them: a statement language or null, whether its catalog read is
+    // a command, false where the declaration states no overlay, and the curated readings, the empty list included.
+    expect(requests.postgres?.agent).toEqual({ statementLanguage: "sql", catalogReadCommandShaped: false });
+    expect(requests.elasticsearch?.agent).toEqual({ statementLanguage: "sql", catalogReadCommandShaped: true });
+    expect(requests.bigquery?.agent).toEqual({ statementLanguage: null, catalogReadCommandShaped: false });
     expect(requests.postgres?.facets.agentReadings).toEqual(admitted("postgres").facets.agentReadings);
     expect(requests.mqtt?.facets).toEqual({ agentReadings: [] });
     // The connection claims in the declaration's vocabulary: a tunnel offered or refused with its sentence, the host
@@ -1153,8 +1157,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   });
 
   test("the claim requests read only the members a declaration authors", () => {
-    // Every member but the authored policy and MCP segments, connection claims, agent readings and statement language
-    // replaced with postgres's, the rest of the facets and the agent overlay included: the
+    // Every member but the authored policy and MCP segments, connection claims, agent readings, statement language and
+    // agent overlay, whose one claim the requests read, replaced with postgres's, the rest of the facets included: the
     // requests the generator writes first, before the declaration generator rewrites the other members, are therefore
     // already the final ones, and the authored safeguards, which no gate reads, are not read either.
     const postgres = admitted("postgres");
@@ -1171,7 +1175,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
           agentCredential: d.connection.agentCredential,
         },
         facets: { ...postgres.facets, agentReadings: d.facets.agentReadings },
-        agent: { ...postgres.agent, statementLanguage: d.agent.statementLanguage },
+        agent: { statementLanguage: d.agent.statementLanguage, overlay: d.agent.overlay },
         policy: d.policy,
         mcp: d.mcp,
       }),
@@ -1185,7 +1189,6 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.facets.monitoring)).toBeGreaterThan(0);
     expect(differs((d) => d.facets.maintenance)).toBeGreaterThan(0);
     expect(differs((d) => d.connection)).toBeGreaterThan(0);
-    expect(differs((d) => d.agent.overlay)).toBeGreaterThan(0);
   });
 
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
@@ -2166,7 +2169,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 with the validator's refusal when Studio's tables do not follow an authored change", () => {
@@ -2189,7 +2192,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 with the validator's refusal when an authored change leaves a placeable field unplaced", () => {
@@ -2209,7 +2212,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate regenerates an authored connection string change in one run", () => {
@@ -2271,7 +2274,42 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates a registry overlay's command flag change into the claim requests in one run", () => {
+    // The subject is chosen by shape, the first declaration whose overlay reads its catalog by command, so the case
+    // names no engine; its overlay is the module Studio's agent overlay registry holds for it.
+    const subject = ADMITTED.find((d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped === true);
+    if (subject === undefined) throw new Error("no committed declaration states a command-shaped catalog read");
+    expect(BUNDLED_CLAIM_REQUESTS[subject.id as DatabaseType].agent.catalogReadCommandShaped).toBe(true);
+    const copy = generatingCopy();
+    try {
+      const overlay = path.join(
+        copy.root,
+        "src/lib/agent/languages",
+        subject.agent.statementLanguage as string,
+        "engines",
+        `${subject.id}.ts`,
+      );
+      const source = readFileSync(overlay, "utf8");
+      expect(source.split("commandShaped: true,").length).toBe(2);
+      writeFileSync(overlay, source.replace("commandShaped: true,", "commandShaped: false,"));
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("is not what the engine declarations project");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY));
+      const declaration = regenerated.find((d) => d.id === subject.id);
+      expect(declaration?.agent.overlay?.dialect?.catalogRead?.commandShaped).toBe(false);
+      const claims = readFileSync(path.join(copy.root, ENGINE_CLAIMS_MODULE), "utf8");
+      expect(claims).toBe(renderClaimRequests(projectClaimRequests(regenerated)));
+      expect(projectClaimRequests(regenerated)[subject.id as DatabaseType].agent.catalogReadCommandShaped).toBe(false);
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the function when a declaration names a connection string function Studio holds none for", () => {
@@ -2344,7 +2382,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the alias when two declarations state one fence alias", () => {
@@ -2425,7 +2463,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the editor language when two declarations state it with different accents", () => {
@@ -2515,7 +2553,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the function when a declaration names a SQL grammar function Studio holds none for", () => {
@@ -2596,7 +2634,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the function when a declaration names a SQL writing function Studio holds none for", () => {
@@ -2682,7 +2720,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate regenerates an authored policy, MCP and safeguards change in one run", () => {
@@ -2740,7 +2778,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate regenerates an authored connection claim change in one run", () => {
@@ -2796,7 +2834,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate keeps an authored SQL text redaction change in one run, and no generated module moves", () => {
@@ -2848,7 +2886,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate regenerates an authored agent readings change in one run", () => {
@@ -2899,7 +2937,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the four generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the engine when an authored statement language leaves its agent overlay no place", () => {

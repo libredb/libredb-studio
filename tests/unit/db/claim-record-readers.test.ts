@@ -25,11 +25,10 @@
  * of that claim's readers decides it.
  *
  * The agent overlay's claim that its catalog read is a command is held by member the same way, its request and its
- * review apart, until the change that projects the agent overlays from the admitted declarations: no module but the
- * catalog read's admission in src/lib/agent/tools.ts reads a member named `commandShaped`, the engine's server
- * overlay's request, and no module but the grant reader reads a member named `catalogReadCommandShaped`, the register
- * row's review of the claim, which an engine's grants carry and which is no grant until `grantedCatalogReadCommand`
- * reads it with the request.
+ * grant apart: no module but the claim projection, which reads each declaration's request, reads a member named
+ * `commandShaped`, and no module but the grant reader, which grants the request against the register row's review, and
+ * the catalog read's admission in src/lib/agent/tools.ts, which reads the engine record's grant, reads a member named
+ * `catalogReadCommandShaped`.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -104,6 +103,8 @@ const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
   [GRANT_READER]: "the grant reader, which grants each engine's request against its legacy row in the grant register",
   "src/lib/db/engine-catalog/projection.ts":
     "the claim projection, which reads each declaration's request and never Studio's row, a CLAIM_READERS entry of tests/unit/db/engine-declaration-readers.test.ts",
+  "src/lib/agent/agent-manifest.ts":
+    "reads a legacy engine's grant, `legacyEngineGrants(...).agentReadings`, and an agent engine's `grants.agentReadings`, which the grant reader answers",
   "src/lib/agent/run-ledger-ids.ts":
     "reads the engine record's grant, `servedEngineRecord(...).grants.agentReadings`, which the grant reader answers",
   "src/lib/agent/tools.ts":
@@ -115,17 +116,19 @@ const COMMAND_SHAPED = "commandShaped";
 
 /** The modules that may read a member named `commandShaped`, each with why. */
 const COMMAND_SHAPED_READERS: Readonly<Record<string, string>> = {
-  "src/lib/agent/tools.ts":
-    "the catalog read's admission, `catalogReadAdmission`, which reads the overlay's request and hands it to the grant reader's `grantedCatalogReadCommand`",
+  "src/lib/db/engine-catalog/projection.ts":
+    "the claim projection, which reads each declaration's request into `agent.catalogReadCommandShaped` and never Studio's row",
 };
 
-/** The member of a register row and of an engine's grants that is the row's review of the overlay's claim. */
+/** The member of a register row, of a claim request and of an engine's grants that names the overlay's claim. */
 const CATALOG_READ_COMMAND_SHAPED = "catalogReadCommandShaped";
 
 /** The modules that may read a member named `catalogReadCommandShaped`, each with why. */
 const CATALOG_READ_COMMAND_SHAPED_READERS: Readonly<Record<string, string>> = {
   [GRANT_READER]:
-    "the grant reader, which carries the row's review into an engine's grants and grants the claim in `grantedCatalogReadCommand`",
+    "the grant reader, which grants each engine's request against its register row's review in `grantEngineClaims`",
+  "src/lib/agent/tools.ts":
+    "the catalog read's admission, `catalogReadAdmission`, which reads the engine record's grant, `servedEngineRecord(...).grants.catalogReadCommandShaped`",
 };
 
 /** Each read `file` makes of a member named `member`, as `<file> reads <member>`, once per file. */
@@ -408,7 +411,7 @@ describe("the claim record readers", () => {
     expect(agentReadingsReaders([{ path: GRANT_READER, text: `row.${AGENT_READINGS};` }])).toEqual([]);
   }, 60_000);
 
-  test("the overlay's command-shaped catalog read request is read only by the catalog read's admission, and its register row's review only by the grant reader, and the scan finds each way a module could read either", () => {
+  test("the overlay's command-shaped catalog read request is read only by the claim projection, and its grant only by the grant reader and the catalog read's admission, and the scan finds each way a module could read either", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
     const scans = [
       [COMMAND_SHAPED, COMMAND_SHAPED_READERS],

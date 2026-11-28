@@ -33,9 +33,9 @@
  *   declaration with the projections Studio's generator projects its own declarations with, the grammar null where
  *   the declaration states no SQL text, and for a legacy engine from Studio's committed tables, never from a
  *   declaration read at run time;
- * - `grants`: Studio's grant of each claim and of the four host facts it reads from no declaration, and the row's
- *   review of the agent overlay's claim that its catalog read is a command, `grantEngineClaims` (./claim-grants)
- *   against the engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its
+ * - `grants`: Studio's grant of each claim, the agent overlay's claim that its catalog read is a command among them,
+ *   and of the four host facts it reads from no declaration, `grantEngineClaims` (./claim-grants) against the
+ *   engine's row of the grant register: a legacy engine's legacy row, a package engine's row keyed by its
  *   package's name, version and digest, or, where the register holds none, each claim at its restrictive value; its
  *   SQL text claims only for the grammar the row reviewed, and whether it did, and its statement language,
  *   decides-alone and text-not-SQL claims also only for the statement language data the row reviewed, the last two

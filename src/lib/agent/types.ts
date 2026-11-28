@@ -349,7 +349,7 @@ export type AgentRunFailureReason =
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
    * workflow's own reads go through the curated provider methods its engine offers to
-   * agent mode (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`; an engine granted none is
+   * agent mode (Studio's grant of its agent readings, its engine record's `grants.agentReadings`; an engine granted none is
    * refused the workflow by the `agent-readings` requirement, not by this reason),
    * under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
    * STATEMENT path; and since #411 it takes a server-side catalog capture before its
@@ -1917,18 +1917,19 @@ export interface AgentRunRecord {
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
-   * The type id of the run's connection when it opened, which picks the curated `inspect_operations` readings
-   * the run is offered (Studio's grant of its agent readings, its engine record's `grants.agentReadings`).
+   * The engine id of the run's connection when it opened, a legacy engine's or a provider package's, which picks
+   * the curated `inspect_operations` readings the run is offered (Studio's grant of its agent readings, its engine
+   * record's `grants.agentReadings`).
    *
    * Decided once at open and read by tool selection and the curated reading, never from the live connection,
    * for the reason `statementLanguage` gives.
    *
    * Optional, because a header written before this field records none, and such a run is offered the six
-   * curated readings it was opened with. A header naming a value that is not a type id, or an agent-mode
-   * operations run on an engine that offers agent mode no reading, is refused when the ledger is read
+   * curated readings it was opened with. A header naming an engine the installed catalog does not serve, or an
+   * agent-mode operations run on an engine that offers agent mode no reading, is refused when the ledger is read
    * (`runHeaderRefusal`).
    */
-  readonly engine?: DatabaseType;
+  readonly engine?: string;
   /**
    * The rule this run is judged against, decided once at open from its workflow variant.
    *

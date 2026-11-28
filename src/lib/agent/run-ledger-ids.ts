@@ -16,15 +16,20 @@
  *    offer agent mode at least one reading, since its reading tool would otherwise have nothing to offer, so that pair
  *    is refused the way a workflow with no variant on its language is.
  *
+ * An engine is live while the installed server catalog serves its record, a legacy engine's or a provider package's
+ * (`serverEngine`), and is read with nothing installed as the legacy engines. One the catalog no longer serves, a
+ * package removed since the run started or a package refused at boot, is refused by name as unknown: its run stays in
+ * its ledger as it was, history, and this build opens no new step of it. No engine is retired, so an engine is only
+ * ever live or unknown.
+ *
  * An absent id keeps its meaning: an absent language reads as `sql`, an absent workflow as
  * `DEFAULT_AGENT_WORKFLOW_TYPE`, an absent verifier as the variant's, which the variant check makes resolvable, and an
- * absent engine as a run recorded before the field, offered the six curated readings it was opened with. No engine is
- * retired, so an engine is only ever live or unknown.
+ * absent engine as a run recorded before the field, offered the six curated readings it was opened with.
  *
  * Server-side: the verifier set is read from the goal rules, which are server modules.
  */
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { isDatabaseType, quoteTypeId } from "@/lib/db/type-id";
+import { servedEngineRecord, serverEngine } from "@/lib/db/server-catalog";
+import { quoteTypeId } from "@/lib/db/type-id";
 import { type AgentStatementLanguageId, agentVariant } from "./agent-manifest";
 import { hasGoalRule, RETIRED_GOAL_VERIFIERS } from "./goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
@@ -76,6 +81,7 @@ export interface AgentRunHeaderVocabulary {
   readonly hasVariant: (language: string | undefined, workflow: string) => boolean;
   readonly isVerifier: (id: string) => boolean;
   readonly retiredVerifiers: ReadonlySet<string>;
+  /** Whether the installed server catalog serves the engine's record, a legacy engine's or a provider package's. */
   readonly isEngine: (id: string) => boolean;
   /**
    * Whether the engine offers agent mode at least one curated reading; asked only of an id `isEngine` holds. Read from
@@ -95,7 +101,7 @@ export const RUN_HEADER_VOCABULARY: AgentRunHeaderVocabulary = Object.freeze({
     agentVariant(language as AgentStatementLanguageId | undefined, workflow as AgentRunWorkflowType) !== undefined,
   isVerifier: hasGoalRule,
   retiredVerifiers: RETIRED_GOAL_VERIFIERS,
-  isEngine: isDatabaseType,
+  isEngine: (id: string) => serverEngine(id).kind === "served",
   hasReading: (engine: string) => servedEngineRecord(engine).grants.agentReadings.length > 0,
 });
 
@@ -165,8 +171,8 @@ function workflowRefusal(
 }
 
 /**
- * The refusal of an engine this build has no provider for, or of an agent-mode operations run on an engine that offers
- * agent mode no curated reading, or `null`.
+ * The refusal of an engine the installed catalog serves no record of, or of an agent-mode operations run on an engine
+ * that offers agent mode no curated reading, or `null`.
  */
 function engineRefusal(header: AgentRunHeaderIds, vocabulary: AgentRunHeaderVocabulary): AgentRunHeaderRefusal | null {
   const { engine } = header;

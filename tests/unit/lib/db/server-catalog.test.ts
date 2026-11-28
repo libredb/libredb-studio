@@ -963,6 +963,8 @@ describe("a package engine's register row", () => {
     ownWords: "code-only",
     servesOneSession: null,
     agentExecution: false,
+    // No grant: the request, which states a language whatever the row.
+    requestsStatementLanguage: true,
     catalogReadCommandShaped: false,
     redaction: { kind: "none" },
     readsSqlText: true,
@@ -1040,7 +1042,8 @@ describe("a package engine's register row", () => {
       ownWords: "scrubbed",
       servesOneSession: LOOSEST_ROW.servesOneSession,
       agentExecution: true,
-      // The row's review of the agent overlay's claim, whose request only the fence reads.
+      requestsStatementLanguage: true,
+      // The request's claim that its catalog read is a command, granted by the row's review of it.
       catalogReadCommandShaped: true,
       // The row reviews no grammar: every SQL text claim at its restrictive value.
       redaction: { kind: "none" },

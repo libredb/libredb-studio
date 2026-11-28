@@ -1,10 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { type AgentModuleLanguageId, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { parseGrantRegister } from "@libredb/grant-register";
+import {
+  type AgentModuleLanguageId,
+  legacyAgentEngine,
+  persistedRunFacts,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { type AgentGoalVerifierId, hasGoalRule, RETIRED_GOAL_VERIFIERS } from "@/lib/agent/goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES } from "@/lib/agent/languages/client";
-import { type AgentRunHeaderVocabulary, RUN_HEADER_VOCABULARY, runHeaderRefusal } from "@/lib/agent/run-ledger-ids";
+import {
+  type AgentRunHeaderRefusal,
+  type AgentRunHeaderVocabulary,
+  RUN_HEADER_VOCABULARY,
+  runHeaderRefusal,
+} from "@/lib/agent/run-ledger-ids";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunMode, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
+import {
+  admittedFor,
+  admittedManifest,
+  packageRow,
+  withCatalog,
+  withLoosestClaims,
+} from "../../../helpers/package-catalog";
 import { shippedDeclaredLanguage } from "../../../helpers/shipped-declared-language";
 
 /**
@@ -197,7 +218,7 @@ function persistableIds(): {
   for (const type of SHIPPED_DATABASE_TYPES) {
     for (const mode of ["agent", "planning"] as const satisfies readonly AgentRunMode[]) {
       for (const workflow of workflows) {
-        const availability = workflowAvailability(mode, workflow, type);
+        const availability = workflowAvailability(mode, workflow, legacyAgentEngine(type));
         if (!availability.open) continue;
         const facts = persistedRunFacts(mode, workflow, type, availability);
         if (facts.statementLanguage !== undefined) languages.add(facts.statementLanguage);
@@ -486,5 +507,62 @@ describe("the ids a run header can carry", () => {
       expect(isAgentStatementLanguage(id)).toBe(false);
       expect(hasGoalRule(id)).toBe(false);
     }
+  });
+});
+
+describe("the engine a run header names, read against the installed catalog", () => {
+  /** The refusal of a header naming `engine`, which this build's installed catalog does not serve. */
+  const unknownEngine = (engine: string): AgentRunHeaderRefusal => ({
+    field: "engine",
+    reason: "unknown",
+    id: engine,
+    named: `the engine "${engine}"`,
+    sentence: `This run was recorded on the engine "${engine}", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.`,
+  });
+
+  test("a run header naming an engine the installed catalog serves is read; one naming an engine it no longer serves is history, refused for a new step by name", async () => {
+    const rowed = admittedFor("acme-rowed", admittedManifest("acmerowed", withLoosestClaims));
+    const bare = admittedFor("acme-bare", admittedManifest("acmebare"));
+    const register = parseGrantRegister(
+      [packageRow(rowed, "acmerowed", { agentReadings: Object.freeze(["sessions"] as const) })],
+      LEGACY_ENGINE_IDS,
+    );
+    const operations = { mode: "agent", workflowType: "operations" } as const;
+
+    // With nothing installed, the legacy engines are served and a package's engine is unknown.
+    expect(runHeaderRefusal({ ...operations, engine: "postgres" })).toBeNull();
+    expect(runHeaderRefusal({ mode: "planning", engine: "acmerowed" })).toEqual(unknownEngine("acmerowed"));
+
+    await withCatalog(composeServerCatalog([rowed, bare], [], register), () => {
+      expect(runHeaderRefusal({ mode: "planning", engine: "acmerowed" })).toBeNull();
+      expect(runHeaderRefusal({ mode: "planning", workflowType: "operations", engine: "acmebare" })).toBeNull();
+      // An agent-mode operations header is read only where the engine's row grants a reading.
+      expect(runHeaderRefusal({ ...operations, engine: "acmerowed" })).toBeNull();
+      expect(runHeaderRefusal({ ...operations, engine: "acmebare" })).toEqual({
+        field: "workflowType",
+        reason: "unknown",
+        id: "operations",
+        named: 'the workflow "operations" on the engine "acmebare"',
+        sentence:
+          'This run is for the workflow "operations" on the engine "acmebare", and that engine offers no agent reading in this LibreDB Studio. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.',
+      });
+      expect(runHeaderRefusal({ ...operations, engine: "postgres" })).toBeNull();
+    });
+
+    // A catalog that no longer serves the engine: its package removed, or refused when the server started.
+    const refused = [
+      { name: "acme-rowed", version: "1.0.0", engines: ["acmerowed"], code: "PROVIDER_DIGEST_MISMATCH" },
+    ];
+    for (const catalog of [
+      composeServerCatalog([bare], [], register),
+      composeServerCatalog([bare], refused, register),
+    ]) {
+      await withCatalog(catalog, () => {
+        expect(runHeaderRefusal({ mode: "planning", engine: "acmerowed" })).toEqual(unknownEngine("acmerowed"));
+        expect(runHeaderRefusal({ ...operations, engine: "acmerowed" })).toEqual(unknownEngine("acmerowed"));
+        expect(runHeaderRefusal({ mode: "planning", engine: "acmebare" })).toBeNull();
+      });
+    }
+    expect(serverCatalogInstalled()).toBe(false);
   });
 });

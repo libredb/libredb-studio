@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { notReviewedSentence, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import {
+  notReviewedSentence,
+  operationsWorkflowOpens,
+  persistedRunFacts,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
@@ -353,20 +358,20 @@ export async function POST(req: Request) {
          known first, and under Automatic it is: the rail classifies at
          `POST /api/agent/classify` and names the workflow in this request, so the
          refusal lands after the classify call and before the open.
-       - **The ENGINE'S LANGUAGE**, from Studio's grant `GRANTED_AGENT_STATEMENT_LANGUAGE`,
-         keyed by type-id, whose record `tests/unit/lib/agent/agent-manifest.test.ts` holds to every provider
-         that has `queryReadOnly`. Read here rather than probed
+       - **The ENGINE'S LANGUAGE**, from Studio's grant in the connection's engine record
+         (`grants.statementLanguage`), whose legacy rows `tests/unit/lib/agent/agent-manifest.test.ts` holds to every
+         provider that has `queryReadOnly`. Read here rather than probed
          off a constructed provider, because a construction is not free on the engines
          this refusal is about: on a single-writer file the second handle throws rather
          than opening (B49), and it is the same grant the rail and the safety strip
          read, so the notice and the refusal cannot disagree about which engines they
          are talking about.
-       - **The REVIEW RECORD**, `GRANTED_AGENT_EXECUTION_ENGINES`, the list form of the grant the
-         provider factory's statement profiles and the core read path read again at run time from
-         each engine record (`grants.agentExecution`). An
-         engine whose language would open the run but which the record does not list is
-         answered with `notReviewedSentence`, naming it. Read after the language, so an
-         engine with neither keeps the posture's sentence below.
+       - **The REVIEW**, the engine record's `grants.agentExecution`, the grant the
+         provider factory's statement profiles and the core read path read again at run time. An
+         engine whose language would open the run but whose record grants no agent execution, or
+         that requests a language its record does not grant, is answered with `notReviewedSentence`,
+         naming it, and naming the operations workflow only where it opens. Read after the language,
+         so an engine with neither keeps the posture's sentence below.
        - **The VARIANT and what it requires.** A language may have no variant of the
          workflow, or a variant whose tools need a reading this engine does not serve;
          either is refused with the manifest's own sentence.
@@ -390,7 +395,8 @@ export async function POST(req: Request) {
       is the same status the route's other cross-field refusal (`autoExecute` on a
       workflow that presents no answer) answers with.
     */
-    const availability = workflowAvailability(mode as AgentRunMode, requestedWorkflow, connection.type);
+    const engine = servedEngineRecord(connection.type);
+    const availability = workflowAvailability(mode as AgentRunMode, requestedWorkflow, engine);
     if (!availability.open) {
       return badRequest(
         availability.cause === "no-adapter"
@@ -401,7 +407,7 @@ export async function POST(req: Request) {
               handover: false,
             }).body
           : availability.cause === "not-reviewed"
-            ? notReviewedSentence(getDBConfig(connection.type).label)
+            ? notReviewedSentence(getDBConfig(connection.type).label, operationsWorkflowOpens(engine))
             : availability.sentence,
         // The only refusal here that a client can already be explaining for itself, so
         // the only one that carries a code (#513).
@@ -420,7 +426,7 @@ export async function POST(req: Request) {
     if (
       mode === "agent" &&
       AGENT_WORKFLOW_SENDS_STATEMENTS[requestedWorkflow] &&
-      servedEngineRecord(connection.type).grants.readRootsRequired &&
+      engine.grants.readRootsRequired &&
       connection.agentReadRoots === undefined
     ) {
       return badRequest(READ_ROOTS_REQUIRED_SENTENCE, "read-roots-required");

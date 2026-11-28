@@ -79,7 +79,7 @@ mock.module("@/lib/agent/languages/sql/engines/client", () => ({
   },
 }));
 
-const { AGENT_REQUIREMENT_ENGINES, persistedRunFacts, workflowAvailability } = await import(
+const { AGENT_REQUIREMENT_ENGINES, legacyAgentEngine, persistedRunFacts, workflowAvailability } = await import(
   "@/lib/agent/agent-manifest"
 );
 const { forgetHeldSnapshots } = await import("@/lib/agent/context-snapshot");
@@ -141,7 +141,7 @@ async function drive(
       kind === listed.id ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
     describeObjects: async () => ({ details: [] }),
   } as unknown as DatabaseProvider;
-  const availability = workflowAvailability("agent", workflowType, connection.type);
+  const availability = workflowAvailability("agent", workflowType, legacyAgentEngine(connection.type));
   if (!availability.open) throw new Error(`${workflowType} does not open on the double`);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-catalog-row-mapper-"));
   dataDirs.push(dataDir);
@@ -186,11 +186,14 @@ describe("an engine that composes its catalog read through a row mapper and no e
   });
 
   test.each(["investigation", "database-assessment", "data-analysis"] as const)("opens %s", (workflow) => {
-    expect(workflowAvailability("agent", workflow, "duckdb")).toMatchObject({ open: true, statementLanguage: "sql" });
+    expect(workflowAvailability("agent", workflow, legacyAgentEngine("duckdb"))).toMatchObject({
+      open: true,
+      statementLanguage: "sql",
+    });
   });
 
   test("refuses query-optimization with the sentence that says it needs an estimating plan", () => {
-    expect(workflowAvailability("agent", "query-optimization", "duckdb")).toEqual({
+    expect(workflowAvailability("agent", "query-optimization", legacyAgentEngine("duckdb"))).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:

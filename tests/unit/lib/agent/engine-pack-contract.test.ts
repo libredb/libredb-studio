@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { workflowAvailability } from "@/lib/agent/agent-manifest";
+import { legacyAgentEngine, workflowAvailability } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -43,7 +43,7 @@ const WORKFLOWS = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowType[];
 /** Every workflow an agent-mode run opens on `type` with a variant, with that variant. */
 const openVariants = (type: DatabaseType) =>
   WORKFLOWS.flatMap((workflow) => {
-    const availability = workflowAvailability("agent", workflow, type);
+    const availability = workflowAvailability("agent", workflow, legacyAgentEngine(type));
     return availability.open && availability.variant !== null ? [{ workflow, variant: availability.variant }] : [];
   });
 

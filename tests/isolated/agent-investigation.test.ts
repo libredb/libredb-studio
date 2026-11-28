@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { streamText, tool } from "ai";
-import { AGENT_WORKFLOW_VARIANTS, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_WORKFLOW_VARIANTS,
+  legacyAgentEngine,
+  persistedRunFacts,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { unreadStopAsksFor } from "@/lib/agent/models";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -5755,7 +5760,7 @@ describe("a MongoDB run is told only what its own tools can do", () => {
     autoExecute = false,
     verifier?: "agent-query-optimization.3",
   ): Promise<AgentRunRecord> {
-    const availability = workflowAvailability("agent", workflowType, "mongodb");
+    const availability = workflowAvailability("agent", workflowType, legacyAgentEngine("mongodb"));
     if (!availability.open) throw new Error(`${workflowType} does not open on mongodb`);
     return b.service.start({
       mode: "agent",
@@ -6113,7 +6118,7 @@ describe("a run whose grounding the execution profile refuses", () => {
     workflowType: AgentRunWorkflowType,
     type: DatabaseType,
   ): Promise<AgentRunRecord> {
-    const availability = workflowAvailability(mode, workflowType, type);
+    const availability = workflowAvailability(mode, workflowType, legacyAgentEngine(type));
     if (!availability.open) throw new Error(`${workflowType} does not open on ${type}`);
     return b.service.start({
       mode,

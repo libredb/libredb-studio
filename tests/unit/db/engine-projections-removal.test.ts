@@ -482,7 +482,7 @@ describe("each projection of the admitted declarations, built with and without a
         agentCredential: POSTGRES.connection.agentCredential,
       },
       facets: { agentReadings: POSTGRES.facets.agentReadings },
-      agent: { statementLanguage: POSTGRES.agent.statementLanguage },
+      agent: { statementLanguage: POSTGRES.agent.statementLanguage, catalogReadCommandShaped: false },
     });
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
 
@@ -585,6 +585,7 @@ describe("each projection of the admitted declarations, built with and without a
       ownWords: "code-only",
       servesOneSession: null,
       agentExecution: false,
+      requestsStatementLanguage: true,
       catalogReadCommandShaped: false,
       redaction: { kind: "none" },
       readsSqlText: true,
