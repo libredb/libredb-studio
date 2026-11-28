@@ -22,6 +22,7 @@ import { admitted } from "@libredb/provider-loader";
 import { parseGrantRegister } from "@libredb/grant-register";
 import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { MODULE_MCP_TOOLS } from "@/lib/agent/languages/mcp";
 import { languageDataSha256 } from "@/lib/db/language-digest";
 import {
   forgetServerCatalog,
@@ -172,7 +173,7 @@ describe("boot admission", () => {
     process.env.LIBREDB_PROVIDERS_DIR = providers;
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
       const lines = logs.warn.mock.calls.map(([message]) => message);
       expect(lines.filter((line) => line.includes(tampered.name))).toEqual([
         `${named("PROVIDER_DIGEST_MISMATCH", tampered)}its files differ from the digest its lock entry pins`,
@@ -220,7 +221,7 @@ describe("boot admission", () => {
     process.env.LIBREDB_PROVIDERS_DIR = providers;
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
       expect(logs.warn.mock.calls.filter(([message]) => message.includes(unheld.name))).toEqual([
         [
           `${named("PROVIDER_SCHEMA_INVALID", unheld)}its manifest is not one the provider contract admits: value-not-allowed at /engines/0/editor/dialect/name`,
@@ -271,7 +272,7 @@ describe("boot admission", () => {
       let answer: boolean;
       let printed = "";
       try {
-        answer = await admitProvidersAtBoot();
+        answer = await admitProvidersAtBoot(MODULE_MCP_TOOLS);
         printed = banner.mock.calls.flat().join("\n");
       } finally {
         exit.mockRestore();
@@ -295,7 +296,7 @@ describe("boot admission", () => {
     const logs = spyLogs();
     let printed = "";
     try {
-      await admitProvidersAtBoot();
+      await admitProvidersAtBoot(MODULE_MCP_TOOLS);
       printed = banner.mock.calls.flat().join("\n");
     } finally {
       exit.mockRestore();
@@ -331,7 +332,7 @@ describe("boot admission", () => {
       });
       try {
         expect([serverCatalogBooting(), serverCatalogInstalled()]).toEqual([false, false]);
-        expect(await admitProvidersAtBoot()).toBe(true);
+        expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
       } finally {
         read.mockRestore();
         logs.restore();
@@ -364,7 +365,7 @@ describe("boot admission", () => {
       const logs = spyLogs();
       let thrown: unknown;
       try {
-        await admitProvidersAtBoot();
+        await admitProvidersAtBoot(MODULE_MCP_TOOLS);
       } catch (error) {
         thrown = error;
       } finally {
@@ -392,7 +393,7 @@ describe("boot admission", () => {
       const compile = spyOn(admission, "hostManifestValidator");
       const logs = spyLogs();
       try {
-        expect(await admitProvidersAtBoot()).toBe(true);
+        expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
         expect([read.mock.calls.length, compile.mock.calls.length]).toEqual([0, 0]);
       } finally {
         read.mockRestore();
@@ -413,7 +414,7 @@ describe("boot admission", () => {
     const logs = spyLogs();
     let answer: Awaited<ReturnType<typeof bootAdmission>>;
     try {
-      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
       const calls = logs.error.mock.calls.filter(([message]) => message.includes(thrower.name));
       expect(calls.length).toBe(1);
       const [message, cause, context] = calls[0] as [string, unknown, unknown];
@@ -443,7 +444,7 @@ describe("boot admission", () => {
       });
     });
     try {
-      const answer = await bootAdmission(providers, 50, STUDIO_GRANT_REGISTER);
+      const answer = await bootAdmission(providers, 50, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
       if (!answer.read) throw new Error("the lock was refused");
       expect(answer.refused.map(({ code }) => code)).toEqual(["PROVIDER_LOAD_FAILED"]);
       expect(logs.warn.mock.calls.filter(([message]) => message.includes(late.name)).length).toBe(1);
@@ -470,7 +471,7 @@ describe("boot admission", () => {
     process.env.LIBREDB_PROVIDERS_DIR = providers;
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
       const lines = logs.warn.mock.calls.map(([message]) => message).filter((line) => line.includes("CATALOG"));
       expect(lines).toEqual([
         `${named("PROVIDER_CATALOG_CONFLICT", first)}it states a fence alias Studio's catalog or another package states, or one that names another engine`,
@@ -517,7 +518,7 @@ describe("boot admission", () => {
     const logs = spyLogs();
     let answer: Awaited<ReturnType<typeof bootAdmission>>;
     try {
-      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register);
+      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register, MODULE_MCP_TOOLS);
       const lines = logs.warn.mock.calls.map(([message]) => message).filter((line) => line.includes("CATALOG"));
       expect(lines).toEqual(
         [first, second].map(
@@ -537,6 +538,97 @@ describe("boot admission", () => {
     ]);
   });
 
+  test("packages granted languages of one MCP tool name, or of a module language's tool, are logged with PROVIDER_CATALOG_CONFLICT and none is admitted", async () => {
+    const generated = () => randomUUID().replaceAll("-", "").slice(0, 12);
+    /** Writes one package per tool of `tools`, each granted a language of its own stating that tool, and a quiet one. */
+    const granted = (tools: readonly string[]) => {
+      const providers = freshProviders();
+      const data = tools.map((tool) => acmereadData(`acme${generated()}`, tool));
+      const stating = (stated: (typeof data)[number]) => (engine: Record<string, Record<string, unknown>>) => {
+        engine.agent = { statementLanguage: stated.name, overlay: { dialect: null, grounding: null } };
+        withStatementLanguageData(engine as EditableEngine, stated);
+      };
+      const written = writePackages(providers, [...data.map((stated) => ({ engine: stating(stated) })), {}]);
+      // Each row grants its package its language under the digest of the data written, keyed by its lock entry.
+      const register = parseGrantRegister(
+        data.map((stated, index) => {
+          const pkg = written[index] as Written;
+          return packageRow({ name: pkg.name, version: "1.0.0", digest: pkg.digest }, pkg.id, {
+            statementLanguage: stated.name,
+            languageSha256: languageDataSha256(stated),
+          });
+        }),
+        LEGACY_ENGINE_IDS,
+      );
+      return { providers, written, register };
+    };
+    const SENTENCE =
+      "it is granted a statement language whose MCP statement tool Studio's catalog or another engine's granted language holds";
+    const conflictLines = (logs: ReturnType<typeof spyLogs>) =>
+      logs.warn.mock.calls.map(([message]) => message).filter((line) => line.includes("CATALOG"));
+
+    // Two packages of one generated tool, and a quiet third.
+    const tool = `run_acme${generated()}_read`;
+    const shared = granted([tool, tool]);
+    const [first, second, quiet] = shared.written as [Written, Written, Written];
+    let logs = spyLogs();
+    let answer: Awaited<ReturnType<typeof bootAdmission>>;
+    try {
+      answer = await bootAdmission(shared.providers, PROVIDER_IMPORT_DEADLINE_MS, shared.register, MODULE_MCP_TOOLS);
+      const lines = conflictLines(logs);
+      expect(lines).toEqual([first, second].map((pkg) => `${named("PROVIDER_CATALOG_CONFLICT", pkg)}${SENTENCE}`));
+      expect(lines.join(" ")).not.toContain(tool);
+    } finally {
+      logs.restore();
+    }
+    if (!answer.read) throw new Error("the lock written here is refused");
+    expect(answer.admitted.map(({ name }) => name)).toEqual([quiet.name]);
+    expect(answer.refused.map(({ name, code }) => `${name} ${code}`)).toEqual([
+      `${first.name} PROVIDER_CATALOG_CONFLICT`,
+      `${second.name} PROVIDER_CATALOG_CONFLICT`,
+    ]);
+
+    // A package granted a language stating a module language's tool: refused by the list boot is handed, and
+    // admitted where the list is empty, so the list is read, not a table of boot's own.
+    const moduleTool = MODULE_MCP_TOOLS[0] as string;
+    expect(moduleTool).toBeDefined();
+    for (const [tools, admittedHeld] of [
+      [MODULE_MCP_TOOLS, false],
+      [[], true],
+    ] as const) {
+      const held = granted([moduleTool]);
+      const [claimant, bystander] = held.written as [Written, Written];
+      logs = spyLogs();
+      try {
+        answer = await bootAdmission(held.providers, PROVIDER_IMPORT_DEADLINE_MS, held.register, tools);
+        expect(conflictLines(logs)).toEqual(
+          admittedHeld ? [] : [`${named("PROVIDER_CATALOG_CONFLICT", claimant)}${SENTENCE}`],
+        );
+      } finally {
+        logs.restore();
+      }
+      if (!answer.read) throw new Error("the lock written here is refused");
+      expect(answer.admitted.map(({ name }) => name)).toEqual(
+        admittedHeld ? [claimant.name, bystander.name] : [bystander.name],
+      );
+    }
+
+    // admitProvidersAtBoot hands the module rule the list its caller hands it, by identity.
+    const providers = freshProviders();
+    writePackages(providers, [{}]);
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    const moduleRule = spyOn(compose, "moduleMcpToolConflicts");
+    logs = spyLogs();
+    try {
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
+      expect(moduleRule.mock.calls.length).toBe(1);
+      expect(moduleRule.mock.calls[0]?.[2]).toBe(MODULE_MCP_TOOLS);
+    } finally {
+      moduleRule.mockRestore();
+      logs.restore();
+    }
+  });
+
   test("a package a set rule refuses is absent from the loader's registry, which names exactly the packages the catalog serves", async () => {
     const providers = freshProviders();
     const alias = `acmereg${randomUUID().replaceAll("-", "").slice(0, 8)}`;
@@ -552,7 +644,7 @@ describe("boot admission", () => {
     process.env.LIBREDB_PROVIDERS_DIR = providers;
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
     } finally {
       logs.restore();
     }
@@ -569,7 +661,7 @@ describe("boot admission", () => {
     const compile = spyOn(admission, "hostManifestValidator");
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
       expect(compile.mock.calls.length).toBe(1);
       const [bytes] = compile.mock.calls[0] as [Uint8Array];
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(MANIFEST_SCHEMA_SHA256);
@@ -582,7 +674,7 @@ describe("boot admission", () => {
     writeLock(empty, []);
     const none = spyOn(admission, "hostManifestValidator");
     try {
-      await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+      await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
       expect(none.mock.calls.length).toBe(0);
     } finally {
       none.mockRestore();
@@ -593,7 +685,7 @@ describe("boot admission", () => {
     forgetPackageDirectories();
     const empty = freshProviders();
     writeLock(empty, []);
-    await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+    await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
     expect(packagesInStack(() => "")).toBeNull();
 
     const providers = freshProviders();
@@ -603,7 +695,7 @@ describe("boot admission", () => {
     ];
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
     } finally {
       logs.restore();
     }
@@ -627,7 +719,7 @@ describe("boot admission", () => {
     process.env.LIBREDB_PROVIDERS_DIR = providers;
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
     } finally {
       logs.restore();
     }
@@ -648,8 +740,8 @@ describe("boot admission", () => {
     const read = spyOn(providersLock, "readProvidersLock");
     const logs = spyLogs();
     try {
-      expect(await admitProvidersAtBoot()).toBe(true);
-      expect(await admitProvidersAtBoot()).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
+      expect(await admitProvidersAtBoot(MODULE_MCP_TOOLS)).toBe(true);
       expect(read.mock.calls.length).toBe(1);
     } finally {
       read.mockRestore();
@@ -679,7 +771,7 @@ describe("boot admission", () => {
     });
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, MODULE_MCP_TOOLS);
     } finally {
       admit.mockRestore();
       logs.restore();

@@ -12,6 +12,7 @@
  * (tests/helpers/declared-agent-language.ts) and requests it as its agent statement language.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -299,8 +300,10 @@ describe("the server's declared language registries", () => {
   test("a granted language two served engines declare, or one a module language holds, fails the registries' first read by name", () => {
     // The catalog's set rules refuse both compositions at boot (`statement-language`). The registries' named error
     // remains the host defect for a catalog composed past the rule, crafted here, and for bundled declarations.
+    // One name, each its own MCP tool (generated), so only the language rule reads the pair.
     const one = languagePackage("acme-one", "acmeone", acmereadData());
-    const two = languagePackage("acme-two", "acmetwo", acmereadData());
+    const tool = `run_acme${randomUUID().replaceAll("-", "").slice(0, 12)}_read`;
+    const two = languagePackage("acme-two", "acmetwo", acmereadData(undefined, tool));
     expect(() => catalogOf([one, two], [grantingRow(one), grantingRow(two)])).toThrow(
       "the admitted packages still conflict (acme-one 1.0.0 statement-language, acme-two 1.0.0 statement-language)",
     );

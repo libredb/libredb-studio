@@ -112,13 +112,14 @@ export function acmereadForm(): AgentRequestForm {
 }
 
 /**
- * The MCP statement tool of `acmeread`, `run_acme_read`: every string marked, the description filled with the engines
- * and the limits and the way past a cut result with the rows shown. Its engines hold no table, so inspect_schema points
- * to it.
+ * The MCP statement tool of `acmeread`, named `tool`, `run_acme_read` unless named: every string marked, the description
+ * filled with the engines and the limits and the way past a cut result with the rows shown. Its engines hold no table,
+ * so inspect_schema points to it. A plant granting two packages hands each its own tool, since the catalog's set rules
+ * refuse two granted languages stating one tool.
  */
-export function acmereadMcp(): NonNullable<AgentMcpTool> {
+export function acmereadMcp(tool = "run_acme_read"): NonNullable<AgentMcpTool> {
   return {
-    tool: "run_acme_read",
+    tool,
     holdsNoTables: true,
     text: {
       title: marked("mcpTitle"),
@@ -130,8 +131,11 @@ export function acmereadMcp(): NonNullable<AgentMcpTool> {
   };
 }
 
-/** The statement language data `name` states: a request language naming no operation, with `acmeread`'s agent part. */
-export function acmereadData(name = "acmeread"): NonNullable<StatementLanguageData> {
+/**
+ * The statement language data `name` states: a request language naming no operation, with `acmeread`'s agent part, its
+ * MCP statement tool named `tool` (`acmereadMcp`).
+ */
+export function acmereadData(name = "acmeread", tool = "run_acme_read"): NonNullable<StatementLanguageData> {
   return {
     name,
     confirmation: {
@@ -141,6 +145,6 @@ export function acmereadData(name = "acmeread"): NonNullable<StatementLanguageDa
       safetyAnalysis: false,
       maxTextBytes: null,
     },
-    agent: { request: acmereadForm(), text: acmereadText(), mcp: acmereadMcp() },
+    agent: { request: acmereadForm(), text: acmereadText(), mcp: acmereadMcp(tool) },
   };
 }

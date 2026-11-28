@@ -1,18 +1,21 @@
 /**
  * Boot admission (docs/providers/CONTRACT.md, clause C-105): the standalone server's `register()`
- * (src/instrumentation.ts) calls `admitProvidersAtBoot()` once, after it installs the host core and before governance,
- * the banner and the samples, so the server's engine catalog is installed before any request is served.
+ * (src/instrumentation.ts) calls `admitProvidersAtBoot(moduleMcpTools)` once, after it installs the host core and before
+ * governance, the banner and the samples, so the server's engine catalog is installed before any request is served.
+ * `moduleMcpTools` is the module languages' MCP statement tools (`MODULE_MCP_TOOLS` in src/lib/agent/languages/mcp.ts),
+ * which only the agent holds and this module does not import, so its caller hands them; step 3 hands them on to the
+ * catalog's set rules.
  *
- * `admitProvidersAtBoot()`:
+ * `admitProvidersAtBoot(moduleMcpTools)`:
  * 1. reads nothing when a server catalog is installed already, from another `register()` call or another bundle of the
  *    process, and answers true; otherwise begins the catalog's boot (`beginServerCatalogBoot`), which the install of
  *    step 2 or 4 ends, before it reads the providers directory, so a reader composed once per installed catalog can tell
  *    the pending boot from a process that installs none;
  * 2. with no providers directory set (`providersDirectory`, ./providers-dir), reads no lock, compiles no validator,
  *    installs the bundled catalog and answers true;
- * 3. otherwise runs `bootAdmission` under `PROVIDER_IMPORT_DEADLINE_MS`; a lock refused as a whole, a set directory that
- *    does not exist among them, prints the boot banner the other boot checks print, naming the lock and the rule, exits
- *    with 1 and answers false, installing no catalog and leaving the boot begun;
+ * 3. otherwise runs `bootAdmission` under `PROVIDER_IMPORT_DEADLINE_MS` with `moduleMcpTools`; a lock refused as a
+ *    whole, a set directory that does not exist among them, prints the boot banner the other boot checks print, naming
+ *    the lock and the rule, exits with 1 and answers false, installing no catalog and leaving the boot begun;
  * 4. installs the catalog `composeServerCatalog` composes from the packages admitted and refused, and answers true.
  * An error thrown by any step after the boot began, from admission or composition alike, ends the boot unfinished
  * (`endServerCatalogBootUnfinished`) and is thrown on unchanged, so a reader composed once per installed catalog names
@@ -22,16 +25,17 @@
  * entry pins, which the lock's read verified, and so are the catalog's set rules, which read each admitted engine's
  * grant of its statement language from it.
  *
- * `bootAdmission(directory, deadlineMs, register)` reads the lock (`readProvidersLock`), logs each package the lock
- * refused, and, when at least one package passed it, records the directory of each such package for the
- * uncaught-exception line (./package-directories, clause C-108), compiles the manifest validator once from the SDK's
+ * `bootAdmission(directory, deadlineMs, register, moduleMcpTools)` reads the lock (`readProvidersLock`), logs each
+ * package the lock refused, and, when at least one package passed it, records the directory of each such package for
+ * the uncaught-exception line (./package-directories, clause C-108), compiles the manifest validator once from the SDK's
  * schema text, whose digest the validator checks, then admits each verified package in package-name order, the order
  * the lock's read answers, one at a time, each import under `deadlineMs` (`admitPackage`, ./admission), each
  * manifest's explain formats, query dialects, query languages, Monaco languages and formatter languages held to
  * Studio's own tables, `STUDIO_HELD_NAMES` (src/lib/db/studio-held-names.ts). The catalog's set rules
- * (`catalogConflicts`) then run over every admitted package and its rows of `register`, each package they refuse is
- * logged with `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are registered (`registerAdmission`), so
- * the loader's registry and the server's catalog name the same packages.
+ * (`catalogConflicts`, and `moduleMcpToolConflicts` over `moduleMcpTools`) then run over every admitted package and its
+ * rows of `register`, each package they refuse is logged once with `PROVIDER_CATALOG_CONFLICT`, by the first rule it
+ * breaks, and only the packages they keep are registered (`registerAdmission`), so the loader's registry and the
+ * server's catalog name the same packages.
  *
  * Every refused package is logged once, by its refusal's one-line sentence: at warn, or at error with the value the
  * entry threw as the logged error for `import-threw`, so the thrown value is never in the sentence. An admitted package
@@ -52,15 +56,22 @@ import {
 } from "@/lib/db/server-catalog";
 import {
   type AdmittedForCatalog,
+  type CatalogConflict,
   catalogConflicts,
   composeServerCatalog,
+  moduleMcpToolConflicts,
   type RefusedForCatalog,
 } from "@/lib/db/server-catalog-compose";
 import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import { logger } from "@/lib/logger";
 import * as admission from "./admission";
 import { recordPackageDirectories } from "./package-directories";
-import { catalogConflictRefusal, type LockRefusal, type PackageRefusal } from "./provider-refusals";
+import {
+  CATALOG_CONFLICT_RULES,
+  catalogConflictRefusal,
+  type LockRefusal,
+  type PackageRefusal,
+} from "./provider-refusals";
 import { providersDirectory } from "./providers-dir";
 import * as providersLock from "./providers-lock";
 
@@ -103,13 +114,14 @@ function refusedOf(refusal: PackageRefusal, engines: readonly string[]): Refused
 
 /**
  * Reads the lock of the providers directory `directory`, admits each package it verified with each import under
- * `deadlineMs`, runs the catalog's set rules against `register` and registers the packages they keep; see the
- * module's docblock.
+ * `deadlineMs`, runs the catalog's set rules against `register` and the module languages' MCP statement tools
+ * `moduleMcpTools` and registers the packages they keep; see the module's docblock.
  */
 export async function bootAdmission(
   directory: string,
   deadlineMs: number,
   register: GrantRegister,
+  moduleMcpTools: readonly string[],
 ): Promise<BootAdmission> {
   const lock = providersLock.readProvidersLock(directory);
   if (!lock.read) return Object.freeze({ read: false, refusal: lock.refusal });
@@ -166,9 +178,10 @@ export async function bootAdmission(
       manifest: answer.manifest,
       record: answer.record,
     });
-  const conflicts = catalogConflicts(
+  const conflicts = setRuleConflicts(
     admittedPackages.map(({ pkg, answer }) => forCatalog(pkg, answer)),
     register,
+    moduleMcpTools,
   );
   const kept: AdmittedForCatalog[] = [];
   for (const { pkg, answer } of admittedPackages) {
@@ -191,6 +204,29 @@ export async function bootAdmission(
   return Object.freeze({ read: true, admitted: Object.freeze(kept), refused: Object.freeze(refused) });
 }
 
+/**
+ * The conflicts of the catalog's set rules over `admitted`: `catalogConflicts` and `moduleMcpToolConflicts` merged, each
+ * package and rule once, sorted by name and then by rule, as each answers its own.
+ */
+function setRuleConflicts(
+  admitted: readonly AdmittedForCatalog[],
+  register: GrantRegister,
+  moduleMcpTools: readonly string[],
+): CatalogConflict[] {
+  const merged = new Map<string, CatalogConflict>();
+  for (const conflict of [
+    ...catalogConflicts(admitted, register),
+    ...moduleMcpToolConflicts(admitted, register, moduleMcpTools),
+  ]) {
+    merged.set(`${conflict.name}\u0000${conflict.rule}`, conflict);
+  }
+  return [...merged.values()].sort(
+    (a, b) =>
+      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
+      CATALOG_CONFLICT_RULES.indexOf(a.rule) - CATALOG_CONFLICT_RULES.indexOf(b.rule),
+  );
+}
+
 /** Prints the boot banner of a lock refused as a whole, and stops the boot with exit 1. */
 function refuseBoot(refusal: LockRefusal): false {
   console.error(
@@ -209,14 +245,15 @@ function refuseBoot(refusal: LockRefusal): false {
 }
 
 /**
- * Admits the providers directory's packages once per process and installs the server's engine catalog; answers false
- * after exiting with 1 when the lock is refused as a whole. See the module's docblock.
+ * Admits the providers directory's packages once per process, the catalog's set rules reading the module languages'
+ * MCP statement tools `moduleMcpTools`, and installs the server's engine catalog; answers false after exiting with 1
+ * when the lock is refused as a whole. See the module's docblock.
  */
-export async function admitProvidersAtBoot(): Promise<boolean> {
+export async function admitProvidersAtBoot(moduleMcpTools: readonly string[]): Promise<boolean> {
   if (serverCatalogInstalled()) return true;
   beginServerCatalogBoot();
   try {
-    return await admitAndInstall();
+    return await admitAndInstall(moduleMcpTools);
   } catch (error) {
     endServerCatalogBootUnfinished();
     throw error;
@@ -224,13 +261,13 @@ export async function admitProvidersAtBoot(): Promise<boolean> {
 }
 
 /** Steps 2 to 4 of the module's docblock, run once the catalog's boot has begun. */
-async function admitAndInstall(): Promise<boolean> {
+async function admitAndInstall(moduleMcpTools: readonly string[]): Promise<boolean> {
   const directory = providersDirectory();
   if (directory === null) {
     installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER));
     return true;
   }
-  const answer = await bootAdmission(directory, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
+  const answer = await bootAdmission(directory, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER, moduleMcpTools);
   if (!answer.read) return refuseBoot(answer.refusal);
   installServerCatalog(composeServerCatalog(answer.admitted, answer.refused, STUDIO_GRANT_REGISTER));
   return true;

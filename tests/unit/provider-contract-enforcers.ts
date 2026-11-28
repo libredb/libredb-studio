@@ -3172,6 +3172,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a set rule refusal carries the package's name, version and rule and no value of its declaration",
         "a package whose granted statement language name a module language, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT",
         "a statement language a package's row does not grant, or SQL, is no catalog conflict",
+        "a package whose MCP tool name a module tool, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT",
+        "an MCP tool a package's row does not grant, or a language with no MCP tool, is no catalog conflict",
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
       ],
       "tests/unit/lib/db/server-catalog-cross-bundle.test.ts": [
@@ -3180,6 +3182,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/provider-host/boot.test.ts": [
         "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines",
         "packages granted one statement language name are logged with PROVIDER_CATALOG_CONFLICT and none is admitted",
+        "packages granted languages of one MCP tool name, or of a module language's tool, are logged with PROVIDER_CATALOG_CONFLICT and none is admitted",
+      ],
+      "tests/unit/mcp/statement-arms.test.ts": [
+        "the module languages' MCP tools boot hands the set rules are the tools the facet registry composes for them",
       ],
       "tests/unit/db/claim-grants.test.ts": [
         "an admitted package with no grant record reads every claim at its restrictive value",

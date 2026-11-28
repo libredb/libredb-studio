@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { register } from "@/instrumentation";
+import { MODULE_MCP_TOOLS } from "@/lib/agent/languages/mcp";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import { forgetTrustMaterial } from "@/lib/db/trust-material";
 import * as dataDir from "@/lib/data-dir";
@@ -512,9 +513,11 @@ describe("instrumentation register()", () => {
     process.env.JWT_SECRET = randomUUID();
     const events: string[] = [];
     const original = boot.admitProvidersAtBoot;
-    const admit = spyOn(boot, "admitProvidersAtBoot").mockImplementation(async () => {
+    const handed: unknown[] = [];
+    const admit = spyOn(boot, "admitProvidersAtBoot").mockImplementation(async (moduleMcpTools) => {
       events.push(`admit, host core ${hostInstalled() ? "installed" : "absent"}`);
-      return await original();
+      handed.push(moduleMcpTools);
+      return await original(moduleMcpTools);
     });
     // The governance preflight reads governanceEnabled too, so the governance start is marked where it reads it again.
     const governance = spyOn(governanceConfig, "governanceEnabled").mockImplementation(() => {
@@ -546,6 +549,9 @@ describe("instrumentation register()", () => {
     // The second register() reaches admission, which reads nothing once a catalog is installed.
     expect(events.filter((event) => event.startsWith("admit")).length).toBe(2);
     expect(serverCatalogInstalled()).toBe(true);
+    // Each call hands the module languages' MCP tools, the list the catalog's set rules read, by identity.
+    expect(handed).toEqual([MODULE_MCP_TOOLS, MODULE_MCP_TOOLS]);
+    for (const list of handed) expect(list).toBe(MODULE_MCP_TOOLS);
   });
 
   test("a boot a check refuses admits no provider", async () => {

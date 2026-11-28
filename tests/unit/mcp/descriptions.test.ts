@@ -151,7 +151,7 @@ describe("the tool descriptions", () => {
     for (const engine of stating) {
       expect(validator.validateEngine(engine), engine.id).toEqual({ admitted: true, engine });
       const tool = engine.statementLanguageData?.agent?.mcp?.tool as McpStatementTool;
-      expect(mcpStatementArm(tool).types, engine.id).toEqual([engine.id]);
+      expect(mcpStatementArm(tool).types as readonly string[], engine.id).toEqual([engine.id]);
     }
   });
 

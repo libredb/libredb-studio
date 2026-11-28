@@ -14,6 +14,7 @@ import path from "node:path";
 import { type GrantRegister, parseGrantRegister, type RegisterGrants, type RegisterRow } from "@libredb/grant-register";
 import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import { DEFAULT_STATEMENT_LANGUAGE } from "@/lib/agent/languages/client";
+import { MODULE_MCP_TOOLS } from "@/lib/agent/languages/mcp";
 import {
   type EngineGrants,
   STUDIO_GRANT_REGISTER,
@@ -61,8 +62,10 @@ import {
   catalogConflicts,
   composeServerCatalog,
   declaredSqlTextRequest,
+  moduleMcpToolConflicts,
   type RefusedForCatalog,
 } from "@/lib/db/server-catalog-compose";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
@@ -1060,6 +1063,12 @@ describe("the set rules", () => {
   const generatedLanguage = () => `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 
   /**
+   * An MCP statement tool name generated at run time, of the schema's form, never written here. Every plant granting
+   * two languages hands each its own, since the `mcp-tool` rule refuses two granted languages stating one tool.
+   */
+  const generatedTool = () => `run_acme${randomUUID().replaceAll("-", "").slice(0, 12)}_read`;
+
+  /**
    * Package `name` serving engine `engine`, whose declaration states `data` and requests its name as its agent
    * language, with the register row granting that name under the digest of the data it declares.
    */
@@ -1081,9 +1090,13 @@ describe("the set rules", () => {
 
   test("a package whose granted statement language name a module language, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT", () => {
     const language = generatedLanguage();
-    const one = languagePackage("acme-language-one", "acmelanguageone", acmereadData(language));
-    const two = languagePackage("acme-language-two", "acmelanguagetwo", acmereadData(language));
-    const quiet = languagePackage("acme-language-quiet", "acmelanguagequiet", acmereadData(generatedLanguage()));
+    const one = languagePackage("acme-language-one", "acmelanguageone", acmereadData(language, generatedTool()));
+    const two = languagePackage("acme-language-two", "acmelanguagetwo", acmereadData(language, generatedTool()));
+    const quiet = languagePackage(
+      "acme-language-quiet",
+      "acmelanguagequiet",
+      acmereadData(generatedLanguage(), generatedTool()),
+    );
     const register = registerOf([one.row, two.row, quiet.row]);
     const expected = ["acme-language-one 1.0.0 statement-language", "acme-language-two 1.0.0 statement-language"];
     for (const order of permutations([one, two, quiet])) {
@@ -1106,17 +1119,20 @@ describe("the set rules", () => {
     raw.engines.push(second);
     const compatibility = raw.compatibility as Record<string, unknown>[];
     compatibility.push({ ...structuredClone(compatibility[0]), engine: "acmetwob" });
-    const shared = acmereadData(generatedLanguage());
-    for (const engine of raw.engines) {
+    const shared = acmereadData(generatedLanguage(), generatedTool());
+    raw.engines.forEach((engine, index) => {
       engine.agent = { statementLanguage: shared.name, overlay: { dialect: null, grounding: null } };
-      withStatementLanguageData(engine, shared);
-    }
+      // One name, each engine its own MCP tool, so only the language rule reads the pair.
+      withStatementLanguageData(engine, index === 0 ? shared : acmereadData(shared.name, generatedTool()));
+    });
     const verdict = VALIDATOR.validate(raw);
     if (!verdict.admitted) throw new Error(`the two-engine manifest is refused: ${JSON.stringify(verdict.refusals)}`);
     const twoEngines = admittedFor("acme-two-engines", verdict.manifest);
-    const sha = declaredLanguageSha256(verdict.manifest);
-    const rows = ["acmetwoa", "acmetwob"].map((engine) =>
-      packageRow(twoEngines, engine, { statementLanguage: shared.name, languageSha256: sha }),
+    const rows = verdict.manifest.engines.map((engine) =>
+      packageRow(twoEngines, engine.id, {
+        statementLanguage: shared.name,
+        languageSha256: languageDataSha256(engine.statementLanguageData as NonNullable<StatementLanguageData>),
+      }),
     );
     expect(named([twoEngines], registerOf(rows))).toEqual(["acme-two-engines 1.0.0 statement-language"]);
 
@@ -1125,7 +1141,7 @@ describe("the set rules", () => {
     const held = Object.keys(AGENT_LANGUAGE_COPY).filter((name) => name !== DEFAULT_STATEMENT_LANGUAGE);
     expect(held.length).toBeGreaterThan(0);
     for (const name of held) {
-      const claimant = languagePackage("acme-held", "acmeheld", acmereadData(name));
+      const claimant = languagePackage("acme-held", "acmeheld", acmereadData(name, generatedTool()));
       expect(named([claimant.pkg, quiet.pkg], registerOf([claimant.row, quiet.row])), name).toEqual([
         "acme-held 1.0.0 statement-language",
       ]);
@@ -1174,6 +1190,149 @@ describe("the set rules", () => {
     // A package granted a name no one else holds.
     const unique = languagePackage("acme-unique", "acmeunique", acmereadData(generatedLanguage()));
     expect(named([unique.pkg], registerOf([unique.row]))).toEqual([]);
+  });
+
+  /** `name version rule` of each conflict the module languages' tools `tools` refuse, the set read against `register`. */
+  const moduleNamed = (packages: readonly AdmittedForCatalog[], register: GrantRegister, tools: readonly string[]) =>
+    moduleMcpToolConflicts(packages, register, tools).map(({ name, version, rule }) => `${name} ${version} ${rule}`);
+
+  test("a package whose MCP tool name a module tool, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT", () => {
+    const tool = generatedTool();
+    const oneLanguage = generatedLanguage();
+    const one = languagePackage("acme-tool-one", "acmetoolone", acmereadData(oneLanguage, tool));
+    const two = languagePackage("acme-tool-two", "acmetooltwo", acmereadData(generatedLanguage(), tool));
+    const quiet = languagePackage(
+      "acme-tool-quiet",
+      "acmetoolquiet",
+      acmereadData(generatedLanguage(), generatedTool()),
+    );
+    const register = registerOf([one.row, two.row, quiet.row]);
+    const expected = ["acme-tool-one 1.0.0 mcp-tool", "acme-tool-two 1.0.0 mcp-tool"];
+    for (const order of permutations([one, two, quiet])) {
+      expect(
+        named(
+          order.map(({ pkg }) => pkg),
+          register,
+        ),
+      ).toEqual(expected);
+    }
+    // Composing the set is the host defect boot never reaches: it refuses both before it composes.
+    expect(() => composeServerCatalog([one.pkg, two.pkg, quiet.pkg], [], register)).toThrow(
+      "the admitted packages still conflict (acme-tool-one 1.0.0 mcp-tool, acme-tool-two 1.0.0 mcp-tool)",
+    );
+
+    // Every tool a bundled declared language states, read from its record, stated by a granted package.
+    const bundledTools = [...LEGACY_ENGINES.values()].flatMap(
+      (record) => record.statementLanguageData?.agent?.mcp?.tool ?? [],
+    );
+    expect(bundledTools.length).toBeGreaterThan(0);
+    for (const bundled of bundledTools) {
+      const claimant = languagePackage("acme-bundled", "acmebundled", acmereadData(generatedLanguage(), bundled));
+      expect(named([claimant.pkg, quiet.pkg], registerOf([claimant.row, quiet.row])), bundled).toEqual([
+        "acme-bundled 1.0.0 mcp-tool",
+      ]);
+    }
+
+    // Every module language's tool, which only the agent holds: refused by the list boot's caller hands, and by no
+    // rule the db layer reads alone.
+    expect(MODULE_MCP_TOOLS.length).toBeGreaterThan(0);
+    for (const held of MODULE_MCP_TOOLS) {
+      const claimant = languagePackage("acme-module", "acmemodule", acmereadData(generatedLanguage(), held));
+      const heldRegister = registerOf([claimant.row, quiet.row]);
+      expect(named([claimant.pkg, quiet.pkg], heldRegister), held).toEqual([]);
+      expect(moduleNamed([claimant.pkg, quiet.pkg], heldRegister, MODULE_MCP_TOOLS), held).toEqual([
+        "acme-module 1.0.0 mcp-tool",
+      ]);
+      expect(moduleNamed([claimant.pkg, quiet.pkg], heldRegister, []), held).toEqual([]);
+    }
+    // The module rule answers in name order, whatever the packages' order.
+    const moduleTool = MODULE_MCP_TOOLS[0] as string;
+    const first = languagePackage("acme-module-a", "acmemodulea", acmereadData(generatedLanguage(), moduleTool));
+    const second = languagePackage("acme-module-b", "acmemoduleb", acmereadData(generatedLanguage(), moduleTool));
+    for (const order of permutations([first, second, quiet])) {
+      expect(
+        moduleNamed(
+          order.map(({ pkg }) => pkg),
+          registerOf([first.row, second.row, quiet.row]),
+          MODULE_MCP_TOOLS,
+        ),
+      ).toEqual(["acme-module-a 1.0.0 mcp-tool", "acme-module-b 1.0.0 mcp-tool"]);
+    }
+
+    // Two engines of one package granted two languages of one tool: the package is refused, as two packages are.
+    const raw = rawManifest("acmetoolsa");
+    const second_ = structuredClone(raw.engines[0]) as EditableEngine;
+    second_.id = "acmetoolsb";
+    raw.engines.push(second_);
+    const compatibility = raw.compatibility as Record<string, unknown>[];
+    compatibility.push({ ...structuredClone(compatibility[0]), engine: "acmetoolsb" });
+    const shared = generatedTool();
+    const data = raw.engines.map(() => acmereadData(generatedLanguage(), shared));
+    raw.engines.forEach((engine, index) => {
+      const stated = data[index] as NonNullable<StatementLanguageData>;
+      engine.agent = { statementLanguage: stated.name, overlay: { dialect: null, grounding: null } };
+      withStatementLanguageData(engine, stated);
+    });
+    const verdict = VALIDATOR.validate(raw);
+    if (!verdict.admitted) throw new Error(`the two-engine manifest is refused: ${JSON.stringify(verdict.refusals)}`);
+    const twoEngines = admittedFor("acme-two-tools", verdict.manifest);
+    const rows = verdict.manifest.engines.map((engine) =>
+      packageRow(twoEngines, engine.id, {
+        statementLanguage: engine.statementLanguageData?.name ?? null,
+        languageSha256: languageDataSha256(engine.statementLanguageData as NonNullable<StatementLanguageData>),
+      }),
+    );
+    expect(named([twoEngines], registerOf(rows))).toEqual(["acme-two-tools 1.0.0 mcp-tool"]);
+
+    // A pair sharing a language and a tool breaks both rules; the language's comes first, so it names the refusal.
+    const both = languagePackage("acme-both", "acmeboth", acmereadData(oneLanguage, tool));
+    expect(named([one.pkg, both.pkg], registerOf([one.row, both.row]))).toEqual([
+      "acme-both 1.0.0 statement-language",
+      "acme-both 1.0.0 mcp-tool",
+      "acme-tool-one 1.0.0 statement-language",
+      "acme-tool-one 1.0.0 mcp-tool",
+    ]);
+
+    // The refusal names the package and the rule, and neither it nor its sentence holds the tool's name.
+    const [conflict] = catalogConflicts([one.pkg, quiet.pkg, two.pkg], register);
+    const refusal = catalogConflictRefusal(conflict as NonNullable<typeof conflict>, "mcp-tool");
+    expect([refusal.code, refusal.rule, refusal.name, refusal.version, refusal.sentence]).toEqual([
+      "PROVIDER_CATALOG_CONFLICT",
+      "mcp-tool",
+      "acme-tool-one",
+      "1.0.0",
+      "PROVIDER_CATALOG_CONFLICT: acme-tool-one 1.0.0: it is granted a statement language whose MCP statement tool Studio's catalog or another engine's granted language holds",
+    ]);
+    expect(`${JSON.stringify(conflict)} ${refusal.sentence}`).not.toContain(tool);
+  });
+
+  test("an MCP tool a package's row does not grant, or a language with no MCP tool, is no catalog conflict", () => {
+    const tool = generatedTool();
+    const one = languagePackage("acme-tool-one", "acmetoolone", acmereadData(generatedLanguage(), tool));
+    const two = languagePackage("acme-tool-two", "acmetooltwo", acmereadData(generatedLanguage(), tool));
+    const packages = [one.pkg, two.pkg];
+    // Only one granted, and neither: no registry composes the other's tool, so nothing collides.
+    expect(named(packages, registerOf([one.row]))).toEqual([]);
+    expect(named(packages, registerOf([]))).toEqual([]);
+    expect(named(packages)).toEqual([]);
+    // A module language's tool stated by a package no row grants is no conflict either.
+    const moduleTool = MODULE_MCP_TOOLS[0] as string;
+    const ungranted = languagePackage("acme-module", "acmemodule", acmereadData(generatedLanguage(), moduleTool));
+    expect(moduleNamed([ungranted.pkg], registerOf([]), MODULE_MCP_TOOLS)).toEqual([]);
+    // A granted language with no MCP tool beside a granted one stating a tool.
+    const silentData = { ...acmereadData(generatedLanguage()), agent: { ...acmereadData().agent, mcp: null } };
+    const silent = languagePackage("acme-no-tool", "acmenotool", silentData as NonNullable<StatementLanguageData>);
+    expect(named([silent.pkg, one.pkg], registerOf([silent.row, one.row]))).toEqual([]);
+    expect(moduleNamed([silent.pkg, one.pkg], registerOf([silent.row, one.row]), MODULE_MCP_TOOLS)).toEqual([]);
+    // A granted language with no agent part at all.
+    const quietData = { ...acmereadData(generatedLanguage()), agent: null };
+    const quiet = languagePackage("acme-no-agent", "acmenoagent", quietData);
+    expect(named([quiet.pkg, one.pkg], registerOf([quiet.row, one.row]))).toEqual([]);
+    // A granted SQL package, which states no data, beside a granted tool-stating one.
+    const sql = admittedFor("acme-sql", admittedManifest("acmesql"));
+    const sqlRow = packageRow(sql, "acmesql", { statementLanguage: "sql" });
+    expect(named([sql, one.pkg], registerOf([sqlRow, one.row]))).toEqual([]);
+    expect(moduleNamed([sql, one.pkg], registerOf([sqlRow, one.row]), MODULE_MCP_TOOLS)).toEqual([]);
   });
 
   test("a set rule refusal carries the package's name, version and rule and no value of its declaration", () => {
