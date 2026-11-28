@@ -489,4 +489,39 @@ describe("the factory's metadata session of a provider package's engine", () => 
     expect(seen).toEqual(["close", "open"]);
     await clearProviderCache();
   });
+
+  // The open is held until the case releases it, and the hook resolves `reached` when the open reaches it, so the case
+  // aborts the wait at a signal of the fixture's, never after a timer.
+  test("a package engine's metadata session open releases a caller whose wait stopped, and the open admits itself for the next caller", async () => {
+    // The metadata place's own session, and a one-session package's, which is the editor's.
+    for (const type of ["acmecached", "acmeone"]) {
+      await clearProviderCache();
+      const reached = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      hooks = {
+        open: async () => {
+          reached.resolve();
+          await release.promise;
+          return { handle: { session: randomUUID() } };
+        },
+        close: () => Promise.resolve(),
+      };
+      seen.length = 0;
+      const connection = packageConnection(type);
+      const engine = engineOf(type);
+      const stop = new AbortController();
+      const reason = new Error("the caller stopped waiting");
+      const waiting = getOrCreateMetadataSession(connection, engine, ADMIN, { signal: stop.signal }).catch(
+        (error: unknown) => error,
+      );
+      await reached.promise;
+      stop.abort(reason);
+      expect(await waiting).toBe(reason);
+      release.resolve();
+      const entry = await getOrCreateMetadataSession(connection, engine, ADMIN);
+      expect(await getOrCreateMetadataSession(connection, engine, ADMIN)).toBe(entry);
+      expect(seen).toEqual(["open"]);
+    }
+    await clearProviderCache();
+  });
 });

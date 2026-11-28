@@ -1664,9 +1664,11 @@ export async function getOrCreateEditorSession(
  *   frame the editor's, so every removal that names the editor's entry names it too, and opened with a pool of at most
  *   `METADATA_POOL_MAX` sessions that opens none until a read asks, shared or owned alike.
  *
- * No caller waits for its open with a signal of its own, so it takes no wait. It opens once per key (C-44), leaves with
- * the idle sweep, which keeps it while a read runs on it (`running`), and with every removal that names its
- * connection, its owner or its record's key, and is torn down with the caches under the teardown's deadlines (C-45).
+ * A caller that waits for its open with a signal of its own, an MCP call, hands it as `wait`: the open releases that
+ * caller with the wait's reason when its signal aborts, and goes on for every other caller (C-81); the object routes
+ * hand none. It opens once per key (C-44), leaves with the idle sweep, which keeps it while a read runs on it
+ * (`running`), and with every removal that names its connection, its owner or its record's key, and is torn down with
+ * the caches under the teardown's deadlines (C-45).
  *
  * @throws As `getOrCreateEditorSession` throws for the same record.
  */
@@ -1674,10 +1676,11 @@ export async function getOrCreateMetadataSession(
   connection: EngineConnection,
   engine: EngineRecord,
   execution: EditorExecutionContext,
+  wait?: OpenWait,
 ): Promise<CachedSession> {
-  if (offersLegacyProvider(engine, connection)) return openWritable(connection, {}, execution, undefined, "tree");
-  if (sessionCapacity(connection) === "one") return getOrCreateEditorSession(connection, engine, execution);
-  return openPackageEntry(connection, engine, execution, undefined, PACKAGE_METADATA_PLACE);
+  if (offersLegacyProvider(engine, connection)) return openWritable(connection, {}, execution, wait, "tree");
+  if (sessionCapacity(connection) === "one") return getOrCreateEditorSession(connection, engine, execution, wait);
+  return openPackageEntry(connection, engine, execution, wait, PACKAGE_METADATA_PLACE);
 }
 
 /** Where a provider package's session is cached and opened: its cache, its opens in flight, its key and its pool. */

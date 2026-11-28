@@ -13,6 +13,9 @@ export const DATABASE_ARGUMENT_DESCRIPTION =
 /** A database-choice refusal, in Studio's words rather than the engine's (#1530). */
 export class McpDatabaseChoiceError extends Error {}
 
+/** The refusal of a database named on a connection that reads only its own. */
+const READS_ITS_OWN_DATABASE_TEXT = "This connection reads only the database it names; call again without database.";
+
 /**
  * The provider one tool call reads; the provider's own refusal to open the database the call names, which the tool
  * answers as the provider's text behind a notice naming it; or, on a connection that reaches every database on its
@@ -106,11 +109,7 @@ export async function providerInDatabase(
   const choice = catalogChoice(provider.config, provider.getCapabilities());
   if (choice !== "honoured") {
     if (database === undefined) return { kind: "chosen", provider };
-    if (choice === "not-declared") {
-      throw new McpDatabaseChoiceError(
-        "This connection reads only the database it names; call again without database.",
-      );
-    }
+    if (choice === "not-declared") throw new McpDatabaseChoiceError(READS_ITS_OWN_DATABASE_TEXT);
     const bound = catalogChoiceBound(choice, provider.type);
     throw new McpDatabaseChoiceError(
       `This connection reads only its own database: ${bound}; call again without database.`,
@@ -130,4 +129,16 @@ export async function providerInDatabase(
     if (error instanceof DatabaseConfigError) return { kind: "provider-refused", error };
     throw error;
   }
+}
+
+/**
+ * The database choice of a provider package's connection, made before its session opens: a package's record offers no
+ * catalog session (`EngineOffers.catalog` in src/lib/db/server-catalog.ts, clause C-66), so its connection reads only
+ * the database it names, and a call that names one is refused in Studio's words, as `providerInDatabase` refuses it on
+ * a legacy connection whose provider declares no catalog sessions.
+ *
+ * @throws {McpDatabaseChoiceError} When the call names a database.
+ */
+export function packageDatabaseChoice(database: string | undefined): void {
+  if (database !== undefined) throw new McpDatabaseChoiceError(READS_ITS_OWN_DATABASE_TEXT);
 }

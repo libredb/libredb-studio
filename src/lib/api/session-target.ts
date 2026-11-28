@@ -15,8 +15,13 @@
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
  * settled; a legacy provider's target marks nothing, since its provider reports its own runs in flight
  * (`hasRunsInFlight`), as it did before targets.
+ *
+ * A caller that answers a provider package's failure by its record (`packageFailureAnswer` in ./package-errors), the
+ * object routes and MCP's `inspect_schema`, answers so only what the package's own tree or source read raised: it
+ * reads its target through `recordingRaised` and asks `raisedByTreeRead` of each failure, so a failure Studio raised
+ * after the open is answered as Studio's own, never as the package's.
  */
-import { type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
+import { type CallContext, type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
 import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { statementTimeout } from "@/lib/api/editor-query";
 import type { CachedSession } from "@/lib/db/factory";
@@ -34,6 +39,7 @@ import type { StoppedRecord } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
+import { HostDefectError } from "@/lib/provider-host/access";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType } from "@/lib/types";
 
@@ -241,6 +247,37 @@ function studioSpec(spec: MaintenanceSpec): MaintenanceOperationSpec {
 }
 
 /**
+ * `target` with each function its session holds, the tree read and, where the session offers `objects.source`, the
+ * source read, recording in `raised` each value it threw or rejected with, passed on as the same value, so a caller
+ * answers by the record only what the session's own calls raised (`raisedByTreeRead`). The session handed on holds
+ * exactly the members `target`'s session holds, so a function is present exactly where the session offers its call, as
+ * `ObjectsSession` states.
+ */
+export function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeTarget {
+  const { session } = target;
+  const { tree, source } = session;
+  const recorded =
+    <Request, Answer>(call: (request: Request, ctx: CallContext) => Promise<Answer>) =>
+    async (request: Request, ctx: CallContext): Promise<Answer> => {
+      try {
+        return await call.call(session, request, ctx);
+      } catch (error) {
+        raised.add(error);
+        throw error;
+      }
+    };
+  return {
+    ...target,
+    session: {
+      calls: session.calls,
+      ...(session.objectModel === undefined ? {} : { objectModel: session.objectModel }),
+      ...(tree === undefined ? {} : { tree: recorded(tree) }),
+      ...(source === undefined ? {} : { source: recorded(source) }),
+    },
+  };
+}
+
+/**
  * The maintenance `session`, a provider package's, accepts, in Studio's form: its narrowed maintenance where it offers
  * `maintenance.run`, and none where it does not, since no control may be offered for a run its session cannot make.
  */
@@ -275,4 +312,13 @@ export function entryMonitoringTarget(entry: CachedSession, connection: EngineCo
     accepted: () => acceptedOf(session),
     ...entryMarks(entry),
   };
+}
+
+/**
+ * Whether `error`, a failure of a tree or source read on a target `recordingRaised` read, is the session's own: a value
+ * one of the session's functions raised, or a host defect, whose refusals name whose defect it is (`REFUSAL_AUTHOR` in
+ * ./package-errors), such as a tree answer the host core refused. Any other failure is Studio's own.
+ */
+export function raisedByTreeRead(raised: ReadonlySet<unknown>, error: unknown): boolean {
+  return raised.has(error) || error instanceof HostDefectError;
 }

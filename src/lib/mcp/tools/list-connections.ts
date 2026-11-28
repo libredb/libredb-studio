@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { isFileBased } from "@/lib/db-ui-config";
-import { legacyProviderRefusal } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord, servedEngineRefusal } from "@/lib/db/server-catalog";
 import type { ManagedConnection } from "@/lib/seed";
 import { newMcpCorrelationId, recordMcpDecision, type McpCallRecord } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
@@ -40,9 +39,12 @@ import {
  * as its language's facet says, lists no database.
  * A connection whose type names no provider this Studio has (FND-1), such as a seed entry of a newer Studio, lists its
  * type as written in `engine`, null in `read_tool` and the refusal's sentence in `unavailable`, and no per-engine fact
- * is read for it, so it lists no database. So does a connection of an engine only a provider package serves, with the
- * server's engine catalog's refusal (`legacyProviderRefusal`), which for a refused package's engine names the refusal
- * codes (C-107).
+ * is read for it, so it lists no database. So does a connection of an engine only refused provider packages name, with
+ * the server's engine catalog's refusal (`servedEngineRefusal`), which names the refusal codes (C-107). Every other
+ * connection is listed from its engine's record, an admitted package's engine's as a legacy engine's: its database is
+ * cut to a file name where the record opens host files for a connection whose one field is its database, the path a
+ * file-based engine reads, and availability answers by the record's grants, so an engine no register row offers to MCP
+ * lists `unavailable`.
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit
@@ -110,9 +112,18 @@ function fileName(path: string): string {
   return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 }
 
+/**
+ * Whether `engine`'s connections hold a host file path in their database setting: an engine whose record opens host
+ * files for its connection and whose one connection field is the database.
+ */
+function databaseIsHostFile(engine: EngineRecord): boolean {
+  const { fields } = engine.connection;
+  return engine.offers.hostFiles && fields.length === 1 && fields[0] === "database";
+}
+
 function listed(connection: ManagedConnection, caller: McpCaller): ListedConnection {
   const { database, environment } = connection;
-  const refusal = legacyProviderRefusal(connection.type, "open");
+  const refusal = servedEngineRefusal(connection.type);
   if (refusal !== null) {
     return {
       id: connection.id,
@@ -130,7 +141,7 @@ function listed(connection: ManagedConnection, caller: McpCaller): ListedConnect
     engine: connection.type,
     ...(database === undefined || mcpWithholdsDatabase(connection.type)
       ? {}
-      : { database: isFileBased(connection.type) ? fileName(database) : database }),
+      : { database: databaseIsHostFile(servedEngineRecord(connection.type)) ? fileName(database) : database }),
     ...(environment === undefined ? {} : { environment }),
     read_tool: unavailable === null ? mcpStatementToolFor(connection.type) : null,
     ...(unavailable === null ? {} : { unavailable }),

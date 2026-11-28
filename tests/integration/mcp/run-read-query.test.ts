@@ -5,6 +5,7 @@
  * untrusted-content notice, and the decision recorded before anything is acquired.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,7 @@ import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/prov
 import { rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import { forgetServerCatalog, installServerCatalog, servedEngineRecord } from "@/lib/db/server-catalog";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
@@ -81,6 +83,7 @@ import {
   testAuthInfo,
   type Negotiation,
 } from "../../helpers/mcp-harness";
+import { STATEMENT_ROW_ENGINE, statementRowCatalog } from "../../helpers/package-statement-row";
 import { withRecordingHostCore } from "../../helpers/recording-host-core";
 
 /** The notice an answer carrying database content opens with on this file's sqlite connections. */
@@ -2235,5 +2238,38 @@ describe("an error answer's record", () => {
     const result = await call();
     expect(result.isError).toBe(true);
     expect("structuredContent" in result).toBe(false);
+  });
+});
+
+// A provider package's engine whose register row grants every MCP statement claim and the SQL statement language: no
+// statement tool serves it while its record offers no execution profile (docs/providers/CONTRACT.md, clause C-109), so
+// run_read_query refuses it by name, naming inspect_schema, before any acquisition, and records no statement text.
+describe("a connection of an engine a provider package serves", () => {
+  afterEach(() => {
+    forgetServerCatalog();
+  });
+
+  test("a statement tool refuses a package engine's connection by name, naming inspect_schema, before any open", async () => {
+    installServerCatalog(statementRowCatalog());
+    const engine = servedEngineRecord(STATEMENT_ROW_ENGINE);
+    expect(engine.grants).toMatchObject({
+      reviewedGrammar: false,
+      exposable: true,
+      agentExecution: true,
+      statementRead: true,
+      statementLanguage: "sql",
+    });
+    const marker = randomUUID();
+    const acquire = mock(async (): Promise<DatabaseProvider> => {
+      throw new Error("a package engine's connection was acquired");
+    });
+    const context = fakeContext({}, STATEMENT_ROW_ENGINE as DatabaseType, {}, acquire);
+    const result = await direct({ connection_id: "seed:fake", sql: `SELECT '${marker}'` }, undefined, context);
+    expect(result).toEqual({ content: [{ type: "text", text: notServed(engine.displayName) }], isError: true });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(mcpEvents().map((event) => [event.action, event.reason])).toEqual([
+      ["run_read_query", "mcp_execution_failed"],
+    ]);
+    expect(JSON.stringify(getServerAuditBuffer().getAll())).not.toContain(marker);
   });
 });

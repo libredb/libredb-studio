@@ -7,13 +7,15 @@ import ts from "typescript";
  * MCP's schema reads go through the host core's tree call (docs/providers/CONTRACT.md, clause C-82).
  *
  * inspect_schema's container listings, relation listings and descriptions, and the database choice's listing, are each
- * one host core tree call on MCP's object tree (`mcpObjectTree` in src/lib/mcp/tools/read-query-limits.ts), under the
- * call's deadline and the request's signal. A provider's tree member called by an MCP module would be a read the host
- * neither bounds nor logs, so no MCP module calls one on anything but an object tree: a name the same function binds to
- * `mcpObjectTree(...)`, or a parameter typed `ObjectTree`. The within-call facade (`objectTreeWithinCall` in
- * src/lib/api/object-tree.ts) is called only by `mcpObjectTree`, and that only by the database choice
- * (`listedDatabases`, for `providerInDatabase`) and inspect_schema (`inspectSchema`), so no other path builds a tree on
- * MCP's deadline.
+ * one host core tree call on MCP's object tree (`mcpTargetTree` in src/lib/mcp/tools/read-query-limits.ts, on a legacy
+ * provider's bridged session through `mcpObjectTree` or on a provider package's metadata session), under the call's
+ * deadline and the request's signal. A provider's tree member called by an MCP module would be a read the host neither
+ * bounds nor logs, so no MCP module calls one on anything but an object tree: a name the same function binds to
+ * `mcpObjectTree(...)` or `mcpTargetTree(...)`, or a parameter typed `ObjectTree`. The within-call facade
+ * (`objectTreeWithinCall` in src/lib/api/object-tree.ts) is called only by `mcpTargetTree`, and that only by
+ * `mcpObjectTree` and inspect_schema's package path (`packageTree`); `mcpObjectTree` is called only by the database
+ * choice (`listedDatabases`, for `providerInDatabase`) and inspect_schema's legacy path (`profiledTree`), so no other
+ * path builds a tree on MCP's deadline.
  *
  * Both scans read the TypeScript syntax tree, so a comment or a docblock that names a member is never a finding, and a
  * finding names its file and its innermost declaration.
@@ -78,7 +80,7 @@ function callsFunction(node: ts.Node, name: string): node is ts.CallExpression {
 
 /**
  * Whether `name`, read inside `node`, is an object tree: a parameter of a function around it typed `ObjectTree`, or a
- * name a function around it binds to `mcpObjectTree(...)`.
+ * name a function around it binds to `mcpObjectTree(...)` or `mcpTargetTree(...)`.
  */
 function isObjectTree(node: ts.Node, name: string): boolean {
   for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
@@ -95,7 +97,7 @@ function isObjectTree(node: ts.Node, name: string): boolean {
         ts.isIdentifier(inside.name) &&
         inside.name.text === name &&
         inside.initializer !== undefined &&
-        callsFunction(inside.initializer, "mcpObjectTree")
+        (callsFunction(inside.initializer, "mcpObjectTree") || callsFunction(inside.initializer, "mcpTargetTree"))
       ) {
         bound = true;
       }
@@ -139,13 +141,17 @@ describe("MCP's schema reads", () => {
     expect(sourceFiles(MCP_SOURCES).flatMap(untreedReads)).toEqual([]);
   });
 
-  test("objectTreeWithinCall is called only by MCP's object tree, and that only by the database choice and inspect_schema", () => {
+  test("objectTreeWithinCall is called only by MCP's target tree, which only MCP's provider tree and inspect_schema call", () => {
     expect(callersOf("objectTreeWithinCall")).toEqual([
-      join(MCP_SOURCES, "tools", "read-query-limits.ts") + ": mcpObjectTree",
+      join(MCP_SOURCES, "tools", "read-query-limits.ts") + ": mcpTargetTree",
+    ]);
+    expect(callersOf("mcpTargetTree")).toEqual([
+      `${join(MCP_SOURCES, "tools", "inspect-schema.ts")}: packageTree`,
+      `${join(MCP_SOURCES, "tools", "read-query-limits.ts")}: mcpObjectTree`,
     ]);
     expect(callersOf("mcpObjectTree")).toEqual([
       `${join(MCP_SOURCES, "tools", "database-choice.ts")}: listedDatabases`,
-      `${join(MCP_SOURCES, "tools", "inspect-schema.ts")}: inspectSchema`,
+      `${join(MCP_SOURCES, "tools", "inspect-schema.ts")}: profiledTree`,
     ]);
   });
 });

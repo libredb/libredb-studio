@@ -781,7 +781,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an admitted package's engine is read at its register row's grant by the statement review, the agent readings, the language grant and the engine pack resolvers, and at each claim's restrictive value where no row or another digest's row exists",
       ],
       "tests/unit/mcp/record-grant-readers.test.ts": [
-        "an admitted package's engine is read at its register row's grant by the annotations and the statement arms, refused by both open checks and availability, and at each claim's restrictive value where no row exists",
+        "an admitted package's engine is read at its register row's grant by the annotations, the statement arms, both open checks and availability, and at each claim's restrictive value where no row exists",
       ],
       "tests/unit/seed/types.test.ts": [
         "the seed schema reads each refusal's grant from the engine record its type names, not Studio's table",
@@ -3182,13 +3182,22 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501",
       ],
       "tests/unit/mcp/availability.test.ts": [
-        "answers the server catalog's refusal for an engine a provider package serves or a refused package names",
+        "answers the server catalog's refusal for an engine only a refused package names, and the exposure sentence for an admitted one no row offers to MCP",
+        "a package engine's connection is available, refused by tool by its grants where no row exists",
       ],
       "tests/unit/mcp/statement-arms.test.ts": [
-        "lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact",
+        "lists a refused package's engine with the server catalog's refusal and an admitted one with the exposure refusal, its type as written and no read tool, reading no per-engine fact",
       ],
       "tests/integration/mcp/context.test.ts": [
-        "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it",
+        "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and read an admitted one's grants from its record",
+        "both open checks open a package engine's connection through its package",
+      ],
+      "tests/integration/mcp/inspect-schema-package-engine.test.ts": [
+        "inspect_schema reads a package engine's tables through its package's metadata session",
+      ],
+      "tests/integration/mcp/unavailable-seed.test.ts": [
+        "list_connections lists it with the exposure refusal",
+        "inspect_schema and every statement tool answer that refusal and acquire nothing",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a query on an admitted engine answers the package's rows through the host core",

@@ -8,18 +8,19 @@
  * calls exactly once for each provider it constructs (src/lib/db/factory.ts).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   ExecutionProfileError,
-  PackageEngineUnsupportedError,
   ProviderUnavailableError,
+  StudioProfileRefusal,
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { getOrCreateProvider } from "@/lib/db/factory";
-import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { forgetServerCatalog, installServerCatalog, servedEngineRecord } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
@@ -32,7 +33,9 @@ import {
   McpConnectionContext,
   mcpCaller,
 } from "@/lib/mcp/context";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
@@ -47,7 +50,9 @@ import {
   resetMcpTestState,
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest, type EditableEngine } from "../../helpers/package-catalog";
+import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
+import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
@@ -806,7 +811,8 @@ describe("the context's source", () => {
 
 // A connection of an engine only a provider package serves (docs/providers/CONTRACT.md, clause C-107): the open's two
 // checks read the server's engine catalog, so a refused package's engine is answered PROVIDER_UNAVAILABLE naming the
-// refusal code, as every route answers it, and an admitted package's engine as one no session opens on yet.
+// refusal code, as every route answers it, and an admitted package's engine is read by its record's grants: with no
+// register row each check's grant is at its restrictive value, which no package's open can meet.
 describe("a connection of an engine a provider package serves or a refused package names", () => {
   const listed = (type: string): ManagedConnection =>
     ({
@@ -834,8 +840,12 @@ describe("a connection of an engine a provider package serves or a refused packa
     forgetServerCatalog();
   });
 
-  test("both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it", () => {
-    for (const check of [assertAgentCredentialWhereRequired, assertReadRootsWhereRequired]) {
+  test("both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and read an admitted one's grants from its record", () => {
+    const checks = [
+      [assertAgentCredentialWhereRequired, "AGENT_CREDENTIAL_REQUIRED"],
+      [assertReadRootsWhereRequired, "READ_ROOTS_REQUIRED"],
+    ] as const;
+    for (const [check, code] of checks) {
       let gone: unknown;
       try {
         check(listed("acmemcpgone"));
@@ -851,11 +861,135 @@ describe("a connection of an engine a provider package serves or a refused packa
       } catch (error) {
         served = error;
       }
-      expect(served).toBeInstanceOf(PackageEngineUnsupportedError);
-      expect((served as Error).message).toBe(
-        "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
+      // No register row: the grant each check reads is at its restrictive value.
+      expect(served).toBeInstanceOf(StudioProfileRefusal);
+      expect((served as StudioProfileRefusal).reasonCode).toBe(code);
+    }
+  });
+});
+
+// An admitted package's engine whose register row grants it MCP exposure: both open checks read its grants from its
+// record, and the context opens its metadata session through its package, the package's own `open`, once per key. A
+// package's open receives no agent credential and no read roots (C-109), so a record that requires either is refused
+// by name before any open, whatever the connection carries.
+describe("a connection of an engine an admitted provider package serves", () => {
+  const OPEN = "acmemcpctxopen";
+  const CRED = "acmemcpctxcred";
+  const ROOTS = "acmemcpctxroots";
+  const providers = scratchDirectory("studio-mcp-context-packages-");
+  const exposed = (engine: EditableEngine) => {
+    engine.mcp = { ...engine.mcp, exposable: true };
+  };
+  const pair = { form: "pair", supersededBy: [] } as const;
+  const listed = (type: string, fields: Record<string, unknown> = {}): ManagedConnection =>
+    ({
+      id: "seed:acme",
+      name: "Acme Store",
+      type,
+      host: "db.acme.internal",
+      createdAt: new Date(),
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+      ...fields,
+    }) as unknown as ManagedConnection;
+  /** Hooks that answer each open with a fresh handle and record the engine whose `open` was called. */
+  const opening = (engine: string, opened: string[]) =>
+    setHooks(engine, {
+      open: () => {
+        opened.push(engine);
+        return Promise.resolve({ handle: { session: randomUUID() } });
+      },
+      close: () => Promise.resolve(),
+    });
+
+  beforeAll(async () => {
+    installHostCore(createHostCore(), "test");
+    const row = { exposable: true, agentCredentialRequired: false, readRootsRequired: false } as const;
+    await admitSessionPackages(
+      providers,
+      [
+        { name: "acme-mcp-ctx-open", engine: OPEN, edit: exposed },
+        {
+          name: "acme-mcp-ctx-cred",
+          engine: CRED,
+          edit: (engine) => {
+            exposed(engine);
+            engine.mcp = { ...engine.mcp, agentCredentialRequired: true };
+            engine.connection.agentCredential = pair;
+          },
+        },
+        { name: "acme-mcp-ctx-roots", engine: ROOTS, edit: exposed },
+      ],
+      {
+        [OPEN]: { ...row, deniedFileAccessRefusal: null },
+        [CRED]: {
+          ...row,
+          deniedFileAccessRefusal: null,
+          agentCredentialRequired: true,
+          agentCredentialForm: null,
+          agentCredential: pair,
+        },
+        [ROOTS]: { ...row, deniedFileAccessRefusal: null, readRootsRequired: true },
+      },
+    );
+  });
+
+  afterAll(() => {
+    forgetServerCatalog();
+    forgetHostCore();
+    removeScratch(providers);
+  });
+
+  test("both open checks open a package engine's connection through its package", async () => {
+    const opened: string[] = [];
+    opening(OPEN, opened);
+    expect(() => assertAgentCredentialWhereRequired(listed(OPEN))).not.toThrow();
+    expect(() => assertReadRootsWhereRequired(listed(OPEN))).not.toThrow();
+    const connection = listed(OPEN);
+    const context = new McpConnectionContext(alice);
+    const first = await context.metadataTarget(connection, noWait());
+    const again = await context.metadataTarget(connection, noWait());
+    const other = await new McpConnectionContext(alice).metadataTarget(listed(OPEN), noWait());
+    expect(opened).toEqual([OPEN]);
+    expect(again.session).toBe(first.session);
+    expect(other.session).toBe(first.session);
+  });
+
+  test("a package engine whose record requires an agent credential or read roots is refused before any open, by name", async () => {
+    const opened: string[] = [];
+    opening(CRED, opened);
+    opening(ROOTS, opened);
+    // Each row grants exposure beside the requirement, so only the requirement refuses.
+    expect(servedEngineRecord(CRED).grants).toMatchObject({ exposable: true, agentCredentialRequired: true });
+    expect(servedEngineRecord(ROOTS).grants).toMatchObject({ exposable: true, readRootsRequired: true });
+    const context = new McpConnectionContext(alice);
+    for (const fields of [{}, { agentUser: "agent", agentPassword: randomUUID() }]) {
+      const refusal = await context.metadataTarget(listed(CRED, fields), noWait()).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(StudioProfileRefusal);
+      expect((refusal as StudioProfileRefusal).reasonCode).toBe("AGENT_CREDENTIAL_REQUIRED");
+      expect((refusal as Error).message).toBe(
+        'Connection "seed:acme" is read by MCP only under a read credential of its own, and its engine\'s session opens through its provider package, which receives none, so MCP cannot read it: an operator reads it in the editor instead.',
       );
     }
+    for (const fields of [{}, { agentReadRoots: ["root"] }]) {
+      const refusal = await context.metadataTarget(listed(ROOTS, fields), noWait()).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(StudioProfileRefusal);
+      expect((refusal as StudioProfileRefusal).reasonCode).toBe("READ_ROOTS_REQUIRED");
+      expect((refusal as Error).message).toBe(
+        'Connection "seed:acme" is read by MCP only beneath read roots its seed entry declares, and its engine\'s session opens through its provider package, which receives none, so MCP cannot read it: an operator reads it in the editor instead.',
+      );
+    }
+    expect(opened).toEqual([]);
+  });
+
+  test("the metadata target of a legacy engine's connection is a host defect: MCP reads it under the operations profile", async () => {
+    const refusal = await new McpConnectionContext(alice)
+      .metadataTarget(listed("postgres"), noWait())
+      .catch((error: unknown) => error);
+    expect((refusal as Error).message).toBe(
+      "MCP reads a legacy engine's schema under the agent-operations profile (`acquire`), never on its metadata session: a host defect.",
+    );
   });
 });
 

@@ -196,7 +196,10 @@ describe("docs/MCP.md", () => {
 
   test("says inspect_schema opens under agent-operations, so it may list a connection whose statement tool refuses the login", () => {
     expect(MCP_DOC).toContain(
-      "    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.",
+      "    For an engine Studio bundles it opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.",
+    );
+    expect(MCP_DOC).toContain(
+      "    For an engine a provider package serves, where a register row offers it to MCP, it reads the package's own metadata session, opened through the package, and refuses a call that names `database`, since such a connection reads only the database it names.",
     );
   });
 

@@ -27,6 +27,7 @@ import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpToolAction } from "@/lib/mcp/audit";
+import { MCP_ENGINE_NOT_OFFERED_TEXT } from "@/lib/mcp/availability";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { mcpToolInputSchemas, type McpToolName } from "@/lib/mcp/tools";
@@ -1558,15 +1559,16 @@ describe("list_connections on a connection whose type names no provider (FND-1)"
   });
 });
 
-// An engine only a provider package serves (docs/providers/CONTRACT.md, clause C-107) is listed as the type that names
-// no provider is: its type as written, no read tool, and the server catalog's refusal, which for a refused package's
-// engine names the refusal code.
+// An engine only a refused package names (docs/providers/CONTRACT.md, clause C-107) is listed as the type that names no
+// provider is: its type as written, no read tool, and the server catalog's refusal, which names the refusal code. An
+// admitted package's engine is listed by its record, and with no register row offering it to MCP it carries the
+// exposure refusal.
 describe("list_connections on a connection of an engine a provider package serves or a refused package names", () => {
   afterEach(() => {
     forgetServerCatalog();
   });
 
-  test("lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact", async () => {
+  test("lists a refused package's engine with the server catalog's refusal and an admitted one with the exposure refusal, its type as written and no read tool, reading no per-engine fact", async () => {
     installServerCatalog(
       composeServerCatalog(
         [admittedFor("acme-list-served", admittedManifest("acmelistserved"))],
@@ -1614,9 +1616,9 @@ describe("list_connections on a connection of an engine a provider package serve
           id: "seed:acmelistserved",
           name: "Acme Store",
           engine: "acmelistserved",
+          database: "/srv/acme/store.db",
           read_tool: null,
-          unavailable:
-            "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
+          unavailable: MCP_ENGINE_NOT_OFFERED_TEXT,
         },
       ],
       total_connections: 2,

@@ -5,12 +5,11 @@ import { metadataTreeTarget } from "@/lib/api/editor-provider";
 import { sourceModel } from "@/lib/api/object-source";
 import { createErrorResponse } from "@/lib/api/errors";
 import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import type { TreeTarget } from "@/lib/api/session-target";
+import { raisedByTreeRead, recordingRaised, type TreeTarget } from "@/lib/api/session-target";
 import { resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
-import { HostDefectError } from "@/lib/provider-host/access";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import {
   connectionTextScrub,
@@ -24,7 +23,7 @@ import {
   legacyConnection,
   legacyProviderType,
 } from "@/lib/db/server-catalog";
-import { type CallContext, checkObjectsFacet } from "@libredb/provider-sdk/calls";
+import { checkObjectsFacet } from "@libredb/provider-sdk/calls";
 import {
   acceptedContainerShapes,
   containerDepth,
@@ -218,45 +217,13 @@ type FailingCall =
 
 /**
  * Whether `error` is a failure of `failing`'s call, which the record answers (`packageFailureAnswer`): any failure of
- * the open; and of the run, a value the session's own functions raised, or a host defect, whose refusals name whose
- * defect it is (`REFUSAL_AUTHOR` in ./package-errors), such as a tree answer the host core refused. Any other failure
- * of the run, such as a session Studio's host built stating no object model (`objectTree` in ./object-tree) or a read
- * before the host core's install, is Studio's own.
+ * the open; and of the run, what the session's own functions raised (`raisedByTreeRead` in ./session-target). Any other
+ * failure of the run, such as a session Studio's host built stating no object model (`objectTree` in ./object-tree) or
+ * a read before the host core's install, is Studio's own.
  */
 function raisedByCall(failing: FailingCall, error: unknown): boolean {
   if (failing.call === "open") return true;
-  return failing.raised.has(error) || error instanceof HostDefectError;
-}
-
-/**
- * `target` with each function its session holds, the tree read and, where the session offers `objects.source`, the
- * source read, recording in `raised` each value it threw or rejected with, passed on as the same value, so a route
- * answers by the record only what the session's own calls raised (`raisedByCall`). The session handed on holds exactly
- * the members `target`'s session holds, so a function is present exactly where the session offers its call, as
- * `ObjectsSession` states.
- */
-function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeTarget {
-  const { session } = target;
-  const { tree, source } = session;
-  const recorded =
-    <Request, Answer>(call: (request: Request, ctx: CallContext) => Promise<Answer>) =>
-    async (request: Request, ctx: CallContext): Promise<Answer> => {
-      try {
-        return await call.call(session, request, ctx);
-      } catch (error) {
-        raised.add(error);
-        throw error;
-      }
-    };
-  return {
-    ...target,
-    session: {
-      calls: session.calls,
-      ...(session.objectModel === undefined ? {} : { objectModel: session.objectModel }),
-      ...(tree === undefined ? {} : { tree: recorded(tree) }),
-      ...(source === undefined ? {} : { source: recorded(source) }),
-    },
-  };
+  return raisedByTreeRead(failing.raised, error);
 }
 
 /**

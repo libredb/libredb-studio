@@ -6,7 +6,7 @@
  * it, as separate module instances, each with its own copy of Studio's error classes. This file reproduces that with
  * two `Bun.build` bundles of Studio's source, as tests/unit/lib/provider-host/cross-bundle.test.ts does: `boot.mjs`,
  * which composes the catalog and installs it, and `route.mjs`, which reads it through `serverEngine` and
- * `assertLegacyProvider` and checks a connection against an engine's field rules. Both load into this process with
+ * `legacyProviderEngine` and checks a connection against an engine's field rules. Both load into this process with
  * `import()`. A bundle is named `.mjs`: written as `.js` beside its `.ts` entry, bun imports the `.ts` source instead,
  * and the two "bundles" would be one module instance.
  */
@@ -48,7 +48,7 @@ interface BootBundle {
  */
 interface RouteBundle {
   serverEngine(value: unknown): EngineAnswer;
-  assertLegacyProvider(value: unknown, need: "route" | "open"): void;
+  legacyProviderEngine(value: unknown, need: "route" | "open"): unknown;
   serverCatalogInstalled(): boolean;
   connectionFieldRefusal(rules: object, connection: DatabaseConnection): string | undefined;
   CONNECTION_FORM: Readonly<Record<string, object>>;
@@ -80,7 +80,7 @@ beforeAll(async () => {
     "",
   ]);
   route = await bundled<RouteBundle>("route", [
-    `export { assertLegacyProvider, serverCatalogInstalled, serverEngine } from ${source("lib", "db", "server-catalog.ts")};`,
+    `export { legacyProviderEngine, serverCatalogInstalled, serverEngine } from ${source("lib", "db", "server-catalog.ts")};`,
     `export { connectionFieldRefusal } from ${source("lib", "db", "connection-field-rules.ts")};`,
     `export { CONNECTION_FORM } from ${source("lib", "db", "connection-form.ts")};`,
     `export { sqlGrammarFor } from ${source("lib", "db", "sql-grammar", "index.ts")};`,
@@ -138,10 +138,10 @@ describe("one server engine catalog across two bundles", () => {
     expect(route.connectionFieldRefusal(rules, connection({ host: "db.local", user: "writer" }))).toBeUndefined();
 
     // The refusals are the route bundle's own classes.
-    const unsupported = thrown(() => route.assertLegacyProvider("acmecrossserved", "route"));
+    const unsupported = thrown(() => route.legacyProviderEngine("acmecrossserved", "route"));
     expect(unsupported).toBeInstanceOf(route.PackageEngineUnsupportedError);
     expect(route.serverEngine("acmecrossgone").kind).toBe("unavailable");
-    const unavailable = thrown(() => route.assertLegacyProvider("acmecrossgone", "route"));
+    const unavailable = thrown(() => route.legacyProviderEngine("acmecrossgone", "route"));
     expect(unavailable).toBeInstanceOf(route.ProviderUnavailableError);
     expect(unavailable).not.toBeInstanceOf(boot.ProviderUnavailableError);
     expect((unavailable as Error).message).toContain("PROVIDER_LOAD_FAILED");
@@ -171,6 +171,6 @@ describe("one server engine catalog across two bundles", () => {
     }
     // The grammar the boot bundle's record holds reads as the route bundle's own row of it.
     expect(answer.engine.statementGrammar).toEqual(route.sqlGrammarFor("snowflake").grammar);
-    expect(() => route.assertLegacyProvider("snowflake", "open")).not.toThrow();
+    expect(() => route.legacyProviderEngine("snowflake", "open")).not.toThrow();
   });
 });

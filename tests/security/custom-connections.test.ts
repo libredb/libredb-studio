@@ -101,7 +101,8 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
     "editorProvider, editorTarget, metadataProvider, metadataTreeTarget, metadataMonitoringTarget and editorMonitoringTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
-  "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
+  "mcp/context.ts":
+    "opens only seeds that opted in with mcp: true, read from getManagedConnections, through acquireExecutionProfileProvider or a provider package's metadataTreeTarget",
   "api/test-connection.ts":
     "testConnection opens the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveServedConnection first",
 };

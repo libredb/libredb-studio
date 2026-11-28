@@ -8,7 +8,8 @@ It is off by default.
 MCP and agent mode, Studio's in-app agent, are separate features that share one read-only core.
 MCP needs neither agent mode nor an LLM provider: it runs with `LIBREDB_AGENT_ENABLED` set to `false` and no `LLM_*` variable set.
 The shared core is the statement languages under `src/lib/agent/languages/`, and those an engine's declaration states as data, each of which declares its MCP tool, or none yet, in the facets `agentLanguageMcpFacets()` answers, the read profiles `agent-read-only` and `agent-operations`, and the seed fields `agentUser`, `agentPassword` and `agentReadRoots`, so those names keep the word agent.
-In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens its connection, and `agent-operations` is the profile `inspect_schema` opens under, which sends no statement.
+In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens its connection, and `agent-operations` is the profile `inspect_schema` opens under for an engine Studio bundles, which sends no statement.
+An engine a provider package serves is read by `inspect_schema` on its package's metadata session, which sends no statement either, and no statement tool serves it yet.
 `agentUser` and `agentPassword` are a seed's read credential of its own, `agentReadRoots` an OPC UA seed's read roots, and each engine record's `agentExecution` grant Studio's review record of the engines the shared core runs statements on.
 
 ## What it is
@@ -31,7 +32,8 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     On a connection with one container level the names are that level's listing, and on a PostgreSQL connection that reaches every database they are the schemas of the database `database` names; on one with two, such as DuckDB, they are the deepest level under the upper container the session is in, or else the first one listed, since no argument chooses that one; on a connection with no container level, such as SQLite, and on Sparkplug B, whose MCP handle declares none, `schema_names` is `{ unavailable }`.
     The names come from the container listings the call makes anyway, so asking for them sends no request of its own.
     `timeout_ms`, 500 to 30000 and 30000 by default, bounds the whole call ([Limits](#limits)).
-    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.
+    For an engine Studio bundles it opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.
+    For an engine a provider package serves, where a register row offers it to MCP, it reads the package's own metadata session, opened through the package, and refuses a call that names `database`, since such a connection reads only the database it names.
     On Kubernetes it refuses the call by name, because no Kubernetes kind is a table: the refusal names `run_kubectl_read`, which reads its objects, and is answered as soon as the connection resolves, before anything is acquired.
     So no object name, a Secret's included, reaches it there ([kubernetes.md](./providers/kubernetes.md#9-capabilities-ai-and-mcp)).
     On MQTT it refuses the call the same way, naming `run_mqtt_read`, because a broker declares no relation kind: a topic is a key, and topic names are withheld ([mqtt.md](./providers/mqtt.md) section 15).
@@ -354,6 +356,7 @@ An empty `list_connections` answer means no connection is opted in for your toke
 A seed entry whose type names no provider this Studio has, such as an engine of a newer Studio, keeps its opt-in ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
 `list_connections` lists it with `engine` as written, `read_tool: null` and `unavailable` set to the sentence that names its type, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
 `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired, and no statement tool is listed for it.
+A seed entry of an engine an admitted provider package serves keeps its opt-in too, and MCP reads it by its engine's register row: where no row offers that engine to MCP, `list_connections` lists it with `read_tool: null` and `unavailable` set to `This connection is not available to MCP: LibreDB Studio does not offer its engine to MCP clients, so an operator removes mcp from this seed.`, and every tool refuses it with that sentence before anything is opened.
 
 Where an engine's line under "Read-only is the database's own enforcement" above says it refuses a login that could do more than read, an opted-in seed for that engine needs a least-privilege principal.
 On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.

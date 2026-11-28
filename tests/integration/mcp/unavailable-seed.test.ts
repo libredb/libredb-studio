@@ -12,13 +12,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { forgetServerCatalog } from "@/lib/db/server-catalog";
 import { unknownTypeSentence } from "@/lib/db/type-id";
+import { MCP_ENGINE_NOT_OFFERED_TEXT } from "@/lib/mcp/availability";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_READ_ONLY_ANNOTATIONS } from "@/lib/mcp/output";
 import { servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { admitSessionPackages } from "../../helpers/package-session-fixture";
+import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
@@ -129,6 +133,84 @@ describe("a seed whose type names no provider, opted in to MCP", () => {
       expect(tools.find((tool) => tool.name === "inspect_schema")?.annotations).toEqual({
         ...MCP_READ_ONLY_ANNOTATIONS,
       });
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+// An engine an admitted provider package serves, with no register row: the seed loader keeps the entry's opt-in, and
+// MCP reads it by its record's grants (docs/providers/CONTRACT.md, clause C-107), so no MCP client is offered it: it is
+// listed with the exposure refusal, every tool answers that refusal before anything is acquired or opened, and a
+// token whose only connection it is lists no statement tool. The package is admitted from a scratch providers
+// directory (tests/helpers/package-session-fixture.ts); no hook is set, so an open of it would fail the case.
+describe("a seed entry of an engine an admitted package serves, with no register row", () => {
+  const PACKAGE_ENGINE = "acmeseedpkg";
+  const providers = scratchDirectory("studio-mcp-unavailable-package-");
+
+  beforeAll(async () => {
+    await admitSessionPackages(providers, [{ name: "acme-seed-pkg", engine: PACKAGE_ENGINE }]);
+  });
+
+  afterAll(() => {
+    forgetServerCatalog();
+    removeScratch(providers);
+  });
+
+  function seedPackageAndShop(): void {
+    writeSeedFile(dir, [
+      { id: "acmepkg", name: "Acme Package", type: PACKAGE_ENGINE, host: "acme.internal" },
+      { id: "shop", name: "Shop", type: "sqlite", database: join(dir, "shop.db") },
+    ]);
+  }
+
+  test("list_connections lists it with the exposure refusal", async () => {
+    seedPackageAndShop();
+    const result = await callTool("list_connections", {});
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent?.connections).toEqual([
+      { id: "seed:shop", name: "Shop", engine: "sqlite", database: "shop.db", read_tool: "run_read_query" },
+      {
+        id: "seed:acmepkg",
+        name: "Acme Package",
+        engine: PACKAGE_ENGINE,
+        read_tool: null,
+        unavailable: MCP_ENGINE_NOT_OFFERED_TEXT,
+      },
+    ]);
+  });
+
+  test("inspect_schema and every statement tool answer that refusal and acquire nothing", async () => {
+    seedPackageAndShop();
+    const acquire = spyOn(McpConnectionContext.prototype, "acquire");
+    const metadataTarget = spyOn(McpConnectionContext.prototype, "metadataTarget");
+    try {
+      const tools = registeredMcpToolNames().filter((tool) => tool !== "list_connections");
+      expect(tools).toContain("inspect_schema");
+      for (const tool of tools) {
+        const args = { ...acmeArguments(tool), connection_id: "seed:acmepkg" };
+        // oxlint-disable-next-line no-await-in-loop -- one tool at a time, so a failure names its tool.
+        const result = await callTool(tool, args);
+        expect({ tool, isError: result.isError, content: result.content }).toEqual({
+          tool,
+          isError: true,
+          content: [{ type: "text", text: MCP_ENGINE_NOT_OFFERED_TEXT }],
+        });
+      }
+      expect(acquire).not.toHaveBeenCalled();
+      expect(metadataTarget).not.toHaveBeenCalled();
+    } finally {
+      acquire.mockRestore();
+      metadataTarget.mockRestore();
+    }
+  });
+
+  test("a token whose only connection it is lists the metadata tools alone", async () => {
+    writeSeedFile(dir, [{ id: "acmepkg", name: "Acme Package", type: PACKAGE_ENGINE }]);
+    const session = await connectClient(admin);
+    try {
+      const { tools } = await session.client.listTools();
+      expect(tools.map((tool) => tool.name)).toEqual(listedMcpToolNames(new Set()));
     } finally {
       await session.close();
     }

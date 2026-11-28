@@ -33,7 +33,6 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import {
-  assertLegacyProvider,
   beginServerCatalogBoot,
   endServerCatalogBootUnfinished,
   type EngineConnection,
@@ -42,13 +41,13 @@ import {
   installServerCatalog,
   legacyConnection,
   legacyProviderEngine,
-  legacyProviderRefusal,
   legacyProviderType,
   offersLegacyProvider,
   serverCatalogBooting,
   serverCatalogBootUnfinished,
   serverCatalogInstalled,
   servedEngineRecord,
+  servedEngineRefusal,
   servedEngines,
   servedPackage,
   serverEngine,
@@ -207,12 +206,12 @@ describe("the accessor", () => {
     expect(refuse({ host: "db.local", user: "reader", database: "d" })).toBeUndefined();
     // The engine's record offers no legacy provider: the server-side check refuses it on a route that does not serve it,
     // by name.
-    const route = thrown(() => assertLegacyProvider("acmeserved", "route"));
+    const route = thrown(() => legacyProviderEngine("acmeserved", "route"));
     expect(route).toBeInstanceOf(PackageEngineUnsupportedError);
     expect((route as Error).message).toBe(
-      "This request is served for an engine of a provider package only by Test Connection, the query route, the object tree's reads and the monitoring, health and pool statistics reads in this LibreDB Studio, and this is another request.",
+      "This request is served for an engine of a provider package only by Test Connection, the query route, the object tree's reads, the monitoring, health and pool statistics reads and MCP in this LibreDB Studio, and this is another request.",
     );
-    const open = thrown(() => assertLegacyProvider("acmeserved", "open"));
+    const open = thrown(() => legacyProviderEngine("acmeserved", "open"));
     expect((open as Error).message).toBe(
       "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
@@ -238,7 +237,7 @@ describe("the accessor", () => {
     for (const value of [undefined, null, "", 7, ["postgres"], "acmenone", "Postgres", " postgres"]) {
       const expected = thrown(() => assertDatabaseType(value)) as UnknownProviderError;
       for (const need of ["route", "open"] as const) {
-        const actual = thrown(() => assertLegacyProvider(value, need)) as UnknownProviderError;
+        const actual = thrown(() => legacyProviderEngine(value, need)) as UnknownProviderError;
         expect(actual).toBeInstanceOf(UnknownProviderError);
         expect([actual.name, actual.message, actual.code, actual.reason, actual.typeId]).toEqual([
           expected.name,
@@ -251,7 +250,7 @@ describe("the accessor", () => {
     }
     for (const id of SHIPPED_DATABASE_TYPES) {
       expect(servedRecord(id).id as string).toBe(id);
-      expect(() => assertLegacyProvider(id, "open")).not.toThrow();
+      expect(legacyProviderEngine(id, "open")).toBe(servedRecord(id));
     }
   });
 
@@ -277,7 +276,7 @@ describe("the accessor", () => {
     expect(servedRecord(bundled).source.package).toBeNull();
     expect<unknown>(serverEngine("acmeunnamed")).toEqual({ kind: "refused", refusal: typeIdRefusal("acmeunnamed") });
 
-    const error = thrown(() => assertLegacyProvider("acmegone", "route")) as ProviderUnavailableError;
+    const error = thrown(() => legacyProviderEngine("acmegone", "route")) as ProviderUnavailableError;
     expect(error).toBeInstanceOf(ProviderUnavailableError);
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect([error.code, error.typeId, error.codes]).toEqual([
@@ -302,7 +301,7 @@ describe("the accessor", () => {
     );
     for (const key of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
       expect<unknown>(serverEngine(key)).toEqual({ kind: "refused", refusal: typeIdRefusal(key) });
-      expect(thrown(() => assertLegacyProvider(key, "route"))).toBeInstanceOf(UnknownProviderError);
+      expect(thrown(() => legacyProviderEngine(key, "route"))).toBeInstanceOf(UnknownProviderError);
     }
   });
 
@@ -533,13 +532,13 @@ describe("one engine record for every engine", () => {
     installServerCatalog(
       composeServerCatalog([admittedFor("acme-offer", admittedManifest("acmeoffer"))], [], STUDIO_GRANT_REGISTER),
     );
-    const refused = thrown(() => assertLegacyProvider("acmeoffer", "open")) as PackageEngineUnsupportedError;
+    const refused = thrown(() => legacyProviderEngine("acmeoffer", "open")) as PackageEngineUnsupportedError;
     expect(refused).toBeInstanceOf(PackageEngineUnsupportedError);
     expect([refused.code, refused.typeId]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeoffer"]);
     expect(refused.message).toBe(
       "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
-    expect(legacyProviderRefusal(legacyId, "route")).toBeNull();
+    expect(legacyProviderEngine(legacyId, "route")).toBe(servedRecord(legacyId));
   });
 
   test("a legacy record offers the legacy provider surface, explain, database, catalog and unbounded pages, and a package record offers none of them", () => {
@@ -592,7 +591,7 @@ describe("one engine record for every engine", () => {
   });
 
   test("installing a catalog whose record offers a legacy provider for an id the legacy adapter does not serve, or none for one it serves, is a host defect, named", () => {
-    // `assertLegacyProvider` narrows a type to `DatabaseType` from the record's offer, so the install holds the offer to
+    // `legacyProviderType` reads a record's id as a `DatabaseType` from the record's offer, so the install holds the offer to
     // the id: a record offers a legacy provider exactly when its id is a legacy engine's.
     const composed = composeServerCatalog(
       [admittedFor("acme-claim", admittedManifest("acmeclaim"))],
@@ -624,17 +623,22 @@ describe("one engine record for every engine", () => {
     );
   });
 
-  test("legacyProviderEngine answers the record of an engine whose record offers a legacy provider, and refuses every other value as assertLegacyProvider does", () => {
+  test("legacyProviderEngine answers the record of an engine whose record offers a legacy provider, refuses a package's engine by name, and every other value as servedEngineRecord does", () => {
     const legacyId = SHIPPED_DATABASE_TYPES[0] as string;
     expect(legacyProviderEngine(legacyId, "open")).toBe(servedRecord(legacyId));
     installServerCatalog(
       composeServerCatalog([admittedFor("acme-lpe", admittedManifest("acmelpe"))], [], STUDIO_GRANT_REGISTER),
     );
     expect(legacyProviderEngine(legacyId, "route")).toBe(servedRecord(legacyId));
-    const values: unknown[] = [undefined, null, "", 5, "constructor", "acmenosuch", "acmelpe"];
+    for (const need of ["route", "open"] as const) {
+      const unsupported = thrown(() => legacyProviderEngine("acmelpe", need));
+      expect(unsupported).toBeInstanceOf(PackageEngineUnsupportedError);
+      expect((unsupported as PackageEngineUnsupportedError).typeId).toBe("acmelpe");
+    }
+    const values: unknown[] = [undefined, null, "", 5, "constructor", "acmenosuch"];
     for (const value of values) {
       for (const need of ["route", "open"] as const) {
-        const expected = thrown(() => assertLegacyProvider(value, need)) as Error;
+        const expected = thrown(() => servedEngineRecord(value)) as Error;
         const answered = thrown(() => legacyProviderEngine(value, need)) as Error;
         expect(answered.constructor).toBe(expected.constructor);
         expect(answered.message).toBe(expected.message);
@@ -642,7 +646,7 @@ describe("one engine record for every engine", () => {
     }
   });
 
-  test("servedEngineRecord answers the record of every engine the catalog serves, and refuses every other value as assertLegacyProvider does", () => {
+  test("servedEngineRecord answers the record of every engine the catalog serves, and refuses every other value as legacyProviderEngine does", () => {
     installServerCatalog(
       composeServerCatalog(
         [admittedFor("acme-ser", admittedManifest("acmeser"))],
@@ -654,8 +658,36 @@ describe("one engine record for every engine", () => {
     expect(servedEngineRecord(legacyId)).toBe(servedRecord(legacyId));
     expect(servedEngineRecord("acmeser")).toBe(servedRecord("acmeser"));
     for (const value of [undefined, null, "", 5, "constructor", "acmenosuch", "acmesergone"]) {
-      const expected = thrown(() => assertLegacyProvider(value, "route")) as Error;
+      const expected = thrown(() => legacyProviderEngine(value, "route")) as Error;
       const answered = thrown(() => servedEngineRecord(value)) as Error;
+      expect(answered.constructor).toBe(expected.constructor);
+      expect(answered.message).toBe(expected.message);
+    }
+  });
+
+  test("servedEngineRefusal answers null for every served record and refuses every other value as servedEngineRecord throws", () => {
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-sref", admittedManifest("acmesref"))],
+        [{ name: "acme-srefgone", version: "1.0.0", engines: ["acmesrefgone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
+      ),
+    );
+    for (const id of [...SHIPPED_DATABASE_TYPES, "acmesref"]) expect(servedEngineRefusal(id)).toBeNull();
+    const gone = servedEngineRefusal("acmesrefgone");
+    expect(gone).toBeInstanceOf(ProviderUnavailableError);
+    expect([(gone as ProviderUnavailableError).typeId, (gone as ProviderUnavailableError).codes]).toEqual([
+      "acmesrefgone",
+      ["PROVIDER_LOAD_FAILED"],
+    ]);
+    for (const value of [undefined, null, "", 5, "constructor", "acmenosuch"]) {
+      const refusal = servedEngineRefusal(value);
+      expect(refusal).toBeInstanceOf(UnknownProviderError);
+      expect(refusal?.message).toBe(typeIdRefusal(value)?.sentence as string);
+    }
+    for (const value of [undefined, null, "", 5, "constructor", "acmenosuch", "acmesrefgone"]) {
+      const expected = thrown(() => servedEngineRecord(value)) as Error;
+      const answered = servedEngineRefusal(value) as Error;
       expect(answered.constructor).toBe(expected.constructor);
       expect(answered.message).toBe(expected.message);
     }
