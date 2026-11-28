@@ -93,12 +93,12 @@ describe("a package engine on a connection route", () => {
     expect(readVaultSecret).not.toHaveBeenCalled();
   });
 
-  test("an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read", async () => {
+  test("an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read", async () => {
     for (const body of [{ connection: inline("acmeserved") }, { connectionId: "seed:served" }]) {
       const refusal = await resolveConnection(body, ADMIN).catch((error: unknown) => error);
       expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
       expect((refusal as Error).message).toBe(
-        "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
+        "This request is served for an engine of a provider package only by Test Connection, the query route, its cancel and a transaction, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
       );
     }
 
@@ -136,7 +136,7 @@ describe("a package engine on a connection route", () => {
       (refusal as PackageEngineUnsupportedError).typeId,
     ]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeserved"]);
     expect((refusal as Error).message).toBe(
-      "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
+      "This request is served for an engine of a provider package only by Test Connection, the query route, its cancel and a transaction, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
     );
     const resolved = await resolveConnection({ connection: inline("postgres") }, ADMIN);
     expect(resolved).toMatchObject({ type: "postgres", host: "db.example", managed: false });

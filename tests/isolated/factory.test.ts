@@ -492,7 +492,7 @@ const {
   getExecutionProfileCacheStats,
   withOneShotTunnel,
   editorCacheKey,
-  findCachedProvider,
+  findCachedEditorEntry,
   readProviderDeclarations,
   logUnclaimedOpen,
 } = await import("@/lib/db/factory");
@@ -1642,8 +1642,9 @@ describe("createDatabaseProvider", () => {
 
   // ─── supportsTransactions agrees with the route's own shape check (#464) ───
   //
-  // `POST /api/db/transaction` gates on `isTransactionProvider(provider)` — the three
-  // methods being present — which no client can read, so `Studio.tsx` reads the
+  // `POST /api/db/transaction` gates on the session's offer of `console.transaction`, which
+  // for a legacy provider's bridged session is `isTransactionProvider(provider)`, the three
+  // methods being present, and which no client can read, so `Studio.tsx` reads the
   // declared capability instead. Two declarations for one fact drift, and the drift is
   // silent in both directions: `true` without the methods puts back the HTTP 400 the
   // capability exists to prevent, and `false` with them hides working controls. Every
@@ -3297,22 +3298,27 @@ describe("an open a removal or a cache close overtakes", () => {
   });
 });
 
-describe("editorCacheKey and findCachedProvider", () => {
+describe("editorCacheKey and findCachedEditorEntry", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+  /** The legacy provider of the editor entry cached under `connection`'s id and `frame`, or null where none is. */
+  const cachedProviderOf = (connection: DatabaseConnection, frame: string) => {
+    const entry = findCachedEditorEntry(connection.id, frame);
+    return entry === null ? null : entry.opened.form === "provider" ? entry.opened.provider : entry;
+  };
 
-  test("editorCacheKey is the key getOrCreateProvider caches under, and findCachedProvider answers what is cached there", async () => {
-    // The transaction route records the key a governed begin resolved and later looks the provider up by it, to roll
+  test("editorCacheKey is the frame getOrCreateProvider caches under, and findCachedEditorEntry answers the entry cached there", async () => {
+    // The transaction route records the key a governed begin resolved and later looks the entry up by it, to roll
     // back a transaction whose credential changed; both only work if this key is the one the provider is cached under.
     const writer = makeConnection("postgres", { id: "seed:orders", user: "writer", password: "write-secret" });
     const reader = makeConnection("postgres", { id: "seed:orders", user: "reader", password: "read-secret" });
 
     const provider = await getOrCreateProvider(writer, {}, owned("alice-subject"));
 
-    expect(findCachedProvider(await editorCacheKey(writer, owned("alice-subject")))).toBe(provider);
+    expect(cachedProviderOf(writer, await editorCacheKey(writer, owned("alice-subject")))).toBe(provider);
     // Another credential, another owner, or no owner at all names another key, under which nothing is cached.
-    expect(findCachedProvider(await editorCacheKey(reader, owned("alice-subject")))).toBeNull();
-    expect(findCachedProvider(await editorCacheKey(writer, owned("bob-subject")))).toBeNull();
-    expect(findCachedProvider(await editorCacheKey(writer))).toBeNull();
+    expect(cachedProviderOf(writer, await editorCacheKey(reader, owned("alice-subject")))).toBeNull();
+    expect(cachedProviderOf(writer, await editorCacheKey(writer, owned("bob-subject")))).toBeNull();
+    expect(cachedProviderOf(writer, await editorCacheKey(writer))).toBeNull();
     // A lookup opens nothing.
     expect(getProviderCacheStats().size).toBe(1);
   });
@@ -8590,7 +8596,8 @@ describe("a provider receives only its engine's fields on every entry point (FND
     const plain: DatabaseConnection = { ...fields };
     const writable = await rawGetOrCreateProvider(plain);
     const profiled = await rawAcquireExecutionProfileProvider(plain, "agent-read-only");
-    expect(findCachedProvider(await editorCacheKey(plain))).toBe(writable);
+    const cached = findCachedEditorEntry(plain.id, await editorCacheKey(plain));
+    expect(cached?.opened.form === "provider" && cached.opened.provider).toBe(writable);
     // The same fields, inherited from a prototype: the cache key reads them as the plain record's.
     const record = Object.create({ ...fields }) as DatabaseConnection;
     expect(await editorCacheKey(record)).toBe(await editorCacheKey(plain));

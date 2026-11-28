@@ -1592,7 +1592,8 @@ async function openEditorProvider(
  * Exported for two callers that must name a cached entry without deriving a second key, as `profiledCacheKey` is for its
  * own. The transaction route records the key a governed `begin` resolved, and a later request that resolves another
  * one, because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
- * provider {@link findCachedProvider} answers for the recorded key (docs/GOVERNANCE.md#per-user-providers). And without
+ * editor entry {@link findCachedEditorEntry} answers for the connection and the recorded key
+ * (docs/GOVERNANCE.md#per-user-providers). And without
  * governance the disconnect route removes only the entries the caller's own record names, its editor entry and its
  * execution-profile entries, by the key scope of `removeProvider` (docs/SECURITY.md, note 0.9). The package does not
  * re-export it.
@@ -1612,16 +1613,22 @@ export async function editorCacheKey(
 }
 
 /**
- * The provider the writable cache holds under `key`, which {@link editorCacheKey} answers, or null when it holds none
- * there: the idle sweep, a disconnect or a teardown removed it, and disconnected it on the way out. A lookup, not a
- * use: it opens nothing and leaves the entry's idle clock alone. A key under which the cache holds a provider package's
- * session is a host defect, raised by name: no legacy caller computes one. For `cachedEditorProvider` in
- * src/lib/api/editor-provider.ts, on which the transaction route rolls back a transaction whose owner's credential
- * changed (docs/GOVERNANCE.md#per-user-providers); the package does not re-export it.
+ * The editor cache's entry of either form whose connection is `connectionId` and whose frame is `frame`, which
+ * {@link editorCacheKey} answers, or null when it holds none: the idle sweep, a disconnect or a teardown removed it,
+ * and closed it on the way out. A lookup, not a use: it opens nothing and leaves the entry's idle clock alone.
+ *
+ * At most one entry matches. A frame frames the connection's type first (`connectionFingerprint` in
+ * ./connection-fingerprint), a type names one record, and an editor entry's key is its frame for a record that offers a
+ * legacy provider and its package's name and its frame for a provider package's, so one connection id and one frame
+ * name one key. For `cachedEditorConsoleTarget` in src/lib/api/editor-provider.ts, on which the transaction route rolls
+ * back a transaction whose owner's credential changed (docs/GOVERNANCE.md#per-user-providers); the package does not
+ * re-export it.
  */
-export function findCachedProvider(key: string): DatabaseProvider | null {
-  const entry = providerCache.get(key);
-  return entry === undefined ? null : heldProvider(entry).provider;
+export function findCachedEditorEntry(connectionId: string, frame: string): CachedSession | null {
+  for (const entry of providerCache.values()) {
+    if (entry.connectionId === connectionId && entry.frame === frame) return entry;
+  }
+  return null;
 }
 
 // ============================================================================

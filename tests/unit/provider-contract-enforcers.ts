@@ -3180,6 +3180,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "tests/api/db/rest-package-engine.test.ts": [
         "cancel runs on a package engine's session through the console's cancel",
+        "a transaction runs on a package engine's session through the console's transaction calls",
+        "a script inside a package engine's transaction runs each unit through the host core's execute",
+        "the transaction route refuses a catalog and an unbounded page a package engine's record does not offer, by name, not-sent, before any open",
+        "under governance a package engine's transaction is rolled back through its own session when its owner's credential changed",
         "disconnect removes every cache entry of a package engine's record, and no other record's",
         "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
         "the profile route and the statement analysis refuse a package engine by the record's offer, by name",
@@ -3203,7 +3207,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3241,6 +3245,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a query on an admitted engine answers the package's rows through the host core",
         "the query route runs one gate and one run for a legacy and a package engine, told apart only by the record's offers",
         "a refused package's engine and an unknown type answer as the server catalog answers them",
+        "explain, database, catalog and unlimited are refused by name before any open",
       ],
       "tests/api/agent/classify.test.ts": ["classify answers a package engine's connection"],
       "tests/api/agent/runs.test.ts": [
@@ -3284,6 +3289,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "tests/api/db/rest-package-engine.test.ts": [
         "cancel runs on a package engine's session through the console's cancel",
+        "a transaction runs on a package engine's session through the console's transaction calls",
+        "a package engine whose session does not offer console.transaction answers the transaction route's one refusal, calling nothing",
       ],
       "tests/unit/lib/api/editor-query.test.ts": [
         "the cancel runs on any session its target states, a package's and the bridge's alike, and one that does not offer console.cancel is answered not offered without a call",
@@ -3328,6 +3335,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a refused offset of a session that refuses it is Studio's own offset refusal, not-sent",
         "refused params of a session that refuses them are FacetNotOfferedError, not-sent",
         "a facet the session does not offer is FacetNotOfferedError naming the call, not-sent",
+        "a statement sent inside a transaction to a session that does not offer console.transaction is FacetNotOfferedError naming console.transaction, not-sent",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "bound params and an offset the package does not honour are refused before the call, not-sent",
@@ -3339,6 +3347,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "tests/api/db/rest-package-engine.test.ts": [
         "the cancel route answers a package's open failure as not-sent, its cancel failure by its grant, and a malformed cancel answer as the package's defect",
+        "the transaction route answers a package's open failure as not-sent, its transaction and statement failures by its grant, logged once, and a malformed transaction answer as the package's defect",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
@@ -3429,6 +3438,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
         "a package's cancel failure is answered by its grant, and a refused cancel or end of scope answer as the package's defect on both grants",
+        "a package's transaction failure is answered by its grant, and a refused transaction answer as the package's defect on both grants",
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",

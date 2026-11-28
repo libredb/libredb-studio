@@ -145,8 +145,8 @@ mock.module("@/lib/db", () => ({
  * same arguments, recorded as the last one built, so the declarations read agrees.
  */
 mock.module("@/lib/db/factory", () => ({
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
-  findCachedProvider: mock(() => null),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached entry.
+  findCachedEditorEntry: mock(() => null),
   getOrCreateEditorSession: async (connection: unknown, _engine: unknown, execution: unknown) => {
     const provider = (await (mockGetOrCreateProvider as (...given: unknown[]) => Promise<unknown>)(
       connection,

@@ -34,8 +34,9 @@ mock.module("@/lib/db", () => ({
   },
 }));
 
-/** The writable cache by key, as `findCachedProvider` reads it. */
-const cachedByKey = new Map<string, DatabaseProvider>();
+/** The editor cache's entries by connection id and frame, as `findCachedEditorEntry` reads them, and each lookup. */
+const cachedEntries = new Map<string, CachedSession>();
+const lookups: [string, string][] = [];
 /** Every open of an editor session, as `getOrCreateEditorSession` receives it, and the entry the case sets it to answer. */
 const openedEditor: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
 let editorEntry: CachedSession;
@@ -57,7 +58,10 @@ mock.module("@/lib/db/factory", () => ({
     openedMetadataSessions.push({ connection, engine, context, rest });
     return metadataEntry;
   },
-  findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
+  findCachedEditorEntry: (connectionId: string, frame: string) => {
+    lookups.push([connectionId, frame]);
+    return cachedEntries.get(`${connectionId}\u0000${frame}`) ?? null;
+  },
   getOrCreateEditorSession: async (
     connection: EngineConnection,
     engine: EngineRecord,
@@ -71,7 +75,7 @@ mock.module("@/lib/db/factory", () => ({
 
 const {
   assertEditorFieldsOffered,
-  cachedEditorProvider,
+  cachedEditorConsoleTarget,
   editorMaintenanceOpening,
   editorMonitoringTarget,
   editorProvider,
@@ -706,21 +710,73 @@ describe("editorSourceTarget", () => {
 });
 
 /**
- * The provider an earlier editor request ran on, found again by the key it resolved
+ * The console target of the editor's session an earlier request ran on, found again by the frame it resolved
  * (docs/GOVERNANCE.md#per-user-providers).
  */
-describe("cachedEditorProvider", () => {
-  test("answers the provider cached under the key, in the catalog editorProvider scoped, and opens nothing", async () => {
-    const shop = providerOf({});
-    const server = providerOf({ catalogSessions: true }, { shop });
-    cachedByKey.set("key-of-the-write-credential", server);
-    opened.length = 0;
+describe("cachedEditorConsoleTarget", () => {
+  const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
+  /** A provider package's session entry, its session and environment stand-ins read back by reference. */
+  function sessionEntry() {
+    const packageSession = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session: packageSession, env }, running: 0, lastUsed: 0 } as unknown;
+    return { entry: entry as CachedSession, packageSession, env };
+  }
 
-    expect(await cachedEditorProvider("key-of-the-write-credential", undefined)).toBe(server);
-    expect(await cachedEditorProvider("key-of-the-write-credential", "shop")).toBe(shop);
-    // Nothing is cached under another key: the idle sweep or a disconnect removed it, or it was never opened.
-    expect(await cachedEditorProvider("key-of-the-read-credential", undefined)).toBeNull();
-    expect(opened).toEqual([]);
+  test("answers the console target of the editor entry the frame names, a legacy provider in the request's catalog and a package's session counting each call on its entry, null where none is cached, and opens nothing", async () => {
+    const shopCapabilities = {};
+    const serverCapabilities = { catalogSessions: true };
+    const shop = providerOf(shopCapabilities);
+    const server = providerOf(serverCapabilities, { shop });
+    cachedEntries.clear();
+    lookups.length = 0;
+    cachedEntries.set(`${connection.id}\u0000frame-of-the-write-credential`, {
+      opened: { form: "provider", provider: server },
+    } as unknown as CachedSession);
+    const { entry, packageSession, env } = sessionEntry();
+    cachedEntries.set(`${packageConnection.id}\u0000package-frame`, entry);
+    opened.length = 0;
+    openedEditor.length = 0;
+
+    const whole = await cachedEditorConsoleTarget(connection, "frame-of-the-write-credential", undefined);
+    expect(whole?.explainSupport()).toBe(serverCapabilities as never);
+    const inShop = await cachedEditorConsoleTarget(connection, "frame-of-the-write-credential", "shop");
+    expect(inShop?.explainSupport()).toBe(shopCapabilities as never);
+
+    const target = await cachedEditorConsoleTarget(packageConnection, "package-frame", undefined);
+    expect([target?.session as unknown, target?.env as unknown, target?.timeout()]).toEqual([
+      packageSession,
+      env,
+      1234,
+    ]);
+    target?.started();
+    expect(entry.running).toBe(1);
+    target?.ended({ kind: "page" });
+    expect(entry.running).toBe(0);
+
+    // Nothing is cached under another frame: the idle sweep or a disconnect removed it, or it was never opened.
+    expect(await cachedEditorConsoleTarget(connection, "frame-of-the-read-credential", undefined)).toBeNull();
+    // Each lookup names the connection's own id and the frame, and nothing was opened.
+    expect(lookups).toEqual([
+      [connection.id, "frame-of-the-write-credential"],
+      [connection.id, "frame-of-the-write-credential"],
+      [packageConnection.id, "package-frame"],
+      [connection.id, "frame-of-the-read-credential"],
+    ]);
+    expect([opened, openedEditor]).toEqual([[], []]);
+  });
+
+  test("a package's entry handed a catalog is refused as Studio's own defect", async () => {
+    cachedEntries.clear();
+    cachedEntries.set(`${packageConnection.id}\u0000package-frame`, sessionEntry().entry);
+
+    const raised = await cachedEditorConsoleTarget(packageConnection, "package-frame", "shop").catch(
+      (error: unknown) => error,
+    );
+    const refusal = { rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" } as const;
+    expect(raised).toBeInstanceOf(HostDefectError);
+    expect((raised as HostDefectError).refusals).toEqual([refusal]);
+    expect(isStudioFailure(raised)).toBe(true);
   });
 });
 

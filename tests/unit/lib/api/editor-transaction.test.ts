@@ -27,6 +27,7 @@ import {
   readTransactionState,
   rollBackAfterCredentialChange,
   runInTransaction,
+  transactionOffered,
   type UnansweredCall,
 } from "@/lib/api/editor-transaction";
 import { entryConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
@@ -707,6 +708,22 @@ describe("the transaction facade on a provider package's session", () => {
     } as unknown as CachedSession;
     return { fx, env, entry, target: entryConsoleTarget(entry, connection) };
   }
+
+  test("transactionOffered answers whether the target's session offers console.transaction, a package's and the bridge's alike", () => {
+    expect(transactionOffered(packageTransactional().target)).toBe(true);
+    const { entry } = packageTransactional();
+    const opened = entry.opened as unknown as { session: ConsoleSession; env: unknown };
+    const withdrawn = { console: { ...CALLS.console, transaction: "not-offered" } };
+    const bare = {
+      ...entry,
+      opened: { ...opened, session: { ...opened.session, calls: { ...CALLS, ...withdrawn } } },
+    } as unknown as CachedSession;
+    expect(transactionOffered(entryConsoleTarget(bare, connection))).toBe(false);
+
+    // A legacy provider's bridged session offers it exactly where the provider holds a transaction session.
+    expect(transactionOffered(providerConsoleTarget(transactional().provider))).toBe(true);
+    expect(transactionOffered(providerConsoleTarget(createMockProvider()))).toBe(false);
+  });
 
   test("a begin, COMMIT, ROLLBACK and state read on a package entry's console target call the package's transaction with its declared environment, each counted on the entry until it answered", async () => {
     const { fx, env, entry, target } = packageTransactional();

@@ -112,8 +112,8 @@ const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<Dat
 );
 mock.module("@/lib/db/factory", () => ({
   getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
-  findCachedProvider: mock(() => null),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached entry.
+  findCachedEditorEntry: mock(() => null),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
   getOrCreateEditorSession: mock(async () => {
     throw new Error("getOrCreateEditorSession is not read by this route");

@@ -10,17 +10,19 @@
  * M-84), in the error's own words through core's scrub where one does, its record's `grants.ownWords` `"scrubbed"`,
  * and in the package-defect words below for a refusal of what the package's open answered. An execute that fails may have run, so it is answered in Studio's sentence where no row grants the
  * words, and as raised, through core's scrub, where one does; a tree read, a source read, a health read, a panel read,
- * a pool statistics read, a maintenance run, a maintenance preview and a cancel that fail are answered as an execute is.
+ * a pool statistics read, a maintenance run, a maintenance preview, a cancel and a transaction call that fail are
+ * answered as an execute is.
  *
  * A value the host core builds about a package's answer it cannot read, a `HostDefectError` with a refusal of a rule
  * `REFUSAL_AUTHOR` names the package's, is the package's defect: on both grants it is answered and logged in Studio's
  * words under `PACKAGE_DEFECT_PREFIX`, where the accessor's message names Studio, as a not-sent `ConnectionError` for
  * an open and a plain `Error` for any other call, a tree, source, panel, pool statistics, health, maintenance run,
- * maintenance preview, cancel or end of scope answer the core refused (`checkTreeAnswer`, `checkSourceAnswer`,
- * `checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer`,
- * `checkMaintenancePreviewAnswer`, `checkCancelAnswer`, `checkEndScopeAnswer`) included; an end of scope's under the
- * call whose run it ended. Its one log line names each rule and pointer, and the words of each close that failed after
- * the refused answer, through core's scrub (`loggedDefect`). The client is answered each rule and
+ * maintenance preview, cancel, end of scope or transaction answer the core refused (`checkTreeAnswer`,
+ * `checkSourceAnswer`, `checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer`,
+ * `checkMaintenancePreviewAnswer`, `checkCancelAnswer`, `checkEndScopeAnswer`, `checkTransactionAnswer`,
+ * `checkTransactionStatement`) included; an end of scope's under the call whose run it ended. Its one log line names
+ * each rule and pointer, and the words of each close that failed after the refused answer, through core's scrub
+ * (`loggedDefect`). The client is answered each rule and
  * pointer where a register row grants the package's words, each refusal's sentence through core's scrub, since its
  * pointer and the key it names may hold a key the package chose, and each rule alone where none does
  * (`packageDefectAnswer`). A `HostDefectError` whose refusals are
@@ -30,9 +32,10 @@
  * Every failure `packageFailureAnswer` answers as the package's (`isPackageFailure`) it logs, once; the query route and
  * the Test Connection route (through `testConnection`'s `failure`, src/lib/api/test-connection.ts), which render the
  * answer, pass `logged` to `createErrorResponse` (src/lib/api/errors.ts), so they write no second line. A request whose
- * facades answer its failures inside (`providerMonitoring`, `providerMaintenance`), and an object route's tree or
- * source read (`handleObjectRequest` in src/lib/api/object-route.ts), holds one `packageAnswers` record, which answers
- * each failure through `packageFailureAnswer` and tells its route which errors it already logged.
+ * facades answer its failures inside (`providerMonitoring`, `providerMaintenance`), an object route's tree or source
+ * read (`handleObjectRequest` in src/lib/api/object-route.ts), or a request that answers several calls of one session
+ * (the cancel and the transaction routes), holds one `packageAnswers` record, which answers each failure through
+ * `packageFailureAnswer` and tells its route which errors it already logged.
  *
  * A package's warnings reach the route as the host core checked and rebuilt them (`checkExecuteAnswer`); where no row
  * grants its own words they reach the client only as Studio's sentence naming their count, each logged once through
@@ -217,7 +220,8 @@ export type PackageCall =
   | "pool statistics read"
   | "maintenance run"
   | "maintenance preview"
-  | "cancel";
+  | "cancel"
+  | "transaction";
 
 /**
  * The error a route answers for `error`, a failure of the `call` of `engine`'s session, the one answer of a provider
@@ -231,8 +235,8 @@ export type PackageCall =
  * execute's is the error as raised where the words are `"scrubbed"`, answered through core's scrub by the route, and a
  * plain `Error` with Studio's sentence, kind internal and outcome unknown, where they are `"code-only"`, since the
  * statement may have run. A tree read's, a source read's, a health read's, a panel read's, a pool statistics read's,
- * a maintenance run's, a maintenance preview's and a cancel's are answered as an execute's. `call` is the noun Studio's sentence and the log
- * line name the call by.
+ * a maintenance run's, a maintenance preview's, a cancel's and a transaction call's are answered as an execute's.
+ * `call` is the noun Studio's sentence and the log line name the call by.
  */
 export function packageFailureAnswer(
   engine: EngineRecord,

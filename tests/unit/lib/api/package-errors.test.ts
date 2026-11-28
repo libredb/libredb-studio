@@ -377,6 +377,51 @@ describe("packageFailureAnswer", () => {
     );
   });
 
+  test("a package's transaction failure is answered by its grant, and a refused transaction answer as the package's defect on both grants", () => {
+    const thrown = new Error(`refused as ${secret}`);
+    const malformed = refused([{ rule: "transaction-answer-unreadable", pointer: "/sessionState" }]);
+    const sentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(malformed.refusals[0] as CallRefusal)}`;
+    for (const [engine, client] of [
+      [CODE_ONLY, codeOnlyDefectSentence("transaction-answer-unreadable")],
+      [GRANTED, sentence],
+    ] as const) {
+      let answered: unknown;
+      let logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        answered = packageFailureAnswer(engine, "transaction", malformed, scrub, ROUTE);
+        logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+      } finally {
+        error.mockRestore();
+      }
+      expect(answered).not.toBeInstanceOf(HostDefectError);
+      expect(answered).not.toBeInstanceOf(ConnectionError);
+      expect([(answered as Error).message, errorOutcome(answered)]).toEqual([client, "unknown"]);
+      expect(logged).toEqual([["A provider package's transaction failed", sentence]]);
+    }
+
+    // A package's own transaction error: Studio's sentence naming its code where no row grants its words, as raised
+    // where one does, logged once through core's scrub on both; a legacy record's as raised, nothing logged here.
+    for (const [engine, expected] of [
+      [CODE_ONLY, "The provider package's transaction failed (INTERNAL_ERROR); the server's log holds its words."],
+      [GRANTED, thrown.message],
+    ] as const) {
+      const error = spyOn(logger, "error").mockImplementation(() => undefined);
+      try {
+        const answered = packageFailureAnswer(engine, "transaction", thrown, scrub, ROUTE);
+        expect((answered as Error).message).toBe(expected);
+        expect(answered).not.toBeInstanceOf(ConnectionError);
+        expect(error.mock.calls.map(([line]) => line)).toEqual(["A provider package's transaction failed"]);
+        expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+      } finally {
+        error.mockRestore();
+      }
+    }
+    expect(
+      errorLines(() => expect(packageFailureAnswer(LEGACY, "transaction", thrown, scrub, ROUTE)).toBe(thrown)),
+    ).toEqual([]);
+  });
+
   test("a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read", () => {
     // A password holding a slash and a tilde, which a JSON Pointer writes as ~1 and ~0, so it is found as written there too.
     const slashed = `${randomUUID()}/~${randomUUID()}`;

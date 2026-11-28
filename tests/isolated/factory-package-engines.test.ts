@@ -25,7 +25,7 @@ import {
   createDatabaseProvider,
   editorCacheKey,
   evictIdleProviders,
-  findCachedProvider,
+  findCachedEditorEntry,
   getExecutionProfileCacheStats,
   getOrCreateEditorSession,
   getOrCreateMetadataProvider,
@@ -220,12 +220,10 @@ describe("the factory's editor cache and a provider package's engine", () => {
     expect(entry.frame).toBe(frame);
     expect([entry.connectionId, entry.engine, entry.running]).toEqual([connection.id, engine, 0]);
     expect(openedSession(entry.opened).session.calls.console.execute).toBeDefined();
-    // The package's key reads a legacy provider of a session's entry: a host defect, raised by name.
-    expect(() => findCachedProvider(`package\u0000acme-cached\u0000${frame}`)).toThrow(
-      "The factory's cache holds a provider package's session under this key, and this caller reads a legacy provider of it: a host defect.",
-    );
-    // The legacy key is the editor key, byte for byte.
-    expect(findCachedProvider(await editorCacheKey(sqlite, ADMIN))).toBe(provider);
+    // Each entry is found by its connection's id and its frame, the legacy one's frame being its key, byte for byte.
+    expect(findCachedEditorEntry(connection.id, frame)).toBe(entry);
+    const legacy = findCachedEditorEntry(sqlite.id, await editorCacheKey(sqlite, ADMIN));
+    expect(legacy?.opened.form === "provider" && legacy.opened.provider).toBe(provider);
     // A second call reads the cache: no second open.
     expect(await getOrCreateEditorSession(connection, engine, ADMIN)).toBe(entry);
     expect(seen.filter((name) => name === "open")).toHaveLength(1);
@@ -291,6 +289,37 @@ describe("the factory's editor cache and a provider package's engine", () => {
       "Connection ID is required",
       undefined,
     ]);
+    await clearProviderCache();
+  });
+
+  test("findCachedEditorEntry answers the editor entry of either form a record's frame names, and opens nothing", async () => {
+    await clearProviderCache();
+    hooks = packageHooks();
+    seen.length = 0;
+    const connection = packageConnection();
+    const engine = engineOf("acmecached");
+    const owned = { owner: "alice-subject", ownerPoolMax: 2 };
+    const entry = await getOrCreateEditorSession(connection, engine, ADMIN);
+    const ownedEntry = await getOrCreateEditorSession(connection, engine, owned);
+    const sqlite = sqliteConnection();
+    const provider = await getOrCreateProvider(sqlite, {}, ADMIN);
+    const before = [entry.lastUsed, ownedEntry.lastUsed];
+    const opens = seen.filter((name) => name === "open").length;
+
+    // A package's entry by the frame `editorCacheKey` answers, each owner's its own; a legacy one by its key.
+    expect(findCachedEditorEntry(connection.id, await editorCacheKey(connection, ADMIN))).toBe(entry);
+    expect(findCachedEditorEntry(connection.id, await editorCacheKey(connection, owned))).toBe(ownedEntry);
+    const legacy = findCachedEditorEntry(sqlite.id, await editorCacheKey(sqlite, ADMIN));
+    expect(legacy?.opened.form === "provider" && legacy.opened.provider).toBe(provider);
+    // Another frame, or the frame under another connection's id, names no entry.
+    expect(findCachedEditorEntry(connection.id, await editorCacheKey(sqlite, ADMIN))).toBeNull();
+    expect(findCachedEditorEntry(sqlite.id, await editorCacheKey(connection, ADMIN))).toBeNull();
+    expect(findCachedEditorEntry(connection.id, "another-frame")).toBeNull();
+
+    // A lookup, not a use: no open, no entry added, and each entry's idle clock untouched.
+    expect(seen.filter((name) => name === "open")).toHaveLength(opens);
+    expect(getProviderCacheStats().size).toBe(3);
+    expect([entry.lastUsed, ownedEntry.lastUsed]).toEqual(before);
     await clearProviderCache();
   });
 

@@ -21,7 +21,7 @@ import type { CallContext } from "@libredb/provider-sdk/calls";
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
@@ -29,7 +29,7 @@ import { parseResponseJSON } from "../../helpers/mock-next";
 import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 import { withStatementLanguageData } from "../../helpers/package-catalog";
-import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
+import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../helpers/governance/granted-snapshot";
 
 /** The session every request is read as: an admin, or a governed user a governance case sets. */
 let caller: Record<string, unknown> = { role: "admin", username: "admin", iat: 1_700_000_000 };
@@ -44,6 +44,7 @@ mock.module("@/lib/auth", () => ({
 const ROUTES: Readonly<Record<string, { POST: (req: never) => Promise<Response> }>> = {
   query: await import("@/app/api/db/query/route"),
   cancel: await import("@/app/api/db/cancel/route"),
+  transaction: await import("@/app/api/db/transaction/route"),
   disconnect: await import("@/app/api/db/disconnect/route"),
   health: await import("@/app/api/db/health/route"),
   profile: await import("@/app/api/db/profile/route"),
@@ -54,8 +55,9 @@ const factory = await import("@/lib/db/factory");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
 
 /**
- * A package offering the cancel, granted no words; one offering it, granted its words; one offering no cancel; and one
- * offering the cancel whose register row lets a caller whose file access is denied open it, as a governed user's is.
+ * A package offering the cancel and the transaction, granted no words; one offering both, granted its words; one
+ * offering neither; and one offering both whose register row lets a caller whose file access is denied open it, as a
+ * governed user's is.
  */
 const REST = "acmerest";
 const WORDS = "acmerestwords";
@@ -104,13 +106,14 @@ beforeAll(async () => {
   await admitSessionPackages(
     providers,
     [
-      { name: "acme-rest", engine: REST, offered: ["console.cancel"] },
-      { name: "acme-rest-words", engine: WORDS, offered: ["console.cancel"] },
+      { name: "acme-rest", engine: REST, offered: ["console.cancel", "console.transaction"] },
+      { name: "acme-rest-words", engine: WORDS, offered: ["console.cancel", "console.transaction"] },
       { name: "acme-plain", engine: PLAIN },
-      { name: "acme-rest-governed", engine: GOVERNED, offered: ["console.cancel"] },
+      { name: "acme-rest-governed", engine: GOVERNED, offered: ["console.cancel", "console.transaction"] },
       {
         name: "acme-rest-nosql",
         engine: NOSQL,
+        offered: ["console.transaction"],
         edit: (engine) => {
           withStatementLanguageData(engine);
           const members = engine as Record<string, unknown>;
@@ -164,15 +167,28 @@ function source() {
 /** An execute answer of one row. */
 const ROWS = () => ({ results: [source()], warnings: [], executionTimeMs: 1, pageApplied: false });
 
-/** Hooks for `engine`'s package: open a fresh handle, close, read health, answer one row and cancel. */
+/** A transaction request as the package's `transaction` receives it. */
+interface TransactionRequest {
+  readonly action: "begin" | "commit" | "rollback" | "state";
+  readonly requireReportedState?: true;
+}
+
+/**
+ * Hooks for `engine`'s package: open a fresh handle, close, read health, answer one row, cancel, and hold one
+ * transaction per handle, whose state a begin opens and a COMMIT or ROLLBACK closes; a statement sent inside it answers
+ * that state too. A case's `transaction` answers instead where it answers anything but undefined.
+ */
 function hooksFor(
   engine: string,
   options: {
     open?: () => Promise<unknown>;
-    execute?: () => Promise<unknown>;
+    execute?: (request: Record<string, unknown>) => Promise<unknown>;
     cancel?: (request: unknown, handle: unknown) => Promise<unknown>;
+    transaction?: (request: TransactionRequest) => Promise<unknown> | undefined;
   } = {},
 ): Seen {
+  const states = new Map<unknown, string>();
+  const stateOf = (handle: unknown) => states.get(handle) ?? "not-in-transaction";
   const seen: Seen = { calls: [] };
   const push =
     (name: string, answer: (...args: unknown[]) => unknown) =>
@@ -186,10 +202,25 @@ function hooksFor(
     health: push("health", () =>
       Promise.resolve({ databaseSize: "1 MB", cacheHitRatio: "99%", slowQueries: [], activeSessions: [] }),
     ),
-    execute: push("execute", options.execute ?? (() => Promise.resolve(ROWS()))),
+    execute: push("execute", async (handle, request) => {
+      const sent = request as Record<string, unknown>;
+      const answer = (await (options.execute ?? (() => Promise.resolve(ROWS())))(sent)) as Record<string, unknown>;
+      return sent.transaction === true ? { sessionState: stateOf(handle), ...answer } : answer;
+    }),
     cancel: push("cancel", (handle, request) =>
       (options.cancel ?? (() => Promise.resolve({ cancelled: false })))(request, handle),
     ),
+    transaction: push("transaction", (handle, request) => {
+      const sent = request as TransactionRequest;
+      const own = options.transaction?.(sent);
+      if (own !== undefined) return own;
+      if (sent.action === "begin") states.set(handle, "in-transaction");
+      if (sent.action === "commit" || sent.action === "rollback") states.set(handle, "not-in-transaction");
+      return Promise.resolve({
+        sessionState: stateOf(handle),
+        ...(sent.requireReportedState === true ? { stateReported: true } : {}),
+      });
+    }),
   });
   return seen;
 }
@@ -348,6 +379,268 @@ describe("the cancel route on a provider package's engine", () => {
   });
 });
 
+describe("the transaction route on a provider package's engine", () => {
+  /** The transaction calls `seen` recorded, each as its action and whether it reached the session `handle` names. */
+  const transactionCalls = (seen: Seen, handle: unknown) =>
+    callsNamed(seen, "transaction").map(({ args }) => [(args[1] as TransactionRequest).action, args[0] === handle]);
+  /** How many sessions the package opened. */
+  const opens = (seen: Seen) => callsNamed(seen, "open").length;
+  const NOT_SUPPORTED = { error: "Transaction control is not supported for this database type" };
+  /**
+   * The messages of `lines` but the confirmation gate's own warning, which it writes for each statement of an engine
+   * whose grammar no register row reviews that runs unconfirmed (`ranUnconfirmed` in src/lib/api/run-confirmation.ts).
+   */
+  const routeLines = (lines: [string, string][]) =>
+    lines
+      .map(([message]) => message)
+      .filter((message) => message !== "A statement that needs a confirmation ran without one");
+
+  test("a transaction runs on a package engine's session through the console's transaction calls", async () => {
+    const connection = connectionOf(REST);
+    const handle = { session: randomUUID() };
+    const seen = hooksFor(REST, { open: () => Promise.resolve({ handle }) });
+
+    expect(await post("transaction", { connection, action: "begin", requireReportedState: true })).toEqual({
+      status: 200,
+      body: { status: "active", message: "Transaction started", stateReported: true },
+    });
+    expect(await post("transaction", { connection, action: "status" })).toEqual({
+      status: 200,
+      body: { inTransaction: true, ownedByYou: true, heldByAnotherSession: false, startedAt: expect.any(String) },
+    });
+    const ran = await post("transaction", { connection, action: "query", sql: "SELECT 1", options: { limit: 5 } });
+    expect(ran).toMatchObject({
+      status: 200,
+      body: { rows: [{ key: "alpha" }], fields: ["key"], rowCount: 1, inTransaction: true },
+    });
+    expect(await post("transaction", { connection, action: "commit" })).toEqual({
+      status: 200,
+      body: { status: "committed", message: "Transaction committed" },
+    });
+    expect((await post("transaction", { connection, action: "begin" })).body).toEqual({
+      status: "active",
+      message: "Transaction started",
+      stateReported: null,
+    });
+    expect(await post("transaction", { connection, action: "rollback" })).toEqual({
+      status: 200,
+      body: { status: "rolled_back", message: "Transaction rolled back" },
+    });
+
+    // One session, opened once: every request reads the state first, then sends its own call, its handle first.
+    expect(opens(seen)).toBe(1);
+    expect(transactionCalls(seen, handle)).toEqual([
+      ["state", true],
+      ["begin", true],
+      ["state", true],
+      ["state", true],
+      ["state", true],
+      ["commit", true],
+      ["state", true],
+      ["begin", true],
+      ["state", true],
+      ["rollback", true],
+    ]);
+    expect(callsNamed(seen, "transaction")[1]?.args[1]).toEqual({ action: "begin", requireReportedState: true });
+    // The statement is sent to the package's execute inside the transaction, with the request's page.
+    const [execute] = callsNamed(seen, "execute").map(({ args }) => args);
+    expect(execute?.[0]).toBe(handle);
+    // The request's page, and the one probe row that tells whether there is more.
+    expect(execute?.[1]).toMatchObject({ statement: "SELECT 1", page: { limit: 6, offset: 0 }, transaction: true });
+  });
+
+  test("a script inside a package engine's transaction runs each unit through the host core's execute", async () => {
+    const lines = loggedLines();
+    const connection = connectionOf(REST);
+    const seen = hooksFor(REST);
+    expect((await post("transaction", { connection, action: "begin" })).status).toBe(200);
+
+    const script = await post("transaction", {
+      connection,
+      action: "query",
+      sql: "SELECT 1; SELECT 2",
+      options: { limit: 5 },
+    });
+    expect(script).toMatchObject({
+      status: 200,
+      body: {
+        rows: [{ key: "alpha" }],
+        multiStatement: true,
+        statementCount: 2,
+        executedCount: 2,
+        hasError: false,
+        inTransaction: true,
+      },
+    });
+    // Each unit is sent inside the transaction: every row of the first, the request's page for the last.
+    expect(callsNamed(seen, "execute").map(({ args }) => args[1])).toEqual([
+      expect.objectContaining({ statement: "SELECT 1", page: { unlimited: true }, transaction: true }),
+      expect.objectContaining({ statement: "SELECT 2", page: { limit: 5, offset: 0 }, transaction: true }),
+    ]);
+
+    // A failing unit ends the run with Studio's sentence naming its code in the script's answer, logged once.
+    let units = 0;
+    hooksFor(REST, {
+      execute: () => {
+        units += 1;
+        return units === 2 ? Promise.reject(new Error(`the store refused ${randomUUID()}`)) : Promise.resolve(ROWS());
+      },
+      // The session still holds the transaction the begin above opened.
+      transaction: () => Promise.resolve({ sessionState: "in-transaction" }),
+    });
+    const failed = await post("transaction", { connection, action: "query", sql: "SELECT 1; SELECT 2; SELECT 3" });
+    expect(failed).toMatchObject({
+      status: 200,
+      body: { executedCount: 2, hasError: true, inTransaction: true },
+    });
+    const statements = (failed.body as { statements: { status: string; error?: string }[] }).statements;
+    expect(statements.map(({ status, error }) => [status, error])).toEqual([
+      ["success", undefined],
+      ["error", "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words."],
+    ]);
+    expect(routeLines(lines())).toEqual(["A provider package's execute failed"]);
+    hooksFor(REST);
+    expect((await post("transaction", { connection, action: "rollback" })).status).toBe(200);
+
+    // A record stating no SQL text sends the text as one statement.
+    const nosql = connectionOf(NOSQL);
+    const plain = hooksFor(NOSQL);
+    expect((await post("transaction", { connection: nosql, action: "begin" })).status).toBe(200);
+    expect((await post("transaction", { connection: nosql, action: "query", sql: "a; b" })).status).toBe(200);
+    expect(callsNamed(plain, "execute").map(({ args }) => (args[1] as { statement: string }).statement)).toEqual([
+      "a; b",
+    ]);
+    expect((await post("transaction", { connection: nosql, action: "rollback" })).status).toBe(200);
+  });
+
+  test("a package engine whose session does not offer console.transaction answers the transaction route's one refusal, calling nothing", async () => {
+    const seen = hooksFor(PLAIN);
+    const connection = connectionOf(PLAIN);
+    for (const body of [{ action: "begin" }, { action: "status" }, { action: "query", sql: "SELECT 1" }]) {
+      expect(await post("transaction", { connection, ...body })).toEqual({ status: 400, body: NOT_SUPPORTED });
+    }
+    // The open is the only call: no transaction call and no statement reached the package.
+    expect(names(seen)).toEqual(["open"]);
+  });
+
+  test("the transaction route answers a package's open failure as not-sent, its transaction and statement failures by its grant, logged once, and a malformed transaction answer as the package's defect", async () => {
+    const lines = loggedLines();
+    for (const engine of [REST, WORDS]) {
+      const granted = engine === WORDS;
+      const sentence = (call: string, words: string) =>
+        granted ? words : `The provider package's ${call} failed (INTERNAL_ERROR); the server's log holds its words.`;
+
+      // The open fails, its words naming the connection's secret: not-sent, logged once.
+      const refusedOpen = connectionOf(engine);
+      hooksFor(engine, {
+        open: () => Promise.reject(new Error(`the store is away for ${String(refusedOpen.password)}`)),
+      });
+      const opened = await post("transaction", { connection: refusedOpen, action: "begin" });
+      expect(opened.status).toBe(503);
+      expect(opened.body).toMatchObject({ code: "CONNECTION_ERROR", outcome: "not-sent" });
+      if (granted) expect((opened.body as { error: string }).error).toBe(PROVIDER_TEXT_WITHHELD);
+      expect(lines().map(([message]) => message)).toEqual(["A provider package's open failed"]);
+
+      // The begin rejects: Studio's sentence naming its code, or the words as raised, logged once.
+      const connection = connectionOf(engine);
+      const begin = `the begin failed ${randomUUID()}`;
+      hooksFor(engine, {
+        transaction: (request) => (request.action === "begin" ? Promise.reject(new Error(begin)) : undefined),
+      });
+      const begun = await post("transaction", { connection, action: "begin" });
+      expect([begun.status, (begun.body as { error: string }).error]).toEqual([500, sentence("transaction", begin)]);
+      expect(lines().map(([message]) => message)).toEqual(["A provider package's transaction failed"]);
+
+      // A begun transaction's COMMIT and statement reject: each answered by the grant, logged once.
+      const commit = `the commit failed ${randomUUID()}`;
+      const statement = `the statement failed ${randomUUID()}`;
+      hooksFor(engine, {
+        execute: () => Promise.reject(new Error(statement)),
+        transaction: (request) => (request.action === "commit" ? Promise.reject(new Error(commit)) : undefined),
+      });
+      expect((await post("transaction", { connection, action: "begin" })).status).toBe(200);
+      const ran = await post("transaction", { connection, action: "query", sql: "SELECT 1" });
+      expect([ran.status, (ran.body as { error: string }).error]).toEqual([500, sentence("execute", statement)]);
+      expect(routeLines(lines())).toEqual(["A provider package's execute failed"]);
+      const committed = await post("transaction", { connection, action: "commit" });
+      expect([committed.status, (committed.body as { error: string }).error]).toEqual([
+        500,
+        sentence("transaction", commit),
+      ]);
+      expect(lines().map(([message]) => message)).toEqual(["A provider package's transaction failed"]);
+
+      // A state answer outside the vocabulary is the package's defect, named by its rule, logged once.
+      hooksFor(engine, { transaction: () => Promise.resolve({ sessionState: "maybe" }) });
+      const malformed = await post("transaction", { connection, action: "status" });
+      expect(malformed.status).toBe(500);
+      const defect = (malformed.body as { error: string }).error;
+      expect(defect.startsWith(PACKAGE_DEFECT_PREFIX)).toBe(true);
+      if (!granted) {
+        expect(defect).toBe(
+          `${PACKAGE_DEFECT_PREFIX} it broke the rule transaction-answer-unreadable; the server's log names where.`,
+        );
+      }
+      const defectLines = lines();
+      expect(defectLines.map(([message]) => message)).toEqual(["A provider package's transaction failed"]);
+      expect(defectLines[0]?.[1].startsWith(PACKAGE_DEFECT_PREFIX)).toBe(true);
+      expect(JSON.stringify([opened.body, begun.body, ran.body, committed.body, defectLines])).not.toContain(
+        String(refusedOpen.password),
+      );
+
+      // The session still holds the begun transaction, which a ROLLBACK ends.
+      hooksFor(engine, { transaction: () => Promise.resolve({ sessionState: "not-in-transaction" }) });
+      expect((await post("transaction", { connection, action: "rollback" })).status).toBe(200);
+    }
+  });
+
+  test("the transaction route refuses a catalog and an unbounded page a package engine's record does not offer, by name, not-sent, before any open", async () => {
+    const seen = hooksFor(REST);
+    const connection = connectionOf(REST);
+    const notOffered = (sentence: string) => ({
+      status: 400,
+      body: expect.objectContaining({ error: sentence, code: "FACET_NOT_OFFERED", outcome: "not-sent" }),
+    });
+
+    for (const action of ["begin", "status", "commit", "rollback", "query"]) {
+      expect([action, await post("transaction", { connection, action, sql: "SELECT 1", catalog: "other" })]).toEqual([
+        action,
+        notOffered(
+          "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+        ),
+      ]);
+    }
+    expect(
+      await post("transaction", { connection, action: "query", sql: "SELECT 1", options: { unlimited: true } }),
+    ).toEqual(
+      notOffered(
+        "This connection's engine does not offer the request field options.unlimited in this LibreDB Studio, so Studio opened nothing.",
+      ),
+    );
+    // A malformed field keeps its 400, before any refusal by name.
+    expect(await post("transaction", { connection, action: "begin", catalog: "" })).toMatchObject({
+      status: 400,
+      body: { code: "CONFIG_ERROR" },
+    });
+    expect(
+      await post("transaction", {
+        connection,
+        action: "query",
+        sql: "SELECT 1",
+        options: { unlimited: true, limit: -1 },
+      }),
+    ).toEqual({ status: 400, body: { error: "options.limit must be a non-negative integer" } });
+
+    // Nothing opened, and no answer was 501.
+    expect(names(seen)).toEqual([]);
+
+    // An unbounded page is a field of the statement a query action sends; no other action reads it.
+    expect(await post("transaction", { connection, action: "status", options: { unlimited: true } })).toMatchObject({
+      status: 200,
+      body: { inTransaction: false },
+    });
+  });
+});
+
 describe("the disconnect route on a provider package's engine", () => {
   test("disconnect removes every cache entry of a package engine's record, and no other record's", async () => {
     const id = `conn-${randomUUID()}`;
@@ -499,11 +792,83 @@ describe("the cancel and disconnect routes on a provider package's engine under 
     caller = { role: "admin", username: "admin", iat: 1_700_000_000 };
   });
 
+  /** The actions of the transaction calls `seen` recorded on the session `handle` names. */
+  const transactionCallsOf = (seen: Seen, handle: unknown) =>
+    callsNamed(seen, "transaction")
+      .filter(({ args }) => args[0] === handle)
+      .map(({ args }) => (args[1] as TransactionRequest).action);
+
   /** `route`'s answer to `body` sent as `user`. */
   const as = (user: Record<string, unknown>, route: string, body: Record<string, unknown>) => {
     caller = user;
     return post(route, { connectionId: "seed:shop", ...body });
   };
+
+  test("under governance a package engine's transaction is rolled back through its own session when its owner's credential changed", async () => {
+    const handles: unknown[] = [];
+    const seen = hooksFor(GOVERNED, {
+      open: () => {
+        const handle = { session: randomUUID() };
+        handles.push(handle);
+        return Promise.resolve({ handle });
+      },
+    });
+    const regrant = (aliceLevel: "read" | "write") =>
+      recordGovernanceSnapshot(
+        grantedSnapshot(
+          [SHOP],
+          [
+            { subject: ALICE.idpSubject, connection: SHOP, level: aliceLevel },
+            { subject: BOB.idpSubject, connection: SHOP, level: "write" as const },
+          ],
+        ),
+      );
+    try {
+      expect((await as(ALICE, "transaction", { action: "begin" })).status).toBe(200);
+      const [writeSession] = handles;
+
+      // Her grant is now read: her next request resolves the read credential's session, and her transaction is
+      // rolled back on the session it began on.
+      regrant("read");
+      const answer = await as(ALICE, "transaction", { action: "status" });
+      expect(answer).toMatchObject({
+        status: 409,
+        body: { code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true },
+      });
+      expect(transactionCallsOf(seen, writeSession)).toEqual(["state", "begin", "state", "rollback"]);
+      // The rollback opened nothing: the read credential's session is opened by her next request only.
+      expect(handles).toHaveLength(1);
+
+      // A rollback the package fails is answered unconfirmed, its failure logged once as the package's through the scrub
+      // of the credential the transaction began on, which this request no longer resolves, and the route's own line
+      // carries no second copy of it.
+      regrant("write");
+      hooksFor(GOVERNED, {
+        open: () => Promise.reject(new Error("the write credential's session is still cached")),
+        transaction: (request) =>
+          request.action === "rollback"
+            ? Promise.reject(new Error(`the rollback failed as ${WRITE_CREDENTIAL.password}`))
+            : undefined,
+      });
+      expect((await as(ALICE, "transaction", { action: "begin" })).status).toBe(200);
+      regrant("read");
+      const lines = loggedLines();
+      expect(await as(ALICE, "transaction", { action: "status" })).toMatchObject({
+        status: 409,
+        body: { code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: false },
+      });
+      // This file records no query event (no governance instance id), which the sink logs on its own line.
+      const logged = lines().filter(([message]) => !message.startsWith("Query event not recorded"));
+      expect(logged).toEqual([
+        ["A provider package's transaction failed", withheldErrorMessage("Error")],
+        ["A transaction whose credential changed was released without a confirmed rollback", "null"],
+      ]);
+      expect(JSON.stringify(logged)).not.toContain(WRITE_CREDENTIAL.password);
+    } finally {
+      regrant("write");
+      await factory.clearProviderCache();
+    }
+  });
 
   test("under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only", async () => {
     let started!: () => void;
