@@ -67,11 +67,7 @@ import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import { logger } from "@/lib/logger";
 import * as admission from "./admission";
 import { recordPackageDirectories } from "./package-directories";
-import {
-  catalogConflictRefusal,
-  type LockRefusal,
-  type PackageRefusal,
-} from "./provider-refusals";
+import { catalogConflictRefusal, type LockRefusal, type PackageRefusal } from "./provider-refusals";
 import { providersDirectory } from "./providers-dir";
 import * as providersLock from "./providers-lock";
 
