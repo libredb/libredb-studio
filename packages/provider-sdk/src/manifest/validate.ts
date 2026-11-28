@@ -1140,15 +1140,16 @@ function agentToolTextRefusals(text: AgentLanguageText, at: string): SchemaRefus
 
 /**
  * The rules of a declared MCP statement tool's description the schema cannot state, at its pointer `at`: counted with
- * each fill at its longest value (`AGENT_MCP_DESCRIPTION_BOUND`; a fill naming no value of the description, which
+ * each fill at its longest value (`AGENT_MCP_DESCRIPTION_BOUND`; a fill that is not one of the bound's own keys, which
  * `agent-text-fill-unknown` refuses, at none), it is at most the bound, and it names the served engines through an
  * `engines` part, so a client reads which engines the tool runs on. Both may apply.
  */
 function mcpDescriptionRefusals(description: AgentText, at: string): SchemaRefusal[] {
   const parts = typeof description === "string" ? [description] : description;
-  const fillLengths: Readonly<Record<string, number>> = AGENT_MCP_DESCRIPTION_BOUND.fillLengths;
+  // Read as a map of the bound's own keys, so a fill named after an inherited member, "constructor", reads no length.
+  const fillLengths = new Map(Object.entries(AGENT_MCP_DESCRIPTION_BOUND.fillLengths));
   const length = parts.reduce(
-    (sum, part) => sum + (typeof part === "string" ? part.length : (fillLengths[part.fill] ?? 0)),
+    (sum, part) => sum + (typeof part === "string" ? part.length : (fillLengths.get(part.fill) ?? 0)),
     0,
   );
   const refusals: SchemaRefusal[] = [];

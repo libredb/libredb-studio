@@ -4775,6 +4775,18 @@ describe("rules the schema cannot state", () => {
     const manyFills = ["Runs on ", { fill: "engines" }, ...Array.from({ length: 16 }, () => ({ fill: "limits" }))];
     expect(manyFills.filter((part) => typeof part === "string").join("").length).toBeLessThan(maxLength);
     expect(refusalsFor(described(manyFills))).toEqual([refusal("agent-mcp-description-over-bound", DESCRIPTION)]);
+    // A fill named after an inherited member of a plain object counts at no length, as every unknown fill does, so the
+    // count stays a number and the bound is still read: one code unit over the bound is refused as over it, besides the
+    // unknown fill's own refusal. "constructor" is the inherited member the schema's fill name pattern admits.
+    const overByOne = [words(maxLength - fillLengths.engines + 1), { fill: "constructor" }, { fill: "engines" }];
+    expect(refusalsFor(described(overByOne))).toEqual([
+      refusal("agent-mcp-description-over-bound", DESCRIPTION),
+      refusal("agent-text-fill-unknown", `${DESCRIPTION}/1/fill`),
+    ]);
+    const atBoundInherited = [words(maxLength - fillLengths.engines), { fill: "constructor" }, { fill: "engines" }];
+    expect(refusalsFor(described(atBoundInherited))).toEqual([
+      refusal("agent-text-fill-unknown", `${DESCRIPTION}/1/fill`),
+    ]);
     // A description that names no engines part: a plain string, or parts filling only the limits.
     expect(refusalsFor(described("Run one read-only Acme read."))).toEqual([
       refusal("agent-mcp-description-engines-unfilled", DESCRIPTION),
