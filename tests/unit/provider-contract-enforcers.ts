@@ -2857,6 +2857,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/api/read-only-execute.test.ts": [
         "the read-only execute runs a statement on a provider package's read-only statement session through one host core execute call, held to the budget it sends",
+        "a row budget whose one-row-past page is no safe integer is refused on a provider package's session before the package is called",
+      ],
+      "tests/isolated/factory-package-read-only-session.test.ts": [
+        "a package's read-only statement session whose open withdrew readOnly from its honours is closed and refused by name, and never cached",
       ],
       "tests/unit/lib/provider-host/open-context.test.ts": [
         "the policy is a read-only statement session's exactly where the caller's execution context asks for both readOnly and sendsStatements",

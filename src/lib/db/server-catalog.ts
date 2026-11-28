@@ -265,8 +265,8 @@ export interface EngineOffers {
    * A read-only statement session (docs/providers/CONTRACT.md, clause C-78) statements are sent through: a legacy
    * record's through the execution-profile acquisition (`acquireExecutionProfileProvider` in ./factory), a provider
    * package's through its package, opened read-only (`getOrCreateReadOnlyStatementSession` in ./factory), offered
-   * exactly where its manifest's console execute honours `readOnly`. A session a refinement narrowed so it no longer
-   * honours `readOnly` is refused each read-only execute by the host core before the call.
+   * exactly where its manifest's console execute honours `readOnly`. A session whose open's refinement withdrew
+   * `readOnly` is closed and refused by name before it is cached (`getOrCreateReadOnlyStatementSession`).
    */
   readonly readOnlyStatements: boolean;
   /**

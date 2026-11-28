@@ -25,9 +25,9 @@ import { type ReadOnlyExecuteCall, runReadOnlyExecute, runReadOnlyPage } from "@
 import { entryReadOnlyTarget, providerReadOnlyTarget } from "@/lib/api/session-target";
 import { errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
 import { type CachedSession, clearProviderCache, getOrCreateReadOnlyStatementSession } from "@/lib/db/factory";
-import { connectionTextScrub } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
-import { HostDefectError } from "@/lib/provider-host/access";
+import { PACKAGE_DEFECT_PREFIX } from "@/lib/api/package-errors";
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { PAGE_MAX_BYTES } from "@libredb/provider-sdk/calls";
 import { admitSessionPackages, setHooks } from "../../../helpers/package-session-fixture";
@@ -817,20 +817,6 @@ describe("a provider package's read-only statement session", () => {
     expect(cancelled).toBeInstanceOf(QueryCancelledError);
     expect(errorOutcome(cancelled)).toBe("unknown");
     left.resolve({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false });
-
-    // A refinement that withdrew readOnly opens a session the host core refuses each read-only execute on, before the
-    // call: Studio's own refusal, passed as raised, the package never called.
-    const narrowed = await packageSession(
-      PKG,
-      () => answerOf([{ name: "n" }], [[1]]),
-      () => ({ handle: { session: randomUUID() }, refine: { calls: { console: { execute: { honours: [] } } } } }),
-    );
-    const refused = await failure(() => runReadOnlyExecute(narrowed.target, callOf({ type: PKG })));
-    expect(refused).toBeInstanceOf(HostDefectError);
-    expect((refused as InstanceType<typeof HostDefectError>).refusals).toEqual([
-      { rule: "request-field-not-honoured", pointer: "/readOnly", name: "readOnly" },
-    ]);
-    expect(narrowed.seen).toEqual([]);
   });
 
   test("a paged read-only execute on a provider package's session sends the caller's page, and an offset the session does not honour is refused before the call", async () => {
@@ -879,10 +865,11 @@ describe("a provider package's read-only statement session", () => {
     const sentence = (value: unknown) =>
       `The provider package's execute failed (${errorCode(value)}); the server's log holds its words.`;
 
-    // Code-only: a plain Error in Studio's sentence naming its code; the words go to the log once, through the scrub.
+    // A statement failure, as a legacy provider's is, outcome unknown since the statement may have run.
+    // Code-only: Studio's sentence naming its code; the words go to the log once, through the scrub.
     const codeOnly = await run(PKG, (password) => new Error(`${marker} denied for ${password}`));
-    expect(codeOnly.failed).toBeInstanceOf(Error);
-    expect(codeOnly.failed).not.toBeInstanceOf(StudioProfileRefusal);
+    expect(codeOnly.failed).toBeInstanceOf(QueryError);
+    expect(errorOutcome(codeOnly.failed)).toBe("unknown");
     expect((codeOnly.failed as Error).message).toBe(sentence(new Error(marker)));
     expect((codeOnly.failed as Error).message).not.toContain(marker);
     expect(codeOnly.logged).toHaveLength(1);
@@ -892,20 +879,70 @@ describe("a provider package's read-only statement session", () => {
 
     // A value that is no error answers Studio's sentence under code-only.
     const plain = await run(PKG, () => marker);
+    expect(plain.failed).toBeInstanceOf(QueryError);
     expect((plain.failed as Error).message).toBe(sentence(marker));
     expect(plain.logged).toHaveLength(1);
 
-    // Scrubbed: the error as raised, logged once.
-    const raised = new Error(marker);
-    const words = await run(WORDS, () => raised);
-    expect(words.failed).toBe(raised);
+    // Scrubbed: the error's own words through core's scrub, the connection's password withheld, logged once.
+    const words = await run(WORDS, () => new Error(marker));
+    expect(words.failed).toBeInstanceOf(QueryError);
+    expect((words.failed as Error).message).toBe(marker);
     expect(words.logged).toHaveLength(1);
+    const withheld = await run(WORDS, (password) => new Error(`${marker} denied for ${password}`));
+    expect(withheld.failed).toBeInstanceOf(QueryError);
+    expect((withheld.failed as Error).message).toBe(PROVIDER_TEXT_WITHHELD);
+    expect(JSON.stringify(withheld.logged)).not.toContain(withheld.password);
+
+    // A malformed answer is the package's defect, a statement failure in the package-defect words.
+    const malformed = await packageSession(PKG, () =>
+      Promise.resolve({ results: "not a list", warnings: [], executionTimeMs: 1, pageApplied: false }),
+    );
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    let defect: unknown;
+    try {
+      defect = await failure(() => runReadOnlyExecute(malformed.target, callOf({ type: PKG })));
+    } finally {
+      error.mockRestore();
+    }
+    expect(defect).toBeInstanceOf(QueryError);
+    expect((defect as Error).message.startsWith(PACKAGE_DEFECT_PREFIX)).toBe(true);
 
     // Studio's own failure passes as raised and is not logged as the package's.
     const studio = new StudioTimeBudgetRefusal(timeSentence(1));
     const own = await run(PKG, () => studio);
     expect(own.failed).toBe(studio);
     expect(own.logged).toEqual([]);
+  });
+
+  test("a row budget whose one-row-past page is no safe integer is refused on a provider package's session before the package is called", async () => {
+    const largest = Number.MAX_SAFE_INTEGER - 1;
+    const sentence = `Read-only execution budget field maxResultRows must be a positive integer <= ${largest} on a provider package's read-only statement session, which Studio asks for one row past it`;
+    const { seen, target } = await packageSession(PKG, () => answerOf([{ name: "n" }], [[1]]));
+    const over = budgetOf({ maxResultRows: Number.MAX_SAFE_INTEGER });
+    // Every mode and page: an executing statement, an estimating plan, and a paged call.
+    const refusals = await Promise.all([
+      failure(() => runReadOnlyExecute(target, callOf({ type: PKG, budget: over }))),
+      failure(() => runReadOnlyExecute(target, callOf({ type: PKG, budget: over, mode: "estimate-plan" }))),
+      failure(() => runReadOnlyPage(target, { ...callOf({ type: PKG, budget: over }), page: { limit: 1, offset: 0 } })),
+    ]);
+    for (const refused of refusals) {
+      expect(refused).toBeInstanceOf(QueryError);
+      expect((refused as Error).message).toBe(sentence);
+      expect(errorOutcome(refused)).toBe("not-sent");
+    }
+    expect(seen).toEqual([]);
+    // One below is sent, its page one row past it the largest safe integer.
+    await runReadOnlyExecute(target, callOf({ type: PKG, budget: budgetOf({ maxResultRows: largest }) }));
+    expect(seen.map(({ request }) => request.page)).toEqual([{ limit: Number.MAX_SAFE_INTEGER, offset: 0 }]);
+
+    // The provider arm takes both, since its bridge asks for no page past the budget.
+    const { provider, queryReadOnly } = providerOf(async () => resultOf([{ n: 1 }]));
+    await Promise.all(
+      [Number.MAX_SAFE_INTEGER, largest].map((maxResultRows) =>
+        runReadOnlyExecute(providerReadOnlyTarget(provider), callOf({ budget: budgetOf({ maxResultRows }) })),
+      ),
+    );
+    expect(queryReadOnly).toHaveBeenCalledTimes(2);
   });
 
   test("a read-only target is the session form only for a provider package's entry, and the facade refuses a target of another engine than its call's", async () => {
