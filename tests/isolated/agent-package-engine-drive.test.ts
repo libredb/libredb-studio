@@ -23,7 +23,7 @@ import path from "node:path";
 import type { CallContext, ExecuteRequest, OpenContext, TreeRequest } from "@libredb/provider-sdk/calls";
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { createLocalWorld } from "@workflow/world-local";
-import { noStatementSessionSentence } from "@/lib/agent/agent-manifest";
+import { noStatementSessionSentence, notReviewedSentence } from "@/lib/agent/agent-manifest";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { noAdapterSentence } from "@/lib/agent/posture";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
@@ -141,13 +141,15 @@ const TREE_MODEL: ObjectModel = {
  * row grants `sql` and agent execution and reviews no grammar (its manifest states SQL text, its row no digest); and one
  * declaring the crafted language `acmeread` (tests/helpers/declared-agent-language.ts), its row granting it under the
  * digest of its data and agent execution, its package honouring `readOnly` and its row reading no read roots, so the
- * factory opens its read-only statement session.
+ * factory opens its read-only statement session; and one declaring the same language whose row grants none, so Studio
+ * has not reviewed its statement path.
  */
 const READS = "acmedrivereads";
 const WORDS = "acmedrivewords";
 const BARE = "acmedrivebare";
 const EXEC = "acmedriveexec";
 const LANG = "acmedrivelang";
+const UNREVIEWED = "acmedriveunreviewed";
 const LANGUAGE_DATA = acmereadData();
 const withModel = (engine: EditableEngine) => {
   (engine as Record<string, unknown>).objects = structuredClone(TREE_MODEL);
@@ -198,6 +200,13 @@ beforeAll(async () => {
         honours: ["readOnly"],
         edit: withModelAndLanguage,
       },
+      {
+        name: "acme-drive-unreviewed",
+        engine: UNREVIEWED,
+        offered: ["objects.tree"],
+        honours: ["readOnly"],
+        edit: withModelAndLanguage,
+      },
     ],
     {
       [READS]: HEALTH,
@@ -210,6 +219,7 @@ beforeAll(async () => {
         agentExecution: true,
         readRootsRequired: false,
       },
+      [UNREVIEWED]: { ...OPEN, readRootsRequired: false },
     },
   );
 });
@@ -446,6 +456,27 @@ describe("an agent run's drive on a provider package's engine", () => {
       expect(createAgentModel, `${mode} ${workflowType}`).toHaveBeenCalledTimes(1);
       createAgentModel.mockClear();
     }
+  });
+
+  test("an agent-mode run whose workflow sends statements on a package engine that requests a language its row does not grant is refused as not reviewed before its first model turn, and its package never opens", async () => {
+    // Vacuity: the declaration requests the crafted language, the row grants none.
+    expect(servedEngineRecord(UNREVIEWED).grants).toMatchObject({
+      requestsStatementLanguage: true,
+      statementLanguage: null,
+    });
+    const seen = hooksFor(UNREVIEWED);
+    const run = await drive(connectionOf(UNREVIEWED), "agent", "investigation", [answersProse("No report.")]);
+
+    expect(run.outcome?.kind).toBe("failed");
+    const error = run.outcome?.kind === "failed" ? run.outcome.error : undefined;
+    expect(error).toBeInstanceOf(StudioProfileRefusal);
+    expect((error as StudioProfileRefusal).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+    expect((error as Error).message).toBe(notReviewedSentence(servedEngineRecord(UNREVIEWED).displayName, false));
+    expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "engine-unsupported" });
+    expect(createAgentModel).not.toHaveBeenCalled();
+    expect(run.turns).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(acquired).not.toHaveBeenCalled();
   });
 
   test("a plan-mode run on a package engine whose row grants its own declared language is driven in that language from its ledger, reaching no fence, query event or execution profile", async () => {
