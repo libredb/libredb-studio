@@ -2,10 +2,11 @@
  * What a caller facade of the provider host core runs its calls on: a session target (`SessionTarget`), the session,
  * the environment every call of it is given, its statement timeout and the run marks of the cache entry it lives in.
  *
- * Every builder of a legacy provider's session target lives here, so this is the one module of the caller facades that
- * builds a bridged session (`bridgedConsole` in src/lib/provider-host/legacy-bridge.ts), and every builder of a target
- * from a cache entry of the provider factory, by the entry's form, so no facade and no route forks on who serves an
- * engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code backend, which
+ * Every builder of a legacy provider's session target lives here, the tree's (`providerTreeTarget`), the monitoring and
+ * health reads' (`providerMonitoringTarget`) and the maintenance calls' (`providerMaintenanceTarget`), so this is the
+ * one module of the caller facades that builds a bridged session for them (`bridgedConsole` and `bridgedMaintenance` in
+ * src/lib/provider-host/legacy-bridge.ts), and every builder of a target from a cache entry of the provider factory, by
+ * the entry's form, so no facade and no route forks on who serves an engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code backend, which
  * is handed the factory's functions and imports none of them, builds its targets here too; the builders that open
  * through the factory live in src/lib/api/editor-provider.ts and call these.
  *
@@ -14,14 +15,21 @@
  * settled; a legacy provider's target marks nothing, since its provider reports its own runs in flight
  * (`hasRunsInFlight`), as it did before targets.
  */
-import { type EnvReader, envReader } from "@libredb/provider-sdk/calls";
+import { type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
 import { statementTimeout } from "@/lib/api/editor-query";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection } from "@/lib/db/server-catalog";
-import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type ObjectReadOptions } from "@/lib/db/types";
+import {
+  DEFAULT_QUERY_TIMEOUT,
+  type DatabaseProvider,
+  type MaintenanceDeclaration,
+  type ObjectReadOptions,
+} from "@/lib/db/types";
 import type { StoppedRecord } from "@/lib/provider-host/core/console";
+import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
+import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType } from "@/lib/types";
 
 /** How a call on a target ended, as its marks read it: undefined for a call that threw, which has settled. */
@@ -52,6 +60,19 @@ export interface TreeTarget extends SessionTarget<ObjectsSession> {
    * when asked, so only a walk over every container reads a provider's capabilities for it.
    */
   wholeServer(): DatabaseType | null;
+}
+
+/** A session target of the monitoring and health reads (src/lib/api/provider-monitoring.ts). */
+export type MonitoringTarget = SessionTarget<MonitoringSession & HealthSession>;
+
+/** A session target of the maintenance calls (src/lib/api/provider-maintenance.ts). */
+export interface MaintenanceTarget extends SessionTarget<Omit<MaintenanceSession, "maintenance">> {
+  /**
+   * The session's maintenance, read when a call is made: a legacy provider's is its declaration narrowed by what the
+   * connected provider accepts (`bridgedMaintenance`), which the SDK refuses as `CallRefusalError` for a narrowing its
+   * declaration cannot have, so a run answers that refusal as not sent, after the route admitted it.
+   */
+  maintenance(): EngineMaintenance;
 }
 
 /** A legacy provider reads no declared environment, so its calls get a reader of none. */
@@ -99,6 +120,57 @@ export function providerTreeTarget(provider: DatabaseProvider, objectReads: Obje
     wholeServer: () => (provider.getCapabilities().catalogSessions === true ? provider.type : null),
     ...NO_MARKS,
   };
+}
+
+/**
+ * What every target of `provider` holds beside its session: no environment, the provider's statement timeout read when
+ * asked, and no marks.
+ */
+function providerFields(provider: DatabaseProvider): Omit<SessionTarget<unknown>, "session"> {
+  return { env: NO_ENVIRONMENT, timeout: () => statementTimeout(provider), ...NO_MARKS };
+}
+
+/**
+ * The monitoring target of `provider`: one bridged session of it, built when this is called, whose panels are its
+ * engine's and whose health is the provider's; no environment, no marks, and, when asked, the provider's statement
+ * timeout.
+ */
+export function providerMonitoringTarget(provider: DatabaseProvider): MonitoringTarget {
+  return { session: bridgedConsole(provider, {}).session, ...providerFields(provider) };
+}
+
+/**
+ * The maintenance target of `provider`: one bridged session of it, built when this is called, as
+ * `providerMonitoringTarget` builds it, and its maintenance read when a call reads it, `declared`, the provider's
+ * maintenance before it connected, narrowed by what the connected provider accepts at that call (`bridgedMaintenance`).
+ */
+export function providerMaintenanceTarget(
+  provider: DatabaseProvider,
+  declared: MaintenanceDeclaration,
+): MaintenanceTarget {
+  return {
+    session: bridgedConsole(provider, {}).session,
+    maintenance: () => bridgedMaintenance(provider, declared),
+    ...providerFields(provider),
+  };
+}
+
+/**
+ * `call`, one host core call on `target`'s session, counted on the target's entry from its start until it ended
+ * (`started`, `ended`), `undefined` for a call that threw; its record, or its error as the same object.
+ */
+export async function markedCall<Record extends CallEnd>(
+  target: Pick<SessionTarget<unknown>, "started" | "ended">,
+  call: () => Promise<Record>,
+): Promise<Record> {
+  target.started();
+  let record: Record | undefined;
+  try {
+    record = await call();
+    return record;
+  } finally {
+    target.ended(record);
+  }
 }
 
 /**
