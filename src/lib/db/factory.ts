@@ -1749,6 +1749,30 @@ function notSentRefusal(sentence: string, code: ExecutionProfileDenyCode): Studi
 }
 
 /**
+ * The refusal `getOrCreateReadOnlyStatementSession` throws for every connection of `engine` by its record alone, with
+ * its sentence and code, or null where its record keeps none of them: an engine read only beneath the read roots a seed
+ * declares (`grants.readRootsRequired`), then an engine whose connections serve one session (`grants.servesOneSession`).
+ * Pure: it reads the record and throws nothing.
+ */
+export function readOnlyStatementRecordRefusal(
+  engine: EngineRecord,
+): { readonly sentence: string; readonly code: ExecutionProfileDenyCode } | null {
+  if (engine.grants.readRootsRequired) {
+    return {
+      sentence: `${engine.displayName} reads only beneath the read roots a seed declares, and a provider package's open receives no read roots, so Studio opens no read-only statement session on it.`,
+      code: "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    };
+  }
+  if (engine.grants.servesOneSession !== null) {
+    return {
+      sentence: `${engine.displayName} serves one session per connection, which the editor holds, so Studio opens no second, read-only statement session on it.`,
+      code: "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    };
+  }
+  return null;
+}
+
+/**
  * A provider package's read-only statement session of `engine` for `connection` (docs/providers/CONTRACT.md, clauses
  * C-78 and C-109), the cache's entry: the session agent mode, and from MCP's package arm MCP, sends read-only executes
  * through (`readOnlyStatementSession` in src/lib/api/editor-provider.ts, the one caller). It is opened through the
@@ -1770,9 +1794,9 @@ function notSentRefusal(sentence: string, code: ExecutionProfileDenyCode): Studi
  *    `PROFILE_UNSUPPORTED_BY_PROVIDER`;
  * 3. an engine whose record does not grant agent execution (`assertStatementsReviewed`), `PROFILE_ENGINE_NOT_REVIEWED`;
  * 4. an engine read only beneath the read roots a seed declares (`grants.readRootsRequired`), since a package's open
- *    receives no read roots (C-109), `PROFILE_UNSUPPORTED_BY_PROVIDER`;
+ *    receives no read roots (C-109), `PROFILE_UNSUPPORTED_BY_PROVIDER` (`readOnlyStatementRecordRefusal`);
  * 5. an engine whose connections serve one session (`grants.servesOneSession`), which the editor holds, so no second
- *    session opens beside it, `PROFILE_UNSUPPORTED_BY_PROVIDER`;
+ *    session opens beside it, `PROFILE_UNSUPPORTED_BY_PROVIDER` (`readOnlyStatementRecordRefusal`);
  * 6. a connection that configures an agent credential, which a package's open does not receive (C-109),
  *    `AGENT_CREDENTIAL_NOT_TAKEN`.
  *
@@ -1808,18 +1832,8 @@ export async function getOrCreateReadOnlyStatementSession(
     markNotSent(error);
     throw error;
   }
-  if (engine.grants.readRootsRequired) {
-    throw notSentRefusal(
-      `${engine.displayName} reads only beneath the read roots a seed declares, and a provider package's open receives no read roots, so Studio opens no read-only statement session on it.`,
-      "PROFILE_UNSUPPORTED_BY_PROVIDER",
-    );
-  }
-  if (engine.grants.servesOneSession !== null) {
-    throw notSentRefusal(
-      `${engine.displayName} serves one session per connection, which the editor holds, so Studio opens no second, read-only statement session on it.`,
-      "PROFILE_UNSUPPORTED_BY_PROVIDER",
-    );
-  }
+  const refused = readOnlyStatementRecordRefusal(engine);
+  if (refused !== null) throw notSentRefusal(refused.sentence, refused.code);
   if (connection.agentUser || connection.agentPassword) {
     throw notSentRefusal(
       `Connection "${connection.id}" configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, which receives no agent credential, so no read-only statement session opens on it.`,
