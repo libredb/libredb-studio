@@ -7,8 +7,9 @@
  * here.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 import { parse } from "yaml";
 
 const WORKFLOWS = path.join(import.meta.dir, "../../.github/workflows");
@@ -73,5 +74,64 @@ describe("image builds", () => {
     );
     expect(qemu).toBeDefined();
     expect(qemu?.if).toBeUndefined();
+  });
+});
+
+/** The literal text of a concurrency group before its first expression. */
+function groupPrefix(group: string): string {
+  const at = group.indexOf("${{");
+  return at === -1 ? group : group.slice(0, at);
+}
+
+/** Evaluates the body of a `${{ ... }}` expression the way sonarcloud-workflow.test.ts does. */
+function evaluate(expression: string, context: Record<string, unknown>): unknown {
+  const body = expression.match(/^\$\{\{([\s\S]*)\}\}$/)?.[1];
+  if (body === undefined) throw new Error(`not a single expression: ${expression}`);
+  return runInNewContext(body, context, { timeout: 100 });
+}
+
+describe("superseded runs", () => {
+  const SUPERSEDED = [
+    ["ci.yml", "ci-"],
+    ["codeql.yml", "codeql-"],
+    ["integration-check.yml", "integration-check-"],
+  ] as const;
+
+  test("ci.yml, codeql.yml and integration-check.yml key their concurrency by workflow, ref and event", () => {
+    // The event is in the key so a scheduled CodeQL run and a push run on main
+    // never cancel or queue behind each other, as security-scan.yml explains.
+    for (const [file, prefix] of SUPERSEDED) {
+      const group = workflow(file).concurrency?.group ?? "";
+      expect(group).toBe(`${prefix}\${{ github.ref }}-\${{ github.event_name }}`);
+    }
+  });
+
+  test("a new push cancels a pull request's running run, and on main only the pending one", () => {
+    // On main a started run finishes: the heavy jobs run only there, and merges land
+    // faster than one main run takes, so cancelling in progress would starve them.
+    // GitHub keeps one running and one pending run per group either way.
+    for (const [file] of SUPERSEDED) {
+      const cancel = workflow(file).concurrency?.["cancel-in-progress"];
+      expect(cancel).toBe("${{ github.event_name == 'pull_request' }}");
+      for (const [event, expected] of [
+        ["pull_request", true],
+        ["push", false],
+        ["schedule", false],
+        ["workflow_dispatch", false],
+      ] as const) {
+        expect(evaluate(String(cancel), { github: { event_name: event } })).toBe(expected);
+      }
+    }
+  });
+
+  test("no two workflows share a concurrency prefix", () => {
+    const prefixes = readdirSync(WORKFLOWS)
+      .filter((file) => file.endsWith(".yml"))
+      .flatMap((file) => {
+        const group = workflow(file).concurrency?.group;
+        return group === undefined ? [] : [groupPrefix(group)];
+      });
+    expect(prefixes).toContain("security-scan-");
+    expect(new Set(prefixes).size).toBe(prefixes.length);
   });
 });

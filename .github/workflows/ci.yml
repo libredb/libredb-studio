@@ -12,6 +12,14 @@ permissions:
   contents: read
   actions: read
 
+# A newer push supersedes this run: on a pull request the running run is
+# cancelled, and on main only a run still pending is replaced, so a started main
+# run always finishes. Keyed by event too, so a push, a schedule and a dispatch on
+# one ref never cancel each other (tests/unit/workflow-triggers.test.ts).
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-build:
     name: Lint, Typecheck and Build
