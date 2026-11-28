@@ -80,10 +80,26 @@ export function describeMqttObjects(kind: string): ObjectDetailBatch {
 }
 
 /**
+ * The engine's statement for a last message on `topic` of `bytes` bytes that holds no text to show: an empty payload,
+ * a payload the read did not keep (its packet carried no byte array), or one of only blank characters.
+ */
+function blankPayloadSentence(topic: string, bytes: number, kept: boolean): string {
+  let held = "only blank characters";
+  if (bytes === 0) held = "an empty payload";
+  else if (!kept) held = "a payload this read did not keep";
+  return `The last message on "${topic}" carried ${held} (${bytes} bytes).`;
+}
+
+/**
  * A topic's payload as the Source tab shows it, or the broker's own reason there is none.
  *
  * `form` is always `partial` and `origin` is `stored`: this is the last message the broker sent on that topic,
  * which is not the topic's history and not a guarantee that another is not already on its way.
+ *
+ * A payload of 0 bytes (a broker delivers a live publish with an empty payload as a message), one the read did not
+ * keep, or one that decodes to only blank characters has no text to show, and a source part is never empty (docs/providers/CONTRACT.md, clause
+ * C-115): the payload part is then the engine's statement of what the read saw, naming the topic and the byte count,
+ * and the Metadata part is unchanged.
  */
 export function mqttSourceDocument(
   path: readonly string[],
@@ -108,7 +124,8 @@ export function mqttSourceDocument(
       ],
     };
   const body = row.payload;
-  const text = body === undefined ? "" : new TextDecoder("utf-8", { fatal: false }).decode(body);
+  const text =
+    body === undefined || row.payloadBytes === 0 ? "" : new TextDecoder("utf-8", { fatal: false }).decode(body);
   /**
    * RENDERED AS REAL JSON, because the caption says it is.
    *
@@ -134,14 +151,14 @@ export function mqttSourceDocument(
     path,
     kind,
     parts: [
-      {
-        id: "payload",
-        label: "Payload",
-        text: body === undefined || row.payloadBytes === 0 ? "" : text,
-        language: "json",
-        form: "partial",
-        origin: "stored",
-      },
+      text.trim() === ""
+        ? {
+            id: "payload",
+            label: "Payload",
+            unavailable: blankPayloadSentence(topic, row.payloadBytes, body !== undefined),
+            statement: true,
+          }
+        : { id: "payload", label: "Payload", text, language: "json", form: "partial", origin: "stored" },
       {
         id: "metadata",
         label: "Metadata",

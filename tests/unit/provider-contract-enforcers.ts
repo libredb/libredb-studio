@@ -3424,6 +3424,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/provider-host/access.test.ts": [
         "a source request refused by the object model is Studio's model refusal, not-sent, in Studio's words",
       ],
+      "tests/unit/db/mqtt/provider.test.ts": [
+        "an empty or blank payload is answered as the engine's statement, never an empty part, and its document passes the host core's source call",
+      ],
     },
     schema: ["/$defs/objectsCalls/properties/source"],
   },
