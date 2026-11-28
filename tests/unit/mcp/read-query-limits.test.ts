@@ -43,7 +43,7 @@ import { logger } from "@/lib/logger";
 import type { McpConnectionContext, McpToolCall } from "@/lib/mcp/context";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
-import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { forgetHostCore, HostCoreBootOrderError, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import {
   acquireWithinCall,
@@ -757,6 +757,22 @@ describe("the MCP object tree", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test("before the host core is installed it throws by name before the provider's capabilities are read", () => {
+    const provider = treeProvider();
+    forgetHostCore();
+    let thrown: unknown;
+    try {
+      mcpObjectTree(provider, new AbortController().signal, Date.now() + 60_000);
+    } catch (error) {
+      thrown = error;
+    } finally {
+      installHostCore(createHostCore(), "test");
+    }
+
+    expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+    expect(mockOf(provider.getCapabilities)).not.toHaveBeenCalled();
   });
 
   test("a tree read's answer and a provider's failure pass by reference", async () => {

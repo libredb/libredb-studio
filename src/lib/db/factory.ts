@@ -18,10 +18,12 @@
  * legacy provider's rolls back an open transaction and disconnects it, a package's session is closed under a cleanup
  * context with no rollback step (`teardownContractSession` in @/lib/provider-host/core/contract-session), each under
  * the teardown's deadlines (clause C-45). `openEngineOnce` is the same open without the cache, for Test Connection.
- * The entry points that answer a `DatabaseProvider` (`getOrCreateProvider`, `getOrCreateMetadataProvider`,
- * `acquireExecutionProfileProvider` and the builds) read a record that offers a legacy provider and refuse a package's
- * engine (`legacyProviderEngine` in ./server-catalog); the execution-profile and metadata caches hold legacy providers
- * only.
+ * `getOrCreateMetadataSession` is the metadata cache's open of any record in the same way: a legacy record's through
+ * `getOrCreateMetadataProvider`'s body, and a package's through the package's own `open` with the metadata session's
+ * pool (clause C-66). The entry points that answer a `DatabaseProvider` (`getOrCreateProvider`,
+ * `getOrCreateMetadataProvider`, `acquireExecutionProfileProvider` and the builds) read a record that offers a legacy
+ * provider and refuse a package's engine (`legacyProviderEngine` in ./server-catalog); the execution-profile cache
+ * holds legacy providers only.
  */
 
 import {
@@ -505,7 +507,8 @@ type HeldEngine = HeldProvider | ({ readonly form: "session" } & OpenedPackageSe
 
 /**
  * An entry of the factory's caches, of every engine alike: what its open answered and what its key, the sweep, a
- * removal and the close read of it. The execution-profile and metadata caches hold the provider form only.
+ * removal and the close read of it. The execution-profile cache holds the provider form only; the metadata cache holds
+ * a provider package's session too (`getOrCreateMetadataSession`).
  */
 export interface CachedSession {
   readonly opened: HeldEngine;
@@ -929,7 +932,8 @@ function withProfile(profile: string, key: string): string {
 // The metadata cache (docs/providers/CONTRACT.md, clause C-66)
 // ----------------------------------------------------------------------------
 // Each connection's metadata session, beside its editor's, so a tree, monitoring or health read, or a kill, never waits
-// for the editor's statements.
+// for the editor's statements: a legacy provider (`getOrCreateMetadataProvider`) or a provider package's session
+// (`getOrCreateMetadataSession`).
 // Physically separate from both caches above, as the profiled cache is, so `getProviderCacheStats` keeps answering
 // the editor cache's sessions only, a provider package's among them. Keyed by the editor's key with `METADATA_FRAME`
 // framed onto it.
@@ -949,7 +953,8 @@ const METADATA_FRAME = "metadata";
  * connection, and keeps the pool's other defaults. Measured on PostgreSQL 18 at a 50 ms round trip, a warm burst of
  * eight tree reads took 418 ms on one connection, 209 ms on two, 158 ms on three and 106 ms on four: the second
  * connection saves the most, and each further one is a database session per connection per owner. Under governance an
- * owned metadata session opens with this size too, whatever `provider.poolMaxPerUser` says (docs/GOVERNANCE.md).
+ * owned metadata session opens with this size too, whatever `provider.poolMaxPerUser` says (docs/GOVERNANCE.md). A
+ * provider package's metadata session asks its open for the same pool (`PACKAGE_METADATA_PLACE`).
  */
 const METADATA_POOL_MAX = 2;
 
@@ -1322,6 +1327,9 @@ export async function getOrCreateProvider(
  * every removal that names its connection, its owner or its record's key, is torn down with the caches under the
  * teardown's deadlines (C-45), and keeps the connection's SSH tunnel open while it serves the connection.
  *
+ * It answers the provider of a legacy record; `getOrCreateMetadataSession` answers the metadata session of any record,
+ * a provider package's among them, and runs this body for a legacy one.
+ *
  * @throws UnknownProviderError if the connection's type is absent or names no provider, as `getOrCreateProvider`.
  */
 export async function getOrCreateMetadataProvider(
@@ -1333,7 +1341,8 @@ export async function getOrCreateMetadataProvider(
 }
 
 /**
- * The body of `getOrCreateProvider`, `getOrCreateMetadataProvider` and a legacy record's `getOrCreateEditorSession`: the
+ * The body of `getOrCreateProvider`, `getOrCreateMetadataProvider` and a legacy record's `getOrCreateEditorSession` and
+ * `getOrCreateMetadataSession`: the
  * checks, the session `reads` resolves to, its key, a cached entry's reuse and the open shared per key; it answers the
  * cache's entry. A tree, monitoring or health read, or a kill (`"tree"`, the
  * literal named for the first of them), of a connection whose
@@ -1622,7 +1631,7 @@ export function findCachedProvider(key: string): DatabaseProvider | null {
  * A record that offers a legacy provider opens through `getOrCreateProvider`'s body, whose checks, key and refusals
  * are that entry point's own (its type is read by name first, FND-1), with no provider options. A provider package's
  * record is checked first (`assertOpenable` in ./open-check), keyed by its package's name and the frame `frameCacheKey`
- * answers, and opened through the package's own `open` within the engine's connect budget (`openCachedSession`).
+ * answers, and opened through the package's own `open` within the engine's connect budget (`openPackageEntry`).
  *
  * @throws {DatabaseConfigError} Not-sent, for a package's connection with no id or one a check refuses.
  * @throws {StudioTimeoutRefusal} Not-sent, when the engine's connect budget ended the open.
@@ -1637,6 +1646,77 @@ export async function getOrCreateEditorSession(
   wait?: OpenWait,
 ): Promise<CachedSession> {
   if (offersLegacyProvider(engine, connection)) return openWritable(connection, {}, execution, wait, "editor");
+  return openPackageEntry(connection, engine, execution, wait, PACKAGE_EDITOR_PLACE);
+}
+
+/**
+ * The connection's metadata session of `engine`, the cache's entry, for any record the server serves
+ * (docs/providers/CONTRACT.md, clause C-66): the session its tree reads run on, beside the editor's, so a tree read
+ * never waits for the editor's statements.
+ *
+ * - A record that offers a legacy provider: `getOrCreateMetadataProvider`'s body (`openWritable`), whose checks, key,
+ *   pool, entry and refusals are that entry point's own.
+ * - A provider package's record whose connection serves one session (`sessionCapacity`, from its register row): the
+ *   editor's session, as `getOrCreateEditorSession` answers it.
+ * - Every other provider package's record: a session of its own, opened through its package as the editor's is
+ *   (`openPackageEntry`), cached in the metadata cache under the editor's key with the metadata frame, its entry's
+ *   frame the editor's, so every removal that names the editor's entry names it too, and opened with a pool of at most
+ *   `METADATA_POOL_MAX` sessions that opens none until a read asks, shared or owned alike.
+ *
+ * No caller waits for its open with a signal of its own, so it takes no wait. It opens once per key (C-44), leaves with
+ * the idle sweep, which keeps it while a read runs on it (`running`), and with every removal that names its
+ * connection, its owner or its record's key, and is torn down with the caches under the teardown's deadlines (C-45).
+ *
+ * @throws As `getOrCreateEditorSession` throws for the same record.
+ */
+export async function getOrCreateMetadataSession(
+  connection: EngineConnection,
+  engine: EngineRecord,
+  execution: EditorExecutionContext,
+): Promise<CachedSession> {
+  if (offersLegacyProvider(engine, connection)) return openWritable(connection, {}, execution, undefined, "tree");
+  if (sessionCapacity(connection) === "one") return getOrCreateEditorSession(connection, engine, execution);
+  return openPackageEntry(connection, engine, execution, undefined, PACKAGE_METADATA_PLACE);
+}
+
+/** Where a provider package's session is cached and opened: its cache, its opens in flight, its key and its pool. */
+interface PackagePlace {
+  readonly cache: Map<string, CachedSession>;
+  readonly flights: typeof editorFlights;
+  /** The key the session caches under, from the package's editor key. */
+  readonly key: (editorKey: string) => string;
+  /** The pool the open asks for, or undefined for core's defaults and the owner's share. */
+  readonly pool: { readonly min: 0; readonly max: number } | undefined;
+}
+
+/** The editor's session of a provider package's record. */
+const PACKAGE_EDITOR_PLACE: PackagePlace = {
+  cache: providerCache,
+  flights: editorFlights,
+  key: (editorKey) => editorKey,
+  pool: undefined,
+};
+
+/** The metadata session of a provider package's record, as `METADATA_SESSION` places a legacy provider's. */
+const PACKAGE_METADATA_PLACE: PackagePlace = {
+  cache: metadataProviderCache,
+  flights: metadataFlights,
+  key: (editorKey) => withProfile(METADATA_FRAME, editorKey),
+  pool: { min: 0, max: METADATA_POOL_MAX },
+};
+
+/**
+ * The session of a provider package's record that `place` caches, the cache's entry: the cached one, else the open in
+ * flight under its key or a new one (`openCachedSession`). The record is checked first (`assertOpenable` in
+ * ./open-check) and keyed by its package's name and the frame `frameCacheKey` answers, which is the entry's frame.
+ */
+async function openPackageEntry(
+  connection: EngineConnection,
+  engine: EngineRecord,
+  execution: EditorExecutionContext,
+  wait: OpenWait | undefined,
+  place: PackagePlace,
+): Promise<CachedSession> {
   if (!connection.id) throw refused("Connection ID is required");
   assertOpenable(engine, connection, execution, "connect");
   const owner = engine.grants.singleWriterFile ? undefined : execution.owner;
@@ -1645,8 +1725,8 @@ export async function getOrCreateEditorSession(
     allowExternalFileAccess: execution.allowExternalFileAccess === true,
     owner,
   });
-  const key = `package\u0000${servedPackage(engine).name}\u0000${frame}`;
-  const cached = providerCache.get(key);
+  const key = place.key(`package\u0000${servedPackage(engine).name}\u0000${frame}`);
+  const cached = place.cache.get(key);
   if (cached !== undefined) {
     cached.lastUsed = Date.now();
     return cached;
@@ -1666,7 +1746,13 @@ export async function getOrCreateEditorSession(
     }),
     ...(owner !== undefined && { owner, ownerPoolMax: execution.ownerPoolMax }),
   };
-  return openOnce(editorFlights, key, meta, (flight) => openCachedSession(connection, engine, opened, flight), wait);
+  return openOnce(
+    place.flights,
+    key,
+    meta,
+    (flight) => openCachedSession(connection, engine, opened, flight, place),
+    wait,
+  );
 }
 
 /** A not-sent configuration error with `sentence`: nothing was opened. */
@@ -1677,9 +1763,9 @@ function refused(sentence: string): DatabaseConfigError {
 }
 
 /**
- * The open `getOrCreateEditorSession` shares under `flight.key` for a provider package's record: it opens the session
- * through the one open function within the engine's connect budget, with the flight's signal as the open's stop, and
- * admits it into the editor cache, unless a removal or a cache close overtook it (`flight.signal`, or a close of the
+ * The open `openPackageEntry` shares under `flight.key` for a provider package's record: it opens the session
+ * through the one open function within the engine's connect budget, with the flight's signal as the open's stop and
+ * `place`'s pool, and admits it into `place`'s cache, unless a removal or a cache close overtook it (`flight.signal`, or a close of the
  * caches still running, `cacheClosesRunning`), in which case it closes what it opened under the teardown's deadlines
  * and fails as overtaken, admitting nothing. A stop of the package's open by the flight's signal fails as overtaken
  * too. Nothing is awaited between the check and the admission. Every failure is marked not-sent (`connectPhase`).
@@ -1689,6 +1775,7 @@ async function openCachedSession(
   engine: EngineRecord,
   execution: EditorExecutionContext,
   flight: Flight<OpenMeta>,
+  place: PackagePlace,
 ): Promise<CachedSession> {
   let admitted: CachedSession | undefined;
   await connectPhase(async () => {
@@ -1701,6 +1788,7 @@ async function openCachedSession(
           purpose: "connect",
           options: {},
           within: { deadline: Date.now() + flight.meta.budget, signal: flight.signal },
+          ...(place.pool !== undefined && { pool: place.pool }),
         }),
       );
     } catch (error) {
@@ -1717,7 +1805,7 @@ async function openCachedSession(
         lastUsed: Date.now(),
         running: 0,
       };
-      providerCache.set(flight.key, admitted);
+      place.cache.set(flight.key, admitted);
       return;
     }
     flightsClosing.add(flight);

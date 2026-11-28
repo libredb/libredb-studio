@@ -20,7 +20,8 @@
  *   caller's file-access posture as a definite boolean, no write refusal (a read-only connection never reaches the open,
  *   since no package's engine keeps that mode), the operator's grant (`managed`) and the literal seed file marker.
  * - `pool`: core's defaults for a session every caller shares, or the owner's share for an owned one
- *   (docs/GOVERNANCE.md#per-user-providers).
+ *   (docs/GOVERNANCE.md#per-user-providers), or the smaller pool the open asks for, the metadata session's, shared or
+ *   owned alike (`PackageOpenRequest.pool`; docs/providers/CONTRACT.md, clause C-66).
  * - `deadline` and `signal`: the caller's, the deadline being the open's start plus the engine's connect budget
  *   (`packageConnectBudget`).
  * - `env`: the package's declared environment (`packageEnvironment`), which every later call of the session gets too.
@@ -54,6 +55,11 @@ export interface PackageOpenRequest {
   /** When the open must have answered: its start plus `packageConnectBudget(engine)`. */
   readonly deadline: number;
   readonly signal: AbortSignal;
+  /**
+   * The pool core chose for this session, when it chose one: the metadata session's, which opens none until a read asks
+   * and holds at most `max`, shared or owned (clause C-66). Absent, the pool is core's defaults or the owner's share.
+   */
+  readonly pool?: { readonly min: 0; readonly max: number };
 }
 
 /** How long the host waits for an open of `engine`: the budget its declaration states, or the host's default. */
@@ -141,6 +147,20 @@ function tlsOf(connection: EngineConnection, engine: EngineRecord): TlsSettings 
 }
 
 /**
+ * The pool of the open: the one the open asks for over core's defaults, else core's defaults for a session every caller
+ * shares, else the owner's share.
+ */
+function poolOf(
+  asked: PackageOpenRequest["pool"],
+  owner: string | undefined,
+  execution: EditorExecutionContext,
+): OpenContext["pool"] {
+  if (asked !== undefined) return { ...DEFAULT_POOL_CONFIG, min: asked.min, max: asked.max };
+  if (owner === undefined) return { ...DEFAULT_POOL_CONFIG };
+  return { ...DEFAULT_POOL_CONFIG, min: 0, max: execution.ownerPoolMax as number };
+}
+
+/**
  * The open context core hands `request.engine`'s package for `request.connection`; see the module's docblock.
  *
  * @throws {DatabaseConfigError} Not-sent: for a field value outside the contract's value forms, for a TLS setting the
@@ -166,10 +186,7 @@ export function packageOpenContext(request: PackageOpenRequest): OpenContext {
       managed: connection.managed === true,
       literalSeedFile: connection[LITERAL_SEED_FILE] === true,
     },
-    pool:
-      owner === undefined
-        ? { ...DEFAULT_POOL_CONFIG }
-        : { ...DEFAULT_POOL_CONFIG, min: 0, max: execution.ownerPoolMax as number },
+    pool: poolOf(request.pool, owner, execution),
     deadline: request.deadline,
     signal: request.signal,
     env: packageEnvironment(servedPackage(engine).manifest),

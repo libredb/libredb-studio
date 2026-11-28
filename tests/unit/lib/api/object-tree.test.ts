@@ -1,8 +1,9 @@
 /**
  * The object tree's caller facade (src/lib/api/object-tree.ts; docs/providers/CONTRACT.md, clause C-65): each tree read
- * of the object routes and the VS Code backend is one host core tree call on the legacy bridge's session, under a
- * deadline of its own, the statement timeout plus ten seconds from that read's start, and the caller's signal, and
- * answers the provider's own answer by reference.
+ * of the object routes and the VS Code backend is one host core tree call on the session of the target its caller hands
+ * it, a legacy provider's bridged session (`providerTreeTarget` in src/lib/api/session-target.ts) or a provider
+ * package's, under a deadline of its own, the statement timeout plus ten seconds from that read's start, and the
+ * caller's signal, and answers the session's own answer by reference.
  *
  * The real host core is installed for the file; a case that needs a record the real core would answer only at a real
  * deadline installs a core of its own around the real one and restores it. Every double signals when the read reaches
@@ -19,10 +20,17 @@ import {
   type ObjectTree,
   objectTree,
   objectTreeWithinCall,
-  type WalkGrant,
 } from "@/lib/api/object-tree";
+import type { BudgetGrant } from "@/lib/api/provider-monitoring";
+import { providerTreeTarget, type TreeTarget } from "@/lib/api/session-target";
 import { errorOutcome } from "@/lib/db/error-record";
-import { QueryCancelledError, StudioObjectModelRefusal, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
+import {
+  FacetNotOfferedError,
+  QueryCancelledError,
+  StudioObjectModelRefusal,
+  StudioTimeoutRefusal,
+  waitedSeconds,
+} from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
@@ -122,9 +130,9 @@ const deadlineSentence = (noun: string, queryTimeout: number) =>
 
 /** A grant of `ms` from now on the route, its time refusal `refusal` by reference and its hold `hold`. */
 function grantOf(
-  over: Partial<WalkGrant> = {},
+  over: Partial<BudgetGrant> = {},
   refusal: Error = new Error(marker()),
-): WalkGrant & { readonly hold: ReturnType<typeof mock<(settled: Promise<unknown>) => void>> } {
+): BudgetGrant & { readonly hold: ReturnType<typeof mock<(settled: Promise<unknown>) => void>> } {
   const hold = mock<(settled: Promise<unknown>) => void>(() => {});
   return {
     deadline: Date.now() + 60_000,
@@ -178,7 +186,7 @@ describe("objectTree", () => {
         },
       }),
       async () => {
-        const tree = objectTree(provider, new AbortController().signal, ROUTE, steppedClock);
+        const tree = objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE, steppedClock);
         await tree.listContainers(parent);
         await tree.listContainers();
         await tree.countObjects(container);
@@ -222,7 +230,7 @@ describe("objectTree", () => {
     mockOf(provider.listObjects).mockImplementation(async () => objects);
     mockOf(provider.describeObject).mockImplementation(async () => detail);
     mockOf(provider.describeObjects).mockImplementation(async () => batch);
-    const tree = objectTree(provider, new AbortController().signal, ROUTE);
+    const tree = objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE);
 
     expect(await tree.listContainers()).toBe(containers);
     expect(await tree.countObjects(["app"])).toBe(counts);
@@ -245,7 +253,7 @@ describe("objectTree", () => {
         },
       }),
       async () => {
-        const read = objectTree(provider, new AbortController().signal, ROUTE);
+        const read = objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE);
         await read.listContainers();
         await read.countObjects(["app"]);
         await read.listObjects(["app"], "view");
@@ -272,7 +280,7 @@ describe("objectTree", () => {
         throw thrown[index];
       });
     });
-    const tree = objectTree(provider, new AbortController().signal, ROUTE);
+    const tree = objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE);
 
     const caught = await Promise.all(READS.map(({ run }) => failure(() => run(tree))));
 
@@ -297,7 +305,7 @@ describe("objectTree", () => {
           return pending.promise;
         });
         const caller = new AbortController();
-        const reading = failure(() => run(objectTree(provider, caller.signal, ROUTE)));
+        const reading = failure(() => run(objectTree(providerTreeTarget(provider), caller.signal, ROUTE)));
         // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each read's log is its own.
         await reached.promise;
         caller.abort(new DOMException("The request went away.", "AbortError"));
@@ -328,7 +336,7 @@ describe("objectTree", () => {
     const provider = providerOf();
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
-    const tree = objectTree(provider, caller.signal, ROUTE);
+    const tree = objectTree(providerTreeTarget(provider), caller.signal, ROUTE);
 
     const caught = await Promise.all(READS.map(({ run }) => failure(() => run(tree))));
 
@@ -344,7 +352,9 @@ describe("objectTree", () => {
     const provider = providerOf(queryTimeout);
     const behind = () => Date.now() - queryTimeout - EXECUTE_SLACK_MS - 1_000;
     const refused = await Promise.all(
-      READS.map(({ run }) => failure(() => run(objectTree(provider, new AbortController().signal, ROUTE, behind)))),
+      READS.map(({ run }) =>
+        failure(() => run(objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE, behind))),
+      ),
     );
     const stopped = await withCore(
       (real) => ({
@@ -357,7 +367,9 @@ describe("objectTree", () => {
       }),
       () =>
         Promise.all(
-          READS.map(({ run }) => failure(() => run(objectTree(provider, new AbortController().signal, ROUTE)))),
+          READS.map(({ run }) =>
+            failure(() => run(objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE))),
+          ),
         ),
     );
 
@@ -386,7 +398,10 @@ describe("objectTree", () => {
           refusals: [{ rule: "request-field-empty", pointer: "/objects/tree", name: "objects.tree" }],
         }),
       }),
-      () => failure(() => objectTree(provider, new AbortController().signal, ROUTE).listObjects(["app"], "table")),
+      () =>
+        failure(() =>
+          objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE).listObjects(["app"], "table"),
+        ),
     );
 
     expect(caught).toBeInstanceOf(Error);
@@ -420,12 +435,16 @@ describe("objectTree", () => {
 
     const editor = await Promise.all(
       READS.map(({ run }) =>
-        failure(() => run(objectTree(Object.assign(providerOf(), malformed), new AbortController().signal, ROUTE))),
+        failure(() =>
+          run(
+            objectTree(providerTreeTarget(Object.assign(providerOf(), malformed)), new AbortController().signal, ROUTE),
+          ),
+        ),
       ),
     );
     const granted = await Promise.all(
       GRANTED_READS.map(({ run }) =>
-        failure(() => run(grantedObjectTree(Object.assign(providerOf(), malformed), grantOf()))),
+        failure(() => run(grantedObjectTree(providerTreeTarget(Object.assign(providerOf(), malformed)), grantOf()))),
       ),
     );
 
@@ -451,8 +470,8 @@ describe("objectTree", () => {
       inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => reason),
     });
 
-    const listed = await objectTree(provider, new AbortController().signal, ROUTE).listContainers();
-    const whole = await grantedObjectTree(provider, grantOf()).containers();
+    const listed = await objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE).listContainers();
+    const whole = await grantedObjectTree(providerTreeTarget(provider), grantOf()).containers();
 
     expect(listed).toEqual([]);
     expect(whole).toEqual({ containers: [], needsConfiguration: reason });
@@ -465,7 +484,7 @@ describe("objectTree", () => {
     forgetHostCore();
     let caught: unknown[];
     try {
-      const tree = objectTree(provider, new AbortController().signal, ROUTE);
+      const tree = objectTree(providerTreeTarget(provider), new AbortController().signal, ROUTE);
       caught = await Promise.all(READS.map(({ run }) => failure(() => run(tree))));
     } finally {
       installHostCore(real, "test");
@@ -493,7 +512,7 @@ describe("grantedObjectTree", () => {
         },
       }),
       async () => {
-        const tree = grantedObjectTree(provider, grant);
+        const tree = grantedObjectTree(providerTreeTarget(provider), grant);
         await tree.containers();
         await tree.containers(container);
         await tree.countObjects(container);
@@ -523,15 +542,15 @@ describe("grantedObjectTree", () => {
     expect(grant.hold).not.toHaveBeenCalled();
   });
 
-  test("a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none", async () => {
+  test("a granted read hands the target's read allowance to the bridge by reference, and none where the target has none", async () => {
     const readAllowance = new RunReadAllowance(5);
     const billed = providerOf();
-    const tree = grantedObjectTree(billed, grantOf({ readAllowance }));
+    const tree = grantedObjectTree(providerTreeTarget(billed, { readAllowance }), grantOf());
     await tree.countObjects(["app"]);
     await tree.listObjects(["app"], "table");
     await tree.describeObjects(["app"], "table", 3);
     const unbilled = providerOf();
-    const plain = grantedObjectTree(unbilled, grantOf());
+    const plain = grantedObjectTree(providerTreeTarget(unbilled), grantOf());
     await plain.countObjects(["app"]);
     await plain.listObjects(["app"], "table");
     await plain.describeObjects(["app"], "table", 3);
@@ -570,7 +589,7 @@ describe("grantedObjectTree", () => {
       );
       const refusal = new Error(marker());
       const grant = grantOf({ deadline: Date.now() + 50 }, refusal);
-      const tree = grantedObjectTree(provider, grant);
+      const tree = grantedObjectTree(providerTreeTarget(provider), grant);
 
       // A plain await of the read, which the grant's real deadline ends.
       const caught = await failure(() => tree.countObjects(["app"]));
@@ -606,7 +625,7 @@ describe("grantedObjectTree", () => {
     const provider = providerOf();
     const refusal = new Error(marker());
     const grant = grantOf({ deadline: Date.now() - 1 }, refusal);
-    const tree = grantedObjectTree(provider, grant);
+    const tree = grantedObjectTree(providerTreeTarget(provider), grant);
 
     const caught = await Promise.all(GRANTED_READS.map(({ run }) => failure(() => run(tree))));
 
@@ -623,7 +642,7 @@ describe("grantedObjectTree", () => {
         throw thrown[index];
       });
     });
-    const tree = grantedObjectTree(provider, grantOf());
+    const tree = grantedObjectTree(providerTreeTarget(provider), grantOf());
 
     const caught = await Promise.all(GRANTED_READS.map(({ run }) => failure(() => run(tree))));
 
@@ -638,7 +657,7 @@ describe("grantedObjectTree", () => {
     forgetHostCore();
     let thrown: unknown;
     try {
-      grantedObjectTree(provider, grantOf());
+      grantedObjectTree(providerTreeTarget(provider), grantOf());
     } catch (error) {
       thrown = error;
     } finally {
@@ -689,7 +708,7 @@ describe("objectTreeWithinCall", () => {
         },
       }),
       async () => {
-        const tree = objectTreeWithinCall(provider, call);
+        const tree = objectTreeWithinCall(providerTreeTarget(provider), call);
         await tree.listContainers();
         await tree.listContainers(parent);
         await tree.listObjects(parent, "table");
@@ -730,7 +749,7 @@ describe("objectTreeWithinCall", () => {
     mockOf(provider.listContainers).mockImplementation(async () => containers);
     mockOf(provider.listObjects).mockImplementation(async () => objects);
     mockOf(provider.describeObject).mockImplementation(async () => detail);
-    const tree = objectTreeWithinCall(provider, withinCallOf());
+    const tree = objectTreeWithinCall(providerTreeTarget(provider), withinCallOf());
 
     expect(await tree.listContainers()).toBe(containers);
     expect(await tree.listObjects(["app"], "table")).toBe(objects);
@@ -740,7 +759,7 @@ describe("objectTreeWithinCall", () => {
     const unconfigured = Object.assign(providerOf(), {
       inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => marker()),
     });
-    expect(await objectTreeWithinCall(unconfigured, withinCallOf()).listContainers()).toEqual([]);
+    expect(await objectTreeWithinCall(providerTreeTarget(unconfigured), withinCallOf()).listContainers()).toEqual([]);
     expect(mockOf(unconfigured.listContainers)).not.toHaveBeenCalled();
   });
 
@@ -760,7 +779,7 @@ describe("objectTreeWithinCall", () => {
           return pending.promise;
         });
         const caller = new AbortController();
-        const reading = failure(() => run(objectTreeWithinCall(provider, withinCallOf(caller))));
+        const reading = failure(() => run(objectTreeWithinCall(providerTreeTarget(provider), withinCallOf(caller))));
         // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each read's log is its own.
         await entered.promise;
         caller.abort(new DOMException("The request went away.", "AbortError"));
@@ -810,7 +829,9 @@ describe("objectTreeWithinCall", () => {
       };
 
       // A plain await of the read, which the call's real deadline ends.
-      const caught = await failure(() => objectTreeWithinCall(provider, call).describeObject(["app", "t"], "table"));
+      const caught = await failure(() =>
+        objectTreeWithinCall(providerTreeTarget(provider), call).describeObject(["app", "t"], "table"),
+      );
 
       expect(built).toHaveLength(1);
       expect(caught).toBe(built[0]);
@@ -832,11 +853,14 @@ describe("objectTreeWithinCall", () => {
   test("a read after the call's deadline or after the caller left is refused before the call and reads nothing", async () => {
     const passedProvider = providerOf();
     const refusal = new Error(marker());
-    const passed = objectTreeWithinCall(passedProvider, withinCallOf(new AbortController(), -1, refusal));
+    const passed = objectTreeWithinCall(
+      providerTreeTarget(passedProvider),
+      withinCallOf(new AbortController(), -1, refusal),
+    );
     const leftProvider = providerOf();
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
-    const left = objectTreeWithinCall(leftProvider, withinCallOf(caller));
+    const left = objectTreeWithinCall(providerTreeTarget(leftProvider), withinCallOf(caller));
 
     const late = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(passed))));
     const gone = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(left))));
@@ -864,14 +888,16 @@ describe("objectTreeWithinCall", () => {
     mockOf(syncProvider.listContainers).mockImplementation(() => {
       throw syncThrown;
     });
-    const tree = objectTreeWithinCall(provider, withinCallOf());
+    const tree = objectTreeWithinCall(providerTreeTarget(provider), withinCallOf());
 
     const caught = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(tree))));
 
     caught.forEach((error, index) => {
       expect(error).toBe(thrown[index]);
     });
-    expect(await failure(() => objectTreeWithinCall(syncProvider, withinCallOf()).listContainers())).toBe(syncThrown);
+    expect(
+      await failure(() => objectTreeWithinCall(providerTreeTarget(syncProvider), withinCallOf()).listContainers()),
+    ).toBe(syncThrown);
   });
 
   test("before the host core is installed it throws by name and reads nothing", () => {
@@ -880,7 +906,7 @@ describe("objectTreeWithinCall", () => {
     forgetHostCore();
     let thrown: unknown;
     try {
-      objectTreeWithinCall(provider, withinCallOf());
+      objectTreeWithinCall(providerTreeTarget(provider), withinCallOf());
     } catch (error) {
       thrown = error;
     } finally {
@@ -889,5 +915,138 @@ describe("objectTreeWithinCall", () => {
 
     expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
     for (const { action } of WITHIN_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+  });
+});
+
+/** A session's calls with `objects.tree` offered or not, and every other call not offered. */
+function callsWith(tree: "offered" | "not-offered") {
+  return {
+    console: {
+      execute: { honours: [] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "not-offered",
+    },
+    objects: { tree },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  } as unknown as TreeTarget["session"]["calls"];
+}
+
+/**
+ * A target of a session of the package form: a tree function recording each call's request and context and answering
+ * an empty answer of its action, the provider double's object model, an environment of its own and run marks counted.
+ */
+function packageTarget(tree: "offered" | "not-offered" = "offered", timeout = 2_000) {
+  const calls: { request: TreeRequest; ctx: CallContext }[] = [];
+  const marks: string[] = [];
+  const empty: Record<TreeRequest["action"], TreeAnswer> = {
+    containers: { containers: [] },
+    count: { counts: {} },
+    list: { objects: [] },
+    describe: { detail: { path: ["app", "orders"], columns: [], indexes: [], foreignKeys: [] } },
+    describeMany: { details: [] },
+  };
+  const env = { get: () => undefined } as unknown as TreeTarget["env"];
+  const target: TreeTarget = {
+    session: {
+      calls: callsWith(tree),
+      objectModel: providerTreeTarget(providerOf()).session.objectModel,
+      tree: async (request, ctx) => {
+        calls.push({ request, ctx });
+        return empty[request.action];
+      },
+    },
+    env,
+    timeout: () => timeout,
+    wholeServer: () => null,
+    started: () => {
+      marks.push("started");
+    },
+    ended: (record) => {
+      marks.push(`ended ${record?.kind}`);
+    },
+  };
+  return { target, calls, marks, env };
+}
+
+describe("the tree facades on a session target", () => {
+  test("the tree facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each read on the entry", async () => {
+    const { target, calls, marks, env } = packageTarget("offered", 2_000);
+    const start = Date.now();
+    const tree = objectTree(target, new AbortController().signal, ROUTE, () => start);
+    await Promise.all(READS.map(({ run }) => run(tree)));
+    expect(calls.map(({ request }) => request.action)).toEqual(READS.map(({ action }) => action));
+    for (const { ctx } of calls) {
+      expect(ctx.env).toBe(env);
+      expect(ctx.deadline).toBe(start + 2_000 + EXECUTE_SLACK_MS);
+    }
+    expect(marks).toEqual([...READS.map(() => "started"), ...READS.map(() => "ended answered")]);
+
+    calls.length = 0;
+    marks.length = 0;
+    const within = objectTreeWithinCall(target, withinCallOf());
+    await Promise.all(WITHIN_READS.map(({ run }) => run(within)));
+    const granted = grantedObjectTree(target, grantOf());
+    await Promise.all(GRANTED_READS.map(({ run }) => run(granted)));
+    expect(calls).toHaveLength(WITHIN_READS.length + GRANTED_READS.length);
+    for (const { ctx } of calls) expect(ctx.env).toBe(env);
+    expect(marks.filter((mark) => mark === "started")).toHaveLength(calls.length);
+    expect(marks.filter((mark) => mark === "ended answered")).toHaveLength(calls.length);
+
+    // A read the session's tree function fails ends its mark too, the failure passed as the same object.
+    const failed = packageTarget();
+    const thrown = new Error(marker());
+    failed.target.session.tree = () => Promise.reject(thrown);
+    const caught = await failure(() =>
+      objectTree(failed.target, new AbortController().signal, ROUTE).listObjects(["app"], "table"),
+    );
+    expect(caught).toBe(thrown);
+    expect(failed.marks).toEqual(["started", "ended undefined"]);
+
+    // The bridge's session of a legacy provider is read the same way, under the provider's own statement timeout.
+    const provider = providerOf(4_000);
+    const bridged = providerTreeTarget(provider);
+    expect(bridged.timeout()).toBe(4_000);
+    await objectTree(bridged, new AbortController().signal, ROUTE).listObjects(["app"], "table");
+    expect(mockOf(provider.listObjects)).toHaveBeenCalledTimes(1);
+  });
+
+  test("a target whose session does not offer objects.tree is refused when the facade is built, before any read", async () => {
+    const { target, calls, marks } = packageTarget("not-offered");
+    const built: unknown[] = [];
+    for (const build of [
+      () => objectTree(target, new AbortController().signal, ROUTE),
+      () => objectTreeWithinCall(target, withinCallOf()),
+      () => grantedObjectTree(target, grantOf()),
+    ]) {
+      try {
+        build();
+        built.push("built");
+      } catch (error) {
+        built.push(error);
+      }
+    }
+    for (const error of built) {
+      expect(error).toBeInstanceOf(FacetNotOfferedError);
+      expect((error as FacetNotOfferedError).message).toBe(
+        "This connection's provider package does not offer objects.tree, so Studio did not call it.",
+      );
+      expect([(error as FacetNotOfferedError).facet, (error as FacetNotOfferedError).operation]).toEqual([
+        "objects",
+        "tree",
+      ]);
+      expect(errorOutcome(error)).toBe("not-sent");
+    }
+    expect(calls).toEqual([]);
+    expect(marks).toEqual([]);
+
+    // A session that offers the tree and states no object model is the host's defect, named, before any read.
+    const unstated = packageTarget();
+    const { calls: offered, tree } = unstated.target.session;
+    expect(() =>
+      objectTree({ ...unstated.target, session: { calls: offered, tree } }, new AbortController().signal, ROUTE),
+    ).toThrow("The session offers objects.tree and states no object model, a defect of the host's session.");
+    expect(unstated.calls).toEqual([]);
   });
 });

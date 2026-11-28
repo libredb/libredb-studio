@@ -72,6 +72,8 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   hostFiles: false,
   testCautions: false,
   executionProfiles: false,
+  objectEdit: false,
+  keyScan: false,
 });
 
 /** An admitted package as boot hands it to the composer. */

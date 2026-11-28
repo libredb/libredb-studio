@@ -221,11 +221,9 @@ describe("the db and open readers of a grant", () => {
       expect(providerOwner(withoutRow, "owner")).toBe("owner");
       expect(await keySplitsOnDeny(withoutRow)).toBe(true);
       expect(await keyFramesOwner(withoutRow)).toBe(true);
-      // A local file is the restrictive value of its claim, so the admission reads the file the connection names
-      // through the declaration rows, which hold no package's engine (a declaration read, opened with M5).
-      const capacity = await thrownBy(() => sessionCapacity(withoutRow));
-      expect(capacity).toBeInstanceOf(UnknownProviderError);
-      expect((capacity as Error).message).toBe(unknownTypeSentence("acmebare"));
+      // No register row names a reason for one session; a package's connection names no file Studio admits, so its
+      // database is never read as in memory, whatever the restrictive value of the local file claim.
+      expect(sessionCapacity(withoutRow)).toBe("several");
     });
   });
 });

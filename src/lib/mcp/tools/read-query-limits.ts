@@ -1,6 +1,8 @@
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { type ObjectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
+import { hostCore } from "@/lib/provider-host/instance";
 import { errorKind } from "@/lib/db/error-record";
 import { QueryCancelledError, type ReadAllowanceExceededError, type RefusedBeforeSendError } from "@/lib/db/errors";
 import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/sql/read-only-refusals";
@@ -288,13 +290,18 @@ class McpCallDeadline extends Error {
 }
 
 /**
- * The object tree of `provider` within one MCP call (clause C-82): every read one host core tree call under the call's
- * one `deadline` and the request's `signal`, a read's failure after the call stopped waiting logged under `/api/mcp`.
+ * The object tree of `provider` within one MCP call (clause C-82), on its bridged session (`providerTreeTarget`): every
+ * read one host core tree call under the call's one `deadline` and the request's `signal`, a read's failure after the
+ * call stopped waiting logged under `/api/mcp`.
  *
- * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any read.
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before the provider's capabilities
+ *   are read and before any read.
  */
 export function mcpObjectTree(provider: DatabaseProvider, signal: AbortSignal, deadline: number): ObjectTree {
-  return objectTreeWithinCall(provider, {
+  // The boot order is read first, so a call before the host core's install is refused by name before the bridged
+  // session is built, which reads the provider's capabilities; the facade reads the installed core again for its reads.
+  hostCore();
+  return objectTreeWithinCall(providerTreeTarget(provider), {
     deadline,
     caller: signal,
     timeRefusal: () => new McpCallDeadline(),

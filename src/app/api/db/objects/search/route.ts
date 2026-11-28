@@ -47,20 +47,20 @@ export const dynamic = "force-dynamic";
  * (`objectTree`, src/lib/api/object-tree.ts) under a deadline of its own, and the request's signal
  * ends the walk at its next read.
  *
- * Every read of the walk runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so
- * it never waits for the editor's statements, except on a connection that serves one session
- * (docs/providers/CONTRACT.md, clause C-66).
+ * Every read of the walk runs on the record's metadata session (`{ reads: "tree" }`), a provider package's through its
+ * package, beside the editor's, so it never waits for the editor's statements, except on a connection that serves one
+ * session (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(
     req,
     "api/db/objects/search",
-    async (provider, body, context) => {
+    async (target, body, context) => {
       const term = requireString(body, "term").toLowerCase();
-      const tree = objectTree(provider, req.signal, context.route);
-      const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
+      const tree = objectTree(target, req.signal, context.route);
+      const kinds = resolveKinds(tree.objectModel, context.engine.id, optionalStringArray(body, "kinds"));
 
-      assertNotWholeServer(provider);
+      assertNotWholeServer(target);
       const enumerated = await enumerateContainers(tree);
       const kindsOf = kindsByContainer(enumerated);
       const pairs = enumerated.containers.flatMap((container) =>
@@ -90,6 +90,6 @@ export async function POST(req: NextRequest) {
       }
       return matches;
     },
-    { session: "metadata" },
+    { reads: "tree" },
   );
 }

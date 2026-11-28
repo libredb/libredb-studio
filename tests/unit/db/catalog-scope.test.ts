@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from "bun:test";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { assertNotWholeServer, catalogChoice, catalogSessionConnection, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { DatabaseConfigError, UnknownProviderError } from "@/lib/db/errors";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
@@ -81,7 +82,9 @@ describe("catalog choice bounded by Studio's record (M-57)", () => {
 
   test("assertNotWholeServer refuses a provider that declares catalog sessions, whatever Studio's record and the connection say", () => {
     const naming = { ...clickhouse, database: "app" };
-    expect(() => assertNotWholeServer(provider(naming, declared).built)).toThrow(DatabaseConfigError);
-    expect(() => assertNotWholeServer(provider(naming, absent).built)).not.toThrow();
+    expect(() => assertNotWholeServer(providerTreeTarget(provider(naming, declared).built))).toThrow(
+      DatabaseConfigError,
+    );
+    expect(() => assertNotWholeServer(providerTreeTarget(provider(naming, absent).built))).not.toThrow();
   });
 });

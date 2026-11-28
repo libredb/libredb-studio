@@ -227,7 +227,7 @@ export async function POST(req: NextRequest) {
 
       return answered;
     },
-    { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
+    { request: "editApply", readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );
 }
 

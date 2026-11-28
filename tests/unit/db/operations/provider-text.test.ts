@@ -4,7 +4,7 @@
  *
  * Every credential here is generated at run time, so no source line holds one.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   AuthenticationError,
@@ -31,11 +31,16 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
+import { logger } from "@/lib/logger";
 import {
   errorRecord,
   isStudioRefusal,
   PROVIDER_TEXT_WITHHELD,
+  PACKAGE_SENTENCE_WITHHELD,
   providerAuthor,
+  providerSentence,
+  type ProviderWords,
+  type ProviderTextScrub,
   providerTextScrub,
   recordedProviderCode,
   scrubKeyScanPage,
@@ -395,9 +400,57 @@ describe("scrubProviderWarnings and withScrubbedWarnings", () => {
   });
 });
 
+/** The words of a record that grants an engine its own words through `scrub`, on a test route. */
+const scrubbed = (scrub: ProviderTextScrub): ProviderWords => ({ scrub, ownWords: "scrubbed", route: "provider-text" });
+
 describe("the object read sentences", () => {
   const password = generated();
   const scrub = providerTextScrub(connectionWith({ password }), "any");
+
+  test("a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const own = `the catalog refused ${generated()}`;
+      const secret = `refused for ${password}`;
+      // Granted: through core's scrub, logged nowhere.
+      expect(providerSentence(scrubbed(scrub), own)).toBe(own);
+      expect(providerSentence(scrubbed(scrub), secret)).toBe(PROVIDER_TEXT_WITHHELD);
+      expect(warn).not.toHaveBeenCalled();
+
+      // Code-only: Studio's sentence, the words logged once through core's scrub under the route.
+      const codeOnly: ProviderWords = { scrub, ownWords: "code-only", route: "api/db/objects/counts" };
+      expect(providerSentence(codeOnly, own)).toBe(PACKAGE_SENTENCE_WITHHELD);
+      expect(providerSentence(codeOnly, secret)).toBe(PACKAGE_SENTENCE_WITHHELD);
+      expect(warn.mock.calls).toEqual([
+        ["A provider package's answer gave a reason", { route: "api/db/objects/counts", reason: own }],
+        [
+          "A provider package's answer gave a reason",
+          { route: "api/db/objects/counts", reason: PROVIDER_TEXT_WITHHELD },
+        ],
+      ]);
+
+      // The tree answer's readers read it: a count's sentences and a description's index sentence.
+      warn.mockClear();
+      const counts: Record<string, KindCount> = {
+        table: { unavailable: own },
+        view: { count: 7, sampledFrom: own },
+        index: { count: 3 },
+      };
+      expect(scrubKindCounts(codeOnly, counts)).toEqual({
+        table: { unavailable: PACKAGE_SENTENCE_WITHHELD },
+        view: { count: 7, sampledFrom: PACKAGE_SENTENCE_WITHHELD },
+        index: { count: 3 },
+      });
+      const detail: ObjectDetail = { path: ["app", "t"], columns: [], indexes: { unavailable: own }, foreignKeys: [] };
+      expect(scrubObjectDetail(codeOnly, detail)).toEqual({
+        ...detail,
+        indexes: { unavailable: PACKAGE_SENTENCE_WITHHELD },
+      });
+      expect(warn).toHaveBeenCalledTimes(3);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   test("scrubKindCounts withholds an unavailable or sampledFrom sentence that holds the connection's credential and keeps every count", () => {
     const counts: Record<string, KindCount> = {
@@ -407,7 +460,7 @@ describe("the object read sentences", () => {
       sequence: { count: 2, sampledFrom: "pg_class estimate" },
       function: { unavailable: "the catalog refused the read" },
     };
-    expect(scrubKindCounts(scrub, counts)).toEqual({
+    expect(scrubKindCounts(scrubbed(scrub), counts)).toEqual({
       table: { unavailable: PROVIDER_TEXT_WITHHELD },
       view: { count: 7, sampledFrom: PROVIDER_TEXT_WITHHELD },
       index: { count: 3 },
@@ -423,14 +476,17 @@ describe("the object read sentences", () => {
       indexes: { unavailable: `index read refused for ${password}` },
       foreignKeys: [],
     };
-    expect(scrubObjectDetail(scrub, refused)).toEqual({ ...refused, indexes: { unavailable: PROVIDER_TEXT_WITHHELD } });
+    expect(scrubObjectDetail(scrubbed(scrub), refused)).toEqual({
+      ...refused,
+      indexes: { unavailable: PROVIDER_TEXT_WITHHELD },
+    });
     const listed: ObjectDetail = {
       path: ["public", "orders"],
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
       foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
     };
-    expect(scrubObjectDetail(scrub, listed)).toEqual(listed);
+    expect(scrubObjectDetail(scrubbed(scrub), listed)).toEqual(listed);
   });
 
   test("scrubSourceDocument withholds a part's refusal, truncation and refused edit sentences, and keeps its text, its statement flag and an offered edit", () => {
@@ -516,14 +572,14 @@ describe("the object read sentences", () => {
       ],
     };
     const before = structuredClone({ counts, detail, document });
-    scrubKindCounts(scrub, counts);
-    scrubObjectDetail(scrub, detail);
+    scrubKindCounts(scrubbed(scrub), counts);
+    scrubObjectDetail(scrubbed(scrub), detail);
     scrubSourceDocument(scrub, document);
     expect({ counts, detail, document }).toEqual(before);
 
     const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
-    expect(scrubKindCounts(clean, counts)).toEqual(counts);
-    expect(scrubObjectDetail(clean, detail)).toEqual(detail);
+    expect(scrubKindCounts(scrubbed(clean), counts)).toEqual(counts);
+    expect(scrubObjectDetail(scrubbed(clean), detail)).toEqual(detail);
     expect(scrubSourceDocument(clean, document)).toEqual(document);
   });
 });

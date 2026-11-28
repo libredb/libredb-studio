@@ -32,7 +32,24 @@ let metadataSession: DatabaseProvider;
 /** Every open of an editor session, as `getOrCreateEditorSession` receives it, and the entry the case sets it to answer. */
 const openedEditor: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
 let editorEntry: CachedSession;
+/** Every open of a metadata session of any record, as `getOrCreateMetadataSession` receives it, and its entry. */
+const openedMetadataSessions: {
+  connection: EngineConnection;
+  engine: EngineRecord;
+  context: unknown;
+  rest: unknown[];
+}[] = [];
+let metadataEntry: CachedSession;
 mock.module("@/lib/db/factory", () => ({
+  getOrCreateMetadataSession: async (
+    connection: EngineConnection,
+    engine: EngineRecord,
+    context: unknown,
+    ...rest: unknown[]
+  ) => {
+    openedMetadataSessions.push({ connection, engine, context, rest });
+    return metadataEntry;
+  },
   findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
   getOrCreateEditorSession: async (
     connection: EngineConnection,
@@ -54,9 +71,10 @@ mock.module("@/lib/db/factory", () => ({
   },
 }));
 
-const { cachedEditorProvider, editorProvider, editorTarget, metadataProvider } = await import(
+const { cachedEditorProvider, editorProvider, editorTarget, metadataProvider, metadataTreeTarget } = await import(
   "@/lib/api/editor-provider"
 );
+const { providerTreeTarget } = await import("@/lib/api/session-target");
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
 const session = (role: string) => ({ role });
@@ -209,6 +227,80 @@ describe("metadataProvider", () => {
 
     metadataSession = providerOf({});
     await expect(metadataProvider(session("admin"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
+  });
+});
+
+/** The object tree's session of any record: the record's metadata session by its form (C-66). */
+describe("metadataTreeTarget", () => {
+  const legacyEngine = { id: connection.type, offers: { legacyProvider: true } } as unknown as EngineRecord;
+  const packageEngine = { id: "acmeps", offers: { legacyProvider: false } } as unknown as EngineRecord;
+  const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
+
+  test("the metadata tree target is the record's metadata session by its form, and a provider's target is one bridged session", async () => {
+    // A legacy record's entry holds a provider: its target is one bridged session of it, no environment, the
+    // provider's statement timeout, no marks, and its type as the whole server where it declares catalog sessions.
+    const server = providerOf({ catalogSessions: true });
+    metadataEntry = {
+      opened: { form: "provider", provider: server },
+      engine: legacyEngine,
+    } as unknown as CachedSession;
+    openedMetadataSessions.length = 0;
+    const legacy = await metadataTreeTarget(session("admin"), connection, legacyEngine);
+    expect(legacy.session.calls.objects.tree).toBe("offered");
+    expect(legacy.session.objectModel).toEqual(providerTreeTarget(server).session.objectModel);
+    expect(() => legacy.env.get("PATH")).toThrow();
+    expect([legacy.timeout(), legacy.wholeServer()]).toEqual([60_000, connection.type]);
+    expect(providerTreeTarget(providerOf({})).wholeServer()).toBeNull();
+    expect(providerTreeTarget({ ...providerOf({}), config: { ...connection, queryTimeout: 5 } }).timeout()).toBe(5);
+    legacy.started();
+    legacy.ended(undefined);
+
+    // A provider package's entry holds its session: its target is that session with its declared environment, the
+    // connection's own statement timeout, no whole server, and each read counted on the entry while it runs.
+    const packageSession = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = {
+      opened: { form: "session", session: packageSession, env },
+      engine: packageEngine,
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    metadataEntry = entry;
+    const target = await metadataTreeTarget(session("user"), packageConnection, packageEngine);
+    expect(target.session as unknown).toBe(packageSession);
+    expect(target.env as unknown).toBe(env);
+    expect([target.timeout(), target.wholeServer()]).toEqual([1234, null]);
+    const untimed = await metadataTreeTarget(
+      session("user"),
+      { ...packageConnection, queryTimeout: undefined },
+      packageEngine,
+    );
+    expect(untimed.timeout()).toBe(60_000);
+
+    target.started();
+    expect(entry.running).toBe(1);
+    target.ended({ kind: "answered" });
+    expect(entry.running).toBe(0);
+    expect(entry.lastUsed).toBeGreaterThan(0);
+    // A stopped read counts until the call it stopped waiting for has settled.
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    target.started();
+    target.ended({ kind: "stopped", settled });
+    expect(entry.running).toBe(1);
+    settle();
+    await settled;
+    await Promise.resolve();
+    expect(entry.running).toBe(0);
+
+    // One open per call, of the record handed, under the editor posture of the session.
+    expect(openedMetadataSessions.map((open) => [open.connection, open.engine, open.context, open.rest])).toEqual([
+      [connection, legacyEngine, { allowExternalFileAccess: true }, []],
+      [packageConnection, packageEngine, { allowExternalFileAccess: false }, []],
+      [{ ...packageConnection, queryTimeout: undefined }, packageEngine, { allowExternalFileAccess: false }, []],
+    ]);
   });
 });
 

@@ -98,9 +98,9 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget and metadataProvider build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataProvider and metadataTreeTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
-    "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
+    "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
   "api/test-connection.ts":
     "testConnection opens the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveServedConnection first",
@@ -111,6 +111,7 @@ const PROVIDER_BUILDERS = [
   "getOrCreateProvider",
   "getOrCreateMetadataProvider",
   "getOrCreateEditorSession",
+  "getOrCreateMetadataSession",
   "acquireExecutionProfileProvider",
   "withOneShotTunnel",
   "openEngineOnce",

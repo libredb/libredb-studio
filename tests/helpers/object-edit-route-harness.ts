@@ -5,6 +5,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { mintPlanToken } from "@/lib/api/object-edit-plan-token";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { QueryError } from "@/lib/db/errors";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { ObjectEditAuditKey } from "@/lib/db/object-edit";
 import type { DatabaseConnection } from "@/lib/types";
 import type {
@@ -229,7 +230,18 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  return { resolveConnection: mockResolveConnection, SeedConnectionError };
+  return {
+    resolveConnection: mockResolveConnection,
+    // The edit routes resolve through the served resolve: the same connection, with its engine's legacy record.
+    resolveServedConnection: async (body: Record<string, unknown>, session: unknown) => {
+      const connection = await (mockResolveConnection as (...args: unknown[]) => Promise<DatabaseConnection>)(
+        body,
+        session,
+      );
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
+    SeedConnectionError,
+  };
 });
 
 mock.module("@/lib/db", () => ({

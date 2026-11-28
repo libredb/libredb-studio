@@ -8,6 +8,7 @@ import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseErr
 import { cancelEditorRun, checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { objectTree } from "@/lib/api/object-tree";
+import { providerTreeTarget } from "@/lib/api/session-target";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-token";
@@ -19,6 +20,7 @@ import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   errorRecord,
   type ProviderTextScrub,
+  type ProviderWords,
   providerTextScrub,
   scrubKindCounts,
   scrubObjectDetail,
@@ -307,6 +309,13 @@ export function createHandlers(
   // clause C-66). The record's connection is the one the editor opens before its per-run catalog scope.
   const treeProviderOf = (record: OpenRecord) =>
     factory.getOrCreateMetadataProvider(record.connection, {}, record.posture);
+  // How the provider's sentences in a tree answer reach the host, as the object routes answer them: through the
+  // connection's scrub, by the engine record's grant of its own words (`providerSentence`), under the method's name.
+  const treeWords = (record: OpenRecord, route: string): ProviderWords => ({
+    scrub: providerTextScrub(record.connection, "any"),
+    ownWords: servedEngineRecord(record.connection.type).grants.ownWords,
+    route,
+  });
   // The same provider, waited for only within an editor call's open wait, its engine's connect budget
   // (`openWithinCall`), the budget the query and cancel routes wait within too: the call stops waiting when the wait
   // ends, and the open goes on for the next call.
@@ -423,7 +432,9 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await treeProviderOf(record), signal, METHODS.listContainers).listContainers(path),
+          objectTree(providerTreeTarget(await treeProviderOf(record)), signal, METHODS.listContainers).listContainers(
+            path,
+          ),
         ),
       );
     },
@@ -432,13 +443,17 @@ export function createHandlers(
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
       const record = openRecord(connectionId);
-      // The counts' `unavailable` and `sampledFrom` sentences are the provider's own words, answered through the
-      // connection's scrub as the object routes answer them.
+      // The counts' `unavailable` and `sampledFrom` sentences are the provider's own words, answered as the object
+      // routes answer them (`treeWords`).
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
           scrubKindCounts(
-            providerTextScrub(record.connection, "any"),
-            await objectTree(await treeProviderOf(record), signal, METHODS.countObjects).countObjects(container),
+            treeWords(record, METHODS.countObjects),
+            await objectTree(
+              providerTreeTarget(await treeProviderOf(record)),
+              signal,
+              METHODS.countObjects,
+            ).countObjects(container),
           ),
         ),
       );
@@ -451,7 +466,10 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await treeProviderOf(record), signal, METHODS.listObjects).listObjects(container, kind),
+          objectTree(providerTreeTarget(await treeProviderOf(record)), signal, METHODS.listObjects).listObjects(
+            container,
+            kind,
+          ),
         ),
       );
     },
@@ -461,13 +479,17 @@ export function createHandlers(
       const path = stringArray(fieldOf(params, "path"), "path");
       const kind = aString(fieldOf(params, "kind"), "kind");
       const record = openRecord(connectionId);
-      // The description's `indexes.unavailable` sentence is the provider's own words, answered through the
-      // connection's scrub as the object routes answer it.
+      // The description's `indexes.unavailable` sentence is the provider's own words, answered as the object routes
+      // answer it (`treeWords`).
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
           scrubObjectDetail(
-            providerTextScrub(record.connection, "any"),
-            await objectTree(await treeProviderOf(record), signal, METHODS.describeObject).describeObject(path, kind),
+            treeWords(record, METHODS.describeObject),
+            await objectTree(
+              providerTreeTarget(await treeProviderOf(record)),
+              signal,
+              METHODS.describeObject,
+            ).describeObject(path, kind),
           ),
         ),
       );
@@ -597,7 +619,7 @@ export function createHandlers(
           const capabilities = provider.getCapabilities();
           let columns: readonly ColumnSchema[] | undefined;
           if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
-            const tree = objectTree(provider, signal, METHODS.selectStatement);
+            const tree = objectTree(providerTreeTarget(provider), signal, METHODS.selectStatement);
             columns = (await tree.describeObject(object.path, object.kind)).columns;
           }
           try {

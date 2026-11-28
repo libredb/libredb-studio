@@ -1212,8 +1212,8 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection and by the query route, its session opening through its package (C-109), and is refused on every other request as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
-Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
+An admitted package's engine is served by Test Connection, the query route and the object tree's reads, its session opening through its package (C-109); the object edit and key scan requests, which the contract has no call for yet, refuse it before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+`PROVIDER_UNAVAILABLE` and `PACKAGE_ENGINE_UNSUPPORTED` are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
 
 ### C-109 (normative): A package's open receives only the context core builds
 
@@ -1223,7 +1223,7 @@ An admitted package's engine opens through the package's own `open`, never throu
 - for each field the declaration names, the connection's own value where it sets one, and no other field, no SSH tunnel and no agent credential;
 - the connection's TLS settings, for a mode the declaration lists;
 - core's egress decision, and core's trust material where the declaration reads it, an empty list otherwise;
-- the open policy, core's pool defaults or the owner's share, and a deadline of the open's start plus the engine's connect budget (M-51);
+- the open policy, core's pool defaults, the owner's share or the metadata session's smaller pool (C-66), and a deadline of the open's start plus the engine's connect budget (M-51);
 - the package's declared environment (M-22), which every later call of the session is given too.
 
 Before `open` is called, core refuses by name, never by value and with outcome not-sent, a connection it cannot hand a package whole, among them a field value outside the contract's value forms, a TLS mode the declaration does not list, a field the declaration refuses, a required secret left blank, an SSH tunnel that is on, a host path field, a read-only connection, a claim its grants leave refused, and a connection or an execution context that is not plain data.
@@ -1237,8 +1237,8 @@ The host core's execute, cancel on a stop, end of a scope, tree, maintenance, mo
 
 ### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 
-Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
-The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered is the package's defect on every grant, logged naming the rule and the pointer and answered naming the rule, with the pointer only where a row grants the package's words and then through core's scrub: a malformed batch or row, a refinement its open answered that the host refuses, an execute answer member that `checkExecuteAnswer` refuses as `execute-answer-unreadable` (its result list, its first result's columns or row count, its execution time, its warning list or a warning, each list at most its member's `ANSWER_LIST_MAX` long and read up to its first hole), or a tree answer that `checkTreeAnswer` refuses as `tree-answer-unreadable`.
+Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read, its execute or its tree read, reaches the client only as Studio's sentence naming its code, its warnings only as Studio's sentence naming their count, and the sentences of its tree answers only as Studio's sentence.
+The package's own words then go only to the server's log, each error, warning and sentence logged once through core's scrub of the connection, and a refusal of what the package answered is the package's defect on every grant, logged naming the rule and the pointer and answered naming the rule, with the pointer only where a row grants the package's words and then through core's scrub: a malformed batch or row, a refinement its open answered that the host refuses, an execute answer member that `checkExecuteAnswer` refuses as `execute-answer-unreadable` (its result list, its first result's columns or row count, its execution time, its warning list or a warning, each list at most its member's `ANSWER_LIST_MAX` long and read up to its first hole), or a tree answer that `checkTreeAnswer` refuses as `tree-answer-unreadable`.
 A package's open that fails is answered as a not-sent connection error, in Studio's sentence naming its code where no row grants its words and in its own words through core's scrub where one does.
 
 ### C-114 (normative): A package carries its drivers bundled into its own modules

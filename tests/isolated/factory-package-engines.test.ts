@@ -18,15 +18,18 @@ import { afterAll, beforeAll, describe, expect, jest, spyOn, test } from "bun:te
 import { randomUUID } from "node:crypto";
 import { CLEANUP_DEADLINE_MS, type ProviderImpl } from "@libredb/provider-sdk/calls";
 import { DatabaseConfigError, PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/db/errors";
+import { DEFAULT_POOL_CONFIG } from "@/lib/db/types";
 import {
   acquireExecutionProfileProvider,
   clearProviderCache,
   createDatabaseProvider,
   editorCacheKey,
+  evictIdleProviders,
   findCachedProvider,
   getExecutionProfileCacheStats,
   getOrCreateEditorSession,
   getOrCreateMetadataProvider,
+  getOrCreateMetadataSession,
   getOrCreateProvider,
   getProviderCacheStats,
   openEngineOnce,
@@ -51,7 +54,7 @@ import { installHostCore } from "@/lib/provider-host/instance";
 import { openedProvider, openedSession } from "@/lib/provider-host/open-engine";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
 import type { DatabaseConnection } from "@/lib/types";
-import { admittedFor, admittedManifest } from "../helpers/package-catalog";
+import { admittedFor, admittedManifest, withEngineRecord } from "../helpers/package-catalog";
 
 /** The hooks the cached package's functions call, set per case. */
 let hooks: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
@@ -86,14 +89,21 @@ function packageHooks(closes = true): typeof hooks {
 beforeAll(() => {
   installHostCore(createHostCore(), "test");
   const cached = admittedFor("acme-cached", admittedManifest("acmecached"));
+  const one = admittedFor("acme-one", admittedManifest("acmeone"));
+  // The one-session package's record names a reason its connections serve one session, as a register row would.
   installServerCatalog(
-    composeServerCatalog(
-      [
-        admittedFor("acme-factory", admittedManifest("acmefactory")),
-        { ...cached, record: { ...cached.record, impl: hookImpl() } },
-      ],
-      [{ name: "acme-factory-gone", version: "1.0.0", engines: ["acmefactorygone"], code: "PROVIDER_LOAD_FAILED" }],
-      STUDIO_GRANT_REGISTER,
+    withEngineRecord(
+      composeServerCatalog(
+        [
+          admittedFor("acme-factory", admittedManifest("acmefactory")),
+          { ...cached, record: { ...cached.record, impl: hookImpl() } },
+          { ...one, record: { ...one.record, impl: hookImpl() } },
+        ],
+        [{ name: "acme-factory-gone", version: "1.0.0", engines: ["acmefactorygone"], code: "PROVIDER_LOAD_FAILED" }],
+        STUDIO_GRANT_REGISTER,
+      ),
+      "acmeone",
+      (engine) => ({ ...engine, grants: Object.freeze({ ...engine.grants, servesOneSession: "one handle per file" }) }),
     ),
   );
 });
@@ -170,9 +180,9 @@ function engineOf(id: string): EngineRecord {
   return served.engine;
 }
 
-/** A connection of the cached package's engine with a fresh id. */
-function packageConnection(): EngineConnection {
-  return { id: `conn-${randomUUID()}`, name: "P", type: "acmecached", host: "db.local" } as unknown as EngineConnection;
+/** A connection of the cached package's engine, or of `type`, with a fresh id. */
+function packageConnection(type = "acmecached"): EngineConnection {
+  return { id: `conn-${randomUUID()}`, name: "P", type, host: "db.local" } as unknown as EngineConnection;
 }
 
 /** A connection of SQLite on an anonymous in-memory database with a fresh id. */
@@ -350,6 +360,133 @@ describe("the factory's editor cache and a provider package's engine", () => {
     const connection = packageConnection();
     await getOrCreateEditorSession(connection, engineOf("acmecached"), ADMIN);
     expect(getProviderCacheStats()).toEqual({ size: 1, connections: [connection.id] });
+    await clearProviderCache();
+  });
+});
+
+/** The pools the package's opens were handed, in order, each open answering a fresh handle. */
+function poolHooks(pools: unknown[]): typeof hooks {
+  return {
+    ...packageHooks(),
+    open: (ctx: unknown) => {
+      pools.push((ctx as { pool: unknown }).pool);
+      return Promise.resolve({ handle: { session: randomUUID() } });
+    },
+  };
+}
+
+describe("the factory's metadata session of a provider package's engine", () => {
+  test("a package engine's metadata session opens once per key through its package, beside its editor session", async () => {
+    await clearProviderCache();
+    hooks = packageHooks();
+    seen.length = 0;
+    const connection = packageConnection();
+    const engine = engineOf("acmecached");
+    const [first, joined] = await Promise.all([
+      getOrCreateMetadataSession(connection, engine, ADMIN),
+      getOrCreateMetadataSession(connection, engine, ADMIN),
+    ]);
+    expect(joined).toBe(first);
+    expect(seen).toEqual(["open"]);
+    expect([first.connectionId, first.engine, first.running]).toEqual([connection.id, engine, 0]);
+    expect(openedSession(first.opened).session.calls.console.execute).toBeDefined();
+    // The metadata cache is not the editor's: the editor cache counts none of it, and the editor opens its own.
+    expect(getProviderCacheStats().size).toBe(0);
+    const editor = await getOrCreateEditorSession(connection, engine, ADMIN);
+    expect(editor).not.toBe(first);
+    expect(editor.frame).toBe(first.frame);
+    expect(seen).toEqual(["open", "open"]);
+    expect(await getOrCreateMetadataSession(connection, engine, ADMIN)).toBe(first);
+    expect(seen).toEqual(["open", "open"]);
+
+    // A legacy record's metadata session is the provider getOrCreateMetadataProvider answers, in one entry.
+    const sqlite = sqliteConnection();
+    const legacy = await getOrCreateMetadataSession(sqlite, engineOf(sqlite.type), ADMIN);
+    expect(openedProvider(legacy.opened)).toBe(await getOrCreateMetadataProvider(sqlite, {}, ADMIN));
+    await clearProviderCache();
+  });
+
+  test("a package engine's metadata session opens with a pool of at most two that opens none until asked, shared and owned, and a one-session package reads on its editor session", async () => {
+    await clearProviderCache();
+    const pools: unknown[] = [];
+    hooks = poolHooks(pools);
+    const engine = engineOf("acmecached");
+    const owned = { ...ADMIN, owner: "alice", ownerPoolMax: 7 };
+    await getOrCreateMetadataSession(packageConnection(), engine, ADMIN);
+    await getOrCreateMetadataSession(packageConnection(), engine, owned);
+    await getOrCreateEditorSession(packageConnection(), engine, owned);
+    expect(pools).toEqual([
+      { ...DEFAULT_POOL_CONFIG, min: 0, max: 2 },
+      { ...DEFAULT_POOL_CONFIG, min: 0, max: 2 },
+      { ...DEFAULT_POOL_CONFIG, min: 0, max: 7 },
+    ]);
+
+    seen.length = 0;
+    const single = packageConnection("acmeone");
+    const editor = await getOrCreateEditorSession(single, engineOf("acmeone"), ADMIN);
+    expect(await getOrCreateMetadataSession(single, engineOf("acmeone"), ADMIN)).toBe(editor);
+    expect(seen).toEqual(["open"]);
+    await clearProviderCache();
+  });
+
+  test("a package engine's metadata session leaves with a removal, the idle sweep and the cache close, and is kept while a read runs", async () => {
+    await clearProviderCache();
+    hooks = packageHooks();
+    const engine = engineOf("acmecached");
+    const removals: [string, (connection: EngineConnection) => Promise<() => Promise<void>>][] = [
+      [
+        "connection",
+        async (connection) => {
+          await getOrCreateMetadataSession(connection, engine, ADMIN);
+          return () => removeProvider(connection.id);
+        },
+      ],
+      [
+        "owner",
+        async (connection) => {
+          await getOrCreateMetadataSession(connection, engine, { ...ADMIN, owner: "bob", ownerPoolMax: 2 });
+          await getOrCreateMetadataSession(connection, engine, { ...ADMIN, owner: "alice", ownerPoolMax: 2 });
+          return () => removeProvider(connection.id, { owner: "alice" });
+        },
+      ],
+      [
+        "key",
+        async (connection) => {
+          const entry = await getOrCreateMetadataSession(connection, engine, ADMIN);
+          return () => removeProvider(connection.id, { key: entry.frame });
+        },
+      ],
+    ];
+    for (const [, open] of removals) {
+      const remove = await open(packageConnection());
+      seen.length = 0;
+      await remove();
+      expect(seen).toEqual(["close"]);
+    }
+    await clearProviderCache();
+
+    // The idle sweep keeps a metadata session a read runs on, and closes it once none runs.
+    const swept = await getOrCreateMetadataSession(packageConnection(), engine, ADMIN);
+    swept.running = 1;
+    seen.length = 0;
+    const info = spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      expect(await evictIdleProviders(0)).toBe(0);
+      expect(seen).toEqual([]);
+      swept.running = 0;
+      expect(await evictIdleProviders(0)).toBe(1);
+      expect(seen).toEqual(["close"]);
+    } finally {
+      info.mockRestore();
+    }
+
+    // The cache close closes it.
+    await getOrCreateMetadataSession(packageConnection(), engine, ADMIN);
+    seen.length = 0;
+    await clearProviderCache();
+    expect(seen).toEqual(["close"]);
+    expect(await getOrCreateMetadataSession(packageConnection(), engine, ADMIN)).toBeDefined();
+    expect(seen).toEqual(["close", "open"]);
     await clearProviderCache();
   });
 });

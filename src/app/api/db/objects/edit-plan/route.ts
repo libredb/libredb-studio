@@ -177,6 +177,6 @@ export async function POST(req: NextRequest) {
         planToken: await mintPlanToken(plan),
       };
     },
-    { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
+    { request: "editPlan", readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );
 }

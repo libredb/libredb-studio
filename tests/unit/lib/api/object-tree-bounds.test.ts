@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
 import type { grantedObjectTree, objectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
+import type { providerTreeTarget } from "@/lib/api/session-target";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
@@ -24,6 +25,7 @@ interface ChildDeps {
   readonly objectTree: typeof objectTree;
   readonly grantedObjectTree: typeof grantedObjectTree;
   readonly objectTreeWithinCall: typeof objectTreeWithinCall;
+  readonly providerTreeTarget: typeof providerTreeTarget;
   readonly errorKind: typeof errorKind;
   readonly errorOutcome: typeof errorOutcome;
   readonly createHostCore: typeof createHostCore;
@@ -40,6 +42,7 @@ const child = boundedChild({
       from: path.join(SOURCE, "lib", "api", "object-tree.ts"),
       names: ["objectTree", "grantedObjectTree", "objectTreeWithinCall"],
     },
+    { from: path.join(SOURCE, "lib", "api", "session-target.ts"), names: ["providerTreeTarget"] },
     { from: path.join(SOURCE, "lib", "db", "error-record.ts"), names: ["errorKind", "errorOutcome"] },
     { from: path.join(SOURCE, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SOURCE, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
@@ -61,7 +64,7 @@ const child = boundedChild({
     if (name === "granted-never-answers") {
       let held = 0;
       // The grant's deadline ends 50 ms from now, and its time refusal is the grant's own.
-      const granted = deps.grantedObjectTree(provider, {
+      const granted = deps.grantedObjectTree(deps.providerTreeTarget(provider), {
         deadline: Date.now() + 50,
         timeRefusal: () => new Error("the grant's own time refusal"),
         route: "bounds",
@@ -78,7 +81,7 @@ const child = boundedChild({
     }
     if (name === "within-call-never-answers") {
       // The call's deadline ends 50 ms from now, and its time refusal is the call's own.
-      const within = deps.objectTreeWithinCall(provider, {
+      const within = deps.objectTreeWithinCall(deps.providerTreeTarget(provider), {
         deadline: Date.now() + 50,
         caller: new AbortController().signal,
         timeRefusal: () => new Error("the call's own time refusal"),
@@ -92,7 +95,7 @@ const child = boundedChild({
       }
     }
     const tree = deps.objectTree(
-      provider,
+      deps.providerTreeTarget(provider),
       new AbortController().signal,
       "bounds",
       // The read's deadline, the statement timeout plus the slack, ends 50 ms from now.

@@ -41,6 +41,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 let activeProvider: DatabaseProvider = createMockProvider();
@@ -94,13 +95,19 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return (body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" }) as { type: string };
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
-    }),
+    resolveConnection,
+    // The key scan resolves through the served resolve: the same connection, with its engine's legacy record.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = await resolveConnection(body);
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });

@@ -2,9 +2,15 @@ import type { EditorRunTarget } from "@/lib/api/editor-query";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { getOrCreateProvider } from "@/lib/db";
-import { findCachedProvider, getOrCreateEditorSession, getOrCreateMetadataProvider } from "@/lib/db/factory";
+import {
+  findCachedProvider,
+  getOrCreateEditorSession,
+  getOrCreateMetadataProvider,
+  getOrCreateMetadataSession,
+} from "@/lib/db/factory";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { entryTreeTarget, type TreeTarget } from "@/lib/api/session-target";
 import { HostDefectError } from "@/lib/provider-host/access";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
@@ -18,7 +24,8 @@ import type { DatabaseConnection } from "@/lib/types";
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
  * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
- * same way, for the reads and the kill that must not wait for the editor's statements. Routes that act on the whole
+ * same way, for the reads and the kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
+ * the object tree's session of any record. Routes that act on the whole
  * connection rather than in one database, such as cancel, which finds a statement in whichever session runs it, call
  * `getOrCreateProvider` directly.
  *
@@ -80,6 +87,24 @@ export async function metadataProvider(
 ): Promise<DatabaseProvider> {
   const connected = await getOrCreateMetadataProvider(connection, {}, editorExecutionContext(session, connection));
   return scopeToCatalog(connected, catalog);
+}
+
+/**
+ * The tree target of `connection`'s metadata session of `engine`, for any record the server serves
+ * (docs/providers/CONTRACT.md, clause C-66): the entry `getOrCreateMetadataSession` answers (src/lib/db/factory.ts), opened under the
+ * session's editor posture as `editorProvider` opens the editor's provider, with the same owner, read by its form
+ * (`entryTreeTarget` in ./session-target): a legacy provider's bridged session, or a provider package's session with
+ * its declared environment, the connection's own statement timeout and each read counted on the entry. The six tree
+ * routes read the object tree on it (`handleObjectRequest` in ./object-route), so a tree read never waits for the
+ * editor's statements, except on a connection that serves one session.
+ */
+export async function metadataTreeTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+): Promise<TreeTarget> {
+  const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection));
+  return entryTreeTarget(entry, connection);
 }
 
 /**

@@ -1,0 +1,119 @@
+/**
+ * What a caller facade of the provider host core runs its calls on: a session target (`SessionTarget`), the session,
+ * the environment every call of it is given, its statement timeout and the run marks of the cache entry it lives in.
+ *
+ * Every builder of a legacy provider's session target lives here, so this is the one module of the caller facades that
+ * builds a bridged session (`bridgedConsole` in src/lib/provider-host/legacy-bridge.ts), and every builder of a target
+ * from a cache entry of the provider factory, by the entry's form, so no facade and no route forks on who serves an
+ * engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code backend, which
+ * is handed the factory's functions and imports none of them, builds its targets here too; the builders that open
+ * through the factory live in src/lib/api/editor-provider.ts and call these.
+ *
+ * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
+ * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
+ * settled; a legacy provider's target marks nothing, since its provider reports its own runs in flight
+ * (`hasRunsInFlight`), as it did before targets.
+ */
+import { type EnvReader, envReader } from "@libredb/provider-sdk/calls";
+import { statementTimeout } from "@/lib/api/editor-query";
+import type { CachedSession } from "@/lib/db/factory";
+import type { EngineConnection } from "@/lib/db/server-catalog";
+import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type ObjectReadOptions } from "@/lib/db/types";
+import type { StoppedRecord } from "@/lib/provider-host/core/console";
+import type { ObjectsSession } from "@/lib/provider-host/core/objects";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import type { DatabaseType } from "@/lib/types";
+
+/** How a call on a target ended, as its marks read it: undefined for a call that threw, which has settled. */
+export type CallEnd = { readonly kind: "answered" | "refused" } | Pick<StoppedRecord, "kind" | "settled"> | undefined;
+
+/** A session a caller facade runs its calls on, and what each call of it is given. */
+export interface SessionTarget<Session> {
+  readonly session: Session;
+  /** The environment every call's context carries: none for a legacy provider, the declared one for a package's. */
+  readonly env: EnvReader;
+  /**
+   * The statement timeout a call's deadline is taken from, the connection's own or Studio's default, read when a call
+   * takes its deadline from it; a facade whose caller holds a deadline of its own reads none.
+   */
+  timeout(): number;
+  /** Marks a call as running on the target's cache entry, before the call. */
+  started(): void;
+  /** Ends the mark `started` set, once the call ended as `record` and, for a stopped call, once it has settled. */
+  ended(record: CallEnd): void;
+}
+
+/** A session target of the object tree's reads (src/lib/api/object-tree.ts). */
+export interface TreeTarget extends SessionTarget<ObjectsSession> {
+  /**
+   * The legacy type of a connection that reaches every database on its server, whose provider declares catalog
+   * sessions, which a walk over every container must not read (`assertNotWholeServer` in src/lib/db/catalog-scope.ts);
+   * null for every other connection, a provider package's among them, whose record offers no catalog session. Read
+   * when asked, so only a walk over every container reads a provider's capabilities for it.
+   */
+  wholeServer(): DatabaseType | null;
+}
+
+/** A legacy provider reads no declared environment, so its calls get a reader of none. */
+const NO_ENVIRONMENT = envReader([], () => undefined);
+
+/** The marks of a target that counts nothing: a legacy provider's. */
+const NO_MARKS = Object.freeze({ started: () => undefined, ended: () => undefined });
+
+/**
+ * The marks of a call on `entry`: `running` counts the call from its start until it ended, or, when a stop ended it,
+ * until the call it stopped waiting for has settled, so the idle sweep never closes a session under a call in flight;
+ * `lastUsed` is the time the call ended.
+ */
+function entryMarks(entry: CachedSession): Pick<SessionTarget<unknown>, "started" | "ended"> {
+  return {
+    started: () => {
+      entry.running += 1;
+    },
+    ended: (record) => {
+      entry.lastUsed = Date.now();
+      if (record?.kind === "stopped") {
+        void record.settled.then(() => {
+          entry.running -= 1;
+        });
+      } else {
+        entry.running -= 1;
+      }
+    },
+  };
+}
+
+/**
+ * The tree target of `provider`: one bridged session of it, built when this is called, which reads the provider's
+ * capabilities once for its object model, before any host core is read; no environment, no marks, and, when asked,
+ * the provider's statement timeout and the provider's type as `wholeServer` where its capabilities declare catalog
+ * sessions.
+ * `objectReads` is handed to the bridge as it is: the agent's billed-read allowance, where the walk has one.
+ */
+export function providerTreeTarget(provider: DatabaseProvider, objectReads: ObjectReadOptions = {}): TreeTarget {
+  const { session } = bridgedConsole(provider, {}, objectReads);
+  return {
+    session,
+    env: NO_ENVIRONMENT,
+    timeout: () => statementTimeout(provider),
+    wholeServer: () => (provider.getCapabilities().catalogSessions === true ? provider.type : null),
+    ...NO_MARKS,
+  };
+}
+
+/**
+ * The tree target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
+ * provider's through `providerTreeTarget`; a provider package's session with its declared environment, the
+ * connection's own statement timeout or Studio's default, no whole server, and the marks of each read on the entry.
+ */
+export function entryTreeTarget(entry: CachedSession, connection: EngineConnection): TreeTarget {
+  const { opened } = entry;
+  if (opened.form === "provider") return providerTreeTarget(opened.provider);
+  return {
+    session: opened.session,
+    env: opened.env,
+    timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
+    wholeServer: () => null,
+    ...entryMarks(entry),
+  };
+}

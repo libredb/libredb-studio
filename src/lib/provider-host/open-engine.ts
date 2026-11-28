@@ -27,7 +27,7 @@ import { logger } from "@/lib/logger";
 import { HostDefectError } from "./access";
 import { type ContractSession, openContractSession } from "./core/contract-session";
 import { openLegacyEngine } from "./legacy-adapter/open";
-import { packageEnvironment, packageOpenContext } from "./open-context";
+import { type PackageOpenRequest, packageEnvironment, packageOpenContext } from "./open-context";
 
 /** What `openEngine` opens an engine with. */
 export interface EngineOpen {
@@ -43,6 +43,11 @@ export interface EngineOpen {
    * nothing, so neither bounds it.
    */
   readonly within?: { readonly deadline: number; readonly signal: AbortSignal };
+  /**
+   * The pool core chose for a provider package's session, when it chose one (`PackageOpenRequest.pool` in
+   * ./open-context): the metadata session's. A legacy open reads its pool from `options` instead.
+   */
+  readonly pool?: PackageOpenRequest["pool"];
 }
 
 /** An opened session of a package's engine, and the package's declared environment its calls are given. */
@@ -57,9 +62,9 @@ export type OpenedEngine =
   | ({ readonly form: "session" } & OpenedPackageSession);
 
 /**
- * Opens a session of `engine`'s package for `connection` through the package's `open`, with the context core builds;
- * see `packageOpenContext`. A stop answers the signal's reason. An open the host refused is a `HostDefectError` carrying
- * the refusals, the class the accessor builds for a refusal no row of it reads (./access.ts): a refinement the open
+ * Opens a session of `engine`'s package for `connection` through the package's `open`, with the context core builds
+ * and the pool core chose for it, if any; see `packageOpenContext`. A stop answers the signal's reason. An open the
+ * host refused is a `HostDefectError` carrying the refusals, the class the accessor builds for a refusal no row of it reads (./access.ts): a refinement the open
  * answered is refused by rules whose author is the package, so every route answers it as the package's defect, naming
  * each rule (`packageFailureAnswer` in src/lib/api/package-errors.ts), and a refusal of the call's start, its deadline
  * passed or its signal aborted before `open` was called, by rules whose author is Studio. A failure the package
@@ -70,10 +75,18 @@ async function openPackageEngine(
   connection: EngineConnection,
   execution: ProviderExecutionContext,
   within: { readonly deadline: number; readonly signal: AbortSignal },
+  pool: PackageOpenRequest["pool"],
 ): Promise<OpenedPackageSession> {
   const served = servedPackage(engine);
   const env = packageEnvironment(served.manifest);
-  const ctx = packageOpenContext({ connection, engine, execution, deadline: within.deadline, signal: within.signal });
+  const ctx = packageOpenContext({
+    connection,
+    engine,
+    execution,
+    deadline: within.deadline,
+    signal: within.signal,
+    ...(pool !== undefined && { pool }),
+  });
   const late = (error: unknown): void => {
     logger.warn("[DB] A provider package's open Studio stopped waiting for failed afterwards.", {
       connectionId: connection.id,
@@ -109,7 +122,10 @@ export async function openEngine(engine: EngineRecord, open: EngineOpen): Promis
       "A provider package's engine was opened without a deadline and a signal: its open connects, so a caller that gives neither is a host defect.",
     );
   }
-  return { form: "session", ...(await openPackageEngine(engine, open.connection, open.execution, open.within)) };
+  return {
+    form: "session",
+    ...(await openPackageEngine(engine, open.connection, open.execution, open.within, open.pool)),
+  };
 }
 
 /**
