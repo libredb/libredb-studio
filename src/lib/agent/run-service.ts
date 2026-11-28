@@ -50,6 +50,7 @@ import type { AgentStatementLanguageId } from "./agent-manifest";
 import { type AgentGoalVerifierId, verifyRunGoal } from "./goal-verifier";
 import type { AgentHistoryCursor, AgentHistoryPage } from "./history";
 import type { AgentPackEvidenceRunEvent } from "./languages/client";
+import { servedClientPacks } from "./languages/server";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -768,7 +769,8 @@ export class AgentRunService {
       review on #347.
     */
     const record = (await this.readOrThrow(runId)).record;
-    const verdict = record.status === "queued" ? null : verifyRunGoal({ ...record, status });
+    // The run's language facts are read from the server's registry composed from the installed catalog.
+    const verdict = record.status === "queued" ? null : verifyRunGoal({ ...record, status }, servedClientPacks());
 
     // Spread rather than the fields outright: an ending that has neither writes the
     // entry it always wrote, so a ledger from before these fields and one after them

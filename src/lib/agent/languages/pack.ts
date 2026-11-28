@@ -796,7 +796,9 @@ export type AgentPostureCopy = {
 
 /**
  * What a language contributes to the browser: data a client bundle may hold, with no server code behind it. Reached
- * through `languageClientPack` in `client.ts`, and read whole by `agent-manifest.ts` through its projections.
+ * in the browser through `languageClientPack` in `client.ts`, and read whole by `agent-manifest.ts` through its
+ * projections; the server reaches it in its registry composed from the installed catalog (`servedClientPacks` and
+ * `serverLanguageClientPack` in `server.ts`).
  */
 export interface AgentLanguageClientPack {
   /** The words the run's sentences use: `AGENT_LANGUAGE_COPY` in `agent-manifest.ts` projects it. */
@@ -861,7 +863,8 @@ export interface AgentLanguageClientPack {
 
 /**
  * One statement language, whole. Each facet is reachable alone through its tier's accessor, which returns the very
- * object the pack holds: `languageClientPack` in `client.ts` for the client facet, which the browser modules read,
+ * object the pack holds: `languageClientPack` in `client.ts` for the client facet, which the browser modules read (the
+ * server reads it through `serverLanguageClientPack` in `server.ts`),
  * `languageServerPack` in `server.ts` for the server facet, which `tools.ts` reads below the execution tier, and
  * `agentLanguagePack` in `index.ts` for the whole pack, which only the run loop reads.
  */

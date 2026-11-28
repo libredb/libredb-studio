@@ -5,6 +5,7 @@ import {
   type AgentGoalVerifierId,
   verifyRunGoal,
 } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import type {
   AgentArtifactReference,
   AgentEvidenceReference,
@@ -146,13 +147,17 @@ describe("an agent run answers when it composed a report backed by something it 
         completed(CORRELATION.full, 8),
         reportCiting(ARTIFACT(CORRELATION.full)),
       ]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-investigation.1", unmet: [] });
   });
 
   test("a report citing only the schema snapshot is answered, because some questions are answerable from the schema", () => {
-    const verdict = verifyRunGoal(run("agent", "succeeded", [contextCaptured, reportCiting(SNAPSHOT)]));
+    const verdict = verifyRunGoal(
+      run("agent", "succeeded", [contextCaptured, reportCiting(SNAPSHOT)]),
+      BUNDLED_CLIENT_PACKS,
+    );
 
     expect(verdict.outcome).toBe("answered");
     expect(verdict.unmet).toEqual([]);
@@ -166,6 +171,7 @@ describe("an agent run answers when it composed a report backed by something it 
         completed(CORRELATION.full, 8),
         reportCiting(ARTIFACT(CORRELATION.empty), ARTIFACT(CORRELATION.full)),
       ]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.outcome).toBe("answered");
@@ -176,7 +182,10 @@ describe("an agent run answers when it composed a report backed by something it 
     // come out of the run loop. It can come out of a hand-written or older ledger,
     // and guessing "empty" about a result nobody has seen would be the verifier
     // inventing evidence of its own.
-    const verdict = verifyRunGoal(run("agent", "succeeded", [contextCaptured, reportCiting(ARTIFACT("never-read"))]));
+    const verdict = verifyRunGoal(
+      run("agent", "succeeded", [contextCaptured, reportCiting(ARTIFACT("never-read"))]),
+      BUNDLED_CLIENT_PACKS,
+    );
 
     expect(verdict.outcome).toBe("answered");
   });
@@ -188,6 +197,7 @@ describe("an agent run that finished without answering says so", () => {
     // `succeeded` with the answer nowhere.
     const verdict = verifyRunGoal(
       run("agent", "succeeded", [contextCaptured, completed(CORRELATION.full, 8), closing]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] });
@@ -204,13 +214,17 @@ describe("an agent run that finished without answering says so", () => {
         completed(CORRELATION.alsoEmpty, 0),
         reportCiting(ARTIFACT(CORRELATION.empty), ARTIFACT(CORRELATION.alsoEmpty)),
       ]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["empty-evidence"] });
   });
 
   test("a run that ran out of turns without reporting is unanswered", () => {
-    const verdict = verifyRunGoal(run("agent", "failed", [contextCaptured, completed(CORRELATION.full, 8)]));
+    const verdict = verifyRunGoal(
+      run("agent", "failed", [contextCaptured, completed(CORRELATION.full, 8)]),
+      BUNDLED_CLIENT_PACKS,
+    );
 
     expect(verdict.outcome).toBe("unanswered");
     expect(verdict.unmet).toEqual(["no-report"]);
@@ -219,7 +233,10 @@ describe("an agent run that finished without answering says so", () => {
   test("a cancelled run is unanswered because it was stopped, not because it failed to report", () => {
     // A user's stop is not a defect of the run, and reporting it as one would make
     // every cancellation look like a model that would not answer.
-    const verdict = verifyRunGoal(run("agent", "cancelled", [contextCaptured, completed(CORRELATION.full, 8)]));
+    const verdict = verifyRunGoal(
+      run("agent", "cancelled", [contextCaptured, completed(CORRELATION.full, 8)]),
+      BUNDLED_CLIENT_PACKS,
+    );
 
     expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["cancelled"] });
   });
@@ -231,6 +248,7 @@ describe("an agent run that finished without answering says so", () => {
         completed(CORRELATION.full, 8),
         reportCiting(ARTIFACT(CORRELATION.full)),
       ]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.outcome).toBe("answered");
@@ -239,6 +257,7 @@ describe("an agent run that finished without answering says so", () => {
   test("a report with no claims at all is unanswered", () => {
     const verdict = verifyRunGoal(
       run("agent", "succeeded", [contextCaptured, { kind: "report-composed", atMs: 30, claims: [] }]),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.unmet).toEqual(["no-report"]);
@@ -250,7 +269,10 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // Planning is toolless by contract, so it can never cite evidence. Judging it
     // by the investigation rule would fail every planning run that did its job.
     // What it CAN produce, since the 2026-08-15 design, is the statement itself.
-    const verdict = verifyRunGoal(run("planning", "succeeded", [closingWithStatement, statementDrafted]));
+    const verdict = verifyRunGoal(
+      run("planning", "succeeded", [closingWithStatement, statementDrafted]),
+      BUNDLED_CLIENT_PACKS,
+    );
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
   });
@@ -258,7 +280,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
   test("an explicit NO STATEMENT: refusal is an answer too", () => {
     // The mode's second legitimate ending: the inventory does not support the
     // question, and saying so is the honest outcome rather than a failure.
-    const verdict = verifyRunGoal(run("planning", "succeeded", [closingRefusing]));
+    const verdict = verifyRunGoal(run("planning", "succeeded", [closingRefusing]), BUNDLED_CLIENT_PACKS);
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
   });
@@ -267,7 +289,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // The defect this rule exists for: a live run on 2026-08-15 answered a question
     // about a real database with a generic inspection plan and scored `answered`,
     // because prose of any length passed.
-    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture]));
+    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture]), BUNDLED_CLIENT_PACKS);
 
     expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-planning.1", unmet: ["no-statement"] });
   });
@@ -275,15 +297,17 @@ describe("a planning run is judged by what planning mode can produce", () => {
   test("a lecture and a mute run are not conflated", () => {
     // Two different facts about a run, and the sentences a reader gets differ: one
     // said nothing at all, the other said a great deal and delivered nothing.
-    expect(verifyRunGoal(run("planning", "succeeded", [lecture])).unmet).toEqual(["no-statement"]);
-    expect(verifyRunGoal(run("planning", "succeeded", [])).unmet).toEqual(["no-plan"]);
+    expect(verifyRunGoal(run("planning", "succeeded", [lecture]), BUNDLED_CLIENT_PACKS).unmet).toEqual([
+      "no-statement",
+    ]);
+    expect(verifyRunGoal(run("planning", "succeeded", []), BUNDLED_CLIENT_PACKS).unmet).toEqual(["no-plan"]);
   });
 
   test("an operations plan keeps the prose rule, because it has no statement contract", () => {
     // The operations variant's `planDeliverable` is prose: the workflow reads no schema and
     // composes no SQL, so requiring a statement of it would fail every run that did
     // exactly what the workflow is for.
-    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture], "operations"));
+    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture], "operations"), BUNDLED_CLIENT_PACKS);
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
   });
@@ -294,25 +318,29 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // prose, and the verdict must not then fail it for drafting no statement.
     const prose = { ...run("planning", "succeeded", [lecture]), statementLanguage: "mqttread" as const };
 
-    expect(verifyRunGoal(prose)).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
-    expect(verifyRunGoal({ ...prose, events: [] }).unmet).toEqual(["no-plan"]);
+    expect(verifyRunGoal(prose, BUNDLED_CLIENT_PACKS)).toEqual({
+      outcome: "answered",
+      verifier: "agent-planning.1",
+      unmet: [],
+    });
+    expect(verifyRunGoal({ ...prose, events: [] }, BUNDLED_CLIENT_PACKS).unmet).toEqual(["no-plan"]);
   });
 
   test("a cancelled plan run that got as far as prose still reports the cancellation", () => {
     // A user's stop is not a defect of the run, so it is substituted for the missing
     // statement rather than reported as one.
-    expect(verifyRunGoal(run("planning", "cancelled", [lecture])).unmet).toEqual(["cancelled"]);
+    expect(verifyRunGoal(run("planning", "cancelled", [lecture]), BUNDLED_CLIENT_PACKS).unmet).toEqual(["cancelled"]);
   });
 
   test("a planning run that said nothing is unanswered", () => {
     // #341 F1: the mute planning run, whose entire ledger was three events.
-    const verdict = verifyRunGoal(run("planning", "succeeded", []));
+    const verdict = verifyRunGoal(run("planning", "succeeded", []), BUNDLED_CLIENT_PACKS);
 
     expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-planning.1", unmet: ["no-plan"] });
   });
 
   test("a cancelled planning run reports the cancellation rather than a missing plan", () => {
-    const verdict = verifyRunGoal(run("planning", "cancelled", []));
+    const verdict = verifyRunGoal(run("planning", "cancelled", []), BUNDLED_CLIENT_PACKS);
 
     expect(verdict.unmet).toEqual(["cancelled"]);
   });
@@ -334,6 +362,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
         [contextCaptured, completed(CORRELATION.full, 8), planComparison, reportCiting(ARTIFACT(CORRELATION.full))],
         "query-optimization",
       ),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
@@ -345,8 +374,10 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     // investigation — it is the workflow that makes it not one.
     const events = [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))];
 
-    expect(verifyRunGoal(run("agent", "succeeded", events, "investigation")).outcome).toBe("answered");
-    expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization"))).toEqual({
+    expect(verifyRunGoal(run("agent", "succeeded", events, "investigation"), BUNDLED_CLIENT_PACKS).outcome).toBe(
+      "answered",
+    );
+    expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization"), BUNDLED_CLIENT_PACKS)).toEqual({
       outcome: "unanswered",
       verifier: "agent-query-optimization.3",
       unmet: ["no-plan-comparison"],
@@ -357,6 +388,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     // Naming the smaller of two problems would send a reader after the wrong one.
     const verdict = verifyRunGoal(
       run("agent", "succeeded", [contextCaptured, completed(CORRELATION.full, 8)], "query-optimization"),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.unmet).toEqual(["no-report"]);
@@ -370,6 +402,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
         [contextCaptured, completed(CORRELATION.empty, 0), planComparison, reportCiting(ARTIFACT(CORRELATION.empty))],
         "query-optimization",
       ),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.unmet).toEqual(["empty-evidence"]);
@@ -383,6 +416,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
         [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))],
         "investigation",
       ),
+      BUNDLED_CLIENT_PACKS,
     );
 
     expect(verdict.outcome).toBe("answered");
@@ -424,7 +458,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     });
 
     const optimization = (events: readonly AgentRunEvent[]) =>
-      verifyRunGoal(run("agent", "succeeded", events, "query-optimization"));
+      verifyRunGoal(run("agent", "succeeded", events, "query-optimization"), BUNDLED_CLIENT_PACKS);
 
     test("a cited report and an index recommendation citing the plan is an answer", () => {
       const verdict = optimization([
@@ -705,6 +739,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
             [contextCaptured, planReadCountedEmpty, reportCiting(ARTIFACT(CORRELATION.plan))],
             "investigation",
           ),
+          BUNDLED_CLIENT_PACKS,
         );
 
         expect(verdict).toEqual({
@@ -721,10 +756,12 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     // only thing separating these verdicts.
     const events = [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))];
 
-    expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization")).unmet).toEqual([
+    expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization"), BUNDLED_CLIENT_PACKS).unmet).toEqual([
       "no-plan-comparison",
     ]);
-    expect(verifyRunGoal(run("agent", "succeeded", events, "database-assessment")).unmet).toEqual(["no-table-profile"]);
+    expect(verifyRunGoal(run("agent", "succeeded", events, "database-assessment"), BUNDLED_CLIENT_PACKS).unmet).toEqual(
+      ["no-table-profile"],
+    );
   });
 });
 
@@ -755,7 +792,7 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
   };
 
   const operations = (events: readonly AgentRunEvent[]) =>
-    verifyRunGoal(run("agent", "succeeded", events, "operations"));
+    verifyRunGoal(run("agent", "succeeded", events, "operations"), BUNDLED_CLIENT_PACKS);
 
   test("a report citing a reading this run took is answered", () => {
     const verdict = operations([readingAttempted, reading(READING, 6), reportCiting(ARTIFACT(READING))]);
@@ -815,6 +852,7 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
     expect(
       verifyRunGoal(
         run("agent", "succeeded", [reading(CORRELATION.empty, 0), reportCiting(ARTIFACT(CORRELATION.empty))]),
+        BUNDLED_CLIENT_PACKS,
       ).unmet,
     ).toEqual(["empty-evidence"]);
   });
@@ -824,7 +862,9 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
   });
 
   test("a cancelled run without a report reports the cancellation instead", () => {
-    expect(verifyRunGoal(run("agent", "cancelled", [readingAttempted], "operations")).unmet).toEqual(["cancelled"]);
+    expect(
+      verifyRunGoal(run("agent", "cancelled", [readingAttempted], "operations"), BUNDLED_CLIENT_PACKS).unmet,
+    ).toEqual(["cancelled"]);
   });
 });
 
@@ -841,7 +881,7 @@ describe("a data-analysis run answers when it also produced something to show", 
   };
 
   const analysis = (events: readonly AgentRunEvent[]) =>
-    verifyRunGoal(run("agent", "succeeded", events, "data-analysis"));
+    verifyRunGoal(run("agent", "succeeded", events, "data-analysis"), BUNDLED_CLIENT_PACKS);
 
   test("the baseline plus an answer is answered", () => {
     const verdict = analysis([contextCaptured, completed(ANSWER, 4), answerComposed, reportCiting(ARTIFACT(ANSWER))]);
@@ -943,24 +983,29 @@ describe("a data-analysis run answers when it also produced something to show", 
     const schemaOnly = [contextCaptured, reportCiting(SNAPSHOT)];
 
     expect(analysis(schemaOnly).unmet).toEqual(["no-answer"]);
-    expect(verifyRunGoal(run("agent", "succeeded", schemaOnly)).unmet).toEqual([]);
+    expect(verifyRunGoal(run("agent", "succeeded", schemaOnly), BUNDLED_CLIENT_PACKS).unmet).toEqual([]);
   });
 
   test("a cancelled run without a report reports the cancellation instead", () => {
-    expect(verifyRunGoal(run("agent", "cancelled", [contextCaptured], "data-analysis")).unmet).toEqual(["cancelled"]);
+    expect(
+      verifyRunGoal(run("agent", "cancelled", [contextCaptured], "data-analysis"), BUNDLED_CLIENT_PACKS).unmet,
+    ).toEqual(["cancelled"]);
   });
 });
 
 describe("agent-query-optimization-kubectl.1", () => {
   const verify = (events: AgentRunEvent[]) =>
-    verifyRunGoal({
-      mode: "agent",
-      workflowType: "query-optimization",
-      status: "succeeded",
-      events,
-      statementLanguage: "kubectl",
-      verifier: "agent-query-optimization-kubectl.1",
-    });
+    verifyRunGoal(
+      {
+        mode: "agent",
+        workflowType: "query-optimization",
+        status: "succeeded",
+        events,
+        statementLanguage: "kubectl",
+        verifier: "agent-query-optimization-kubectl.1",
+      },
+      BUNDLED_CLIENT_PACKS,
+    );
 
   const USAGE = "4f2c9a10-0000-4000-8000-0000000000a1";
   const READ = "4f2c9a10-0000-4000-8000-0000000000a2";
@@ -1077,27 +1122,30 @@ describe("agent-query-optimization-kubectl.1", () => {
       events: [contextCaptured, ...usageRead(USAGE, 3), reportCiting(ARTIFACT(USAGE))],
       statementLanguage: "kubectl",
     } as const;
-    expect(verifyRunGoal(ledger)).toEqual({
+    expect(verifyRunGoal(ledger, BUNDLED_CLIENT_PACKS)).toEqual({
       outcome: "answered",
       verifier: "agent-query-optimization-kubectl.1",
       unmet: [],
     });
-    expect(verifyRunGoal({ ...ledger, verifier: "agent-query-optimization-kubectl.1" }).verifier).toBe(
-      "agent-query-optimization-kubectl.1",
-    );
+    expect(
+      verifyRunGoal({ ...ledger, verifier: "agent-query-optimization-kubectl.1" }, BUNDLED_CLIENT_PACKS).verifier,
+    ).toBe("agent-query-optimization-kubectl.1");
   });
 });
 
 describe("agent-database-assessment-kubectl.1", () => {
   const verify = (events: AgentRunEvent[]) =>
-    verifyRunGoal({
-      mode: "agent",
-      workflowType: "database-assessment",
-      status: "succeeded",
-      events,
-      statementLanguage: "kubectl",
-      verifier: "agent-database-assessment-kubectl.1",
-    });
+    verifyRunGoal(
+      {
+        mode: "agent",
+        workflowType: "database-assessment",
+        status: "succeeded",
+        events,
+        statementLanguage: "kubectl",
+        verifier: "agent-database-assessment-kubectl.1",
+      },
+      BUNDLED_CLIENT_PACKS,
+    );
 
   const PROFILE = "4f2c9a10-0000-4000-8000-0000000000b1";
   const READ = "4f2c9a10-0000-4000-8000-0000000000b2";
@@ -1147,7 +1195,7 @@ describe("agent-database-assessment-kubectl.1", () => {
       events: [contextCaptured, completed(READ, 4), reportCiting(ARTIFACT(READ))],
       statementLanguage: "kubectl",
     } as const;
-    expect(verifyRunGoal(ledger)).toEqual({
+    expect(verifyRunGoal(ledger, BUNDLED_CLIENT_PACKS)).toEqual({
       outcome: "unanswered",
       verifier: "agent-database-assessment-kubectl.1",
       unmet: ["no-workload-profile"],
@@ -1168,9 +1216,10 @@ describe("the verifier registry", () => {
 
   test("every workflow identifies the rule that judged it, so a reader knows what the verdict measured", () => {
     for (const [workflowType, goal] of Object.entries(AGENT_WORKFLOW_GOALS)) {
-      expect(verifyRunGoal(run("agent", "succeeded", [], workflowType as AgentRunWorkflowType)).verifier).toBe(
-        goal.verifier,
-      );
+      expect(
+        verifyRunGoal(run("agent", "succeeded", [], workflowType as AgentRunWorkflowType), BUNDLED_CLIENT_PACKS)
+          .verifier,
+      ).toBe(goal.verifier);
     }
   });
 
@@ -1186,8 +1235,10 @@ describe("the verifier registry", () => {
 
   test("a persisted verifier id is the rule applied, and an unknown one is an error", () => {
     const run = { mode: "agent", workflowType: "investigation", status: "succeeded", events: [] } as const;
-    expect(verifyRunGoal({ ...run, verifier: "agent-investigation.1" }).verifier).toBe("agent-investigation.1");
-    expect(() => verifyRunGoal({ ...run, verifier: "agent-query-optimization.1" })).toThrow(
+    expect(verifyRunGoal({ ...run, verifier: "agent-investigation.1" }, BUNDLED_CLIENT_PACKS).verifier).toBe(
+      "agent-investigation.1",
+    );
+    expect(() => verifyRunGoal({ ...run, verifier: "agent-query-optimization.1" }, BUNDLED_CLIENT_PACKS)).toThrow(
       "no rule for verifier agent-query-optimization.1",
     );
   });
@@ -1197,7 +1248,7 @@ describe("the verifier registry", () => {
     for (const id of ["toString", "constructor", "__proto__"]) {
       let caught: unknown;
       try {
-        verifyRunGoal({ ...run, verifier: id as AgentGoalVerifierId });
+        verifyRunGoal({ ...run, verifier: id as AgentGoalVerifierId }, BUNDLED_CLIENT_PACKS);
       } catch (error) {
         caught = error;
       }
@@ -1209,8 +1260,10 @@ describe("the verifier registry", () => {
 
   test("a run with no persisted verifier is judged by its language's variant, and an absent language reads as sql", () => {
     const run = { mode: "agent", workflowType: "operations", status: "succeeded", events: [] } as const;
-    expect(verifyRunGoal({ ...run, statementLanguage: "kubectl" }).verifier).toBe("agent-operations.2");
-    expect(verifyRunGoal(run).verifier).toBe("agent-operations.2");
+    expect(verifyRunGoal({ ...run, statementLanguage: "kubectl" }, BUNDLED_CLIENT_PACKS).verifier).toBe(
+      "agent-operations.2",
+    );
+    expect(verifyRunGoal(run, BUNDLED_CLIENT_PACKS).verifier).toBe("agent-operations.2");
   });
 
   test("planning is judged by its own rule whatever the run is FOR", () => {
@@ -1223,7 +1276,7 @@ describe("the verifier registry", () => {
     for (const workflowType of Object.keys(AGENT_WORKFLOW_GOALS) as AgentRunWorkflowType[]) {
       const events =
         workflowType === "operations" ? [lecture] : ([closingWithStatement, statementDrafted] as AgentRunEvent[]);
-      const verdict = verifyRunGoal(run("planning", "succeeded", events, workflowType));
+      const verdict = verifyRunGoal(run("planning", "succeeded", events, workflowType), BUNDLED_CLIENT_PACKS);
       expect(verdict, workflowType).toEqual({ outcome: "answered", verifier: AGENT_PLANNING_VERIFIER, unmet: [] });
     }
   });
@@ -1232,23 +1285,26 @@ describe("the verifier registry", () => {
     // Composing claims that rest on something the run read is what EVERY workflow
     // has to do; the templates add to it rather than replacing it (#330 T3).
     for (const workflowType of Object.keys(AGENT_WORKFLOW_GOALS) as AgentRunWorkflowType[]) {
-      expect(verifyRunGoal(run("agent", "succeeded", [contextCaptured, closing], workflowType)).unmet).toEqual([
-        "no-report",
-      ]);
+      expect(
+        verifyRunGoal(run("agent", "succeeded", [contextCaptured, closing], workflowType), BUNDLED_CLIENT_PACKS).unmet,
+      ).toEqual(["no-report"]);
     }
   });
 });
 
 describe("agent-query-optimization-mongo.1", () => {
   const verify = (events: AgentRunEvent[], status: "succeeded" | "cancelled" = "succeeded") =>
-    verifyRunGoal({
-      mode: "agent",
-      workflowType: "query-optimization",
-      status,
-      events,
-      statementLanguage: "mongo",
-      verifier: "agent-query-optimization-mongo.1",
-    });
+    verifyRunGoal(
+      {
+        mode: "agent",
+        workflowType: "query-optimization",
+        status,
+        events,
+        statementLanguage: "mongo",
+        verifier: "agent-query-optimization-mongo.1",
+      },
+      BUNDLED_CLIENT_PACKS,
+    );
 
   const PLAN = "4f2c9a10-0000-4000-8000-0000000000b1";
   const READ = "4f2c9a10-0000-4000-8000-0000000000b2";
@@ -1276,13 +1332,16 @@ describe("agent-query-optimization-mongo.1", () => {
   });
 
   test("is the verifier the MongoDB optimization variant is opened under", () => {
-    const verdict = verifyRunGoal({
-      mode: "agent",
-      workflowType: "query-optimization",
-      status: "succeeded",
-      events: [contextCaptured, planRead, reportCiting(ARTIFACT(PLAN))],
-      statementLanguage: "mongo",
-    });
+    const verdict = verifyRunGoal(
+      {
+        mode: "agent",
+        workflowType: "query-optimization",
+        status: "succeeded",
+        events: [contextCaptured, planRead, reportCiting(ARTIFACT(PLAN))],
+        statementLanguage: "mongo",
+      },
+      BUNDLED_CLIENT_PACKS,
+    );
     expect(verdict.verifier).toBe("agent-query-optimization-mongo.1");
   });
 

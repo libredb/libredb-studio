@@ -3,6 +3,7 @@ import { openWorkflows, workflowAvailability } from "@/lib/agent/agent-manifest"
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { grantedAgentStatementLanguage } from "@/lib/agent/languages/client";
+import { servedAvailabilityTables, servedClientPacks } from "@/lib/agent/languages/server";
 import { startRefusalSentence } from "@/lib/agent/posture";
 import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
@@ -100,7 +101,9 @@ export async function POST(req: Request) {
     // one is resolved under the caller's own session through the served resolve, the way the run route resolves it,
     // so the language comes from a connection this caller may open and never from a type the body claims: the
     // statement language its engine record grants (`grantedAgentStatementLanguage`), a legacy engine's or a provider
-    // package's.
+    // package's, read with the workflows it opens from the server's registry composed from the installed catalog
+    // (`servedClientPacks`, `servedAvailabilityTables`), so a package engine granted its own declared language is
+    // classified in it.
     const { connectionId } = body;
     if (connectionId !== undefined && (typeof connectionId !== "string" || connectionId.trim() === "")) {
       return badRequest("connectionId must be a non-empty string when provided");
@@ -115,10 +118,11 @@ export async function POST(req: Request) {
         return badRequest('mode must be "planning" or "agent" when connectionId is provided');
       }
       const { engine } = await resolveServedConnection({ connectionId }, guard.session);
-      const workflows = openWorkflows(mode, engine);
+      const tables = servedAvailabilityTables();
+      const workflows = openWorkflows(mode, engine, tables);
       // Only agent mode can open nothing, and then the default workflow is closed too: the second conjunct narrows the
       // type and is never the one that decides.
-      const fallback = workflowAvailability(mode, DEFAULT_AGENT_WORKFLOW_TYPE, engine);
+      const fallback = workflowAvailability(mode, DEFAULT_AGENT_WORKFLOW_TYPE, engine, tables);
       if (workflows.length === 0 && !fallback.open) {
         return NextResponse.json(
           { error: startRefusalSentence(fallback, engine), refused: "engine-unsupported" },
@@ -126,7 +130,7 @@ export async function POST(req: Request) {
         );
       }
       classification = await classifyAgentWorkflow(objective, {
-        statementLanguage: grantedAgentStatementLanguage(engine) ?? undefined,
+        statementLanguage: grantedAgentStatementLanguage(engine, servedClientPacks()) ?? undefined,
         workflows,
       });
     }

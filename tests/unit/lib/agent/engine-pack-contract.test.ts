@@ -4,6 +4,7 @@ import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
 import { runServerPack } from "@/lib/agent/languages/engines/server";
 import type { AgentEnginePack, AgentEngineServerDialect } from "@/lib/agent/languages/pack";
@@ -424,14 +425,17 @@ describe.each(ENGINES)("%s", (type) => {
         if (arm === undefined) throw new Error(`${type} ${workflow} offers ${tool} with no arm`);
         expect(arm.inputSchema, `${workflow} ${tool}`).toBe(agentToolDefinition(pack.id, workflow, tool).inputSchema);
       }
-      const verdict = verifyRunGoal({
-        mode: "agent",
-        workflowType: workflow,
-        status: "succeeded",
-        events: [],
-        statementLanguage: pack.id,
-        verifier: variant.verifier,
-      });
+      const verdict = verifyRunGoal(
+        {
+          mode: "agent",
+          workflowType: workflow,
+          status: "succeeded",
+          events: [],
+          statementLanguage: pack.id,
+          verifier: variant.verifier,
+        },
+        BUNDLED_CLIENT_PACKS,
+      );
       expect(verdict.verifier).toBe(variant.verifier);
     }
   });

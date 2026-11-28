@@ -6,25 +6,28 @@
  * imports only the leaves `workflow-tool-sets.ts` and `execution-policy.ts`. The whole pack in `index.ts` holds the
  * very objects this record holds, which `tests/unit/lib/agent/languages.test.ts` asserts.
  *
- * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
- * it registers its client facet here, and then every language the bundled declarations state agent data for, read
- * from the statement language projection (`BUNDLED_STATEMENT_LANGUAGE_DATA`) in its id order, the engines that state
- * none left out, and composed from its data by `declared-client.ts`: the browser's composition of the bundled
- * declarations (`DECLARED_AGENT_LANGUAGES`), kept until the browser reads a provider package's language, since a
- * browser cannot read the server's engine catalog. Its keys are declared in the order the projections in
- * `agent-manifest.ts` list them, the module languages first.
+ * A registry of client facets (`AgentClientPacks`) holds every module language (`AgentModuleLanguageId`,
+ * `MODULE_CLIENT_PACKS`), so a later module language does not compile until it registers its client facet here, and
+ * then the languages declared as data it composes. The browser's registry, `BUNDLED_CLIENT_PACKS`, adds every language
+ * the bundled declarations state agent data for, read from the statement language projection
+ * (`BUNDLED_STATEMENT_LANGUAGE_DATA`) in its id order, the engines that state none left out, and composed from its data
+ * by `declared-client.ts`: the browser's composition of the bundled declarations (`DECLARED_AGENT_LANGUAGES`), kept
+ * until the browser reads a provider package's language, since a browser cannot read the server's engine catalog. Its
+ * keys are declared in the order the projections in `agent-manifest.ts` list them, the module languages first.
  *
  * The registries in `server.ts`, `index.ts` and `mcp.ts` compose their declared languages from the server's installed
  * catalog instead, through the same two composers here, `composeDeclaredLanguages(servedLanguageData())`
- * (src/lib/db/operations/served-language-data.ts) and `declaredClientPack`. Both are memoized, the first per array of
- * data and the second per agent part, so every server registry reading one catalog reads one branded list, and the
- * browser's registry and the server's hold one client facet for one declared data object: a legacy engine's record
- * holds the projection's own data, so its declared language's facet is the one this record holds.
+ * (src/lib/db/operations/served-language-data.ts) and `declaredClientPack`; the server's registry of client facets is
+ * `servedClientPacks` in `server.ts`. Both composers are memoized, the first per array of data and the second per agent
+ * part, so every server registry reading one catalog reads one branded list, and the browser's registry and the
+ * server's hold one client facet for one declared data object: a legacy engine's record holds the projection's own
+ * data, so its declared language's facet is the one the browser's registry holds.
  *
- * It is also where an engine's granted statement language meets the packs: `grantedAgentStatementLanguage` reads the
+ * It is also where an engine's granted statement language meets a registry: `grantedAgentStatementLanguage` reads the
  * `statementLanguage` grant of the engine it is handed, an engine record on the server or a legacy engine's grants in
- * the browser (`legacyAgentEngine` of `agent-manifest.ts`), so the manifest and the engine registry read the grant
- * through it and no table of Studio's is keyed by an engine here.
+ * the browser (`legacyAgentEngine` of `agent-manifest.ts`), against the registry its caller hands, the server's or the
+ * browser's, so the manifest and the engine registry read the grant through it, no reader picks a registry for its
+ * caller, and no table of Studio's is keyed by an engine here.
  */
 import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import type { EngineGrants } from "@/lib/db/claim-grants";
@@ -76,9 +79,9 @@ export const DEFAULT_STATEMENT_LANGUAGE = "sql" as const satisfies AgentStatemen
 
 /**
  * The family a run reads: its persisted language, or `DEFAULT_STATEMENT_LANGUAGE` when the record holds none. The one
- * place an absent language is read. The id is not validated here: a ledger whose header names a language this build
- * does not hold is refused when it is read (`runHeaderRefusal` in `run-ledger-ids.ts`), so such an id never reaches a
- * record, and a caller that passes one fails where its resolver names it.
+ * place an absent language is read. The id is not validated here: a ledger whose header names a language the server's
+ * registry does not hold is refused when it is read (`runHeaderRefusal` in `run-ledger-ids.ts`), so such an id never
+ * reaches a record, and a caller that passes one fails where its resolver names it.
  */
 export function statementFamilyOf(language: AgentStatementLanguageId | undefined): AgentStatementLanguageId {
   return language ?? DEFAULT_STATEMENT_LANGUAGE;
@@ -95,7 +98,11 @@ export function statementFamilyOf(language: AgentStatementLanguageId | undefined
  */
 export const RETIRED_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set<string>();
 
-const MODULE_CLIENT_PACKS = Object.freeze({
+/**
+ * The module languages' client facets, by language, in the order every registry lists them: the part the browser's
+ * registry and the server's share, each declared language composed after them.
+ */
+export const MODULE_CLIENT_PACKS = Object.freeze({
   sql: SQL_CLIENT_PACK,
   kubectl: KUBECTL_CLIENT_PACK,
   mongo: MONGO_CLIENT_PACK,
@@ -168,32 +175,41 @@ export const DECLARED_AGENT_LANGUAGES: readonly DeclaredAgentLanguage[] = compos
   Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null),
 );
 
-const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>> = Object.freeze({
+/**
+ * The client facet of every statement language one registry holds, by language, the module languages first: the
+ * browser's composition of the bundled declarations (`BUNDLED_CLIENT_PACKS`) or the server's, composed from its
+ * installed catalog (`servedClientPacks` in `server.ts`). Every reader below that resolves a language is handed one, so
+ * no reader picks a registry for its caller.
+ */
+export type AgentClientPacks = Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>>;
+
+/**
+ * The browser's registry: the module languages and the languages the bundled declarations state, composed at load. It
+ * is kept until the browser reads the server's catalog (M7); the server never reads it, and reads `servedClientPacks`
+ * in `server.ts` instead (`tests/unit/lib/agent/served-language-facts.test.ts` holds that no server module imports it).
+ */
+export const BUNDLED_CLIENT_PACKS: AgentClientPacks = Object.freeze({
   ...MODULE_CLIENT_PACKS,
   ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map((language) => [language.id, declaredClientPack(language)])),
 });
 
-const LIVE_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(Object.keys(CLIENT_PACKS));
-
-/**
- * Whether `value` is exactly one of the statement languages this build holds a pack for, a module language or one the
- * bundled declarations state as data. A prototype key is not one.
- */
-export function isAgentStatementLanguage(value: string): value is AgentStatementLanguageId {
-  return LIVE_STATEMENT_LANGUAGES.has(value);
-}
-
 /**
  * The agent's statement language for `engine`'s granted statement language `granted`: `granted` itself where it is
- * null or a language this build holds a pack for, a module language or one declared as data. A grant reads a language
+ * null or a language `packs` holds, a module language or one the registry composed from data. A grant reads a language
  * as a name of the register's form, not as Studio's list, so this is the one place a granted name meets the agent's
- * packs; an engine's register row, a legacy engine's or a package's, grants only a language Studio reviewed, so a name
+ * packs, and the registry the caller hands decides which languages exist: the server's, composed from its installed
+ * catalog, or the browser's. An engine's register row, a legacy engine's or a package's, grants only a language Studio
+ * reviewed, and the server's registry composes every language a served record's grant names its data for, so a name
  * with no pack is a host defect.
  *
- * @throws {Error} Naming the engine and the language, where agent mode holds no pack for `granted`.
+ * @throws {Error} Naming the engine and the language, where `packs` holds no pack for `granted`.
  */
-export function agentLanguageOfGrant(engine: string, granted: string | null): AgentStatementLanguageId | null {
-  if (granted === null || isAgentStatementLanguage(granted)) return granted;
+export function agentLanguageOfGrant(
+  engine: string,
+  granted: string | null,
+  packs: AgentClientPacks,
+): AgentStatementLanguageId | null {
+  if (granted === null || Object.hasOwn(packs, granted)) return granted as AgentStatementLanguageId | null;
   throw new Error(
     `${engine} is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
   );
@@ -201,34 +217,38 @@ export function agentLanguageOfGrant(engine: string, granted: string | null): Ag
 
 /**
  * The agent's statement language for `engine`: the `statementLanguage` grant its grants hold, an engine record's or a
- * legacy engine's, read as the agent's language (`agentLanguageOfGrant`), or null where the grant is null.
+ * legacy engine's, read as the agent's language against `packs` (`agentLanguageOfGrant`), or null where the grant is
+ * null.
  *
- * @throws {Error} Naming the engine and the language, where agent mode holds no pack for the granted language.
+ * @throws {Error} Naming the engine and the language, where `packs` holds no pack for the granted language.
  */
-export function grantedAgentStatementLanguage(engine: {
-  readonly id: string;
-  readonly grants: Pick<EngineGrants, "statementLanguage">;
-}): AgentStatementLanguageId | null {
-  return agentLanguageOfGrant(engine.id, engine.grants.statementLanguage);
+export function grantedAgentStatementLanguage(
+  engine: {
+    readonly id: string;
+    readonly grants: Pick<EngineGrants, "statementLanguage">;
+  },
+  packs: AgentClientPacks,
+): AgentStatementLanguageId | null {
+  return agentLanguageOfGrant(engine.id, engine.grants.statementLanguage, packs);
 }
 
 /**
- * The client facet for `language`. The record holds every module language and every declared one, and a declared id is
- * only ever branded for a language the record holds, so a typed id always has one.
+ * The client facet for `language` in the browser's composition. The record holds every module language and every
+ * declared one, and a declared id is only ever branded for a language the record holds, so a typed id always has one.
  */
 export function languageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {
-  return CLIENT_PACKS[language];
+  return BUNDLED_CLIENT_PACKS[language];
 }
 
 /**
- * One member of every client facet, keyed by language in the order the packs are declared, frozen. A null pick stays
- * an own key, so a language with nothing to say is still listed.
+ * One member of every client facet of the browser's composition, keyed by language in the order the packs are
+ * declared, frozen. A null pick stays an own key, so a language with nothing to say is still listed.
  */
 export function projectClientPacks<Value>(
   pick: (pack: AgentLanguageClientPack) => Value,
 ): Readonly<Record<AgentStatementLanguageId, Value>> {
   return Object.freeze(
-    Object.fromEntries(Object.entries(CLIENT_PACKS).map(([id, pack]) => [id, pick(pack)])) as Record<
+    Object.fromEntries(Object.entries(BUNDLED_CLIENT_PACKS).map(([id, pack]) => [id, pick(pack)])) as Record<
       AgentStatementLanguageId,
       Value
     >,

@@ -27,6 +27,7 @@ import type { AgentModel } from "@/lib/agent/model-adapter";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { ConnectionError, StudioProfileRefusal } from "@/lib/db/errors";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { type EngineConnection, servedEngineRecord } from "@/lib/db/server-catalog";
 import { logger } from "@/lib/logger";
@@ -34,7 +35,8 @@ import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { configureAgentModel, restoreAgentModel } from "../helpers/agent-model-env";
-import { type EditableEngine, withLoosestClaims } from "../helpers/package-catalog";
+import { acmereadData } from "../helpers/declared-agent-language";
+import { type EditableEngine, withLoosestClaims, withStatementLanguageData } from "../helpers/package-catalog";
 import { admitSessionPackages, setHooks } from "../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../helpers/provider-artifacts";
 import { servedResolveOver } from "../helpers/served-resolve";
@@ -130,15 +132,25 @@ const TREE_MODEL: ObjectModel = {
 };
 
 /**
- * A package whose row grants the health reading; the same with its words granted; one with no register row; and one
- * whose row grants `sql` and agent execution and reviews no grammar (its manifest states SQL text, its row no digest).
+ * A package whose row grants the health reading; the same with its words granted; one with no register row; one whose
+ * row grants `sql` and agent execution and reviews no grammar (its manifest states SQL text, its row no digest); and one
+ * declaring the crafted language `acmeread` (tests/helpers/declared-agent-language.ts), its row granting it under the
+ * digest of its data and agent execution.
  */
 const READS = "acmedrivereads";
 const WORDS = "acmedrivewords";
 const BARE = "acmedrivebare";
 const EXEC = "acmedriveexec";
+const LANG = "acmedrivelang";
+const LANGUAGE_DATA = acmereadData();
 const withModel = (engine: EditableEngine) => {
   (engine as Record<string, unknown>).objects = structuredClone(TREE_MODEL);
+};
+/** The tree model and the crafted language, requested as the engine's agent statement language. */
+const withModelAndLanguage = (engine: EditableEngine) => {
+  withModel(engine);
+  engine.agent = { statementLanguage: LANGUAGE_DATA.name, overlay: { dialect: null, grounding: null } };
+  withStatementLanguageData(engine, LANGUAGE_DATA);
 };
 /** The tree model, the active sessions panel, and a request of the health and sessions readings. */
 const withModelAndReadings = (engine: EditableEngine) => {
@@ -173,11 +185,18 @@ beforeAll(async () => {
       },
       { name: "acme-drive-bare", engine: BARE, offered: ["objects.tree"], edit: withModel },
       { name: "acme-drive-exec", engine: EXEC, offered: ["objects.tree", "monitoring.panel"], edit: withLoosestClaims },
+      { name: "acme-drive-lang", engine: LANG, offered: ["objects.tree"], edit: withModelAndLanguage },
     ],
     {
       [READS]: HEALTH,
       [WORDS]: { ...HEALTH, ownWords: "scrubbed" },
       [EXEC]: { ...OPEN, statementLanguage: "sql", agentExecution: true },
+      [LANG]: {
+        ...OPEN,
+        statementLanguage: LANGUAGE_DATA.name,
+        languageSha256: languageDataSha256(LANGUAGE_DATA),
+        agentExecution: true,
+      },
     },
   );
 });
@@ -290,8 +309,9 @@ interface Driven {
 }
 
 /**
- * A run planted in the ledger as the start route would record it on `on`, with the engine's id and `catalog` where
- * one is named, then driven from its ledger by the composition root with `turns` as its model.
+ * A run planted in the ledger as the start route would record it on `on`, with the engine's id, and `catalog` and
+ * `statementLanguage` where one is named, then driven from its ledger by the composition root with `turns` as its
+ * model.
  */
 async function drive(
   on: EngineConnection,
@@ -299,6 +319,7 @@ async function drive(
   workflowType: AgentRunWorkflowType,
   turns: readonly ScriptedTurn[],
   catalog?: string,
+  statementLanguage?: string,
 ): Promise<Driven> {
   const service = await getAgentRunService();
   const { runId } = await service.start({
@@ -308,6 +329,7 @@ async function drive(
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: on.id,
     ...(catalog === undefined ? {} : { catalog }),
+    ...(statementLanguage === undefined ? {} : { statementLanguage: statementLanguage as never }),
     objective: "Is the engine healthy?",
   });
   const script = scriptedModel(...turns);
@@ -415,6 +437,38 @@ describe("an agent run's drive on a provider package's engine", () => {
     expect(built).not.toHaveBeenCalled();
     expect(recorded).not.toHaveBeenCalled();
     expect(seen).toEqual([]);
+  });
+
+  test("a plan-mode run on a package engine whose row grants its own declared language is driven in that language from its ledger, reaching no fence, query event or execution profile", async () => {
+    const seen = hooksFor(LANG);
+    // Vacuity: the record grants its own language and agent execution, and offers no execution profiles.
+    expect(servedEngineRecord(LANG).grants).toMatchObject({ statementLanguage: "acmeread", agentExecution: true });
+    expect(servedEngineRecord(LANG).offers.executionProfiles).toBe(false);
+    const objective = (LANGUAGE_DATA.agent as NonNullable<typeof LANGUAGE_DATA.agent>).text.investigation
+      .objective as string;
+    const run = await drive(
+      connectionOf(LANG),
+      "planning",
+      "investigation",
+      [answersProse("No plan."), answersProse("No plan.")],
+      undefined,
+      LANGUAGE_DATA.name,
+    );
+
+    expect(run.thrown).toBeUndefined();
+    expect(run.outcome?.kind).toBe("finished");
+    expect(finishedOf(run.events)).toMatchObject({ status: "succeeded" });
+    // The first model turn's system prompt states the declared investigation objective.
+    expect(JSON.stringify(run.turns[0]?.body)).toContain(objective);
+    expect(run.events.find((event) => event.kind === "context-captured")).toMatchObject({
+      tableCount: 2,
+      snapshot: { readVia: "provider-inventory" },
+    });
+    expect(seen.filter((call) => call === "open")).toEqual(["open"]);
+    expect(inspected).not.toHaveBeenCalled();
+    expect(built).not.toHaveBeenCalled();
+    expect(recorded).not.toHaveBeenCalled();
+    expect(acquired).not.toHaveBeenCalled();
   });
 
   test("a run recorded with a database on an engine whose record offers no catalog session no longer resolves, refused by name before anything opens", async () => {

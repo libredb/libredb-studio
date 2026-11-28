@@ -15,6 +15,7 @@ import {
   AGENT_PACK_READING_REFUSAL_HEADLINES,
   AGENT_PACK_REQUIREMENTS,
   AGENT_PACK_SHORTFALL_SENTENCES,
+  BUNDLED_CLIENT_PACKS,
   evidenceEventSpec,
   agentLanguageOfGrant,
   grantedAgentStatementLanguage,
@@ -519,14 +520,17 @@ describe("the goal rules the packs register", () => {
   test("every variant's verifier has a rule, and a verdict names the id it was measured against", () => {
     for (const id of ids) {
       for (const [workflowType, variant] of Object.entries(AGENT_WORKFLOW_VARIANTS[id])) {
-        const verdict = verifyRunGoal({
-          mode: "agent",
-          workflowType: workflowType as keyof typeof AGENT_WORKFLOW_VARIANTS.sql,
-          status: "succeeded",
-          events: [],
-          statementLanguage: id,
-          verifier: variant.verifier,
-        });
+        const verdict = verifyRunGoal(
+          {
+            mode: "agent",
+            workflowType: workflowType as keyof typeof AGENT_WORKFLOW_VARIANTS.sql,
+            status: "succeeded",
+            events: [],
+            statementLanguage: id,
+            verifier: variant.verifier,
+          },
+          BUNDLED_CLIENT_PACKS,
+        );
         expect(verdict.verifier).toBe(variant.verifier);
       }
     }
@@ -621,19 +625,19 @@ describe("the client packs", () => {
 
   test("a granted statement language is read as the agent's language where agent mode holds its pack, and refused by name, naming the engine and the language, where it holds none", () => {
     for (const id of Object.keys(LANGUAGE_IDS) as AgentStatementLanguageId[]) {
-      expect(agentLanguageOfGrant("postgres", id)).toBe(id);
+      expect(agentLanguageOfGrant("postgres", id, BUNDLED_CLIENT_PACKS)).toBe(id);
     }
-    expect(agentLanguageOfGrant("postgres", null)).toBeNull();
+    expect(agentLanguageOfGrant("postgres", null, BUNDLED_CLIENT_PACKS)).toBeNull();
     // A name of the register's form that no pack holds, and a prototype key, which is not a pack either.
     for (const granted of ["acmeql", "constructor"]) {
-      expect(() => agentLanguageOfGrant("acme", granted)).toThrow(
+      expect(() => agentLanguageOfGrant("acme", granted, BUNDLED_CLIENT_PACKS)).toThrow(
         `acme is granted the statement language ${JSON.stringify(granted)}, for which agent mode holds no pack`,
       );
     }
   });
 
   test("a type's granted agent statement language is its grant read as the agent's language, null for a type granted none, and a name that is no type id is refused before any grant is read", () => {
-    expect(grantedAgentStatementLanguage(legacyAgentEngine("mongodb"))).toBe("mongo");
+    expect(grantedAgentStatementLanguage(legacyAgentEngine("mongodb"), BUNDLED_CLIENT_PACKS)).toBe("mongo");
     // Each shipped engine whose declaration states agent data for its language is granted that language.
     const declaring = SHIPPED_DATABASE_TYPES.flatMap((type) => {
       const data = BUNDLED_STATEMENT_LANGUAGE_DATA[type];
@@ -641,12 +645,12 @@ describe("the client packs", () => {
     });
     expect(declaring.length).toBeGreaterThan(0);
     for (const { type, name } of declaring) {
-      expect({ type, granted: grantedAgentStatementLanguage(legacyAgentEngine(type)) }).toEqual({
+      expect({ type, granted: grantedAgentStatementLanguage(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS) }).toEqual({
         type,
         granted: shippedDeclaredLanguage(name),
       });
     }
-    expect(grantedAgentStatementLanguage(legacyAgentEngine("bigquery"))).toBeNull();
+    expect(grantedAgentStatementLanguage(legacyAgentEngine("bigquery"), BUNDLED_CLIENT_PACKS)).toBeNull();
     // A name that is no type id has no grant to read: the legacy engine's reader refuses it first.
     expect(() => legacyAgentEngine("toString" as DatabaseType)).toThrow(UnknownProviderError);
   });

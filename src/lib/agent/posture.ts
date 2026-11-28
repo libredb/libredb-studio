@@ -21,7 +21,8 @@
  *    from the language's workflow variants, so no pack ranks its own claim.
  *  - **Client-safe imports only** - types, Studio's grant `GRANTED_AGENT_EXECUTION_ENGINES`, the legacy engine's
  *    grants through the agent manifest (`legacyAgentEngine`, which also guards the type id), the language packs' client
- *    facets (`languages/client.ts`, where each language's reads, widened and hand-over words live), the engines' client
+ *    facets in the browser's composition (`languages/client.ts`, `BUNDLED_CLIENT_PACKS`, where each language's reads,
+ *    widened and hand-over words live), the engines' client
  *    facets (`languages/engines/client.ts`), `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule the review record's docblock in `src/lib/db/claim-grants.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
@@ -47,7 +48,7 @@ import {
 import { namedList } from "@/lib/agent/engine-support";
 import { GRANTED_AGENT_EXECUTION_ENGINES } from "@/lib/db/claim-grants";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { grantedAgentStatementLanguage, languageClientPack } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS, grantedAgentStatementLanguage, languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";
 import type { AgentPostureCopy, StatementBudgets } from "@/lib/agent/languages/pack";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -370,7 +371,7 @@ export function agentPosture(input: {
   readonly refusedHere?: string | null;
 }): AgentPosture {
   const engine = input.engine === null ? null : legacyAgentEngine(input.engine);
-  const language = engine === null ? null : grantedAgentStatementLanguage(engine);
+  const language = engine === null ? null : grantedAgentStatementLanguage(engine, BUNDLED_CLIENT_PACKS);
   if (input.mode === "planning") return planPosture(language);
   if (engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(engine, input.engineLabel);

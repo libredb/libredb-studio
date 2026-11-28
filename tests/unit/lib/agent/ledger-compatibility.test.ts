@@ -5,6 +5,7 @@ import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { AgentRunStore, ledgerStreamName } from "@/lib/agent/run-store";
 import { selectAgentTools } from "@/lib/agent/tools";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
@@ -187,7 +188,7 @@ describe("a ledger written before statementLanguage existed", () => {
     const record = view?.record;
     if (record === undefined) throw new Error("no record");
     expect(record.statementLanguage).toBeUndefined();
-    expect(verifyRunGoal(record).verifier).toBe("agent-query-optimization.3");
+    expect(verifyRunGoal(record, BUNDLED_CLIENT_PACKS).verifier).toBe("agent-query-optimization.3");
     expect(selectAgentTools(record).map((tool) => tool.name)).toContain("inspect_plan");
   });
 });
@@ -212,7 +213,7 @@ describe("a kubectl run resumed in a fresh process", () => {
     if (record === undefined) throw new Error("no record");
     expect(record.statementLanguage).toBe("kubectl");
     expect(selectAgentTools(record).map((tool) => tool.name)).toEqual(["run_read_query", "compose_report"]);
-    expect(verifyRunGoal(record).verifier).toBe("agent-investigation.1");
+    expect(verifyRunGoal(record, BUNDLED_CLIENT_PACKS).verifier).toBe("agent-investigation.1");
   });
 });
 

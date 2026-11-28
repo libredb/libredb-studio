@@ -48,7 +48,7 @@ import type {
   AgentLanguageServerPack,
   FacetOverrides,
 } from "../pack";
-import { languageServerPack } from "../server";
+import { languageServerPack, servedClientPacks } from "../server";
 import { CASSANDRA_SERVER_OVERLAY } from "../sql/engines/cassandra";
 import { CLICKHOUSE_SERVER_OVERLAY } from "../sql/engines/clickhouse";
 import { COUCHBASE_SERVER_OVERLAY } from "../sql/engines/couchbase";
@@ -167,7 +167,7 @@ export function runServerPack(language: AgentStatementLanguageId | undefined, id
   const engine = servedEngineRecord(id);
   const family = statementFamilyOf(language);
   const base = languageServerPack(family);
-  if (engineFamily(engine) !== family || !Object.hasOwn(SERVER_OVERLAYS, id)) return base;
+  if (engineFamily(engine, servedClientPacks()) !== family || !Object.hasOwn(SERVER_OVERLAYS, id)) return base;
   let facet = ENGINE_SERVER_FACETS.get(engine.id);
   if (facet === undefined) {
     facet = defineOverlay(base, SERVER_OVERLAYS[id as AgentEngineType] as EngineServerOverlay);

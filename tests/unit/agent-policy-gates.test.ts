@@ -10,6 +10,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { AGENT_TOOL_DEFINITIONS, selectAgentTools } from "@/lib/agent/tools";
 import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -247,7 +248,7 @@ describe("GATE — every final finding carries a citation", () => {
     // The gate as the verifier sees it: prose is not a finding, and a report resting
     // only on empty results has cited nothing that says anything.
     const uncited = run([{ kind: "closing-statement", atMs: 1, text: "Everything looks fine." }]);
-    expect(verifyRunGoal(uncited).outcome).toBe("unanswered");
+    expect(verifyRunGoal(uncited, BUNDLED_CLIENT_PACKS).outcome).toBe("unanswered");
 
     const hollow = run([
       { kind: "tool-completed", atMs: 1, stepId: "s", artifact: artifact("c1", 0) },
@@ -257,7 +258,7 @@ describe("GATE — every final finding carries a citation", () => {
         claims: [{ claim: "Nothing exists.", evidence: [{ source: "artifact", correlationId: "c1" }] }],
       },
     ]);
-    expect(verifyRunGoal(hollow).unmet).toEqual(["empty-evidence"]);
+    expect(verifyRunGoal(hollow, BUNDLED_CLIENT_PACKS).unmet).toEqual(["empty-evidence"]);
   });
 
   test("every workflow is held to the citation bar, whatever else it adds", () => {
@@ -267,6 +268,7 @@ describe("GATE — every final finding carries a citation", () => {
           [{ kind: "closing-statement", atMs: 1, text: "A confident summary with nothing behind it." }],
           workflowType,
         ),
+        BUNDLED_CLIENT_PACKS,
       );
       expect(verdict.outcome, workflowType).toBe("unanswered");
       expect(verdict.unmet, workflowType).toContain("no-report");

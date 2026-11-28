@@ -22,6 +22,13 @@
  * its ledger as it was, history, and this build opens no new step of it. No engine is retired, so an engine is only
  * ever live or unknown.
  *
+ * A statement language is live while the installed server catalog composes it (`servedClientPacks` in
+ * `languages/server.ts`): a module language always, a language declared as data while a served record's grant names
+ * its data, and with nothing installed the legacy records' languages. One the catalog no longer composes, its package
+ * removed or its row no longer granting it under its data's digest, is refused by name as unknown, its run kept as
+ * history; Studio's own retired languages are refused as retired. The variant of an agent-mode run's workflow is read
+ * from the same registry.
+ *
  * An absent id keeps its meaning: an absent language reads as `sql`, an absent workflow as
  * `DEFAULT_AGENT_WORKFLOW_TYPE`, an absent verifier as the variant's, which the variant check makes resolvable, and an
  * absent engine as a run recorded before the field, offered the six curated readings it was opened with.
@@ -32,7 +39,8 @@ import { servedEngineRecord, serverEngine } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
 import { type AgentStatementLanguageId, agentVariant } from "./agent-manifest";
 import { hasGoalRule, RETIRED_GOAL_VERIFIERS } from "./goal-verifier";
-import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
+import { RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
+import { servedClientPacks } from "./languages/server";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType, DEFAULT_AGENT_WORKFLOW_TYPE } from "./types";
 
 export type AgentRunHeaderField = "statementLanguage" | "workflowType" | "verifier" | "engine";
@@ -90,15 +98,19 @@ export interface AgentRunHeaderVocabulary {
   readonly hasReading: (engine: string) => boolean;
 }
 
-/** This build's vocabulary. */
+/** This build's vocabulary, its languages and their variants read from the installed catalog when it is asked. */
 export const RUN_HEADER_VOCABULARY: AgentRunHeaderVocabulary = Object.freeze({
-  isLanguage: isAgentStatementLanguage,
+  isLanguage: (id: string) => Object.hasOwn(servedClientPacks(), id),
   retiredLanguages: RETIRED_STATEMENT_LANGUAGES,
   // `Object.hasOwn`, for the reason `agentVariant` gives: a workflow such as `toString` is read from a ledger, and the
   // inherited method is not a workflow.
   isWorkflow: (id: string) => Object.hasOwn(AGENT_WORKFLOW_PRESENTS_ANSWER, id),
   hasVariant: (language: string | undefined, workflow: string) =>
-    agentVariant(language as AgentStatementLanguageId | undefined, workflow as AgentRunWorkflowType) !== undefined,
+    agentVariant(
+      language as AgentStatementLanguageId | undefined,
+      workflow as AgentRunWorkflowType,
+      servedClientPacks(),
+    ) !== undefined,
   isVerifier: hasGoalRule,
   retiredVerifiers: RETIRED_GOAL_VERIFIERS,
   isEngine: (id: string) => serverEngine(id).kind === "served",

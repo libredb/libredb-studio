@@ -22,6 +22,7 @@ import {
   statementSessionRefusal,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/composed-sql";
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
@@ -263,11 +264,13 @@ describe("the SQL variants", () => {
   });
 
   test("an absent language reads as sql", () => {
-    expect(agentVariant(undefined, "investigation")).toBe(AGENT_WORKFLOW_VARIANTS.sql.investigation);
+    expect(agentVariant(undefined, "investigation", BUNDLED_CLIENT_PACKS)).toBe(
+      AGENT_WORKFLOW_VARIANTS.sql.investigation,
+    );
   });
 
   test("an unknown language is a named error, not an absent variant", () => {
-    const read = () => agentVariant("cobol" as AgentStatementLanguageId, "investigation");
+    const read = () => agentVariant("cobol" as AgentStatementLanguageId, "investigation", BUNDLED_CLIENT_PACKS);
     expect(read).toThrow("unknown statement language cobol");
     try {
       read();
@@ -277,7 +280,7 @@ describe("the SQL variants", () => {
   });
 
   test.each([...WORKFLOWS])("kubectl has a %s variant", (workflow) => {
-    expect(agentVariant("kubectl", workflow)).toBeDefined();
+    expect(agentVariant("kubectl", workflow, BUNDLED_CLIENT_PACKS)).toBeDefined();
   });
 
   test("operations is one variant for every language", () => {
@@ -285,24 +288,26 @@ describe("the SQL variants", () => {
   });
 
   test("an inherited plan deliverable is the SQL one", () => {
-    expect(planDeliverableOf(undefined, "query-optimization")).toEqual({
+    expect(planDeliverableOf(undefined, "query-optimization", BUNDLED_CLIENT_PACKS)).toEqual({
       kind: "statement",
       noun: "the rewritten statement",
     });
   });
 
   test("an absent language plans with the SQL objective, and a language with a variant plans with its own", () => {
-    expect(planObjectiveOf(undefined, "database-assessment")).toBe(
-      requiredVariant("sql", "database-assessment").objective,
+    expect(planObjectiveOf(undefined, "database-assessment", BUNDLED_CLIENT_PACKS)).toBe(
+      requiredVariant("sql", "database-assessment", BUNDLED_CLIENT_PACKS).objective,
     );
-    expect(planObjectiveOf("kubectl", "operations")).toBe(requiredVariant("kubectl", "operations").objective);
-    expect(planObjectiveOf("kubectl", "investigation")).toBe(
+    expect(planObjectiveOf("kubectl", "operations", BUNDLED_CLIENT_PACKS)).toBe(
+      requiredVariant("kubectl", "operations", BUNDLED_CLIENT_PACKS).objective,
+    );
+    expect(planObjectiveOf("kubectl", "investigation", BUNDLED_CLIENT_PACKS)).toBe(
       "Your objective is a question about this Kubernetes cluster. Answer it from what you establish.",
     );
   });
 
   test("the kubectl investigation reads the cluster with run_read_query and inherits the SQL plan deliverable", () => {
-    expect(requiredVariant("kubectl", "investigation")).toEqual({
+    expect(requiredVariant("kubectl", "investigation", BUNDLED_CLIENT_PACKS)).toEqual({
       tools: ["run_read_query", "compose_report"],
       narrowedExtras: [],
       classifierDescription: "a question about the cluster that is answered from what the run establishes",
@@ -312,12 +317,14 @@ describe("the SQL variants", () => {
       requires: [],
       verifier: "agent-investigation.1",
     });
-    expect(Object.isFrozen(requiredVariant("kubectl", "investigation").tools)).toBe(true);
-    expect(planDeliverableOf("kubectl", "investigation")).toEqual(planDeliverableOf("sql", "investigation"));
+    expect(Object.isFrozen(requiredVariant("kubectl", "investigation", BUNDLED_CLIENT_PACKS).tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "investigation", BUNDLED_CLIENT_PACKS)).toEqual(
+      planDeliverableOf("sql", "investigation", BUNDLED_CLIENT_PACKS),
+    );
   });
 
   test("the kubectl query optimization is resource efficiency, judged on usage and never auto-executed", () => {
-    expect(requiredVariant("kubectl", "query-optimization")).toEqual({
+    expect(requiredVariant("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS)).toEqual({
       tools: ["run_read_query", "inspect_usage", "recommend_change", "compose_report"],
       narrowedExtras: ["inspect_usage", "recommend_change"],
       classifierDescription:
@@ -329,18 +336,18 @@ describe("the SQL variants", () => {
       requires: ["cluster-usage-reading"],
       verifier: "agent-query-optimization-kubectl.1",
     });
-    expect(Object.isFrozen(requiredVariant("kubectl", "query-optimization").tools)).toBe(true);
-    expect(planDeliverableOf("kubectl", "query-optimization")).toEqual({
+    expect(Object.isFrozen(requiredVariant("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS).tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS)).toEqual({
       kind: "statement",
       noun: "the kubectl read that measures usage against requests",
     });
-    expect(planObjectiveOf("kubectl", "query-optimization")).toBe(
-      requiredVariant("kubectl", "query-optimization").objective,
+    expect(planObjectiveOf("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS)).toBe(
+      requiredVariant("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS).objective,
     );
   });
 
   test("the kubectl assessment is cluster health, judged on a workload profile and never auto-executed", () => {
-    expect(requiredVariant("kubectl", "database-assessment")).toEqual({
+    expect(requiredVariant("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS)).toEqual({
       tools: ["run_read_query", "profile_workloads", "compose_report"],
       narrowedExtras: ["profile_workloads"],
       classifierDescription:
@@ -352,18 +359,18 @@ describe("the SQL variants", () => {
       requires: ["cluster-workload-reading"],
       verifier: "agent-database-assessment-kubectl.1",
     });
-    expect(Object.isFrozen(requiredVariant("kubectl", "database-assessment").tools)).toBe(true);
-    expect(planDeliverableOf("kubectl", "database-assessment")).toEqual({
+    expect(Object.isFrozen(requiredVariant("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS).tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS)).toEqual({
       kind: "statement",
       noun: "the kubectl read that establishes each workload's state",
     });
-    expect(planObjectiveOf("kubectl", "database-assessment")).toBe(
-      requiredVariant("kubectl", "database-assessment").objective,
+    expect(planObjectiveOf("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS)).toBe(
+      requiredVariant("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS).objective,
     );
   });
 
   test("the kubectl data analysis presents a read and never auto-executes it", () => {
-    expect(requiredVariant("kubectl", "data-analysis")).toEqual({
+    expect(requiredVariant("kubectl", "data-analysis", BUNDLED_CLIENT_PACKS)).toEqual({
       tools: ["run_read_query", "present_answer", "compose_report"],
       narrowedExtras: ["present_answer"],
       classifierDescription: "a question about the cluster whose answer is a result the user wants to see",
@@ -374,16 +381,18 @@ describe("the SQL variants", () => {
       requires: [],
       verifier: "agent-data-analysis.1",
     });
-    expect(Object.isFrozen(requiredVariant("kubectl", "data-analysis").tools)).toBe(true);
-    expect(planDeliverableOf("kubectl", "data-analysis")).toEqual(planDeliverableOf("sql", "data-analysis"));
+    expect(Object.isFrozen(requiredVariant("kubectl", "data-analysis", BUNDLED_CLIENT_PACKS).tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "data-analysis", BUNDLED_CLIENT_PACKS)).toEqual(
+      planDeliverableOf("sql", "data-analysis", BUNDLED_CLIENT_PACKS),
+    );
   });
 
   test("a workflow naming an inherited property is a missing variant, not a function", () => {
     const workflow = "toString" as AgentRunWorkflowType;
-    expect(agentVariant("sql", workflow)).toBeUndefined();
+    expect(agentVariant("sql", workflow, BUNDLED_CLIENT_PACKS)).toBeUndefined();
     let caught: unknown;
     try {
-      requiredVariant(undefined, workflow);
+      requiredVariant(undefined, workflow, BUNDLED_CLIENT_PACKS);
     } catch (error) {
       caught = error;
     }
@@ -392,7 +401,7 @@ describe("the SQL variants", () => {
   });
 
   test("operations plans in prose", () => {
-    expect(planDeliverableOf("kubectl", "operations")).toEqual({ kind: "prose" });
+    expect(planDeliverableOf("kubectl", "operations", BUNDLED_CLIENT_PACKS)).toEqual({ kind: "prose" });
   });
 
   test("the variants are frozen", () => {
@@ -411,24 +420,24 @@ describe("the MongoDB variants (issue #1614)", () => {
     a cluster: the route refuses it and the rail shows no consent step.
   */
   test.each(Object.keys(AGENT_WORKFLOW_VARIANTS.mongo))("the %s variant never auto-executes", (workflow) => {
-    expect(requiredVariant("mongo", workflow as AgentRunWorkflowType).canAutoExecute).toBe(false);
+    expect(requiredVariant("mongo", workflow as AgentRunWorkflowType, BUNDLED_CLIENT_PACKS).canAutoExecute).toBe(false);
   });
 
   test("every statement workflow is offered the read-class four whole, inspect_plan included", () => {
-    expect(requiredVariant("mongo", "investigation").tools).toEqual([
+    expect(requiredVariant("mongo", "investigation", BUNDLED_CLIENT_PACKS).tools).toEqual([
       "inspect_schema",
       "run_read_query",
       "inspect_plan",
       "compose_report",
     ]);
-    expect(requiredVariant("mongo", "database-assessment").tools).toEqual([
+    expect(requiredVariant("mongo", "database-assessment", BUNDLED_CLIENT_PACKS).tools).toEqual([
       "inspect_schema",
       "run_read_query",
       "inspect_plan",
       "compose_report",
       "profile_table",
     ]);
-    expect(requiredVariant("mongo", "data-analysis").tools).toEqual([
+    expect(requiredVariant("mongo", "data-analysis", BUNDLED_CLIENT_PACKS).tools).toEqual([
       "inspect_schema",
       "run_read_query",
       "inspect_plan",
@@ -437,7 +446,7 @@ describe("the MongoDB variants (issue #1614)", () => {
       "present_answer",
     ]);
     // The optimization keeps its own list: the read-class four and the index card, and no compare_plans.
-    expect(requiredVariant("mongo", "query-optimization").tools).toEqual([
+    expect(requiredVariant("mongo", "query-optimization", BUNDLED_CLIENT_PACKS).tools).toEqual([
       "inspect_schema",
       "run_read_query",
       "inspect_plan",
@@ -548,7 +557,7 @@ describe("workflowAvailability", () => {
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
-      variant: requiredVariant("kubectl", "investigation"),
+      variant: requiredVariant("kubectl", "investigation", BUNDLED_CLIENT_PACKS),
     });
     if (!open.open) throw new Error("refused");
     // Its verifier is the SQL investigation's, so only the language is written to the header.
@@ -563,7 +572,7 @@ describe("workflowAvailability", () => {
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
-      variant: requiredVariant("kubectl", "query-optimization"),
+      variant: requiredVariant("kubectl", "query-optimization", BUNDLED_CLIENT_PACKS),
     });
     if (!open.open) throw new Error("refused");
     expect(persistedRunFacts("agent", "query-optimization", "kubernetes", open)).toEqual({
@@ -585,7 +594,7 @@ describe("workflowAvailability", () => {
     expect(open).toEqual({
       open: true,
       statementLanguage: "kubectl",
-      variant: requiredVariant("kubectl", "database-assessment"),
+      variant: requiredVariant("kubectl", "database-assessment", BUNDLED_CLIENT_PACKS),
     });
     if (!open.open) throw new Error("refused");
     expect(persistedRunFacts("agent", "database-assessment", "kubernetes", open)).toEqual({
@@ -599,7 +608,7 @@ describe("workflowAvailability", () => {
     expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("postgres"))).toEqual({
       open: true,
       statementLanguage: "sql",
-      variant: requiredVariant("sql", "data-analysis"),
+      variant: requiredVariant("sql", "data-analysis", BUNDLED_CLIENT_PACKS),
     });
   });
 
@@ -607,7 +616,7 @@ describe("workflowAvailability", () => {
     expect(workflowAvailability("agent", "operations", legacyAgentEngine("spark"))).toEqual({
       open: true,
       statementLanguage: null,
-      variant: requiredVariant("sql", "operations"),
+      variant: requiredVariant("sql", "operations", BUNDLED_CLIENT_PACKS),
     });
   });
 
@@ -623,17 +632,17 @@ describe("workflowAvailability", () => {
     expect(workflowAvailability("agent", "data-analysis", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
-      variant: requiredVariant("mongo", "data-analysis"),
+      variant: requiredVariant("mongo", "data-analysis", BUNDLED_CLIENT_PACKS),
     });
     expect(workflowAvailability("agent", "operations", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
-      variant: requiredVariant("mongo", "operations"),
+      variant: requiredVariant("mongo", "operations", BUNDLED_CLIENT_PACKS),
     });
     expect(workflowAvailability("planning", "investigation", legacyAgentEngine("mongodb"))).toEqual({
       open: true,
       statementLanguage: "mongo",
-      variant: requiredVariant("mongo", "investigation"),
+      variant: requiredVariant("mongo", "investigation", BUNDLED_CLIENT_PACKS),
     });
     // Every statement-sending workflow has a mongo variant: none of them may be the SQL
     // variant wearing a different name, and this is where that would show first.
@@ -649,13 +658,16 @@ describe("workflowAvailability", () => {
     requirement. So they are driven through tables naming a language whose variants are partial, which is what a
     language is while its variants are being filled in, and what the manifest may hold again for the next language.
   */
-  const sqlInvestigation = requiredVariant("sql", "investigation");
+  const sqlInvestigation = requiredVariant("sql", "investigation", BUNDLED_CLIENT_PACKS);
   const partialLanguage = {
-    variants: {
-      ...AGENT_WORKFLOW_VARIANTS,
+    packs: {
+      ...BUNDLED_CLIENT_PACKS,
       kubectl: {
-        operations: requiredVariant("kubectl", "operations"),
-        investigation: { ...sqlInvestigation, requires: ["cluster-usage-reading"] },
+        ...BUNDLED_CLIENT_PACKS.kubectl,
+        variants: {
+          operations: requiredVariant("kubectl", "operations", BUNDLED_CLIENT_PACKS),
+          investigation: { ...sqlInvestigation, requires: ["cluster-usage-reading"] },
+        },
       },
     },
     // Held empty here whatever the live mirror says, so the refusal is driven by the table and not by the census.
@@ -761,11 +773,14 @@ describe("workflowAvailability", () => {
   test("a variant that requires a curated reading holds it on the engine's own grants", () => {
     const readingInvestigation = {
       ...partialLanguage,
-      variants: {
-        ...partialLanguage.variants,
+      packs: {
+        ...partialLanguage.packs,
         kubectl: {
-          ...partialLanguage.variants.kubectl,
-          investigation: { ...sqlInvestigation, requires: ["agent-readings"] },
+          ...partialLanguage.packs.kubectl,
+          variants: {
+            ...partialLanguage.packs.kubectl.variants,
+            investigation: { ...sqlInvestigation, requires: ["agent-readings"] },
+          },
         },
       },
     } as const;
@@ -778,7 +793,7 @@ describe("workflowAvailability", () => {
     expect(workflowAvailability("agent", "investigation", kubernetes, readingInvestigation)).toEqual({
       open: true,
       statementLanguage: "kubectl",
-      variant: readingInvestigation.variants.kubectl.investigation,
+      variant: readingInvestigation.packs.kubectl.variants.investigation,
     });
     expect(workflowAvailability("agent", "investigation", unread, readingInvestigation)).toEqual({
       open: false,
@@ -795,7 +810,7 @@ describe("workflowAvailability", () => {
     expect(workflowAvailability("agent", "investigation", legacyAgentEngine("kubernetes"), held)).toEqual({
       open: true,
       statementLanguage: "kubectl",
-      variant: partialLanguage.variants.kubectl.investigation,
+      variant: partialLanguage.packs.kubectl.variants.investigation,
     });
     expect(
       workflowAvailability("planning", "query-optimization", legacyAgentEngine("kubernetes"), partialLanguage),
@@ -811,7 +826,7 @@ describe("workflowAvailability", () => {
     `sql-catalog` and out of `sql-composers`, so the case holds whichever shipped engines are in it.
   */
   const catalogOnly = {
-    variants: AGENT_WORKFLOW_VARIANTS,
+    packs: BUNDLED_CLIENT_PACKS,
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
   } as const;
 
@@ -821,7 +836,7 @@ describe("workflowAvailability", () => {
       expect(workflowAvailability("agent", workflow, legacyAgentEngine("duckdb"), catalogOnly)).toEqual({
         open: true,
         statementLanguage: "sql",
-        variant: requiredVariant("sql", workflow),
+        variant: requiredVariant("sql", workflow, BUNDLED_CLIENT_PACKS),
       });
     },
   );
@@ -991,7 +1006,7 @@ describe("workflow availability on a package engine's record", () => {
     expect(workflowAvailability("planning", "investigation", language)).toEqual({
       open: true,
       statementLanguage: "sql",
-      variant: requiredVariant("sql", "investigation"),
+      variant: requiredVariant("sql", "investigation", BUNDLED_CLIENT_PACKS),
     });
 
     for (const workflow of statementWorkflows) {
@@ -1042,7 +1057,7 @@ describe("workflow availability on a package engine's record", () => {
         expect(workflowAvailability("planning", workflow, engine)).toEqual({
           open: true,
           statementLanguage: "sql",
-          variant: requiredVariant("sql", workflow),
+          variant: requiredVariant("sql", workflow, BUNDLED_CLIENT_PACKS),
         });
       }
       for (const workflow of statementWorkflows) {

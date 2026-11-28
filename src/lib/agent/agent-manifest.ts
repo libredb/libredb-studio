@@ -18,6 +18,11 @@
  * clause M-83), read through `grantedAgentStatementLanguage` of `languages/client.ts`; Studio's review of it is the
  * `statementLanguage` member of the engine's row in the grant register, and `tests/unit/lib/agent/agent-manifest.test.ts`
  * holds each legacy row to its provider: an engine has a language exactly when its provider has `queryReadOnly`.
+ *
+ * Every reader here that resolves a language is handed the registry of client facets it reads
+ * (`AgentClientPacks`): the server hands its registry composed from the installed catalog (`servedClientPacks` and
+ * `servedAvailabilityTables` in `languages/server.ts`), so a language only a provider package declares is known there,
+ * and the browser hands its bundled composition (`BUNDLED_CLIENT_PACKS`) until it reads the server's catalog.
  */
 import { type EngineGrants, legacyEngineGrants } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -26,6 +31,8 @@ import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import {
   AGENT_PACK_REQUIREMENTS,
+  type AgentClientPacks,
+  BUNDLED_CLIENT_PACKS,
   DEFAULT_STATEMENT_LANGUAGE,
   grantedAgentStatementLanguage,
   projectClientPacks,
@@ -72,8 +79,8 @@ declare const declaredLanguage: unique symbol;
  * A statement language an engine declares as data (`statementLanguageData` of its declaration), with no module of its
  * own: its name, branded so a bare string is not one. Only `declaredAgentLanguages` in `languages/declared-client.ts`
  * brands a name, when a registry composes its declared languages (the browser's at load, from the bundled declarations,
- * and the server's once per installed catalog), and `isAgentStatementLanguage` in `languages/client.ts` narrows any
- * other string to one.
+ * and the server's once per installed catalog), and a registry of client facets narrows any other string to one
+ * (`agentLanguageOfGrant` in `languages/client.ts`).
  */
 export type AgentDeclaredLanguageId = string & { readonly [declaredLanguage]: true };
 
@@ -81,8 +88,9 @@ export type AgentDeclaredLanguageId = string & { readonly [declaredLanguage]: tr
  * The statement languages agent mode can send: the module languages, and the languages declared as data, the bundled
  * declarations' in the browser and those the installed server catalog grants on the server. A record over this type is
  * total over the module languages at compile time; it holds a declared language only where the registry building it
- * adds one: `languages/client.ts` for the browser's registries, and the server's registries from the installed catalog
- * (`servedLanguageData` in src/lib/db/operations/served-language-data.ts).
+ * adds one: `languages/client.ts` for the browser's registries (`BUNDLED_CLIENT_PACKS`), and the server's registries
+ * from the installed catalog (`servedLanguageData` in src/lib/db/operations/served-language-data.ts, and
+ * `servedClientPacks` in `languages/server.ts` for the client facets).
  */
 export type AgentStatementLanguageId = AgentModuleLanguageId | AgentDeclaredLanguageId;
 
@@ -110,14 +118,19 @@ export interface AgentLanguageCopy {
   readonly adviceKeys: readonly string[];
 }
 
-/** Each language's copy, the entry its client pack (`languages/<id>/client.ts`) holds. */
+/**
+ * Each language's copy in the browser's composition, the entry its client pack (`languages/<id>/client.ts`) holds. The
+ * server reads a language's copy from its own registry (`serverLanguageClientPack(language).copy` in
+ * `languages/server.ts`).
+ */
 export const AGENT_LANGUAGE_COPY: Readonly<Record<AgentStatementLanguageId, AgentLanguageCopy>> = projectClientPacks(
   (pack) => pack.copy,
 );
 
 /**
  * The operation each language's `inspect_plan` drives, which is the id a run's plan artifacts are recorded under;
- * null for a language with no plan to read (no kubectl variant offers `inspect_plan`). Kept here, client-safe, so
+ * null for a language with no plan to read (no kubectl variant offers `inspect_plan`), and for every language declared
+ * as data, so the set below is the same over the browser's composition and the server's. Kept here, client-safe, so
  * every reader that asks whether an artifact is a plan reads one record rather than a set of its own, and a
  * language's plans count wherever plans are counted. `agent-manifest.test.ts` holds each entry to the
  * `inspect_plan` definition the run is offered.
@@ -232,27 +245,30 @@ export interface AgentWorkflowVariant {
  * reads the SQL variant's objective and deliverable instead, because planning is never gated by a language.
  *
  * The SQL record is total over `AgentRunWorkflowType`, in the union's order, which is the order the classifier
- * lists the workflows in. Each language's record is the one its client pack (`languages/<id>/client.ts`) holds.
+ * lists the workflows in. Each language's record is the one its client pack (`languages/<id>/client.ts`) holds. This is
+ * the browser's composition; a reader resolving a language reads the `variants` of the registry it is handed
+ * (`agentVariant`), the server's from `servedClientPacks()`.
  */
 export const AGENT_WORKFLOW_VARIANTS: Readonly<
   Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
 > = projectClientPacks((pack) => pack.variants);
 
 /**
- * The variant of one workflow on one language, or undefined when the language has none. An absent language reads as
- * `sql`, which is what a run recorded before languages existed was. A language the manifest does not hold is an
- * error rather than an absent variant. A ledger naming one is refused when it is read (`runHeaderRefusal`), so the
- * throw here is a caller's error.
+ * The variant of one workflow on one language in the registry `packs`, or undefined when the language has none. An
+ * absent language reads as `sql`, which is what a run recorded before languages existed was. A language the registry
+ * does not hold is an error rather than an absent variant. A ledger naming one the server's registry does not hold is
+ * refused when it is read (`runHeaderRefusal`), so the throw here is a caller's error.
  */
 export function agentVariant(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  packs: AgentClientPacks,
 ): AgentWorkflowVariant | undefined {
   const id = statementFamilyOf(language);
-  if (!Object.hasOwn(AGENT_WORKFLOW_VARIANTS, id)) throw new AgentManifestError(`unknown statement language ${id}`);
+  if (!Object.hasOwn(packs, id)) throw new AgentManifestError(`unknown statement language ${id}`);
   // The workflow is read from a ledger too, so it is guarded the same way: a name such as `toString` must be a
   // missing variant, never the inherited method.
-  const variants: Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>> = AGENT_WORKFLOW_VARIANTS[id];
+  const variants: Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>> = packs[id].variants;
   return Object.hasOwn(variants, workflow) ? variants[workflow] : undefined;
 }
 
@@ -260,23 +276,26 @@ export function agentVariant(
 export function requiredVariant(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  packs: AgentClientPacks,
 ): AgentWorkflowVariant {
-  const variant = agentVariant(language, workflow);
+  const variant = agentVariant(language, workflow, packs);
   if (variant === undefined) throw new AgentManifestError(`no ${workflow} variant for ${statementFamilyOf(language)}`);
   return variant;
 }
 
 /**
  * What a plan of this workflow hands back. A variant that inherits, and a language with no variant at all, read the
- * SQL variant's: planning is never gated by a language, so a plan always has a deliverable to ask for.
+ * SQL variant's: planning is never gated by a language, so a plan always has a deliverable to ask for. SQL is a module
+ * language, its record the same object in every registry.
  */
 export function planDeliverableOf(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  packs: AgentClientPacks,
 ): AgentPlanDeliverable {
-  const own = agentVariant(language, workflow)?.planDeliverable;
+  const own = agentVariant(language, workflow, packs)?.planDeliverable;
   if (own !== undefined && own !== "inherits") return own;
-  const inherited = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow).planDeliverable;
+  const inherited = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow, packs).planDeliverable;
   if (inherited === "inherits") throw new AgentManifestError(`the sql ${workflow} variant inherits from nothing`);
   return inherited;
 }
@@ -288,8 +307,10 @@ export function planDeliverableOf(
 export function planObjectiveOf(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  packs: AgentClientPacks,
 ): string {
-  return (agentVariant(language, workflow) ?? requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow)).objective;
+  return (agentVariant(language, workflow, packs) ?? requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow, packs))
+    .objective;
 }
 
 /**
@@ -354,20 +375,23 @@ export function legacyAgentEngine(type: DatabaseType): AgentEngine {
 }
 
 /**
- * The tables availability is decided from besides the engine's grants. A parameter rather than read inline so the two
- * refusals the manifest cannot produce while every language it holds is total stay tested: a language whose variants
- * are being filled in is exactly where they occur. Every requirement but `agent-readings`, which the engine's own
- * grants answer (`operationsWorkflowOpens`), is read from `requirementEngines` as a list of engine ids.
+ * The tables availability is decided from besides the engine's grants: the registry of client facets the engine's
+ * granted language and its variants are read from, `packs`, and the engines each listed requirement holds on. A
+ * parameter rather than read inline, for two reasons: the server decides availability over its registry composed from
+ * the installed catalog (`servedAvailabilityTables` in `languages/server.ts`) and the browser over its bundled
+ * composition, and the two refusals the manifest cannot produce while every language it holds is total stay tested: a
+ * language whose variants are being filled in is exactly where they occur. Every requirement but `agent-readings`,
+ * which the engine's own grants answer (`operationsWorkflowOpens`), is read from `requirementEngines` as a list of
+ * engine ids.
  */
-interface AgentAvailabilityTables {
-  readonly variants: Readonly<
-    Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
-  >;
+export interface AgentAvailabilityTables {
+  readonly packs: AgentClientPacks;
   readonly requirementEngines: Readonly<Record<AgentListedRequirement, readonly string[]>>;
 }
 
+/** The browser's tables: its bundled composition, and the listed requirements. The default of the readers below. */
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
-  variants: AGENT_WORKFLOW_VARIANTS,
+  packs: BUNDLED_CLIENT_PACKS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
 });
 
@@ -450,7 +474,7 @@ function variantIn(
   language: AgentStatementLanguageId,
   workflow: AgentRunWorkflowType,
 ): AgentWorkflowVariant | undefined {
-  const variants = tables.variants[language];
+  const { variants } = tables.packs[language];
   return Object.hasOwn(variants, workflow) ? variants[workflow] : undefined;
 }
 
@@ -467,6 +491,9 @@ function variantIn(
  * exactly where its row grants one and is executed exactly there (tests/unit/db/claim-grants.test.ts), so no legacy
  * engine reaches `not-reviewed`, and every legacy record offers execution profiles, so none reaches
  * `no-statement-session`.
+ *
+ * `tables` defaults to the browser's composition, for the browser and the tests; the server's routes pass
+ * `servedAvailabilityTables()`, so an engine granted a language only the installed catalog composes is answered.
  */
 export function workflowAvailability(
   mode: AgentRunMode,
@@ -474,7 +501,7 @@ export function workflowAvailability(
   engine: AgentEngine,
   tables: AgentAvailabilityTables = MANIFEST_TABLES,
 ): AgentWorkflowAvailability {
-  const language = grantedAgentStatementLanguage(engine);
+  const language = grantedAgentStatementLanguage(engine, tables.packs);
   if (mode === "planning") {
     return {
       open: true,
@@ -511,14 +538,14 @@ export function workflowAvailability(
  * lacks a variant or a requirement, the refused workflows are never offered. Plan mode opens every workflow. In agent
  * mode the set is empty on an engine that opens no workflow there: one with no statement workflow that offers agent
  * mode no curated reading, as a provider package's engine with no register row; the classify route refuses such a
- * connection before it asks the classifier.
+ * connection before it asks the classifier. `tables` defaults as `workflowAvailability`'s does.
  */
 export function openWorkflows(
   mode: AgentRunMode,
   engine: AgentEngine,
   tables: AgentAvailabilityTables = MANIFEST_TABLES,
 ): readonly AgentRunWorkflowType[] {
-  const order = Object.keys(tables.variants[DEFAULT_STATEMENT_LANGUAGE]) as AgentRunWorkflowType[];
+  const order = Object.keys(tables.packs[DEFAULT_STATEMENT_LANGUAGE].variants) as AgentRunWorkflowType[];
   return Object.freeze(order.filter((workflow) => workflowAvailability(mode, workflow, engine, tables).open));
 }
 
@@ -526,7 +553,8 @@ export function openWorkflows(
  * What a run opened under an availability on an engine persists: the engine's id, `engine`, in every mode, because it
  * is a fact of the run rather than of its tools; the language unless it is sql; the verifier unless it is the SQL one.
  * Absence is what the last two read as. A plan is judged by the planning rule whatever its variant says, so it never
- * persists a verifier.
+ * persists a verifier. SQL's verifier is read from the browser's composition: SQL is a module language, its record the
+ * same object in every registry.
  */
 export function persistedRunFacts(
   mode: AgentRunMode,
@@ -539,7 +567,7 @@ export function persistedRunFacts(
   readonly verifier?: AgentGoalVerifierId;
 } {
   const language = availability.statementLanguage;
-  const sqlVerifier = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow).verifier;
+  const sqlVerifier = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow, BUNDLED_CLIENT_PACKS).verifier;
   const verifier = mode === "agent" ? availability.variant?.verifier : undefined;
   return {
     engine,

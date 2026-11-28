@@ -9,16 +9,15 @@ import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { agentLanguagePack } from "../index";
 import { grantedAgentStatementLanguage } from "../client";
 import type { AgentEnginePack } from "../pack";
+import { servedClientPacks } from "../server";
 import { engineClientPack, engineFamily } from "./client";
 import { runServerPack } from "./server";
 
 /**
- * The pack of engine `id`, read from its record in the server's engine catalog (`servedEngineRecord`): its family pack
- * itself when neither overlay changes a facet, or when its record grants it a family its overlays are not of (a
- * language declared as data, or a provider package's engine, which has no overlay), otherwise a frozen pack holding
- * the overlaid facets and the family's execution facet. Its family is the `statementLanguage` grant of its record
- * (`grantedAgentStatementLanguage`). An engine whose record grants it no statement language has none, and asking is a
- * named error.
+ * The pack of engine `id`, read from its record (`servedEngineRecord`) and the server's registry (`servedClientPacks`):
+ * its family pack itself when neither overlay changes a facet or its record grants a family its overlays are not of
+ * (a declared language, or a package's engine), otherwise a frozen pack of the overlaid facets and the family's
+ * execution facet. Its family is its record's grant (`grantedAgentStatementLanguage`); with none, asking is an error.
  *
  * @throws {Error} Naming the engine, where its engine record grants it no statement language.
  * @throws {UnknownProviderError} When `id` names no engine the server knows.
@@ -26,11 +25,12 @@ import { runServerPack } from "./server";
  */
 export function agentEnginePack(id: string): AgentEnginePack {
   const engine = servedEngineRecord(id);
-  const language = grantedAgentStatementLanguage(engine);
+  const packs = servedClientPacks();
+  const language = grantedAgentStatementLanguage(engine, packs);
   if (language === null) throw new Error(`no engine pack for ${id}: Studio grants it no statement language`);
-  const client = engineClientPack(engine);
+  const client = engineClientPack(engine, packs);
   const family = agentLanguagePack(language);
   const server = runServerPack(family.id, id);
-  if (engineFamily(engine) !== language || (client === family.client && server === family.server)) return family;
+  if (engineFamily(engine, packs) !== language || (client === family.client && server === family.server)) return family;
   return Object.freeze({ id: family.id, client, server, execution: family.execution });
 }

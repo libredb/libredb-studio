@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_WORKFLOW_VARIANTS, legacyAgentEngine } from "@/lib/agent/agent-manifest";
-import { DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "@/lib/agent/languages/client";
+import { BUNDLED_CLIENT_PACKS, DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "@/lib/agent/languages/client";
 import { engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { MONGO_SERVER_PACK } from "@/lib/agent/languages/mongo/server";
@@ -47,11 +47,12 @@ describe("CURATED_CALL_LANGUAGE", () => {
 
 describe("engineFamily", () => {
   test("an engine's family is the language the manifest maps it onto", () => {
-    for (const type of ALL_TYPES) expect(engineFamily(legacyAgentEngine(type))).toBe(statementLanguage[type]);
+    for (const type of ALL_TYPES)
+      expect(engineFamily(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS)).toBe(statementLanguage[type]);
   });
 
   test("a name that is no own key has no family", () => {
-    expect(engineFamily({ id: "toString", grants: { statementLanguage: null } })).toBeNull();
+    expect(engineFamily({ id: "toString", grants: { statementLanguage: null } }, BUNDLED_CLIENT_PACKS)).toBeNull();
   });
 });
 
@@ -63,7 +64,7 @@ describe("runServerPack", () => {
         const run = runServerPack(language, type);
         // An engine of the run's family keeps the members its overlay overrides; held in engine-overlays.test.ts.
         const overridden =
-          engineFamily(legacyAgentEngine(type)) === statementFamilyOf(language)
+          engineFamily(legacyAgentEngine(type), BUNDLED_CLIENT_PACKS) === statementFamilyOf(language)
             ? Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect")
             : [];
         for (const member of Object.keys(family) as (keyof typeof family)[]) {

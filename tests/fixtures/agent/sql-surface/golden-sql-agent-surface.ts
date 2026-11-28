@@ -22,6 +22,7 @@ import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { runInvestigation } from "@/lib/agent/investigation";
 import { promptedToolContract } from "@/lib/agent/prompted-tools";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -352,7 +353,7 @@ function verdicts(mode: AgentRunMode, runs: Readonly<Record<string, readonly Age
       Object.fromEntries(
         Object.entries(runs).map(([name, events]) => [
           name,
-          verifyRunGoal({ mode, workflowType, status: "succeeded", events }),
+          verifyRunGoal({ mode, workflowType, status: "succeeded", events }, BUNDLED_CLIENT_PACKS),
         ]),
       ),
     ]),

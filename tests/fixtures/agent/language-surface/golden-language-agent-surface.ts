@@ -36,6 +36,7 @@ import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { BUNDLED_CLIENT_PACKS } from "@/lib/agent/languages/client";
 import { DATABASE_TOOL_HANDLERS, runInvestigation } from "@/lib/agent/investigation";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
 import { promptedToolContract } from "@/lib/agent/prompted-tools";
@@ -568,14 +569,17 @@ function verdicts() {
       Object.fromEntries(
         Object.entries(runs).map(([name, events]) => [
           name,
-          verifyRunGoal({
-            mode: "agent",
-            workflowType,
-            status: "succeeded",
-            events,
-            statementLanguage,
-            verifier: verifier as keyof typeof LANGUAGE_RUNS,
-          }),
+          verifyRunGoal(
+            {
+              mode: "agent",
+              workflowType,
+              status: "succeeded",
+              events,
+              statementLanguage,
+              verifier: verifier as keyof typeof LANGUAGE_RUNS,
+            },
+            BUNDLED_CLIENT_PACKS,
+          ),
         ]),
       ),
     ]),
