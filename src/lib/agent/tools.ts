@@ -76,6 +76,7 @@ import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
 import {
   type MonitoringTarget,
+  type ObjectRead,
   providerMonitoringTarget,
   providerTreeTarget,
   raisedByTreeRead,
@@ -2881,7 +2882,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
   // One record of the walk's package failures, so each is logged once, and every value the package's tree function
   // raised, so only those are answered as the package's (`recordingRaised`).
   const answers = packageAnswers(engine, scrub, OBJECT_INVENTORY_ROUTE);
-  const raised = new Set<unknown>();
+  const raised = new Map<unknown, ObjectRead>();
   let inventory: AgentInventory = { objects: [], kinds: [] };
   let defaultContainer: readonly string[] | undefined;
   let outcome: AgentToolOutcome;
@@ -2973,13 +2974,14 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * (docs/providers/CONTRACT.md, clause C-109), which would read as a login the seed did not name for the agent. A failed
  * open is answered by the record (`answers`), a not-sent `ConnectionError` logged once as the package's where it is one,
  * so the capture is unavailable and the plan run goes on as on a legacy engine it could not reach. The target records
- * every value the session's tree function raises in `raised`, so the walk answers only those as the package's.
+ * every value the session's tree function raises in `raised`, named by the read that raised it, so the walk answers
+ * only those as the package's.
  */
 async function groundingTreeTarget(
   context: AgentToolContext,
   engine: EngineRecord,
   answers: PackageAnswers,
-  raised: Set<unknown>,
+  raised: Map<unknown, ObjectRead>,
 ): Promise<TreeTarget> {
   if (engine.offers.executionProfiles) {
     // Which profile grounds the run, decided by what the run is (`groundsUnderExecutionProfile`): a
