@@ -37,5 +37,13 @@
       "statement": "list \u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000",
       "sentence": "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it."
     }
+  },
+  "agent": {
+    "objective": "Which names does the store hold?",
+    "prose": "A list read answers every name the store holds. Plan mode sends no statement.",
+    "notReviewed": "Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and In-memory key-value fixture is not one of them, so a run whose workflow sends a statement is not opened on it. Plan mode drafts here."
+  },
+  "mcp": {
+    "notOffered": "This connection is not available to MCP: LibreDB Studio does not offer its engine to MCP clients, so an operator removes mcp from this seed."
   }
 }
