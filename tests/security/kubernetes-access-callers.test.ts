@@ -308,6 +308,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/monitoring/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
   },
   editorMonitoringTarget: {
     "src/app/api/db/pool-stats/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,

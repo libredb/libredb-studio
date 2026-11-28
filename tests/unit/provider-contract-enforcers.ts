@@ -3234,6 +3234,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/isolated/agent-package-engine-drive.test.ts": [
         "a plan-mode run on a package engine is driven from its ledger through the served resolve, and grounds through its package's metadata session",
+        "the operations workflow reads a package engine's granted readings through its package, and refuses every other by name",
       ],
     },
   },

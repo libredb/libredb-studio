@@ -93,8 +93,9 @@
  * column profile and the statement analysis resolve through `resolveServedConnection` too and refuse a package's engine
  * by the record's offer (`objectEdit`, `keyScan`, `columnProfile`, `connectionDeclarations`) or its statement grammar.
  * Agent mode's classify, runs and hand-over routes and an agent run's drive resolve through `resolveServedConnection`
- * too: a run grounds on the record's metadata session (`metadataTreeTarget`), and a run whose workflow sends
- * statements, which needs a read-only statement session, is refused where the record offers no execution profiles.
+ * too: a run grounds and takes its curated readings on the record's metadata session (`metadataTreeTarget`,
+ * `metadataMonitoringTarget`), and a run whose workflow sends statements, which needs a read-only statement session, is
+ * refused where the record offers no execution profiles.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *

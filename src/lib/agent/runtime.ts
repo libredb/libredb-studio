@@ -27,7 +27,7 @@
  */
 
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
-import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget, metadataTreeTarget } from "@/lib/api/editor-provider";
 import {
   type EngineConnection,
   type EngineRecord,
@@ -306,9 +306,13 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
             {},
             editorExecutionContext(actor, target),
           ),
-        // The record's metadata session under the run's persisted actor, the session the tree routes read; the
-        // grounding walk opens it on a provider package's engine only.
-        sessions: { metadataTree: () => metadataTreeTarget({ role: actor.role }, connection, engine) },
+        // The record's metadata session under the run's persisted actor, the session the tree and monitoring routes
+        // read; the grounding walk and the curated readings open it on a provider package's engine only, whose run
+        // holds no catalog (refused above where it was recorded with one).
+        sessions: {
+          metadataTree: () => metadataTreeTarget({ role: actor.role }, connection, engine),
+          monitoring: () => metadataMonitoringTarget({ role: actor.role }, connection, engine, undefined),
+        },
       },
     });
     return { kind: "finished", result };

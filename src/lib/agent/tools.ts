@@ -126,7 +126,6 @@ import {
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
-import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   type EngineConnection,
   type EngineRecord,
@@ -135,7 +134,6 @@ import {
   servedEngineRecord,
 } from "@/lib/db/server-catalog";
 import type { AgentEngineCapabilities, AgentEngineLabels } from "@/lib/agent/engine-view";
-import { typeIdRow } from "@/lib/db/type-id";
 import {
   type AuditedInvocation,
   actorLabel,
@@ -356,10 +354,12 @@ export type AgentProviderAcquirer = (
 /**
  * The sessions of a run's engine a tool opens through the engine's record rather than the acquirer: the record's
  * metadata session, as a tree target (`metadataTreeTarget` in src/lib/api/editor-provider.ts), which the grounding walk
- * reads a provider package's engine on. The drive builds it for every record; only a package engine's walk calls it.
+ * reads a provider package's engine on, and as a monitoring target (`metadataMonitoringTarget`), which the curated
+ * readings read it on. The drive builds both for every record; only a package engine's walk and readings call them.
  */
 export interface AgentEngineSessions {
   metadataTree(): Promise<TreeTarget>;
+  monitoring(): Promise<MonitoringTarget>;
 }
 
 /**
@@ -3007,12 +3007,7 @@ async function groundingTreeTarget(
       "PROFILE_UNSUPPORTED_BY_PROVIDER",
     );
   }
-  if (context.connection.agentUser || context.connection.agentPassword) {
-    throw new StudioProfileRefusal(
-      `Connection "${context.connection.id}" configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, which receives no agent credential, so agent mode reads nothing on it.`,
-      "AGENT_CREDENTIAL_NOT_TAKEN",
-    );
-  }
+  refusePackageAgentCredential(context);
   let target: TreeTarget;
   try {
     target = await context.sessions.metadataTree();
@@ -3020,6 +3015,23 @@ async function groundingTreeTarget(
     throw answers.answer("open", error);
   }
   return recordingRaised(target, raised);
+}
+
+/**
+ * Refuses by name a run on a provider package's engine whose connection names an agent credential, before the package's
+ * session opens: that session opens with the connection's own credential (docs/providers/CONTRACT.md, clause C-109),
+ * which would read as a login the seed did not name for the agent. Read by the grounding walk's and the curated
+ * readings' package arms.
+ *
+ * @throws {StudioProfileRefusal} `AGENT_CREDENTIAL_NOT_TAKEN`, where the connection names an agent user or password.
+ */
+function refusePackageAgentCredential(context: AgentToolContext): void {
+  if (context.connection.agentUser || context.connection.agentPassword) {
+    throw new StudioProfileRefusal(
+      `Connection "${context.connection.id}" configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, which receives no agent credential, so agent mode reads nothing on it.`,
+      "AGENT_CREDENTIAL_NOT_TAKEN",
+    );
+  }
 }
 
 /**
@@ -3717,6 +3729,8 @@ const instant = (value: Date | undefined): string | null => (value === undefined
  */
 interface CuratedReading {
   readonly label: string;
+  /** The call a provider package's failure of this reading is answered for (`PackageAnswers`). */
+  readonly call: "panel read" | "health";
   readonly fields: readonly string[];
   /** The projected column `input.schema` narrows on, or absent when the reading has no schema dimension. */
   readonly schemaColumn?: string;
@@ -3806,6 +3820,7 @@ function healthRows(health: HealthInfo): CuratedRows {
 const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> = Object.freeze({
   sessions: {
     label: "active sessions",
+    call: "panel read",
     fields: [
       "pid",
       "user",
@@ -3840,6 +3855,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   },
   "slow-queries": {
     label: "slow queries",
+    call: "panel read",
     fields: ["queryId", "query", "calls", "totalTime", "avgTime", "minTime", "maxTime", "rows"],
     read: (target, _input, limit, grant) =>
       panelRows(target, { panel: AGENT_READING_PANELS["slow-queries"], limit }, grant, (entries) =>
@@ -3857,6 +3873,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   },
   "table-stats": {
     label: "table statistics",
+    call: "panel read",
     schemaColumn: "schemaName",
     scope: (labels) => labels.tableStatsCaption,
     fields: [
@@ -3891,6 +3908,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   },
   "index-stats": {
     label: "index statistics",
+    call: "panel read",
     schemaColumn: "schemaName",
     fields: [
       "schemaName",
@@ -3922,6 +3940,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   },
   storage: {
     label: "storage",
+    call: "panel read",
     fields: ["name", "location", "size", "sizeBytes", "usagePercent", "walSizeBytes"],
     read: (target, _input, _limit, grant) =>
       panelRows(target, { panel: AGENT_READING_PANELS.storage }, grant, (stores) =>
@@ -3937,6 +3956,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   },
   health: {
     label: "health",
+    call: "health",
     fields: ["activeConnections", "databaseSize", "cacheHitRatio"],
     read: (target, _input, _limit, grant) => readGrantedHealth(target, grant).then(healthRows),
   },
@@ -3990,7 +4010,10 @@ async function runCuratedRead(
 ): Promise<QueryResult> {
   const input = validatedInput as AgentCuratedReadInput;
   const reading = CURATED_READINGS[input.kind];
-  const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+  const engine = runEngine(context);
+  // One record of the reading's package failures, so each is logged once (`PackageAnswers`).
+  const answers = packageAnswers(engine, runTextScrub(context), CURATED_READING_ROUTE);
+  const targetOf = await curatedReadingSession(context, engine, answers);
   const grant: GrantedRead = {
     deadline: Date.now() + budget.statementTimeoutMs,
     deadlineSentence: `The ${reading.label} reading did not answer within the ${waitedSeconds(budget.statementTimeoutMs)} its call was granted, so Studio stopped waiting for it.`,
@@ -4014,13 +4037,15 @@ async function runCuratedRead(
   // install throws here by name and is never taken for a provider's error. The boot order is read first, so it is
   // refused before the reading's bridged session is built, which reads the provider's capabilities, as the walk does.
   hostCore();
-  const target = providerMonitoringTarget(provider);
+  const target = targetOf();
   const started = reading.read(target, input, limit, grant);
   let answered: CuratedRows;
   try {
     answered = await started;
   } catch (error) {
-    throw asReadingFailure(error, legacyProviderType(runEngine(context)));
+    // A provider package's failure is answered by its record and logged once; a legacy provider's error and Studio's
+    // own, its timeout refusal among them, are answered as raised (`packageFailureAnswer`).
+    throw asReadingFailure(answers.answer(reading.call, error), legacyProviderType(engine));
   }
   if (answered.kind === "not-offered") throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
   const read = answered.rows;
@@ -4052,6 +4077,38 @@ async function runCuratedRead(
     rowCount: rows.length,
     executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
   };
+}
+
+/**
+ * The session a curated reading reads `engine` on, as the monitoring target the reading builds once its call is sent.
+ *
+ * A record that offers execution profiles: the provider the run's acquirer opens under the operations profile, read
+ * through the legacy bridge (`providerMonitoringTarget`), its target built after the call is granted, as before.
+ *
+ * Any other record, a provider package's engine: its metadata session, opened through the record
+ * (`context.sessions.monitoring()`), the session the monitoring and health routes read, after the host core's boot
+ * order is read and a connection that names an agent credential is refused by name (`refusePackageAgentCredential`),
+ * so no package open precedes either. A failed open is answered by the record (`answers`), so the reading is refused
+ * before its call is sent.
+ */
+async function curatedReadingSession(
+  context: AgentToolContext,
+  engine: EngineRecord,
+  answers: PackageAnswers,
+): Promise<() => MonitoringTarget> {
+  if (engine.offers.executionProfiles) {
+    const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+    return () => providerMonitoringTarget(provider);
+  }
+  hostCore();
+  refusePackageAgentCredential(context);
+  let target: MonitoringTarget;
+  try {
+    target = await context.sessions.monitoring();
+  } catch (error) {
+    throw answers.answer("open", error);
+  }
+  return () => target;
 }
 
 /**
@@ -4096,7 +4153,7 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
   // makes no repair entry: the definition this run was handed never offered it.
   const offered = agentReadingsOf(context.engine);
   if (!offered.includes(selector.kind)) {
-    const label = typeIdRow(CONNECTION_FORM, context.engine).label;
+    const label = runEngine(context).displayName;
     return unavailable(
       "READING_NOT_OFFERED",
       `"${selector.kind}" is not a reading the ${label} connection offers agent mode; it offers ${members(offered)}.`,
