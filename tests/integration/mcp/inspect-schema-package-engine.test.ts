@@ -367,20 +367,43 @@ describe("inspect_schema on a provider package's engine", () => {
 
   test("a Studio error after a package engine's open is answered as Studio's own, never as the package's", async () => {
     // A session whose package offers no tree: the facade refuses it when built, before any read, and the package's
-    // tree is never called.
+    // tree is never called. The refusal is Studio's sentence: no notice, no database-failure prefix, no package author.
     const seen = hooksFor(BARE);
     const error = spyOn(logger, "error").mockImplementation(() => undefined);
     try {
-      const result = await inspect(listedOf(BARE));
-      expect(result.isError).toBe(true);
-      const text = result.content.map((block) => block.text).join("\n");
-      expect(text).not.toContain("The provider package's");
-      expect(text).toContain("objects.tree");
+      expect(await inspect(listedOf(BARE))).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "This connection's provider package does not offer objects.tree, so Studio did not call it.",
+          },
+        ],
+        structuredContent: { error: { kind: "not-offered", code: "FACET_NOT_OFFERED", outcome: "not-sent" } },
+        isError: true,
+      });
       expect(error.mock.calls.filter(([line]) => String(line).startsWith("A provider package's"))).toEqual([]);
     } finally {
       error.mockRestore();
     }
     expect(names(seen)).toEqual(["open"]);
+  });
+
+  test("a tree read error the package raised stays the package's, even in words Studio could have written", async () => {
+    // Who raised it decides, never its words: the package rejects with Studio's own sentence for a missing tree.
+    const words = "This connection's provider package does not offer objects.tree, so Studio did not call it.";
+    hooksFor(WORDS, { tree: () => Promise.reject(new Error(words)) });
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const result = await inspect(listedOf(WORDS));
+      expect(result.isError).toBe(true);
+      expect(result.content.map(({ text }) => text)).toEqual([
+        databaseContentNotice(authorOf(WORDS, "acme-mcp-words")),
+        `${MCP_ENGINE_ERROR_PREFIX}${words}`,
+      ]);
+      expect(error.mock.calls.filter(([line]) => line === "A provider package's tree read failed")).toHaveLength(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("a stopped wait releases inspect_schema at its deadline while the package's open runs on", async () => {

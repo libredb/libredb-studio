@@ -90,11 +90,14 @@ import {
  * readings agent mode's `inspect_operations` offers, never this acquisition. On a provider package's engine, whose
  * record offers none, it reads the record's metadata session instead (`metadataTargetWithinCall`, clause C-66), opened
  * through the package's own `open`, which also sends no statement; a database named on the call is refused before that
- * open (`packageDatabaseChoice`), since a package's record offers no catalog session. A failure of that open, and of a
- * tree read the package's session raised (`recordingRaised`, `raisedByTreeRead`), is answered by the record
+ * open (`packageDatabaseChoice`), since a package's record offers no catalog session. A failure the package's open
+ * raised, and one a tree read of the package's session raised (`recordingRaised`, `raisedByTreeRead`), is answered by
+ * the record
  * (`packageFailureAnswer`, clause C-112), logged once: behind the notice naming the package where its register row
- * grants the package its own words, and in Studio's sentence naming its code otherwise; every other failure is
- * Studio's own and is answered as on a legacy engine. A package's sentence in a schema answer, an index read's
+ * grants the package its own words, and in Studio's sentence naming its code otherwise. Every other failure on a
+ * package's engine is Studio's own, a session that offers no `objects.tree` (`FacetNotOfferedError`) or a defect of
+ * Studio's host among them, and is answered in Studio's words with its error record, with no notice, no package named
+ * and no package log line (`studioFailure`). A package's sentence in a schema answer, an index read's
  * `unavailable`, reaches the client under the same grant (`providerSentence`). The decision event is written before
  * acquisition and the outcome after, and a call whose record cannot be written runs nothing. The page is fitted to the
  * result cap at a table boundary, and the column and index caps count what they leave out instead of adding fake
@@ -552,6 +555,18 @@ function packageAnswer(
   return ownWordsFailure((answered as Error).message, answered, scrub);
 }
 
+/**
+ * The answer to `error`, a failure on a provider package's engine that the package's own call did not raise: Studio's
+ * own words through the open's scrub, with the failure's error record, and no notice, since no package wrote them.
+ */
+function studioFailure(error: unknown, scrub: ProviderTextScrub): ToolResult {
+  return ownWordsFailure(
+    scrubProviderText(scrub, error instanceof Error ? error.message : String(error)),
+    error,
+    scrub,
+  );
+}
+
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
   // First: a call made before the host core is installed throws by name, with no record written and nothing opened, so
   // Studio's boot-order defect is never answered as the database's error.
@@ -625,6 +640,13 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     }
     const answered = packageAnswer(engine, failing.current, error, scrub, author);
     if (answered !== null) return finish(answered, "mcp_execution_failed");
+    // Studio's own database choice refusal, raised in this tool layer: its words, with no failure record.
+    if (error instanceof McpDatabaseChoiceError) {
+      return finish(ownWordsError(scrubProviderText(scrub, error.message)), "mcp_execution_failed");
+    }
+    // On a package's engine, what the package's call did not raise is Studio's own, never the package's or the
+    // database's.
+    if (!engine.offers.executionProfiles) return finish(studioFailure(error, scrub), "mcp_execution_failed");
     // #1462: the agent-operations profile runs the same role check as agent-read-only
     // (factory.ts), so a superuser seed refuses here too. A refusal Studio wrote reads in
     // Studio's words, scrubbed - no notice, no "The database refused or failed the call:"
@@ -638,10 +660,6 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     }
     if (error instanceof ExecutionProfileError) {
       return finish(ownWordsFailure(scrubProviderText(scrub, error.message), error, scrub), "mcp_execution_failed");
-    }
-    // Studio's own database choice refusal, raised in this tool layer: its words, with no failure record.
-    if (error instanceof McpDatabaseChoiceError) {
-      return finish(ownWordsError(scrubProviderText(scrub, error.message)), "mcp_execution_failed");
     }
     return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, author), "mcp_execution_failed");
   }
