@@ -233,8 +233,8 @@ export function projectUnavailableSeed(entry: UnavailableSeedEntry, userRoles: s
     name: entry.name,
     // The one place a listed record's type is not a type id by construction. `DatabaseConnection.type` says a listed
     // record may carry any value there, and every reader checks it: the client derives Unavailable from it, the server
-    // refuses it by name wherever a route opens the record (resolveServedConnection), and MCP reads it by its engine record's
-    // grants, so an engine no register row offers to MCP is listed and refused with the exposure sentence.
+    // refuses it by name wherever a route opens the record (resolveServedConnection), and MCP reads it by its engine
+    // record's grants, so an engine no register row offers to MCP is listed and refused with the exposure sentence.
     type: entry.type as DatabaseType,
     environment: entry.environment,
     group: entry.group,

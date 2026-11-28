@@ -1730,7 +1730,7 @@ Discovered connections are validated one by one, and a bad one never fails the l
 - User role is extracted from the JWT session **server-side** — never from client headers or request params.
 - Every database operation (query, schema, health check, etc.) goes through `resolveServedConnection()`, which verifies role access before returning credentials.
 - Role check failures return 403 with no credential information.
-- While `ALLOW_CUSTOM_CONNECTIONS` is off, that body also refuses a connection supplied in the request with 403, so only seeds reach a provider (see [Custom Connections](#custom-connections)).
+- While `ALLOW_CUSTOM_CONNECTIONS` is off, `resolveServedConnection()` also refuses a connection supplied in the request with 403, so only seeds reach a provider (see [Custom Connections](#custom-connections)).
 
 ### Audit Trail
 

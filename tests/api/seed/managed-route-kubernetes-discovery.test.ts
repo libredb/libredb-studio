@@ -1,6 +1,6 @@
 /**
- * GET /api/connections/managed and resolveServedConnection with the real Kubernetes discovery source: an export file the
- * exporter's shape, read through the loader, merged by src/lib/seed/index.ts and gated by the Kubernetes access
+ * GET /api/connections/managed and resolveServedConnection with the real Kubernetes discovery source: an export file
+ * the exporter's shape, read through the loader, merged by src/lib/seed/index.ts and gated by the Kubernetes access
  * review against a fake API server. Only getSession is replaced.
  *
  * This is the end-to-end check of the contract between the source and the review: every discovered connection names

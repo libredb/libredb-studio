@@ -379,9 +379,10 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
   });
 
   test("an admin's run on a seed offered to admin and user hands over under the posture a user's run gets", async () => {
-    // `resolveServedConnection` hands the route the run actor's own copy of the seed, which names only the roles that actor
-    // holds, so an admin's copy of a seed offered to ["admin", "user"] reads ["admin"]. The posture is still the one the
-    // operator's roles decide (docs/providers/duckdb.md 3.16), so every actor of that seed hands over on one handle.
+    // `resolveServedConnection` hands the route the run actor's own copy of the seed, which names only the roles that
+    // actor holds, so an admin's copy of a seed offered to ["admin", "user"] reads ["admin"]. The posture is still the
+    // one the operator's roles decide (docs/providers/duckdb.md 3.16), so every actor of that seed hands over on one
+    // handle.
     const warehouse = (roles: string[]): SeedConnection => ({
       id: "warehouse",
       name: "Warehouse",

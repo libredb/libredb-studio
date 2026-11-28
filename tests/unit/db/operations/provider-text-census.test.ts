@@ -528,9 +528,9 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [testConnectionCore, "healthFailureSentence", "withheldProviderError"],
   [testConnectionCore, "testConnectionCautions", "withholdProviderError"],
   [editorQuery, "editorPageBody", "withScrubbedWarnings"],
-  // A provider package's warnings reach the client by its record's grant of its own words, a statement's page and a unit
-  // of the editor's script alike: through core's scrub, or only as Studio's count sentence, each logged through core's
-  // scrub (`packageWarnings` in src/lib/api/package-errors.ts, which calls `scrubProviderWarnings`).
+  // A provider package's warnings reach the client by its record's grant of its own words, a statement's page and a
+  // unit of the editor's script alike: through core's scrub, or only as Studio's count sentence, each logged through
+  // core's scrub (`packageWarnings` in src/lib/api/package-errors.ts, which calls `scrubProviderWarnings`).
   [editorQuery, "packagePageBody", "packageWarningsByGrant"],
   [editorQuery, "packageWarningsByGrant", "scrubProviderWarnings"],
   [editorQuery, "packageWarningsByGrant", "packageWarnings"],

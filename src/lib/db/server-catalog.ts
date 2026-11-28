@@ -60,11 +60,11 @@
  * `legacyProviderEngine`, which reads the record's `legacyProvider` offer: the provider factory's entry points
  * (./factory), which read the record's grants and connection tables where they once read Studio's tables keyed by type.
  * A refused package's engine is refused there as `ProviderUnavailableError`, an engine whose record offers no legacy
- * provider as `PackageEngineUnsupportedError`, whose session opens through its package, and every other value exactly
- * as `assertDatabaseType` refuses it. Only Test Connection, the query route, its cancel and a transaction, a
- * multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring, health and
- * maintenance requests, the provider metadata read, MCP and agent mode serve an engine whose record offers no legacy
- * provider in this Studio: each reads the type through `servedEngineRecord`, the routes when they resolve the
+ * provider as `PackageEngineUnsupportedError` (an engine whose session opens through its package), and every other
+ * value exactly as `assertDatabaseType` refuses it. Only Test Connection, the query route, its cancel and a
+ * transaction, a multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring,
+ * health and maintenance requests, the provider metadata read, MCP and agent mode serve an engine whose record offers
+ * no legacy provider in this Studio: each reads the type through `servedEngineRecord`, the routes when they resolve the
  * connection with its record through `resolveServedConnection` (src/lib/seed/resolve-connection.ts); Test Connection
  * then runs one test for every record, which reads what differs from the record's offers and grants (`testConnection`
  * in src/lib/api/test-connection.ts), the query route opens every record's cached editor session and runs a statement
@@ -474,8 +474,8 @@ export function servedEngineRefusal(value: unknown): ProviderUnavailableError | 
  * The record of the engine a connection's type names, when that record offers a legacy provider: what the provider
  * factory (./factory) reads of a legacy engine, its grants and its connection tables, in place of Studio's tables keyed
  * by type. A type the catalog serves no record of is refused as `servedEngineRecord` refuses it, and an engine whose
- * record offers no legacy provider as `PackageEngineUnsupportedError`, whose sentence says its session opens through its
- * package.
+ * record offers no legacy provider as `PackageEngineUnsupportedError`, whose sentence says its session opens through
+ * its package.
  *
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {PackageEngineUnsupportedError} When the engine's record offers no legacy provider.
