@@ -10,6 +10,7 @@ import {
   envReader,
   type ExecuteRequest,
   type PageBound,
+  type Warning,
 } from "@libredb/provider-sdk/calls";
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { firstResultSet } from "@/lib/api/first-result-set";
@@ -44,8 +45,8 @@ import type {
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
-import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
-import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
+import type { AnsweredRun } from "@/lib/provider-host/legacy-bridge";
+import type { DatabaseType, QueryPagination, QueryResult, QueryWarning } from "@/lib/types";
 
 /*
  * THE EDITOR QUERY'S PROVIDER-FACING STEPS, WITH NO NEXT IN THEM.
@@ -558,10 +559,27 @@ export interface PackagePage {
 }
 
 /**
+ * The warnings a client receives for `warnings`, the ones a provider package's execute answered, by how the engine's
+ * record grants the package its own words, `ownWords`: through core's `scrub` where they are `"scrubbed"`, and as
+ * `packageWarnings` answers them under `route` where they are `"code-only"`, Studio's one sentence naming their count,
+ * each logged once. Read by a statement's page body (`packagePageBody`) and by a unit of a script of
+ * `POST /api/db/multi-query` on a package's session (`entryConsoleTarget` in ./session-target).
+ */
+export function packageWarningsByGrant(
+  warnings: readonly Warning[],
+  ownWords: EngineRecord["grants"]["ownWords"],
+  scrub: ProviderTextScrub,
+  route: string,
+): QueryWarning[] {
+  return ownWords === "scrubbed"
+    ? scrubProviderWarnings(scrub, warnings)
+    : packageWarnings("execute", warnings, scrub, route);
+}
+
+/**
  * The answer body of the page `record` holds, under `columns`, the first result's columns the package answered, and
- * `page`; its warnings by how the engine's record grants its own words, `ownWords`: through core's `scrub` where they
- * are `"scrubbed"`, and as `packageWarnings` answers them under `route` where they are `"code-only"`. The columns'
- * names, the execution time, the row count and the warnings are the members the host core checked before it pumped
+ * `page`; its warnings by how the engine's record grants its own words, `ownWords` (`packageWarningsByGrant`). The
+ * columns' names, the execution time, the row count and the warnings are the members the host core checked before it pumped
  * the page (`checkExecuteAnswer`, clause C-112), so none is checked again here. The record is released once, in a
  * `finally`, whether or not the body was built. A provider package's statement form builds its body with it
  * (`entryConsoleTarget` in ./session-target).
@@ -586,10 +604,7 @@ export function packagePageBody(
       .slice(0, page.limit)
       .map((row) => Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])));
     const typed = columns.filter((column) => typeof column.type === "string");
-    const warnings =
-      ownWords === "scrubbed"
-        ? scrubProviderWarnings(scrub, record.warnings)
-        : packageWarnings("execute", record.warnings, scrub, route);
+    const warnings = packageWarningsByGrant(record.warnings, ownWords, scrub, route);
     return {
       body: {
         rows,
@@ -719,21 +734,30 @@ export async function cancelEditorRun(
 }
 
 /**
- * Ends `scope`, which the script facade (`openEditorScript`, src/lib/api/editor-script.ts) minted for a provider whose
- * session offers `console.endScope` and sent with every unit it ran on `provider`, through the bridge's
- * `console.endScope` and the host core's endScope call, under a cleanup context of its own that `caller`'s leaving does
- * not end (docs/providers/CONTRACT.md, clause C-60), and answers the end's outcome.
+ * Ends `scope`, which the script facade (`openEditorScript`, src/lib/api/editor-script.ts) minted for a session that
+ * offers `console.endScope` and sent with every unit it ran on `target`, through the session's `console.endScope` (the
+ * legacy bridge's for a legacy provider) and the host core's endScope call, on the target's session, under a cleanup
+ * context of its own with the target's declared environment that `caller`'s leaving does not end
+ * (docs/providers/CONTRACT.md, clause C-60), the call counted on the target's cache entry from its start until it
+ * ended, and answers the end's outcome.
  *
- * @throws The provider's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
+ * @throws The session's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
  * it, outcome unknown; a host defect for a refusal, the facet's included, since a scope is minted only where the facet
  * is offered.
  */
 export async function endEditorScope(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   scope: string,
   caller: AbortSignal,
   route: string,
 ): Promise<EndScopeAnswer["openTransaction"]> {
   const core = hostCore();
-  return endedScope(await endScopeRecord(core, bridgedConsole(provider, {}).session, scope, route), caller);
+  target.started();
+  let record: EndScopeRecord | undefined;
+  try {
+    record = await endScopeRecord(core, target.session, scope, route, target.env);
+  } finally {
+    target.ended(record);
+  }
+  return endedScope(record, caller);
 }

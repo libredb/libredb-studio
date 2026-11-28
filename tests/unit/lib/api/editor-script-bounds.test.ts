@@ -70,7 +70,14 @@ const child = boundedChild({
             })
             .runUnit(0, (result) => result, start)
         : await deps
-            .openEditorScript(provider, { units, dialect: "postgres", options: {}, signal, route: "bounds" })
+            .openEditorScript(deps.providerConsoleTarget(provider), {
+              units,
+              options: {},
+              signal,
+              route: "bounds",
+              // Core's scrub of a connection that holds no secret.
+              scrub: { type: "postgres", forms: [] },
+            })
             .runUnit(0, (result) => result, start);
     return outcome.kind === "answered"
       ? "answered"

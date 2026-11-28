@@ -1,11 +1,11 @@
 import type { ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { composedStatementOn } from "@/lib/api/composed-statement";
 import { callContext, executeDeadline, executeViews, hostPorts, pageBound } from "@/lib/api/editor-query";
+import { providerSampleRead } from "@/lib/api/session-target";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { refusalError, stopError } from "@/lib/provider-host/access";
 import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
 
 /*
@@ -17,8 +17,9 @@ import type { QueryResult } from "@/lib/types";
  * the legacy bridge's composed statement session (clause C-50) through its one opener, `composedStatementOn`
  * (src/lib/api/composed-statement.ts), so it reaches the provider exactly as written, with every row as its page: the
  * console session's prepare would append a page bound to every aggregate. The SQL sample runs on the bridge's console
- * session (`bridgedConsole`) asking a page of the given rows and nothing else, so the provider writes its own bound,
- * one row past the page (`probePastPage`), and at most the page's rows are answered.
+ * session, built as the provider's sample read (`providerSampleRead` in src/lib/api/session-target.ts), asking a page
+ * of the given rows and nothing else, so the provider writes its own bound, one row past the page (`probePastPage`),
+ * and at most the page's rows are answered.
  *
  * The process's host core is read and the views built when the reads are opened, synchronously, so a profile run before
  * the install throws `HostCoreBootOrderError` before any read and outside every measure's refusal (clause C-52). Each
@@ -64,12 +65,12 @@ export function openProfileReads(
   return {
     composed: (statement) => composedStatementOn(core, provider, { statement, context: context(), route, end }),
     sample: async (statement, rows) => {
-      const bridged = bridgedConsole(provider, { limit: rows });
+      const form = providerSampleRead(provider, rows);
       const request: ExecuteRequest = { statement, page: pageBound({ limit: rows }) };
-      const record = await core.executeCall(bridged.session, request, context(), bridged.pumpLimits, hostPorts(route));
+      const record = await core.executeCall(form.session, request, context(), form.pumpLimits, hostPorts(route));
       if (record.kind !== "page") throw end(record);
       try {
-        return bridged.answered().result.rows.slice(0, Math.min(rows, record.page.rows.length));
+        return form.answered().rows.slice(0, Math.min(rows, record.page.rows.length));
       } finally {
         record.release();
       }

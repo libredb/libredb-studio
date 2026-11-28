@@ -50,6 +50,10 @@ const STATISTICS_READ = "readStatisticsForGrounding";
 const COMPOSED_SESSION = "bridgedComposedStatements";
 /** The composed statement facade, the one opener of that session. */
 const COMPOSED_FACADE = join("src", "lib", "api", "composed-statement.ts");
+/** The session target module, the one module of the caller facades that builds a legacy provider's bridged session. */
+const SESSION_TARGET = join("src", "lib", "api", "session-target.ts");
+/** Its builder of a composed statement session, which the opener reads. */
+const COMPOSED_READ = "providerComposedRead";
 const CORE_READING = "runReadOnlyReading";
 /** Each budgeted read that is not a statement, and the one function outside provider code that reads it. */
 const BUDGETED_READS = [
@@ -561,10 +565,14 @@ describe("the agent's statements and the hand-over replay on the host core", () 
   });
 
   test("only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session", () => {
-    // The session sends its statement through the plain query, unprepared, so its callers are held here: one opener,
-    // read by two facades, each called by the one caller that composes its statements.
+    // The session sends its statement through the plain query, unprepared, so its callers are held here: one builder,
+    // read by one opener, read by two facades, each called by the one caller that composes its statements.
     const sessions = callsOutsideProviders(COMPOSED_SESSION);
     expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${SESSION_TARGET} in ${COMPOSED_READ}`,
+    ]);
+    const reads = callsOutsideProviders(COMPOSED_READ);
+    expect(reads.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
       `${COMPOSED_FACADE} in ${COMPOSED_OPENER}`,
     ]);
     // The profile's call is the `composed` read of the reads `openProfileReads` opens.

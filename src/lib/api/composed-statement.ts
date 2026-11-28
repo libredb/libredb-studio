@@ -1,11 +1,11 @@
 import { type CallContext, deadlineSignal, type ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { contextOn, hostPorts } from "@/lib/api/editor-query";
 import { type BudgetGrant, budgetGrantEnd } from "@/lib/api/provider-monitoring";
+import { providerComposedRead } from "@/lib/api/session-target";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedComposedStatements } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
 
 /*
@@ -16,7 +16,8 @@ import type { QueryResult } from "@/lib/types";
  * (`readStatisticsForGrounding` in src/lib/agent/tools.ts), SQL Server's estimates and libSQL's availability probe and
  * estimates. The operations profile opens no read-only statement path, and the console session's prepare would append
  * a page bound to the statement on both dialects, so it runs on the legacy bridge's composed statement session
- * (`bridgedComposedStatements`, clause C-50), whose execute sends the provider's plain `query` the statement alone.
+ * (`bridgedComposedStatements`, clause C-50), whose execute sends the provider's plain `query` the statement alone,
+ * built as the provider's composed read (`providerComposedRead` in src/lib/api/session-target.ts).
  * `composedStatementOn` is the one opener of that session, read by this facade and by the data profile's reads
  * (`openProfileReads`, src/lib/api/profile-reads.ts, clause C-86), each of which builds its own context and reads its
  * own end of a call that answered no page.
@@ -73,7 +74,7 @@ export interface ComposedStatementOn {
 
 /**
  * Runs `call.statement` on `provider`'s plain query path through `core`, exactly as composed: the one opener of the
- * composed statement session (`bridgedComposedStatements`), read by both its facades, `runComposedStatement` and the
+ * composed statement session (`providerComposedRead`), read by both its facades, `runComposedStatement` and the
  * data profile's reads (`openProfileReads`, src/lib/api/profile-reads.ts; clause C-86). The session is built when
  * this is called, synchronously; the call is one host core execute of a fresh request of the statement and every row
  * as its page, on `call.context`.
@@ -86,14 +87,14 @@ export function composedStatementOn(
   provider: DatabaseProvider,
   call: ComposedStatementOn,
 ): Promise<QueryResult> {
-  const bridged = bridgedComposedStatements(provider);
+  const form = providerComposedRead(provider);
   const request: ExecuteRequest = { statement: call.statement, page: { unlimited: true } };
   return core
-    .executeCall(bridged.session, request, call.context, bridged.pumpLimits, hostPorts(call.route))
+    .executeCall(form.session, request, call.context, form.pumpLimits, hostPorts(call.route))
     .then((record) => {
       if (record.kind !== "page") throw call.end(record);
       try {
-        return bridged.answered();
+        return form.answered();
       } finally {
         record.release();
       }

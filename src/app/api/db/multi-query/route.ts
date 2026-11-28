@@ -17,6 +17,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { rowTextByteLimit } from "@/lib/db/statement-language-row";
 import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
 import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
@@ -372,13 +373,13 @@ export async function POST(req: NextRequest) {
     if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
     // The host core is read here, after the open and before any unit, outside every unit's own answer, so a script
     // run before the core is installed fails by name and sends nothing.
-    const script = openEditorScript(provider, {
+    const script = openEditorScript(providerConsoleTarget(provider), {
       units: statements,
-      dialect: connection.type,
       options,
       ...(queryId === undefined ? {} : { queryId }),
       signal: req.signal,
       route: "api/db/multi-query",
+      scrub,
     });
     const { results, totalExecutionTime, openTransaction } = await runScript(
       script,
