@@ -75,7 +75,7 @@ describe("docs/SECURITY.md row 3.8", () => {
 
   test("keeps its precondition: the mode is a boundary only on a managed seed whose secret stays on the server", () => {
     expect(security).toContain(
-      "**3.8.** Partial for one precondition: the mode is a boundary only on a managed seed, which `resolveConnection` re-resolves from the operator's file whatever a caller sends",
+      "**3.8.** Partial for one precondition: the mode is a boundary only on a managed seed, which `resolveConnection` and `resolveServedConnection` re-resolve from the operator's file whatever a caller sends",
     );
   });
 });

@@ -353,6 +353,45 @@ describe("POST /api/db/monitoring", () => {
     expect(JSON.stringify(body)).not.toContain(password);
   });
 
+  test("a panel sentence a legacy provider writes that holds a form of the connection's credential is withheld, and a clean one is answered as given", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const overview = {
+      version: "PostgreSQL 16.1",
+      uptime: "10 days",
+      activeConnections: 5,
+      maxConnections: 100,
+      databaseSize: "256 MB",
+      databaseSizeBytes: 268435456,
+      tableCount: 15,
+      indexCount: 30,
+    };
+    const clean = `counted from ${crypto.randomUUID()}`;
+    const dashboard = async (sampledFrom: string, cacheHitAdvice: string) => {
+      (mockProvider.getOverview as Mocked).mockResolvedValueOnce({ ...overview, tableCountSampledFrom: sampledFrom });
+      (mockProvider.getPerformanceMetrics as Mocked).mockResolvedValueOnce({ cacheHitRatio: 70, cacheHitAdvice });
+      const res = await POST(
+        createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never,
+      );
+      expect(res.status).toBe(200);
+      return await parseResponseJSON<{ overview: unknown; performance: unknown }>(res);
+    };
+
+    const sampledHolding = await dashboard(`sampled by ${password}`, clean);
+    expect([sampledHolding.overview, sampledHolding.performance]).toEqual([
+      { ...overview, tableCountSampledFrom: PROVIDER_TEXT_WITHHELD },
+      { cacheHitRatio: 70, cacheHitAdvice: clean },
+    ]);
+    expect(JSON.stringify(sampledHolding)).not.toContain(password);
+
+    const adviceHolding = await dashboard(clean, `set the cache for ${password}`);
+    expect([adviceHolding.overview, adviceHolding.performance]).toEqual([
+      { ...overview, tableCountSampledFrom: clean },
+      { cacheHitRatio: 70, cacheHitAdvice: PROVIDER_TEXT_WITHHELD },
+    ]);
+    expect(JSON.stringify(adviceHolding)).not.toContain(password);
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 

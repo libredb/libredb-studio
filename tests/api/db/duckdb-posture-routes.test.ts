@@ -84,7 +84,6 @@ mock.module("@/lib/auth", () => ({
 mock.module("@/lib/db", () => ({
   ...actualDb,
   getOrCreateProvider: mockGetOrCreateProvider,
-  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
 }));

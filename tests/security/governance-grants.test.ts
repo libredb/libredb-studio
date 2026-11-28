@@ -271,8 +271,8 @@ describe("the connection route inventory", () => {
     }
   });
 
-  test("every connection route resolves its connection through resolveConnection, resolveServedConnection or handleObjectRequest", () => {
-    const resolves = /\b(resolveConnection|resolveServedConnection|handleObjectRequest)\s*\(/;
+  test("every connection route resolves its connection through resolveConnection, resolveServedConnection, handleObjectRequest or handleMaintenanceRequest", () => {
+    const resolves = /\b(resolveConnection|resolveServedConnection|handleObjectRequest|handleMaintenanceRequest)\s*\(/;
     const unresolved = Object.keys(CONNECTION_ROUTES).filter(
       (route) => !resolves.test(withoutComments(readFileSync(join(API_ROOT_DIR, route, "route.ts"), "utf8"))),
     );

@@ -17,14 +17,7 @@
 // Factory (Primary API)
 // ============================================================================
 
-// `getOrCreateMetadataProvider` answers a legacy connection's metadata session (docs/providers/CONTRACT.md, clause
-// C-66); the package surface (src/exports/providers.ts) does not re-export it.
-export {
-  getOrCreateProvider,
-  getOrCreateMetadataProvider,
-  createDatabaseProvider,
-  readProviderDeclarations,
-} from "./factory";
+export { getOrCreateProvider, createDatabaseProvider, readProviderDeclarations } from "./factory";
 
 // ============================================================================
 // Types & Interfaces

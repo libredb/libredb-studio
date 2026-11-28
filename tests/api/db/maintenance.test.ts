@@ -739,7 +739,7 @@ describe("POST /api/db/maintenance", () => {
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
       kind: "not-offered",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
@@ -785,10 +785,11 @@ describe("POST /api/db/maintenance", () => {
         body: { type: "reindex", target: "users", connection: validConnection },
       }) as never,
     );
-    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string; outcome: string }>(res);
 
     expect(res.status).toBe(400);
     expect(data.code).toBe("FACET_NOT_OFFERED");
+    expect(data.outcome).toBe("not-sent");
     expect(data.error).toBe(
       '"reindex" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts vacuum, analyze, kill; nothing was run.',
     );

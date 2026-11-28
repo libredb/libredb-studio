@@ -313,7 +313,7 @@ describe("POST /api/db/maintenance/preview", () => {
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
       kind: "not-offered",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(calledMethods()).toEqual([]);
@@ -335,7 +335,7 @@ describe("POST /api/db/maintenance/preview", () => {
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
       kind: "not-offered",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(calledMethods()).toEqual([]);
@@ -359,7 +359,7 @@ describe("POST /api/db/maintenance/preview", () => {
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
       kind: "not-offered",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
     expect(mockPreviewMaintenance).not.toHaveBeenCalled();
