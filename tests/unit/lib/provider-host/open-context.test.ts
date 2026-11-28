@@ -268,4 +268,35 @@ describe("the open context of a provider package's engine", () => {
     expect(open({})).toEqual({ ...DEFAULT_POOL_CONFIG, min: 0, max: 2 });
     expect(open({ owner: "sub-1", ownerPoolMax: 7 })).toEqual({ ...DEFAULT_POOL_CONFIG, min: 0, max: 2 });
   });
+
+  test("the policy is a read-only statement session's exactly where the caller's execution context asks for both readOnly and sendsStatements", () => {
+    const policy = (execution: Record<string, unknown>) => {
+      const { readOnly, sendsStatements, refuseWrites } = packageOpenContext({
+        connection: connectionOf(plain),
+        engine: plain,
+        execution,
+        deadline: Date.now() + 1000,
+        signal,
+      }).policy;
+      return { readOnly, sendsStatements, refuseWrites };
+    };
+    expect(policy({ readOnly: true, sendsStatements: true })).toEqual({
+      readOnly: true,
+      sendsStatements: true,
+      refuseWrites: false,
+    });
+    // Either flag alone, or neither, is not a read-only statement session: the package is handed the editor's policy.
+    const editorLike: Record<string, unknown>[] = [
+      { readOnly: true },
+      { sendsStatements: true },
+      {},
+      { readOnly: false, sendsStatements: true },
+    ];
+    for (const execution of editorLike) {
+      expect({ execution, policy: policy(execution) }).toEqual({
+        execution,
+        policy: { readOnly: false, sendsStatements: false, refuseWrites: false },
+      });
+    }
+  });
 });

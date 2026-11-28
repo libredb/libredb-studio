@@ -3,7 +3,8 @@
  *
  * Studio's review record is each engine's `agentExecution` grant, its row of the grant register, read here from the
  * engine's record (`servedEngineRecord` in src/lib/db/server-catalog.ts). Every statement-sending gate reads it here
- * at run time: the provider factory's acquisition of a profile that sends statements, the core read path
+ * at run time: the provider factory's acquisition of a profile that sends statements, the provider factory's open of a
+ * provider package's read-only statement session (`getOrCreateReadOnlyStatementSession`), the core read path
  * (`runReadOnlyReading` in src/lib/db/operations/read-only-statement.ts) that every MCP read-only statement and every
  * budgeted reading passes, and the host core's read-only execute (`runReadOnlyExecute` in
  * src/lib/api/read-only-execute.ts) that every agent and hand-over statement passes; plan mode's statistics read under
@@ -16,19 +17,19 @@
  * engine record's `grants.agentExecution` on the server, `legacyAgentEngine` in the browser) and loads no refusal of
  * its own.
  */
-import type { DatabaseType } from "@/lib/types";
 import { StudioProfileRefusal } from "./errors";
 import { servedEngineRecord } from "./server-catalog";
 
 /**
- * Refuses, by name, an engine whose record does not grant agent execution, before any statement is sent on it.
+ * Refuses, by name, an engine whose record does not grant agent execution, before any statement is sent on it. `type`
+ * is an engine id, a legacy engine's or a provider package's, read through the engine's record.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no engine the server knows, before any grant
  * is read.
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {StudioProfileRefusal} `PROFILE_ENGINE_NOT_REVIEWED`, when the engine record does not grant agent execution.
  */
-export function assertStatementsReviewed(type: DatabaseType): void {
+export function assertStatementsReviewed(type: string): void {
   if (!servedEngineRecord(type).grants.agentExecution) {
     throw new StudioProfileRefusal(
       `Provider type "${type}" is not on the review record of engines that run agent and MCP statements, so no statement is sent on it, whatever its provider implements`,

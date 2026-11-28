@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { runReadOnlyExecute } from "@/lib/api/read-only-execute";
+import type { DatabaseProvider } from "@/lib/db/types";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
@@ -41,19 +42,22 @@ const child = boundedChild({
       type: "postgres",
       config: { id: "c1", name: "Prod", type: "postgres", host: "db" },
       queryReadOnly: () => new Promise<never>(() => {}),
-    } as unknown as Parameters<typeof deps.runReadOnlyExecute>[0];
+    } as unknown as DatabaseProvider;
     let held = 0;
     try {
-      await deps.runReadOnlyExecute(provider, {
-        type: "postgres",
-        statement: "SELECT 1",
-        budget: { statementTimeoutMs: 50, maxResultRows: 200, maxResultBytes: 262144 },
-        caller: new AbortController().signal,
-        route: "bounds",
-        holdUntilSettled: () => {
-          held += 1;
+      await deps.runReadOnlyExecute(
+        { form: "provider", provider },
+        {
+          type: "postgres",
+          statement: "SELECT 1",
+          budget: { statementTimeoutMs: 50, maxResultRows: 200, maxResultBytes: 262144 },
+          caller: new AbortController().signal,
+          route: "bounds",
+          holdUntilSettled: () => {
+            held += 1;
+          },
         },
-      });
+      );
       return "answered";
     } catch (error) {
       return `${(error as Error).name} ${deps.errorKind(error)} ${deps.errorOutcome(error)} ${(error as Error).message} held ${held}`;

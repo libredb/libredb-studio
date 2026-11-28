@@ -1,6 +1,7 @@
 /**
  * The read-only execute facade (src/lib/api/read-only-execute.ts; docs/providers/CONTRACT.md, clause C-79): one agent
- * or hand-over statement runs through the host core's execute on the legacy bridge's read-only statement session, under
+ * or hand-over statement runs through the host core's execute on the legacy bridge's read-only statement session, or on
+ * a provider package's read-only statement session the provider factory opened through its package, under
  * a deadline of the statement timeout from its own start and the caller's signal, and keeps today's answers: the review
  * gate and the budget check first, the provider's result by reference, the row and byte refusals in the providers'
  * sentences, the time refusal's class and sentence at every wait a stop ends, and the caller's hold of a stopped call.
@@ -10,12 +11,27 @@
  * a short real deadline settled with a plain `await` before asserting, and a caller's leaving is driven by the test
  * once the provider's call has reached it. `read-only-execute-bounds.test.ts` holds a provider that never answers in a
  * bounded Node child. A `process.on("unhandledRejection")` counter must read zero after every abandoned call settled.
+ *
+ * A provider package's session is opened by the factory's own opener over packages written into a scratch providers
+ * directory and admitted by Studio's boot admission (tests/helpers/package-session-fixture.ts), so the session arm runs
+ * on a real contract session; each package function calls the hook the case sets, and a stop is driven on a promise the
+ * execute hook settles, never on a timer. Paths are the scratch directory's real paths, the same step on every
+ * platform; every password and marker is generated at run time.
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { CallContext, ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { type ReadOnlyExecuteCall, runReadOnlyExecute, runReadOnlyPage } from "@/lib/api/read-only-execute";
-import { errorKind, errorOutcome } from "@/lib/db/error-record";
+import { entryReadOnlyTarget, providerReadOnlyTarget } from "@/lib/api/session-target";
+import { errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
+import { type CachedSession, clearProviderCache, getOrCreateReadOnlyStatementSession } from "@/lib/db/factory";
+import { connectionTextScrub } from "@/lib/db/operations/provider-text";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
+import { HostDefectError } from "@/lib/provider-host/access";
+import { encodeValue } from "@libredb/provider-sdk/values";
+import { PAGE_MAX_BYTES } from "@libredb/provider-sdk/calls";
+import { admitSessionPackages, setHooks } from "../../../helpers/package-session-fixture";
+import { removeScratch, scratchDirectory } from "../../../helpers/provider-artifacts";
 import {
   ExecutionProfileError,
   QueryCancelledError,
@@ -163,8 +179,8 @@ describe("runReadOnlyExecute", () => {
         },
       }),
       async () => {
-        await runReadOnlyExecute(provider, call);
-        await runReadOnlyExecute(provider, plain);
+        await runReadOnlyExecute(providerReadOnlyTarget(provider), call);
+        await runReadOnlyExecute(providerReadOnlyTarget(provider), plain);
       },
     );
     const after = Date.now();
@@ -208,14 +224,23 @@ describe("runReadOnlyExecute", () => {
     const statement = `SELECT ${marker()}`;
     const rowBudget = budgetOf({ maxResultRows: 2 });
 
-    expect(await runReadOnlyExecute(answering.provider, callOf())).toBe(three);
+    expect(await runReadOnlyExecute(providerReadOnlyTarget(answering.provider), callOf())).toBe(three);
     const rows = await failure(() =>
-      runReadOnlyExecute(answering.provider, callOf({ statement, budget: rowBudget, type: "mysql" })),
+      runReadOnlyExecute(
+        providerReadOnlyTarget(answering.provider),
+        callOf({ statement, budget: rowBudget, type: "mysql" }),
+      ),
     );
-    const plan = await runReadOnlyExecute(answering.provider, callOf({ budget: rowBudget, mode: "estimate-plan" }));
+    const plan = await runReadOnlyExecute(
+      providerReadOnlyTarget(answering.provider),
+      callOf({ budget: rowBudget, mode: "estimate-plan" }),
+    );
     const rowBytes = measureRowBytes({ n: 1 });
     const bytes = await failure(() =>
-      runReadOnlyExecute(answering.provider, callOf({ statement, budget: budgetOf({ maxResultBytes: rowBytes }) })),
+      runReadOnlyExecute(
+        providerReadOnlyTarget(answering.provider),
+        callOf({ statement, budget: budgetOf({ maxResultBytes: rowBytes }) }),
+      ),
     );
 
     expect(rows).toBeInstanceOf(StudioRowBudgetRefusal);
@@ -243,11 +268,18 @@ describe("runReadOnlyExecute", () => {
       }),
       async () => [
         await failure(() =>
-          runReadOnlyExecute(provider, callOf({ type: "snowflake", budget: budgetOf({ maxResultRows: 0 }) })),
+          runReadOnlyExecute(
+            providerReadOnlyTarget(provider),
+            callOf({ type: "snowflake", budget: budgetOf({ maxResultRows: 0 }) }),
+          ),
         ),
-        await failure(() => runReadOnlyExecute(provider, callOf({ budget: budgetOf({ maxResultRows: 1.5 }) }))),
-        await failure(() => runReadOnlyExecute(provider, callOf({ budget: budgetOf({ statementTimeoutMs: 0 }) }))),
-        await failure(() => runReadOnlyExecute(plain, callOf({ type: "mysql" }))),
+        await failure(() =>
+          runReadOnlyExecute(providerReadOnlyTarget(provider), callOf({ budget: budgetOf({ maxResultRows: 1.5 }) })),
+        ),
+        await failure(() =>
+          runReadOnlyExecute(providerReadOnlyTarget(provider), callOf({ budget: budgetOf({ statementTimeoutMs: 0 }) })),
+        ),
+        await failure(() => runReadOnlyExecute(providerReadOnlyTarget(plain), callOf({ type: "mysql" }))),
       ],
     );
     const [notReviewed, fractional, zeroTime, without] = refusals;
@@ -276,7 +308,7 @@ describe("runReadOnlyExecute", () => {
     let settledSeen = false;
 
     const warned = await warningsOf(async () => {
-      const stopped = await failure(() => runReadOnlyExecute(provider, call));
+      const stopped = await failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), call));
 
       expect(stopped).toBeInstanceOf(StudioTimeBudgetRefusal);
       expect((stopped as Error).message).toBe(timeSentence(50));
@@ -326,7 +358,7 @@ describe("runReadOnlyExecute", () => {
           };
         },
       }),
-      () => Promise.all(calls.map((call) => failure(() => runReadOnlyExecute(provider, call)))),
+      () => Promise.all(calls.map((call) => failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), call)))),
     );
 
     expect(pending).toEqual([]);
@@ -357,7 +389,7 @@ describe("runReadOnlyExecute", () => {
           return record;
         },
       }),
-      () => failure(() => runReadOnlyExecute(provider, call)),
+      () => failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), call)),
     );
 
     expect(records).toHaveLength(1);
@@ -382,7 +414,7 @@ describe("runReadOnlyExecute", () => {
     const controller = new AbortController();
     const call = callOf({ caller: controller.signal });
 
-    const running = failure(() => runReadOnlyExecute(provider, call));
+    const running = failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), call));
     await reached;
     controller.abort(new Error(marker()));
     const left = await running;
@@ -397,7 +429,7 @@ describe("runReadOnlyExecute", () => {
     const gone = new AbortController();
     gone.abort(new Error(marker()));
     const early = callOf({ caller: gone.signal });
-    const before = await failure(() => runReadOnlyExecute(provider, early));
+    const before = await failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), early));
 
     expect(before).toBeInstanceOf(QueryCancelledError);
     expect(errorOutcome(before)).toBe("not-sent");
@@ -410,7 +442,10 @@ describe("runReadOnlyExecute", () => {
     const { provider } = providerOf(async () => resultOf([{ wide }]));
 
     const refused = await failure(() =>
-      runReadOnlyExecute(provider, callOf({ budget: budgetOf({ maxResultBytes: 64 * 1024 * 1024 }) })),
+      runReadOnlyExecute(
+        providerReadOnlyTarget(provider),
+        callOf({ budget: budgetOf({ maxResultBytes: 64 * 1024 * 1024 }) }),
+      ),
     );
 
     expect(refused).toBeInstanceOf(StudioByteBudgetRefusal);
@@ -427,7 +462,7 @@ describe("runReadOnlyExecute", () => {
     });
     const call = callOf();
 
-    expect(await failure(() => runReadOnlyExecute(provider, call))).toBe(thrown);
+    expect(await failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), call))).toBe(thrown);
     expect(call.held).toEqual([]);
   });
 
@@ -437,7 +472,7 @@ describe("runReadOnlyExecute", () => {
     forgetHostCore();
     let error: unknown;
     try {
-      error = await failure(() => runReadOnlyExecute(provider, callOf()));
+      error = await failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), callOf()));
     } finally {
       installHostCore(real, "test");
     }
@@ -451,7 +486,10 @@ describe("runReadOnlyExecute", () => {
     const { provider, queryReadOnly } = providerOf(async () => result);
 
     expect(
-      await runReadOnlyExecute(provider, callOf({ budget: budgetOf({ statementTimeoutMs: 2_147_483_647 }) })),
+      await runReadOnlyExecute(
+        providerReadOnlyTarget(provider),
+        callOf({ budget: budgetOf({ statementTimeoutMs: 2_147_483_647 }) }),
+      ),
     ).toBe(result);
     expect(budgetAt(queryReadOnly, 0).statementTimeoutMs).toBe(2_147_483_647);
   });
@@ -489,8 +527,8 @@ describe("runReadOnlyPage", () => {
         },
       }),
       async () => [
-        await runReadOnlyPage(applying.provider, { ...call, page: { limit: 4, offset: 2 } }),
-        await runReadOnlyPage(notApplying.provider, { ...call, page: { limit: 4, offset: 0 } }),
+        await runReadOnlyPage(providerReadOnlyTarget(applying.provider), { ...call, page: { limit: 4, offset: 2 } }),
+        await runReadOnlyPage(providerReadOnlyTarget(notApplying.provider), { ...call, page: { limit: 4, offset: 0 } }),
       ],
     );
 
@@ -519,7 +557,10 @@ describe("runReadOnlyPage", () => {
     const { provider, prepareQuery, queryReadOnly } = pagingProviderOf(false, resultOf([{ n: 1 }]));
 
     const refused = await failure(() =>
-      runReadOnlyPage(provider, { ...callOf({ type: "sqlite" }), page: { limit: 4, offset: 2 } }),
+      runReadOnlyPage(providerReadOnlyTarget(provider), {
+        ...callOf({ type: "sqlite" }),
+        page: { limit: 4, offset: 2 },
+      }),
     );
 
     expect(refused).toBeInstanceOf(StudioOffsetRefusal);
@@ -528,5 +569,372 @@ describe("runReadOnlyPage", () => {
     expect(prepareQuery).toHaveBeenCalledTimes(1);
     expect(queryReadOnly).not.toHaveBeenCalled();
     expect(provider.query).not.toHaveBeenCalled();
+  });
+});
+
+/** A package that honours readOnly under a row granting agent execution, its own words code-only. */
+const PKG = "acmeroxmain";
+/** The same, its row granting its own words through core's scrub. */
+const WORDS = "acmeroxwords";
+/** One that honours readOnly and offset, code-only. */
+const PAGED = "acmeroxpaged";
+const ADMIN = Object.freeze({ allowExternalFileAccess: true });
+const REVIEWED = Object.freeze({ agentExecution: true, readRootsRequired: false });
+const providers = scratchDirectory("studio-read-only-execute-session-");
+let packageEngines: Map<string, EngineRecord>;
+
+beforeAll(async () => {
+  packageEngines = await admitSessionPackages(
+    providers,
+    [
+      { name: "acme-rox-main", engine: PKG, honours: ["readOnly"] },
+      { name: "acme-rox-words", engine: WORDS, honours: ["readOnly"] },
+      { name: "acme-rox-paged", engine: PAGED, honours: ["readOnly", "offset"] },
+    ],
+    { [PKG]: REVIEWED, [WORDS]: { ...REVIEWED, ownWords: "scrubbed" }, [PAGED]: REVIEWED },
+  );
+});
+afterAll(async () => {
+  await clearProviderCache();
+  removeScratch(providers);
+});
+
+/** A connection of `id`'s engine with a generated password. */
+function packageConnection(id: string): EngineConnection {
+  return { id: `conn-${randomUUID()}`, name: "ROX", type: id, host: "db.local", password: randomUUID() } as never;
+}
+
+/** What one execute hook received and how the case answers it. */
+interface ExecuteSeen {
+  readonly request: ExecuteRequest;
+  readonly ctx: CallContext;
+  /** The entry's running count when the call reached the package. */
+  readonly running: number;
+}
+
+/**
+ * A result source of `rows` under `columns`, answering in batches no larger than the pump asks for and of at most
+ * `batchRows` rows.
+ */
+function sourceOf(columns: readonly { name: string; type?: string }[], rows: unknown[][], batchRows = rows.length) {
+  let at = 0;
+  return {
+    columns,
+    next: (limit: { maxRows: number }) => {
+      const batch = rows.slice(at, at + Math.min(limit.maxRows, batchRows));
+      at += batch.length;
+      return Promise.resolve({ rows: batch, done: at >= rows.length });
+    },
+    close: () => Promise.resolve(),
+  };
+}
+
+/**
+ * The read-only statement session of `id` for a fresh connection, opened by the factory's opener with `open` as the
+ * package's open answer, and its target; each execute calls `execute` after recording what it received.
+ */
+async function packageSession(
+  id: string,
+  execute: (seen: ExecuteSeen) => Promise<unknown>,
+  open: () => unknown = () => ({ handle: { session: randomUUID() } }),
+) {
+  const connection = packageConnection(id);
+  const seen: ExecuteSeen[] = [];
+  // The entry the opener answers, read by the execute hook, which runs only after the open.
+  const opened: { entry?: CachedSession } = {};
+  setHooks(id, {
+    open: () => Promise.resolve(open()),
+    close: () => Promise.resolve(),
+    health: () => Promise.resolve({ databaseSize: "1", cacheHitRatio: "1", slowQueries: [], activeSessions: [] }),
+    execute: (_handle, request, ctx) => {
+      const call = {
+        request: request as ExecuteRequest,
+        ctx: ctx as CallContext,
+        running: opened.entry?.running ?? -1,
+      };
+      seen.push(call);
+      return execute(call);
+    },
+  });
+  const entry = await getOrCreateReadOnlyStatementSession(connection, packageEngines.get(id) as EngineRecord, ADMIN);
+  opened.entry = entry;
+  const scrub = connectionTextScrub(connection, undefined, "any");
+  return { connection, entry, seen, target: entryReadOnlyTarget(entry, connection, scrub) };
+}
+
+/** An answer of one result of `rows` under `columns`. */
+const answerOf = (
+  columns: readonly { name: string; type?: string }[],
+  rows: unknown[][],
+  over: Record<string, unknown> = {},
+) =>
+  Promise.resolve({
+    results: [sourceOf(columns, rows)],
+    warnings: [],
+    executionTimeMs: 4,
+    pageApplied: false,
+    ...over,
+  });
+
+describe("a provider package's read-only statement session", () => {
+  test("the read-only execute runs a statement on a provider package's read-only statement session through one host core execute call, held to the budget it sends", async () => {
+    const columns = [{ name: "key" }, { name: "value", type: "text" }];
+    const { entry, seen, target } = await packageSession(PKG, () =>
+      answerOf(columns, [
+        ["alpha", 1],
+        ["beta", BigInt(10)],
+      ]),
+    );
+    const call = callOf({
+      type: PKG,
+      budget: { ...budgetOf(), readAllowance: new RunReadAllowance(10, { scope: "call" }) },
+    });
+    const result = await runReadOnlyExecute(target, call);
+    expect(result).toEqual({
+      rows: [
+        { key: "alpha", value: 1 },
+        { key: "beta", value: encodeValue(BigInt(10)) },
+      ],
+      fields: ["key", "value"],
+      columnTypes: { value: "text" },
+      rowCount: 2,
+      executionTime: 4,
+    });
+    // One call, a fresh request of the statement, every row as one row past the budget, the budget, and no allowance.
+    expect(seen.map(({ request }) => request)).toEqual([
+      {
+        statement: call.statement,
+        page: { limit: 201, offset: 0 },
+        readOnly: { budget: { maxRows: 200, maxBytes: 262_144 } },
+      },
+    ]);
+    expect(() => seen[0]?.ctx.env.get("PATH")).toThrow();
+    // The entry counted the call while it ran, and not after.
+    expect([seen[0]?.running, entry.running]).toEqual([1, 0]);
+
+    // The mode is sent where one is given, and an estimating plan is held to its bytes alone.
+    const two = budgetOf({ maxResultRows: 1 });
+    const plan = await runReadOnlyPage(target, {
+      ...callOf({ type: PKG, budget: two, mode: "estimate-plan" }),
+      page: { unlimited: true },
+    });
+    expect(plan.result.rows).toHaveLength(2);
+    expect(seen[1]?.request.readOnly).toEqual({ budget: { maxRows: 1, maxBytes: 262_144 }, mode: "estimate-plan" });
+    expect(plan.pageApplied).toBe(false);
+    // An answer of one row past the budget is refused, never cut; one over the byte budget too.
+    const rows = await failure(() => runReadOnlyExecute(target, callOf({ type: PKG, budget: two })));
+    expect(rows).toBeInstanceOf(StudioRowBudgetRefusal);
+    expect((rows as Error).message).toBe(rowBudgetSentence(2, 1));
+    const bytes = await failure(() =>
+      runReadOnlyExecute(target, callOf({ type: PKG, budget: budgetOf({ maxResultBytes: 10 }) })),
+    );
+    expect(bytes).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect(entry.running).toBe(0);
+  });
+
+  test("an estimating plan of every row on a provider package's session asks every row and answers a plan longer than the row budget whole", async () => {
+    const plan = [[1], [2], [3], [4], [5]];
+    const { seen, target } = await packageSession(PKG, () => answerOf([{ name: "op" }], plan));
+    const answer = await runReadOnlyPage(target, {
+      ...callOf({ type: PKG, budget: budgetOf({ maxResultRows: 1 }), mode: "estimate-plan" }),
+      page: { unlimited: true },
+    });
+    // A plan's rows are the optimizer's operators, held to the bytes alone (clause C-78), so the page is every row.
+    expect(seen.map(({ request }) => request.page)).toEqual([{ unlimited: true }]);
+    expect(answer.result.rows).toEqual(plan.map(([op]) => ({ op })));
+    expect(answer.result.rowCount).toBe(5);
+    expect(answer.pageApplied).toBe(false);
+  });
+
+  test("a package's warnings reach the answer by its record's words grant, and a page the host cut by bytes answers none of its rows", async () => {
+    const marker = randomUUID();
+    const warned = {
+      results: [sourceOf([{ name: "n" }], [[1]])],
+      warnings: [{ message: marker }],
+      executionTimeMs: 1,
+      pageApplied: false,
+    };
+    const codeOnly = await packageSession(PKG, () => Promise.resolve(warned));
+    let answered: QueryResult | undefined;
+    const lines = await warningsOf(async () => {
+      answered = await runReadOnlyExecute(codeOnly.target, callOf({ type: PKG }));
+    });
+    expect(answered?.warnings).toEqual([
+      { message: "The provider package returned 1 warning; the server's log holds their words." },
+    ]);
+    expect(lines.filter(([line]) => line === "A provider package's execute returned a warning")).toHaveLength(1);
+    const scrubbed = await packageSession(WORDS, () => Promise.resolve(warned));
+    const words = await runReadOnlyExecute(scrubbed.target, callOf({ type: WORDS }));
+    expect(words.warnings?.map((warning) => warning.message)).toEqual([marker]);
+
+    // Two rows of 20 MiB: the host pumps the first, cuts the page at its 32 MiB, and Studio answers none of them.
+    const wide = "x".repeat(20 * 1024 * 1024);
+    const cut = await packageSession(PKG, () =>
+      Promise.resolve({
+        results: [sourceOf([{ name: "w" }], [[wide], [wide]], 1)],
+        warnings: [],
+        executionTimeMs: 1,
+        pageApplied: false,
+      }),
+    );
+    const over = await failure(() =>
+      runReadOnlyExecute(cut.target, callOf({ type: PKG, budget: budgetOf({ maxResultBytes: 64 * 1024 * 1024 }) })),
+    );
+    expect(over).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect((over as Error).message).toBe(
+      `The statement's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, so Studio answers none of its rows.`,
+    );
+    expect(errorOutcome(over)).toBe("unknown");
+  });
+
+  test("a stopped or refused read-only execute on a provider package's session answers as the provider arm answers it", async () => {
+    // A deadline that ends the call: the time refusal, the stopped call's settlement handed to the caller's hold.
+    const pending = Promise.withResolvers<unknown>();
+    const stopped = await packageSession(PKG, () => pending.promise);
+    const deadlined = callOf({ type: PKG, budget: budgetOf({ statementTimeoutMs: 50 }) });
+    const timed = await failure(() => runReadOnlyExecute(stopped.target, deadlined));
+    expect(timed).toBeInstanceOf(StudioTimeBudgetRefusal);
+    expect((timed as Error).message).toBe(timeSentence(50));
+    expect(deadlined.held).toHaveLength(1);
+    // Counted until the stopped call settles.
+    expect(stopped.entry.running).toBe(1);
+    pending.resolve({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false });
+    await Promise.all(deadlined.held);
+    expect(stopped.entry.running).toBe(0);
+
+    // A caller that leaves once the call reached the package: QueryCancelledError, outcome unknown.
+    const reached = Promise.withResolvers<void>();
+    const left = Promise.withResolvers<unknown>();
+    const leaving = await packageSession(PKG, () => {
+      reached.resolve();
+      return left.promise;
+    });
+    const caller = new AbortController();
+    const running = failure(() => runReadOnlyExecute(leaving.target, callOf({ type: PKG, caller: caller.signal })));
+    await reached.promise;
+    caller.abort();
+    const cancelled = await running;
+    expect(cancelled).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(cancelled)).toBe("unknown");
+    left.resolve({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false });
+
+    // A refinement that withdrew readOnly opens a session the host core refuses each read-only execute on, before the
+    // call: Studio's own refusal, passed as raised, the package never called.
+    const narrowed = await packageSession(
+      PKG,
+      () => answerOf([{ name: "n" }], [[1]]),
+      () => ({ handle: { session: randomUUID() }, refine: { calls: { console: { execute: { honours: [] } } } } }),
+    );
+    const refused = await failure(() => runReadOnlyExecute(narrowed.target, callOf({ type: PKG })));
+    expect(refused).toBeInstanceOf(HostDefectError);
+    expect((refused as InstanceType<typeof HostDefectError>).refusals).toEqual([
+      { rule: "request-field-not-honoured", pointer: "/readOnly", name: "readOnly" },
+    ]);
+    expect(narrowed.seen).toEqual([]);
+  });
+
+  test("a paged read-only execute on a provider package's session sends the caller's page, and an offset the session does not honour is refused before the call", async () => {
+    const paged = await packageSession(PAGED, () =>
+      answerOf([{ name: "n" }], [[1], [2], [3], [4], [5]], { pageApplied: true }),
+    );
+    const answer = await runReadOnlyPage(paged.target, { ...callOf({ type: PAGED }), page: { limit: 4, offset: 2 } });
+    expect(paged.seen[0]?.request.page).toEqual({ limit: 4, offset: 2 });
+    expect(answer.pageApplied).toBe(true);
+    // The pump takes the page's rows.
+    expect(answer.result.rows).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
+
+    const unpaged = await packageSession(PKG, () => answerOf([{ name: "n" }], [[1]]));
+    const refused = await failure(() =>
+      runReadOnlyPage(unpaged.target, { ...callOf({ type: PKG }), page: { limit: 4, offset: 2 } }),
+    );
+    expect(refused).toBeInstanceOf(StudioOffsetRefusal);
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect((refused as Error).message).toBe(
+      "This connection's provider package does not take an offset, so Studio asks for no page after the first.",
+    );
+    expect(unpaged.seen).toEqual([]);
+    // Offset 0 is no offset: sent.
+    await runReadOnlyPage(unpaged.target, { ...callOf({ type: PKG }), page: { limit: 4, offset: 0 } });
+    expect(unpaged.seen).toHaveLength(1);
+  });
+
+  test("a provider package's failure of a read-only execute is answered by its record's words grant and logged once", async () => {
+    /** Runs one statement on a fresh session of `id` whose execute rejects with what `thrown` builds from its password. */
+    const run = async (id: string, thrown: (password: string) => unknown) => {
+      const held: { password: string } = { password: "" };
+      const session = await packageSession(id, () => Promise.reject(thrown(held.password)));
+      held.password = session.connection.password as string;
+      const logged: unknown[][] = [];
+      const error = spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+        logged.push(args);
+      });
+      try {
+        const failed = await failure(() => runReadOnlyExecute(session.target, callOf({ type: id })));
+        return { failed, logged, password: held.password };
+      } finally {
+        error.mockRestore();
+      }
+    };
+    const marker = randomUUID();
+    const sentence = (value: unknown) =>
+      `The provider package's execute failed (${errorCode(value)}); the server's log holds its words.`;
+
+    // Code-only: a plain Error in Studio's sentence naming its code; the words go to the log once, through the scrub.
+    const codeOnly = await run(PKG, (password) => new Error(`${marker} denied for ${password}`));
+    expect(codeOnly.failed).toBeInstanceOf(Error);
+    expect(codeOnly.failed).not.toBeInstanceOf(StudioProfileRefusal);
+    expect((codeOnly.failed as Error).message).toBe(sentence(new Error(marker)));
+    expect((codeOnly.failed as Error).message).not.toContain(marker);
+    expect(codeOnly.logged).toHaveLength(1);
+    expect(codeOnly.logged[0]?.[0]).toBe("A provider package's execute failed");
+    expect(JSON.stringify(codeOnly.logged)).not.toContain(codeOnly.password);
+    expect(codeOnly.password).not.toBe("");
+
+    // A value that is no error answers Studio's sentence under code-only.
+    const plain = await run(PKG, () => marker);
+    expect((plain.failed as Error).message).toBe(sentence(marker));
+    expect(plain.logged).toHaveLength(1);
+
+    // Scrubbed: the error as raised, logged once.
+    const raised = new Error(marker);
+    const words = await run(WORDS, () => raised);
+    expect(words.failed).toBe(raised);
+    expect(words.logged).toHaveLength(1);
+
+    // Studio's own failure passes as raised and is not logged as the package's.
+    const studio = new StudioTimeBudgetRefusal(timeSentence(1));
+    const own = await run(PKG, () => studio);
+    expect(own.failed).toBe(studio);
+    expect(own.logged).toEqual([]);
+  });
+
+  test("a read-only target is the session form only for a provider package's entry, and the facade refuses a target of another engine than its call's", async () => {
+    const { target } = await packageSession(PKG, () => answerOf([{ name: "n" }], [[1]]));
+    expect(target.form).toBe("session");
+    // A legacy provider's entry reaches no read-only target: its statements go through the execution-profile acquisition.
+    const legacyEntry = { opened: { form: "provider", provider: createMockProvider() } } as unknown as CachedSession;
+    expect(() =>
+      entryReadOnlyTarget(
+        legacyEntry,
+        packageConnection(PKG),
+        connectionTextScrub(packageConnection(PKG), undefined, "any"),
+      ),
+    ).toThrow(
+      "A legacy provider's cache entry reached the read-only statement target of a provider package's session: a host defect.",
+    );
+    // A call naming another engine than the session's is a host defect, refused before anything is sent.
+    expect(await failure(() => runReadOnlyExecute(target, callOf({ type: WORDS })))).toBeInstanceOf(Error);
+    expect(((await failure(() => runReadOnlyExecute(target, callOf({ type: WORDS })))) as Error).message).toBe(
+      `A read-only execute named the engine "${WORDS}" on the read-only statement session of "${PKG}": a host defect.`,
+    );
+    // A provider target of a provider package's engine is a host defect too.
+    const { provider, queryReadOnly } = providerOf(async () => resultOf([{ n: 1 }]));
+    expect(
+      ((await failure(() => runReadOnlyExecute(providerReadOnlyTarget(provider), callOf({ type: PKG })))) as Error)
+        .message,
+    ).toBe(
+      `A read-only execute named the engine "${PKG}", which a provider package serves, on a legacy provider: a host defect.`,
+    );
+    expect(queryReadOnly).not.toHaveBeenCalled();
   });
 });

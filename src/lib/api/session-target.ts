@@ -17,7 +17,9 @@
  * none of them, builds its targets here too; the builders that open through the factory live in
  * src/lib/api/editor-provider.ts and call these.
  * A provider package's entry's maintenance opening is built here too (`packageMaintenanceOpening`); a legacy
- * provider's reads the factory's declarations.
+ * provider's reads the factory's declarations. So is the read-only execute's target (`ReadOnlyStatementTarget`): a
+ * legacy provider's (`providerReadOnlyTarget`) or a provider package's read-only statement session's
+ * (`entryReadOnlyTarget`), whose page is read into a result here (`readOnlyPageResult`).
  *
  * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
@@ -63,7 +65,8 @@ import {
 import type { CachedSession } from "@/lib/db/factory";
 import { StudioByteBudgetRefusal } from "@/lib/db/errors";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
-import type { EngineConnection } from "@/lib/db/server-catalog";
+import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import {
   DEFAULT_QUERY_TIMEOUT,
   type DatabaseProvider,
@@ -425,17 +428,57 @@ function packageStatement(entry: CachedSession, session: ConsoleSession, run: St
 /** Studio's sentence for a unit of a script inside a transaction whose page the host cut by bytes. */
 const UNIT_OVER_PAGE_SENTENCE = `The unit's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, and a script's answer has no field to say where a page ends, so Studio answers none of its rows.`;
 
+/** Studio's sentence for a read-only statement whose page the host cut by bytes. */
+const READ_ONLY_OVER_PAGE_SENTENCE = `The statement's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, so Studio answers none of its rows.`;
+
+/**
+ * The result of the page `record` holds on a provider package's session, under `columns`, the first result's columns
+ * the package answered: the page's rows as records keyed by their column names, each cell in the value codec's wire
+ * form, its fields, the declared types of the columns that state one, the package's own row count where the page holds
+ * every row and the package stated one, and the rows answered otherwise, and the package's execution time. A page the
+ * host cut by bytes is `StudioByteBudgetRefusal` in `overPage`, outcome unknown, since the statement ran, naming none
+ * of its rows: never a shorter result. The caller releases the record.
+ *
+ * @throws {StudioByteBudgetRefusal} For a page the host cut by bytes.
+ */
+function packagePageResult(record: PageRecord, columns: readonly Column[], overPage: string): QueryResult {
+  if (record.page.end === "byte-limit") throw new StudioByteBudgetRefusal(overPage);
+  const fields = columns.map((column) => column.name);
+  const rows = record.page.rows.map((row) =>
+    Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])),
+  );
+  const typed = columns.filter((column) => typeof column.type === "string");
+  return {
+    rows,
+    fields,
+    ...(typed.length > 0 && {
+      columnTypes: Object.fromEntries(typed.map((column) => [column.name, column.type as string])),
+    }),
+    rowCount: record.page.end === "done" && record.rowCount !== undefined ? record.rowCount : rows.length,
+    executionTime: record.executionTimeMs,
+  };
+}
+
+/**
+ * The result of a read-only statement's page on a provider package's read-only statement session (`packagePageResult`),
+ * read by the read-only execute's session arm (src/lib/api/read-only-execute.ts); it carries no warnings, which the
+ * facade answers by the engine's record.
+ *
+ * @throws {StudioByteBudgetRefusal} For a page the host cut by bytes, in Studio's sentence for a read-only statement.
+ */
+export function readOnlyPageResult(record: PageRecord, columns: readonly Column[]): QueryResult {
+  return packagePageResult(record, columns, READ_ONLY_OVER_PAGE_SENTENCE);
+}
+
 /**
  * A unit of a script on a provider package's session, inside a transaction or of POST /api/db/multi-query: the session
  * itself, whose unit's rows exist only in its page, so the pump takes every row of a unit but the last, and the
  * request's page for the last (`lastUnitOptions`), no row past it, since a script's answer carries no pagination. Its
- * result is the page's rows as records keyed by their column names, each cell in the value codec's wire form, its
- * fields, the declared types of the columns that state one, the package's own row count where the page holds every row
- * and the package stated one, and the rows answered otherwise, and the package's execution time; and its warnings as
- * `warnings` answers them, present only where it answers at least one. A unit inside a transaction is handed no
- * `warnings`, since the transaction route's answer reads none. A page the host cut by bytes is
- * `StudioByteBudgetRefusal`, outcome unknown, since the statement ran, naming none of its rows: never a shorter result.
- * The unit's text is the facade's request; the form reads nothing else of `open`.
+ * result is the page's result (`packagePageResult`), and its warnings as `warnings` answers them, present only where it
+ * answers at least one. A unit inside a transaction is handed no `warnings`, since the transaction route's answer reads
+ * none. A page the host cut by bytes is `StudioByteBudgetRefusal` in the unit's own sentence, outcome unknown, since
+ * the statement ran, naming none of its rows: never a shorter result. The unit's text is the facade's request; the form
+ * reads nothing else of `open`.
  */
 function packageScriptUnit(
   session: ConsoleSession,
@@ -452,23 +495,9 @@ function packageScriptUnit(
       return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
     },
     answered: (record) => {
-      if (record.page.end === "byte-limit") throw new StudioByteBudgetRefusal(UNIT_OVER_PAGE_SENTENCE);
-      const fields = columns.map((column) => column.name);
-      const rows = record.page.rows.map((row) =>
-        Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])),
-      );
-      const typed = columns.filter((column) => typeof column.type === "string");
+      const result = packagePageResult(record, columns, UNIT_OVER_PAGE_SENTENCE);
       const answered = warnings?.(record) ?? [];
-      return {
-        rows,
-        fields,
-        ...(typed.length > 0 && {
-          columnTypes: Object.fromEntries(typed.map((column) => [column.name, column.type as string])),
-        }),
-        rowCount: record.page.end === "done" && record.rowCount !== undefined ? record.rowCount : rows.length,
-        executionTime: record.executionTimeMs,
-        ...(answered.length > 0 && { warnings: answered }),
-      };
+      return { ...result, ...(answered.length > 0 && { warnings: answered }) };
     },
   };
 }
@@ -502,6 +531,57 @@ export function entryConsoleTarget(entry: CachedSession, connection: EngineConne
       cancelSent: () => false,
     }),
     explainSupport: () => NO_PLAN,
+  };
+}
+
+/**
+ * What the read-only execute (src/lib/api/read-only-execute.ts) runs a statement on, by form:
+ * - `"provider"`: a legacy provider acquired under an execution profile that sends statements, over which the facade
+ *   opens the legacy bridge's read-only statement session (`providerReadOnlyTarget`);
+ * - `"session"`: a provider package's read-only statement session, opened through its package by the provider factory
+ *   (`getOrCreateReadOnlyStatementSession` in src/lib/db/factory.ts) for an engine whose record offers
+ *   `readOnlyStatements`, with its declared environment and the marks of each call on its cache entry, its engine's
+ *   record and core's scrub of its connection, by which the facade answers its failures and its warnings
+ *   (`entryReadOnlyTarget`).
+ */
+export type ReadOnlyStatementTarget =
+  | { readonly form: "provider"; readonly provider: DatabaseProvider }
+  | ({
+      readonly form: "session";
+      readonly engine: EngineRecord;
+      readonly scrub: ProviderTextScrub;
+    } & SessionTarget<ConsoleSession>);
+
+/** The read-only statement target of `provider`, a legacy provider acquired under a profile that sends statements. */
+export function providerReadOnlyTarget(provider: DatabaseProvider): ReadOnlyStatementTarget {
+  return { form: "provider", provider };
+}
+
+/**
+ * The read-only statement target of `entry`, a provider package's read-only statement session the provider factory
+ * opened for `connection` (`getOrCreateReadOnlyStatementSession`): the session with its declared environment, the
+ * connection's own statement timeout or Studio's default, the marks of each call on the entry, the entry's engine
+ * record, and `scrub`, core's scrub of the connection.
+ *
+ * @throws {Error} A host defect, for an entry that holds a legacy provider: only the factory's opener of a provider
+ *   package's read-only statement session answers an entry this reads.
+ */
+export function entryReadOnlyTarget(
+  entry: CachedSession,
+  connection: EngineConnection,
+  scrub: ProviderTextScrub,
+): ReadOnlyStatementTarget {
+  const { opened } = entry;
+  if (opened.form === "provider") {
+    throw new Error(
+      "A legacy provider's cache entry reached the read-only statement target of a provider package's session: a host defect.",
+    );
+  }
+  return {
+    form: "session",
+    engine: entry.engine,
+    scrub,
+    ...packageTarget(entry, opened.session, opened.env, connection),
   };
 }
 

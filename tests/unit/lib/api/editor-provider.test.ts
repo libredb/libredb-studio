@@ -48,7 +48,19 @@ const openedMetadataSessions: {
   rest: unknown[];
 }[] = [];
 let metadataEntry: CachedSession;
+/** Every open of a read-only statement session, as `getOrCreateReadOnlyStatementSession` receives it, and its entry. */
+const openedReadOnly: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
+let readOnlyEntry: CachedSession;
 mock.module("@/lib/db/factory", () => ({
+  getOrCreateReadOnlyStatementSession: async (
+    connection: EngineConnection,
+    engine: EngineRecord,
+    context: unknown,
+    ...rest: unknown[]
+  ) => {
+    openedReadOnly.push({ connection, engine, context, rest });
+    return readOnlyEntry;
+  },
   getOrCreateMetadataSession: async (
     connection: EngineConnection,
     engine: EngineRecord,
@@ -84,6 +96,7 @@ const {
   metadataMaintenanceOpening,
   metadataMonitoringTarget,
   metadataTreeTarget,
+  readOnlyStatementSession,
 } = await import("@/lib/api/editor-provider");
 const { providerSourceTarget, providerTreeTarget } = await import("@/lib/api/session-target");
 
@@ -335,6 +348,45 @@ describe("metadataMaintenanceOpening", () => {
 });
 
 /** The object tree's session of any record: the record's metadata session by its form (C-66). */
+describe("readOnlyStatementSession", () => {
+  test("a provider package's read-only statement session opens under the session's editor posture with the caller's wait, and answers the statements and tree targets of its one entry", async () => {
+    const packageEngine = { id: "acmeros", offers: { legacyProvider: false } } as unknown as EngineRecord;
+    const password = randomUUID();
+    const packageConnection = { id: "p", name: "p", type: "acmeros", password } as unknown as EngineConnection;
+    const packageSession = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    readOnlyEntry = {
+      opened: { form: "session", session: packageSession, env },
+      engine: packageEngine,
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    openedReadOnly.length = 0;
+    const wait = { signal: new AbortController().signal };
+    const { statements, tree } = await readOnlyStatementSession(
+      session("admin"),
+      packageConnection,
+      packageEngine,
+      wait,
+    );
+    expect(openedReadOnly).toEqual([
+      {
+        connection: packageConnection,
+        engine: packageEngine,
+        context: { allowExternalFileAccess: true },
+        rest: [wait],
+      },
+    ]);
+    if (statements.form !== "session") throw new Error("not a session target");
+    expect(statements.session as unknown).toBe(packageSession);
+    expect(statements.engine).toBe(packageEngine);
+    expect(statements.env as unknown).toBe(env);
+    expect(tree.session as unknown).toBe(packageSession);
+    // Core's scrub of every field the package receives, the connection's own password among them.
+    expect(JSON.stringify(statements.scrub.forms)).toContain(password);
+  });
+});
+
 describe("metadataTreeTarget", () => {
   const legacyEngine = { id: connection.type, offers: { legacyProvider: true } } as unknown as EngineRecord;
   const packageEngine = { id: "acmeps", offers: { legacyProvider: false } } as unknown as EngineRecord;

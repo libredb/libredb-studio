@@ -217,7 +217,8 @@ export interface EngineSource {
 /**
  * What an engine offers the server paths that tell a legacy engine from a package's engine today, one member per
  * difference, each true for a legacy engine, served by a legacy `DatabaseProvider`, and false for a package's engine,
- * served through the provider contract.
+ * served through the provider contract, except `readOnlyStatements`, which a package's engine offers where its package
+ * takes a read-only execute.
  */
 export interface EngineOffers {
   /**
@@ -254,12 +255,20 @@ export interface EngineOffers {
   /**
    * A provider the execution-profile acquisition opens (`acquireExecutionProfileProvider` in ./factory): the agent's and
    * MCP's profiles, with the seed's agent credential, its read roots and a read-only statement session. A package's
-   * session is opened through its package, with none of them (C-109), until Studio opens a read-only statement session
-   * through a package. MCP's statement tools serve only an engine whose record offers it
-   * (src/lib/mcp/tools/served-engines.ts), and agent mode sends statements only to such an engine
-   * (`workflowAvailability`'s `no-statement-session` in src/lib/agent/agent-manifest.ts).
+   * session is opened through its package, with neither the agent credential nor the read roots (C-109), and a
+   * read-only statement session through its package only where it offers `readOnlyStatements`. MCP's statement tools
+   * serve only an engine whose record offers it (src/lib/mcp/tools/served-engines.ts), and agent mode sends statements
+   * only to such an engine (`workflowAvailability`'s `no-statement-session` in src/lib/agent/agent-manifest.ts).
    */
   readonly executionProfiles: boolean;
+  /**
+   * A read-only statement session (docs/providers/CONTRACT.md, clause C-78) statements are sent through: a legacy
+   * record's through the execution-profile acquisition (`acquireExecutionProfileProvider` in ./factory), a provider
+   * package's through its package, opened read-only (`getOrCreateReadOnlyStatementSession` in ./factory), offered
+   * exactly where its manifest's console execute honours `readOnly`. A session a refinement narrowed so it no longer
+   * honours `readOnly` is refused each read-only execute by the host core before the call.
+   */
+  readonly readOnlyStatements: boolean;
   /**
    * A provider built without connecting that answers its per-connection facts (`readProviderDeclarations` in
    * ./factory): fleet health reads whether a connection resumes billed compute from it before it reads the

@@ -2855,6 +2855,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/provider-sdk/call-surface-parity.test.ts": [
         "every member of today's read-only statement surface has a place in the console calls or with the host",
       ],
+      "tests/unit/lib/api/read-only-execute.test.ts": [
+        "the read-only execute runs a statement on a provider package's read-only statement session through one host core execute call, held to the budget it sends",
+      ],
+      "tests/unit/lib/provider-host/open-context.test.ts": [
+        "the policy is a read-only statement session's exactly where the caller's execution context asks for both readOnly and sendsStatements",
+      ],
+      "tests/unit/lib/db/server-catalog.test.ts": [
+        "a package engine offers a read-only statement session exactly where its package's console execute honours readOnly",
+      ],
     },
     schema: ["/$defs/executeRequestField"],
   },
@@ -2877,6 +2886,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/api/read-only-execute.test.ts": [
         "a paged read-only execute sends its page through one host core execute call and answers whether the provider applied it",
         "a paged read-only execute whose offset the provider's prepare did not apply is refused as Studio's own refusal before the read-only path is called",
+        "a paged read-only execute on a provider package's session sends the caller's page, and an offset the session does not honour is refused before the call",
       ],
       "tests/integration/mcp/run-read-query.test.ts": [
         "run_read_query's page, one row past max_rows from the offset, is applied by the read-only statement session through the host core, never by MCP",
@@ -3282,6 +3292,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/isolated/factory-package-engines.test.ts": [
         "a package engine's metadata session opens with a pool of at most two that opens none until asked, shared and owned, and a one-session package reads on its editor session",
       ],
+      "tests/isolated/factory-package-read-only-session.test.ts": [
+        "a package's read-only statement session opens through its package under the read-only statement policy, once per package and frame, beside the editor's session",
+        "a package engine the factory opens no read-only statement session for is refused by name before its package opens, in the gates' order",
+      ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
         "each open check refuses before the package's open is called and before any file is read",
@@ -3295,6 +3309,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the environment reader answers a declared name from the process and refuses any other by name, never reading it",
         "the pool is core's default for a shared session and the owner's share for an owned one",
         "the pool is the metadata session's smaller pool when the open asks for it, shared and owned",
+        "the policy is a read-only statement session's exactly where the caller's execution context asks for both readOnly and sendsStatements",
       ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "a refinement narrows the calls and the maintenance; a widening one is refused and the handle is closed under a cleanup context",

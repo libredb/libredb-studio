@@ -42,6 +42,7 @@ const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
 const { ExecutionProfileError } = await import("@/lib/db/errors");
 const { runReadOnlyReading } = await import("@/lib/db/operations/read-only-statement");
 const { runReadOnlyExecute } = await import("@/lib/api/read-only-execute");
+const { providerReadOnlyTarget } = await import("@/lib/api/session-target");
 const { runReadQueryTool } = await import("@/lib/agent/tools");
 const { captureContextSnapshot } = await import("@/lib/agent/context-snapshot");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
@@ -223,7 +224,7 @@ describe("an engine the review record does not list, though its provider impleme
 
     expectNotReviewed(
       await settled(
-        runReadOnlyExecute(provider, {
+        runReadOnlyExecute(providerReadOnlyTarget(provider), {
           type: "sqlite",
           statement: "SELECT 1",
           budget,
@@ -250,7 +251,7 @@ describe("an engine the review record does not list, though its provider impleme
     expect(queryReadOnly).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();
 
-    const served = await runReadOnlyExecute(provider, {
+    const served = await runReadOnlyExecute(providerReadOnlyTarget(provider), {
       type: "postgres",
       statement: "SELECT 1",
       budget,

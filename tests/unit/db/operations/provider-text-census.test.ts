@@ -440,6 +440,8 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "maintenance-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
+  join("src", "lib", "api", "read-only-execute.ts"),
+  join("src", "lib", "api", "editor-provider.ts"),
   join("src", "lib", "api", "editor-transaction.ts"),
   join("src", "lib", "api", "object-tree.ts"),
   join("src", "lib", "api", "provider-maintenance.ts"),
@@ -464,6 +466,8 @@ const maintenanceRoute = join("src", "lib", "api", "maintenance-route.ts");
 const fleetHealth = join("src", "app", "api", "admin", "fleet-health", "route.ts");
 const recordedRun = join("src", "lib", "query-events", "recorded-run.ts");
 const editorQuery = join("src", "lib", "api", "editor-query.ts");
+const readOnlyExecute = join("src", "lib", "api", "read-only-execute.ts");
+const editorProvider = join("src", "lib", "api", "editor-provider.ts");
 const providerHost = (...path: string[]) => join("src", "lib", "provider-host", ...path);
 const testConnectionCore = join("src", "lib", "api", "test-connection.ts");
 const routeEvents = join("src", "lib", "query-events", "route-events.ts");
@@ -534,6 +538,12 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [editorQuery, "packagePageBody", "packageWarningsByGrant"],
   [editorQuery, "packageWarningsByGrant", "scrubProviderWarnings"],
   [editorQuery, "packageWarningsByGrant", "packageWarnings"],
+  // A provider package's read-only statement session: its failure is answered by its record's grant of its own words,
+  // its warnings as the editor's are, each through core's scrub of the connection over every field the package receives.
+  [editorProvider, "readOnlyStatementSession", "connectionTextScrub"],
+  [readOnlyExecute, "packageAnswer", "packageFailureAnswer"],
+  [readOnlyExecute, "readOnlySessionPage", "scrubProviderWarnings"],
+  [readOnlyExecute, "readOnlySessionPage", "packageWarnings"],
   [routeEvents, "failure", "connectionTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
   [recordedRun, "runRecorded", "providerTextScrub"],

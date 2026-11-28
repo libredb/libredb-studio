@@ -336,7 +336,8 @@ export type AgentWorkflowAvailability =
   | { readonly open: false; readonly cause: "not-reviewed" }
   /**
    * The engine's record grants agent execution of its statement language, and its session opens through its provider
-   * package (its record offers no execution profiles), which Studio opens no read-only statement session through yet.
+   * package (its record offers no execution profiles), which agent mode opens no read-only statement session through
+   * yet.
    */
   | { readonly open: false; readonly cause: "no-statement-session" }
   | { readonly open: false; readonly cause: "no-variant" | "requirement-unmet"; readonly sentence: string };

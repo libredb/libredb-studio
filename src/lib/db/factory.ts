@@ -22,8 +22,10 @@
  * `getOrCreateMetadataProvider`'s body, and a package's through the package's own `open` with the metadata session's
  * pool (clause C-66). The entry points that answer a `DatabaseProvider` (`getOrCreateProvider`,
  * `getOrCreateMetadataProvider`, `acquireExecutionProfileProvider` and the builds) read a record that offers a legacy
- * provider and refuse a package's engine (`legacyProviderEngine` in ./server-catalog); the execution-profile cache
- * holds legacy providers only.
+ * provider and refuse a package's engine (`legacyProviderEngine` in ./server-catalog). The execution-profile cache holds
+ * the providers `acquireExecutionProfileProvider` opens and the read-only statement sessions of provider packages
+ * `getOrCreateReadOnlyStatementSession` opens through each package's own `open` (clause C-78), each under a frame of
+ * its own, so neither is ever answered for the other.
  */
 
 import {
@@ -41,6 +43,7 @@ import {
   ConnectionError,
   connectPhase,
   DatabaseConfigError,
+  type ExecutionProfileDenyCode,
   markNotSent,
   StudioProfileRefusal,
   StudioTimeoutRefusal,
@@ -510,8 +513,9 @@ type HeldEngine = HeldProvider | ({ readonly form: "session" } & OpenedPackageSe
 
 /**
  * An entry of the factory's caches, of every engine alike: what its open answered and what its key, the sweep, a
- * removal and the close read of it. The execution-profile cache holds the provider form only; the metadata cache holds
- * a provider package's session too (`getOrCreateMetadataSession`).
+ * removal and the close read of it. The execution-profile cache holds a provider package's read-only statement session
+ * too (`getOrCreateReadOnlyStatementSession`), and the metadata cache a provider package's metadata session
+ * (`getOrCreateMetadataSession`).
  */
 export interface CachedSession {
   readonly opened: HeldEngine;
@@ -1690,6 +1694,11 @@ interface PackagePlace {
   readonly key: (editorKey: string) => string;
   /** The pool the open asks for, or undefined for core's defaults and the owner's share. */
   readonly pool: { readonly min: 0; readonly max: number } | undefined;
+  /**
+   * What the open adds to the caller's execution context: `readOnly` and `sendsStatements` both for a read-only
+   * statement session, so its package is handed that session's policy (`packageOpenContext`), and nothing otherwise.
+   */
+  readonly execution: Pick<ProviderExecutionContext, "readOnly" | "sendsStatements">;
 }
 
 /** The editor's session of a provider package's record. */
@@ -1698,6 +1707,7 @@ const PACKAGE_EDITOR_PLACE: PackagePlace = {
   flights: editorFlights,
   key: (editorKey) => editorKey,
   pool: undefined,
+  execution: {},
 };
 
 /** The metadata session of a provider package's record, as `METADATA_SESSION` places a legacy provider's. */
@@ -1706,7 +1716,113 @@ const PACKAGE_METADATA_PLACE: PackagePlace = {
   flights: metadataFlights,
   key: (editorKey) => withProfile(METADATA_FRAME, editorKey),
   pool: { min: 0, max: METADATA_POOL_MAX },
+  execution: {},
 };
+
+/**
+ * The frame a provider package's read-only statement session's key carries onto the editor's key (`withProfile`) in the
+ * profiled cache, so it frames the same connection fingerprint, credentials, file-access posture and owner as the
+ * editor's entry beside it. No execution profile is named `read-only-statements`, so no acquisition's key meets it; the
+ * profiled cache's removal, idle sweep and teardown read the entry by its `frame`, the editor's key, as every profiled
+ * entry's.
+ */
+const READ_ONLY_STATEMENT_FRAME = "read-only-statements";
+
+/**
+ * The read-only statement session of a provider package's record (docs/providers/CONTRACT.md, clause C-78): in the
+ * profiled cache, keyed by the editor's key with `READ_ONLY_STATEMENT_FRAME`, with core's pool, opened under the
+ * read-only statement policy.
+ */
+const PACKAGE_READ_ONLY_STATEMENT_PLACE: PackagePlace = {
+  cache: profiledProviderCache,
+  flights: profiledFlights,
+  key: (editorKey) => withProfile(READ_ONLY_STATEMENT_FRAME, editorKey),
+  pool: undefined,
+  execution: { readOnly: true, sendsStatements: true },
+};
+
+/** A not-sent execution profile refusal with `sentence` and `code`: nothing was opened. */
+function notSentRefusal(sentence: string, code: ExecutionProfileDenyCode): StudioProfileRefusal {
+  const refusal = new StudioProfileRefusal(sentence, code);
+  markNotSent(refusal);
+  return refusal;
+}
+
+/**
+ * A provider package's read-only statement session of `engine` for `connection` (docs/providers/CONTRACT.md, clauses
+ * C-78 and C-109), the cache's entry: the session agent mode, and from MCP's package arm MCP, sends read-only executes
+ * through (`readOnlyStatementSession` in src/lib/api/editor-provider.ts, the one caller). It is opened through the
+ * package's own `open` as the editor's session is (`openPackageEntry`), with the editor's checks and key, under the
+ * read-only statement policy, both `readOnly` and `sendsStatements` (`packageOpenContext` in
+ * src/lib/provider-host/open-context.ts), so the session takes read-only executes only. One session per package and
+ * frame serves every caller: a package's session carries no profile of its own, and the budget travels in each request.
+ * It is cached in the profiled cache (`PACKAGE_READ_ONLY_STATEMENT_PLACE`), beside the editor's session and never
+ * answered for it, counted by `getExecutionProfileCacheStats`, opened once per key (C-44), kept by the idle sweep while
+ * a call runs on it (`running`), and leaves with the sweep, with every removal that names its connection, its owner or
+ * its record's key, and with the caches' teardown under the teardown's deadlines (C-45). A caller that waits with a
+ * signal of its own hands it as `wait`, as `getOrCreateEditorSession` takes it.
+ *
+ * Each engine it cannot open one for is refused by name before any cache read or open, every refusal marked not-sent,
+ * in this order:
+ * 1. a record that offers a legacy provider, a host defect: a legacy record's statements go through the
+ *    execution-profile acquisition (`acquireExecutionProfileProvider`);
+ * 2. a package that takes no read-only execute (its record does not offer `readOnlyStatements`),
+ *    `PROFILE_UNSUPPORTED_BY_PROVIDER`;
+ * 3. an engine whose record does not grant agent execution (`assertStatementsReviewed`), `PROFILE_ENGINE_NOT_REVIEWED`;
+ * 4. an engine read only beneath the read roots a seed declares (`grants.readRootsRequired`), since a package's open
+ *    receives no read roots (C-109), `PROFILE_UNSUPPORTED_BY_PROVIDER`;
+ * 5. an engine whose connections serve one session (`grants.servesOneSession`), which the editor holds, so no second
+ *    session opens beside it, `PROFILE_UNSUPPORTED_BY_PROVIDER`;
+ * 6. a connection that configures an agent credential, which a package's open does not receive (C-109),
+ *    `AGENT_CREDENTIAL_NOT_TAKEN`.
+ *
+ * @throws {Error} A host defect, for a record that offers a legacy provider.
+ * @throws {StudioProfileRefusal} Not-sent, for each refusal above.
+ * @throws As `getOrCreateEditorSession` throws for a provider package's record.
+ */
+export async function getOrCreateReadOnlyStatementSession(
+  connection: EngineConnection,
+  engine: EngineRecord,
+  execution: EditorExecutionContext,
+  wait?: OpenWait,
+): Promise<CachedSession> {
+  if (engine.offers.legacyProvider) {
+    throw new Error(
+      "The factory opens a read-only statement session only through a provider package, and this caller handed it a legacy engine's record, whose statements go through the execution-profile acquisition: a host defect.",
+    );
+  }
+  if (!engine.offers.readOnlyStatements) {
+    throw notSentRefusal(
+      `The provider package of ${engine.displayName} takes no read-only execute (it does not list readOnly among the request fields it honours), so Studio opens no read-only statement session on it.`,
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+  try {
+    assertStatementsReviewed(engine.id);
+  } catch (error) {
+    markNotSent(error);
+    throw error;
+  }
+  if (engine.grants.readRootsRequired) {
+    throw notSentRefusal(
+      `${engine.displayName} reads only beneath the read roots a seed declares, and a provider package's open receives no read roots, so Studio opens no read-only statement session on it.`,
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+  if (engine.grants.servesOneSession !== null) {
+    throw notSentRefusal(
+      `${engine.displayName} serves one session per connection, which the editor holds, so Studio opens no second, read-only statement session on it.`,
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+  if (connection.agentUser || connection.agentPassword) {
+    throw notSentRefusal(
+      `Connection "${connection.id}" configures an agent credential, and its engine's session opens through its provider package with the connection's own credential, which receives no agent credential, so no read-only statement session opens on it.`,
+      "AGENT_CREDENTIAL_NOT_TAKEN",
+    );
+  }
+  return openPackageEntry(connection, engine, execution, wait, PACKAGE_READ_ONLY_STATEMENT_PLACE);
+}
 
 /**
  * The session of a provider package's record that `place` caches, the cache's entry: the cached one, else the open in
@@ -1743,11 +1859,13 @@ async function openPackageEntry(
   };
   // The open is handed the posture as the caller gave it, so the open check `openEngine` runs reads what the check
   // above read; `packageOpenContext` hands the package the definite boolean. The derived boolean frames the key alone.
-  const opened: EditorExecutionContext = {
+  // The place adds the read-only statement policy for a read-only statement session, and nothing for any other.
+  const opened: ProviderExecutionContext = {
     ...(execution.allowExternalFileAccess !== undefined && {
       allowExternalFileAccess: execution.allowExternalFileAccess,
     }),
     ...(owner !== undefined && { owner, ownerPoolMax: execution.ownerPoolMax }),
+    ...place.execution,
   };
   return openOnce(
     place.flights,
@@ -1776,7 +1894,7 @@ function refused(sentence: string): DatabaseConfigError {
 async function openCachedSession(
   connection: EngineConnection,
   engine: EngineRecord,
-  execution: EditorExecutionContext,
+  execution: ProviderExecutionContext,
   flight: Flight<OpenMeta>,
   place: PackagePlace,
 ): Promise<CachedSession> {
@@ -2545,7 +2663,8 @@ export function getProviderCacheStats(): { size: number; connections: string[] }
 
 /**
  * Execution-profile cache statistics (observability for the isolation
- * invariant: agent acquisitions must never appear in getProviderCacheStats).
+ * invariant: agent acquisitions must never appear in getProviderCacheStats): the profiled providers and the provider
+ * packages' read-only statement sessions (`getOrCreateReadOnlyStatementSession`) it holds, and the connections they serve.
  */
 export function getExecutionProfileCacheStats(): { size: number; connections: string[] } {
   return {

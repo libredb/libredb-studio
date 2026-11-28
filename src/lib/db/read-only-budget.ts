@@ -21,7 +21,7 @@ import { QueryError } from "./errors";
  * own timer past the budget clamps it here. */
 export const MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647;
 
-export function assertReadOnlyBudget(budget: ReadOnlyStatementBudget, provider: DatabaseType): void {
+export function assertReadOnlyBudget(budget: ReadOnlyStatementBudget, provider: DatabaseType | undefined): void {
   const fields: Array<[name: string, value: unknown, max: number]> = [
     ["statementTimeoutMs", budget?.statementTimeoutMs, MAX_STATEMENT_TIMEOUT_MS],
     ["maxResultRows", budget?.maxResultRows, Number.MAX_SAFE_INTEGER],

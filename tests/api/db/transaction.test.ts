@@ -163,6 +163,10 @@ mock.module("@/lib/db/factory", () => ({
   getOrCreateMetadataSession: mock(async () => {
     throw new Error("getOrCreateMetadataSession is not read by this route");
   }),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no read-only statement session.
+  getOrCreateReadOnlyStatementSession: mock(async () => {
+    throw new Error("getOrCreateReadOnlyStatementSession is not read by this route");
+  }),
 }));
 
 // ─── Query events (docs/GOVERNANCE.md#query-events) ─────────────────────────
