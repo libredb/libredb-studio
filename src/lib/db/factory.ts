@@ -84,6 +84,7 @@ import {
   openedProvider,
   openedSession,
   openEngine,
+  providerForm,
 } from "@/lib/provider-host/open-engine";
 import { teardownContractSession } from "@/lib/provider-host/core/contract-session";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
@@ -539,20 +540,6 @@ export interface CachedSession {
   running: number;
 }
 
-/**
- * The legacy provider `entry` holds.
- *
- * @throws {Error} A host defect, when `entry` holds a provider package's session: a caller that reads a provider of it.
- */
-function heldProvider(entry: CachedSession): HeldProvider {
-  if (entry.opened.form !== "provider") {
-    throw new Error(
-      "The factory's cache holds a provider package's session under this key, and this caller reads a legacy provider of it: a host defect.",
-    );
-  }
-  return entry.opened;
-}
-
 const providerCache = new Map<string, CachedSession>();
 
 // ============================================================================
@@ -694,7 +681,7 @@ async function reusableEntry(
 ): Promise<CachedSession | null> {
   const cached = cache.get(key);
   if (cached === undefined) return null;
-  const held = heldProvider(cached);
+  const held = providerForm(cached.opened);
   if (held.provider.config.queryTimeout !== connection.queryTimeout) {
     try {
       await held.provider.disconnect();
@@ -731,7 +718,7 @@ async function sharedOpen(
   wait?: OpenWait,
 ): Promise<CachedSession> {
   const shared = await openOnce(flights, key, meta, open, wait);
-  if (heldProvider(shared).provider.config.queryTimeout === connection.queryTimeout) return shared;
+  if (providerForm(shared.opened).provider.config.queryTimeout === connection.queryTimeout) return shared;
   return (await reusableEntry(cache, key, connection)) ?? openOnce(flights, key, meta, open, wait);
 }
 
@@ -1057,7 +1044,7 @@ async function teardownProvider(
   noun: CacheNoun = "provider",
 ): Promise<boolean> {
   cache.delete(key);
-  const { provider, scrub } = heldProvider(entry);
+  const { provider, scrub } = providerForm(entry.opened);
   const id = entry.connectionId;
   const shared = entry.owner === undefined;
   const whose = shared ? "a shared provider" : "an owned provider";
@@ -1310,7 +1297,7 @@ export async function getOrCreateProvider(
   execution: EditorExecutionContext = {},
   wait?: OpenWait,
 ): Promise<DatabaseProvider> {
-  return heldProvider(await openWritable(connection, options, execution, wait, "editor")).provider;
+  return providerForm((await openWritable(connection, options, execution, wait, "editor")).opened).provider;
 }
 
 /**
@@ -1340,7 +1327,7 @@ export async function getOrCreateMetadataProvider(
   options: ProviderOptions = {},
   execution: EditorExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return heldProvider(await openWritable(connection, options, execution, undefined, "tree")).provider;
+  return providerForm((await openWritable(connection, options, execution, undefined, "tree")).opened).provider;
 }
 
 /**
@@ -2161,7 +2148,7 @@ export async function acquireExecutionProfileProvider(
   const owner = providerOwner(connection, requester.owner);
   const cacheKey = await profiledCacheKey(connection, profile, requester);
   const cached = await reusableEntry(profiledProviderCache, cacheKey, connection);
-  if (cached !== null) return heldProvider(cached).provider;
+  if (cached !== null) return providerForm(cached.opened).provider;
 
   const credential = resolveAgentCredential(connection);
   const acquisition = PROFILE_ACQUISITION[profile];
@@ -2312,7 +2299,7 @@ export async function acquireExecutionProfileProvider(
     openProfiledProvider,
     wait,
   );
-  return heldProvider(entry).provider;
+  return providerForm(entry.opened).provider;
 }
 
 /**
