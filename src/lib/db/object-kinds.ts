@@ -652,28 +652,36 @@ export function kindAcceptsSourceEdits(model: ObjectModelView, id: string): bool
  * every caller is left holding the whole union with no `.text` on it. The one-property spelling
  * `isCountUnavailable` uses does not compile here at all, because `ObjectSourcePart` has three
  * required members on the refused arm, and that red build is the safe direction.
+ *
+ * A part's form is read by its member's VALUE, as `isCountUnavailable` reads a count's: a part
+ * holding `unavailable` as an own `undefined` is not a refusal, as the SDK's `checkSourceAnswer`
+ * reads it and `boundSourceAnswer` rebuilds it (docs/providers/CONTRACT.md, clause C-115). The
+ * `in` only narrows the type.
  */
 export function isSourcePartUnavailable(part: ObjectSourcePart): part is {
   readonly id: string;
   readonly label: string;
   readonly unavailable: string;
 } {
-  return "unavailable" in part;
+  return "unavailable" in part && part.unavailable !== undefined;
 }
 
 /**
  * The narrowing predicate for a neutral statement part, the member that carries a fact about the
  * object rather than a refusal to read it.
  *
- * Ask it BEFORE `isSourcePartUnavailable`, which answers true for a statement too. Only the part's
- * OWN `statement` key counts, and only the value `true`: a part that crossed a host seam or a JSON
- * round trip with `statement: "true"` is not a statement, and the reader's shape check refuses it.
+ * Ask it BEFORE `isSourcePartUnavailable`, which answers true for a statement too. Only a part
+ * whose `unavailable` holds a value (`isSourcePartUnavailable`) and whose OWN `statement` key holds
+ * `true` counts: a part that crossed a host seam or a JSON round trip with `statement: "true"` is
+ * not a statement, and the reader's shape check refuses it.
  */
 export function isSourcePartStatement(
   part: ObjectSourcePart,
 ): part is { readonly id: string; readonly label: string; readonly unavailable: string; readonly statement: true } {
   return (
-    "unavailable" in part && Object.hasOwn(part, "statement") && (part as { statement?: unknown }).statement === true
+    isSourcePartUnavailable(part) &&
+    Object.hasOwn(part, "statement") &&
+    (part as { statement?: unknown }).statement === true
   );
 }
 

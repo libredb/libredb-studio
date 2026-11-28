@@ -527,6 +527,25 @@ describe("isSourcePartStatement", () => {
   });
 });
 
+describe("a source part's form", () => {
+  test("a source part's form is read by its value: a readable part with its own undefined unavailable is neither a refusal nor a statement", () => {
+    const readable = {
+      id: "definition",
+      label: "Definition",
+      text: "SELECT 1",
+      language: "sql",
+      form: "complete",
+      origin: "stored",
+      unavailable: undefined,
+      statement: true,
+    } as unknown as ObjectSourcePart;
+
+    expect(Object.hasOwn(readable, "unavailable")).toBe(true);
+    expect(isSourcePartUnavailable(readable)).toBe(false);
+    expect(isSourcePartStatement(readable)).toBe(false);
+  });
+});
+
 describe("applySourceBound", () => {
   test("an unbounded call marks nothing, because marking an exact answer teaches a reader to discount every mark", () => {
     const bounded = applySourceBound("SELECT 1", undefined);

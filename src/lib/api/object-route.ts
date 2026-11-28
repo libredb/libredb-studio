@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { readBoundedJson } from "@/lib/api/bounded-json";
 import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { sourceModel } from "@/lib/api/object-source";
 import { createErrorResponse } from "@/lib/api/errors";
 import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
 import type { TreeTarget } from "@/lib/api/session-target";
@@ -10,6 +11,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
 import { HostDefectError } from "@/lib/provider-host/access";
+import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import {
   connectionTextScrub,
   type ProviderTextScrub,
@@ -22,13 +24,12 @@ import {
   legacyConnection,
   legacyProviderType,
 } from "@/lib/db/server-catalog";
-import { SOURCE_PART_LIMIT, applySourceBound, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { type CallContext, checkObjectsFacet } from "@libredb/provider-sdk/calls";
 import {
   acceptedContainerShapes,
   containerDepth,
   enumerableKinds,
   findKind,
-  isSourcePartUnavailable,
   kindAcceptsSourceEdits,
   kindHasSource,
   type ObjectKindView,
@@ -100,9 +101,10 @@ import type { UserPayload } from "@/lib/auth";
  *   (`EngineOffers.objectEdit`, `EngineOffers.keyScan`) is refused before any open as `FacetNotOfferedError` naming the
  *   request, 400, outcome not-sent; no provider package's record offers either, since the provider contract has no
  *   edit or key scan call yet. Every other record opens the editor's provider through `getOrCreateProvider`.
- * - no options, which the source read passes until it is a contract call on the record's session: the connection is
- *   resolved through `resolveConnection`, which refuses a provider package's engine as `PACKAGE_ENGINE_UNSUPPORTED`,
- *   501, and the editor's provider is opened through `getOrCreateProvider`.
+ * - no options, which the source read passes: it reads through the host core's source call on the bridged session of
+ *   the editor's provider (`objectSource` in ./object-source), and until a package's session is served there the
+ *   connection is resolved through `resolveConnection`, which refuses a provider package's engine as
+ *   `PACKAGE_ENGINE_UNSUPPORTED`, 501, and the editor's provider is opened through `getOrCreateProvider`.
  *
  * Every arm opens after the guard, the body read and the connection's resolution, with the execution context of the
  * guard's session and the resolved connection.
@@ -208,7 +210,7 @@ type TreeRun = (tree: TreeTarget, body: Record<string, unknown>, context: TreeRe
 
 /**
  * The call of the tree arm a failure is answered by: the record's open, then its tree read, with every value the
- * session's tree function raised during the run (`recordingRaised`).
+ * session's own functions raised during the run (`recordingRaised`).
  */
 type FailingCall =
   | { readonly engine: EngineRecord; readonly call: "open" }
@@ -216,7 +218,7 @@ type FailingCall =
 
 /**
  * Whether `error` is a failure of `failing`'s call, which the record answers (`packageFailureAnswer`): any failure of
- * the open; and of the run, a value the session's tree function raised, or a host defect, whose refusals name whose
+ * the open; and of the run, a value the session's own functions raised, or a host defect, whose refusals name whose
  * defect it is (`REFUSAL_AUTHOR` in ./package-errors), such as a tree answer the host core refused. Any other failure
  * of the run, such as a session Studio's host built stating no object model (`objectTree` in ./object-tree) or a read
  * before the host core's install, is Studio's own.
@@ -227,26 +229,32 @@ function raisedByCall(failing: FailingCall, error: unknown): boolean {
 }
 
 /**
- * `target` with its session's tree function recording in `raised` each value it threw or rejected with, passed on as
- * the same value, so a route answers by the record only what the session's own call raised (`raisedByCall`).
+ * `target` with each function its session holds, the tree read and, where the session offers `objects.source`, the
+ * source read, recording in `raised` each value it threw or rejected with, passed on as the same value, so a route
+ * answers by the record only what the session's own calls raised (`raisedByCall`). The session handed on holds exactly
+ * the members `target`'s session holds, so a function is present exactly where the session offers its call, as
+ * `ObjectsSession` states.
  */
 function recordingRaised(target: TreeTarget, raised: Set<unknown>): TreeTarget {
   const { session } = target;
-  const tree = session.tree;
-  if (tree === undefined) return target;
+  const { tree, source } = session;
+  const recorded =
+    <Request, Answer>(call: (request: Request, ctx: CallContext) => Promise<Answer>) =>
+    async (request: Request, ctx: CallContext): Promise<Answer> => {
+      try {
+        return await call.call(session, request, ctx);
+      } catch (error) {
+        raised.add(error);
+        throw error;
+      }
+    };
   return {
     ...target,
     session: {
       calls: session.calls,
       ...(session.objectModel === undefined ? {} : { objectModel: session.objectModel }),
-      tree: async (request, ctx) => {
-        try {
-          return await tree.call(session, request, ctx);
-        } catch (error) {
-          raised.add(error);
-          throw error;
-        }
-      },
+      ...(tree === undefined ? {} : { tree: recorded(tree) }),
+      ...(source === undefined ? {} : { source: recorded(source) }),
     },
   };
 }
@@ -273,7 +281,7 @@ async function providerRun(
 /**
  * The tree arm: the tree target of the record's metadata session, and `run`'s answer on it, `state.failing` naming the
  * record's call a failure is answered by: the open, then the tree read, which answers by the record only the values
- * the session's tree function raised (`recordingRaised`).
+ * the session's own functions raised (`recordingRaised`).
  */
 async function treeRun(
   run: TreeRun,
@@ -797,204 +805,86 @@ export function resolveKinds<K extends ObjectKindView>(
 }
 
 /**
- * The provider's source reader for one kind, or a 400 saying it has none (#789 Phase 2).
+ * A 400 for a source read the connection's session cannot serve for one kind (#789 Phase 2).
  *
- * ONE branch with TWO conjuncts, on purpose. The first is reachable on every engine: a kind that
- * declares no `hasSource` is an ordinary thing to ask for, because a caller can hold a stale menu
- * or a path it built itself. The second is reachable through a provider that declares the kind and
- * omits the method, which `readObjectSource` being optional makes representable and only this
- * check makes visible. Folding them into two `if`s would give the second one a line whose only
- * purpose is a state the first already excluded, which is the shape the deleted 501 arm had.
+ * ONE branch with TWO conjuncts, on purpose. The first is reachable through a provider that
+ * declares a kind with source and omits the method, which `readObjectSource` being optional makes
+ * representable: the legacy bridge offers `objects.source` exactly where the provider defines it,
+ * so its session does not offer the facet (`checkObjectsFacet`). The second is reachable on every
+ * engine: a kind whose model states no source, or no such kind at all, is an ordinary thing to ask
+ * for, because a caller can hold a stale menu or a path it built itself. The model is read only for
+ * a session that offers the facet (`sourceModel`), so a session that offers it and states no model
+ * is the host's defect and never this 400.
  *
  * It is a helper here rather than a `throw` in the route for the reason every 400 in this module
  * is: `ObjectRouteError` is module-private, and keeping it private is what keeps the status
  * vocabulary in one file rather than letting each route mint its own.
  *
  * 400 and not 404 or 501, following `resolveKinds`: answering nothing reads as a claim about the
- * DATA when the truth is a claim about the ENGINE.
- *
- * The returned function is BOUND to the provider, because it is read off the instance as a value
- * and a provider method that reaches its own pool through `this` would otherwise be called with
- * no receiver.
- *
- * `model` is the object model the source route reads the kind through (the one the legacy bridge states for the
- * provider's session), and the reader stays the provider's own until the source read is a contract call. The refusal
- * answers outcome `not-sent`: nothing was asked of the engine (clause M-89).
+ * DATA when the truth is a claim about the ENGINE. The refusal answers outcome `not-sent`: nothing
+ * was asked of the engine (clause M-89). The host core's source call refuses the same two cases
+ * before any call (clause C-115); this sentence, naming the engine and the kind, is the one the
+ * source route has always answered for them.
  */
-export function requireSourceReader(
-  provider: DatabaseProvider,
-  model: ObjectModelView,
-  kind: string,
-): (path: readonly string[], kind: string, limit?: number) => Promise<ObjectSourceDocument> {
-  const read = provider.readObjectSource;
-  if (!kindHasSource(model, kind) || read === undefined) {
-    throw new ObjectRouteError(
-      `${provider.type} declares no readable source for kind "${kind}"`,
-      400,
-      undefined,
-      NOT_SENT,
-    );
+export function requireSourceReader(session: ObjectsSession, engine: string, kind: string): void {
+  if (checkObjectsFacet(session.calls, "source").length > 0 || !kindHasSource(sourceModel(session), kind)) {
+    throw new ObjectRouteError(`${engine} declares no readable source for kind "${kind}"`, 400, undefined, NOT_SENT);
   }
-  return read.bind(provider);
 }
 
 /**
- * The answered document under the route's OWN bound (#789 Phase 2).
+ * The source document the host core's source call answered, with the edit affordance the route
+ * decides (#789 Phase 3).
  *
- * The route ENFORCES rather than trusts, which is the shipped precedent and not a new rule: the
- * inventory route applies its own two bounds on top of the bound it hands `describeObjects`. The
- * callers behind this one are the providers that implement `readObjectSource`, and the
- * route materialises the whole answer and serialises it in one `NextResponse.json`, so this is the
- * one place a memory bound can actually be held. A number merely PASSED to an implementation is a
- * request, not a bound.
+ * The bound and the shape are the core's: `sourceCall` reads the answer once with
+ * `checkSourceAnswer`, which refuses a document of no part or more parts than `SOURCE_PART_LIMIT`,
+ * a part carrying both a refusal and a text, and a sentence past `SOURCE_CHARACTER_LIMIT`, and cuts
+ * each readable text past that bound with `boundSourceAnswer`, so this function checks and cuts
+ * nothing of its own (clause C-115).
  *
- * CORRECTED after review, because the first version of this paragraph named a caller that cannot
- * reach it. MEASURED: `handleObjectRequest` takes its provider from `getOrCreateProvider`, which
- * resolves through a closed `switch (connection.type)` in
- * `src/lib/provider-host/legacy-adapter/open.ts` with no registration point for anyone else, and the
- * embedded shell has no API routes at all, so a host implementing the workspace source seam reads
- * through its own function and never through this module. The bound is here for a PROVIDER
- * defect, which is enough on its own.
- *
- * A provider that bounded correctly is returned unchanged, which is what makes the walk safe to
- * run on every answer. A provider that bounded at its own SMALLER limit is also unchanged, because
- * its text already fits. Only a provider that over-answered is sliced, and its own sentence is
- * KEPT and joined rather than replaced: a second bound is a second fact.
- *
- * `parts.length` is bounded too, because the tuple type has no upper bound and the real response
- * size is `limit` times the part count. `SOURCE_PART_LIMIT` is twice the largest shape any
- * engine in the fleet produces, so no correct provider can reach it and a provider that does is a
- * defect rather than a database fact.
- *
- * The EMPTY document is refused by name rather than left to the destructuring below. `parts` is a
- * non-empty tuple in the type and a JavaScript caller is not held to it, and MEASURED before this
- * guard existed, `parts: []` reached `"unavailable" in part` on `undefined` and raised
- * `TypeError: part is not an Object`, which `createErrorResponse` reports as an unhandled error
- * rather than as the caller's mistake it is.
- *
- * THE THIRD ARGUMENT is the object model the source route reads the kind through, the one the legacy
- * bridge states for the CONNECTED provider's session, and it is what makes the edit affordance a
- * route-enforced fact rather than a provider-reported one (#789 Phase 3). Same
- * precedent as the paragraph above: a declaration merely READ from an implementation is a report
- * and not a bound. A provider that offers `edit` on a part whose kind it never declared
- * `acceptsSourceEdits` would ship a client an Edit button for an object no `buildObjectEdit` can
- * plan, and the user would meet the refusal after typing rather than before.
+ * `model` is the object model of the session that answered, and it is what makes the edit
+ * affordance a route-enforced fact rather than a provider-reported one: a declaration merely READ
+ * from an implementation is a report and not a bound. A provider that offers `edit` on a part whose
+ * kind it never declared `acceptsSourceEdits` would ship a client an Edit button for an object no
+ * `buildObjectEdit` can plan, and the user would meet the refusal after typing rather than before.
  */
-export function boundSourceDocument(
-  document: ObjectSourceDocument,
-  limit: number,
-  model: ObjectModelView,
-): ObjectSourceDocument {
-  if (document.parts.length === 0) {
-    throw new ObjectRouteError(
-      "the source read answered a document with no parts, and a source document names at least one",
-      400,
-    );
-  }
-  if (document.parts.length > SOURCE_PART_LIMIT) {
-    throw new ObjectRouteError(
-      `the source read answered ${document.parts.length} parts and this route carries at most ${SOURCE_PART_LIMIT}`,
-      400,
-    );
-  }
+export function offeredSourceEdits(document: ObjectSourceDocument, model: ObjectModelView): ObjectSourceDocument {
   // Destructured rather than mapped, because `parts` is a NON-EMPTY tuple and `Array.prototype.map`
   // answers a plain array that no longer satisfies it.
   const [first, ...rest] = document.parts;
   const kindEditable = kindAcceptsSourceEdits(model, document.kind);
   return {
     ...document,
-    parts: [boundPart(first, limit, kindEditable), ...rest.map((part) => boundPart(part, limit, kindEditable))],
-  };
-}
-
-/**
- * One part under the bound, and the one malformed shape the bound cannot hold.
- *
- * The hybrid is refused BEFORE the narrowing, and that order is the whole guard. MEASURED against
- * tsc 6.0.3 and recorded on `ObjectSourcePart` itself: a part carrying `unavailable` BESIDE
- * `text`, `language`, `form` and `origin` COMPILES with no cast, because the excess-property check
- * on a union admits any property declared on ANY member of it. `isSourcePartUnavailable` asks
- * `"unavailable" in part`, so such a part narrows to the refusal arm and the line below would
- * return it untouched: MEASURED through this function at a 1,000,000 bound, a hybrid carrying
- * 2,000,000 characters came back with its text whole, 2,000,141 characters of JSON on the wire,
- * while a client narrowing the same way renders a refusal over the definition the engine really
- * returned. `assertObjectSurface` refuses the shape for our own providers, and the check runs only
- * in the provider suites, so this is where the same refusal reaches a running server (#789).
- *
- * A 400 in this module's own vocabulary and not a silent repair. Bounding the text would keep the
- * memory bound and still ship a part that reads as a refusal over a real definition, which is the
- * exact collapse the union exists to prevent.
- *
- * Below it, a refusal carries no text, so there is nothing to bound and nothing to mark. Reading
- * `.text` on one would be a property access on the arm that does not declare it.
- */
-function boundPart(part: ObjectSourcePart, limit: number, kindEditable: boolean): ObjectSourcePart {
-  if (isSourcePartUnavailable(part) && Object.hasOwn(part, "text")) {
-    throw new ObjectRouteError(
-      "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
-        "are different facts and a reader must never be shown one over the other",
-      400,
-    );
-  }
-  // THE ORDER IS THE GUARD. `boundText` MARKS `truncated` itself when a provider over-answered, and
-  // `stripEdit` refuses a truncated part, so stripping first would carry the affordance through on
-  // exactly the parts this route cut.
-  return stripEdit(boundText(part, limit), kindEditable);
-}
-
-/**
- * The part under the character bound, with no affordance decision in it (#789).
- *
- * Split out of `boundPart` so the stripping below runs over the ALREADY BOUNDED part. The two were
- * one function through Phase 2, when there was nothing to strip.
- */
-function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
-  if (isSourcePartUnavailable(part) || part.text.length <= limit) return part;
-  const reason = sourceBoundTruncationReason(limit);
-  /*
-   * ONE SLICER for the fleet, and the route was the second one (#789). It cut with a bare
-   * `part.text.slice(0, limit)` while every `readObjectSource` cuts through `applySourceBound`,
-   * which drops an orphaned surrogate half: the bound counts UTF-16 CODE UNITS, so it can land
-   * BETWEEN the two halves of an astral character, and MEASURED through this function, a text
-   * holding an emoji at exactly the boundary came back ending in `\ud83d`, which is not a
-   * character and which JSON serialises as a lone escape.
-   *
-   * Only `.text` is taken from it. The MARK is composed here, because this route's second bound
-   * has a fact the helper does not: a provider that already bounded at its own smaller limit
-   * keeps its own sentence and this one is JOINED to it rather than replacing it.
-   */
-  return {
-    ...part,
-    text: applySourceBound(part.text, limit).text,
-    truncated: { limit, reason: part.truncated === undefined ? reason : `${part.truncated.reason}; ${reason}` },
+    parts: [stripEdit(first, kindEditable), ...rest.map((part) => stripEdit(part, kindEditable))],
   };
 }
 
 /**
  * The `edit` affordance, kept or DELETED, decided by the route and never by the provider (#789).
  *
- * THREE reasons to delete it, and they are checked in this order because each is a different fact:
+ * TWO reasons to delete it, and they are checked in this order because each is a different fact:
  *
- * 1. THE PART IS A REFUSAL. Representable and not hypothetical: MEASURED against tsc 6.0.3 and
- *    already recorded on `boundPart` above, the excess-property check on a union admits any
- *    property declared on ANY member of it, so a part carrying `unavailable` BESIDE `edit`
- *    compiles with no cast. A provider spreading a conditional affordance onto a refusal would
- *    ship an editable refusal: a client narrows it to the refusal arm, draws "this could not be
- *    read", and offers an Edit button over the text it just said it does not have.
- * 2. THE PART IS TRUNCATED, whether the PROVIDER marked it or `boundText` just did. A truncated
- *    part is a PREFIX, and submitting a prefix back replaces the object with the part of itself
- *    the reader was shown, which is ruling 1b's second clause: a SUCCESS destroying something the
- *    user was not shown. It is the server-side half of the pair that closed backlog entry X17: the
- *    CAPTION tells a human that a bounded text is not whole, and THIS tells the machine not to
- *    offer an edit over it. X17 is closed, so the id no longer resolves and the pairing is named
- *    here instead. It WITHDRAWS THE OFFER; it does not make the submission impossible, and
- *    the write-path paragraph below says whose job that is.
- * 3. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
+ * 1. THE PART IS TRUNCATED, whether the PROVIDER marked it or the host core's cut
+ *    (`boundSourceAnswer`) did. A truncated part is a PREFIX, and submitting a prefix back replaces
+ *    the object with the part of itself the reader was shown, which is ruling 1b's second clause: a
+ *    SUCCESS destroying something the user was not shown. It is the server-side half of the pair
+ *    that closed backlog entry X17: the CAPTION tells a human that a bounded text is not whole, and
+ *    THIS tells the machine not to offer an edit over it. X17 is closed, so the id no longer
+ *    resolves and the pairing is named here instead. It WITHDRAWS THE OFFER; it does not make the
+ *    submission impossible, and the write-path paragraph below says whose job that is.
+ * 2. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
  *    the defect where a client's declaration can be a different server's, closed on the read path:
  *    the affordance travels with the document from the server that answered it.
  *
- * WHICH OF THE THREE RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
- * implied by the fact that all three are tested. This paragraph counted ONE producer when PostgreSQL
+ * A REFUSAL PART CARRYING AN OFFER needs no rule here. The excess-property check on a union admits
+ * any property declared on ANY member of it, so a part carrying `unavailable` BESIDE `edit`
+ * compiles with no cast (MEASURED against tsc 6.0.3 and recorded on `ObjectSourcePart`), but the
+ * host core's `checkSourceAnswer` refuses it, since `edit` is no member of a refusal, and the only
+ * caller of this function, `POST` in `src/app/api/db/objects/source/route.ts`, hands it only the
+ * document the core checked and cut.
+ *
+ * WHICH OF THE TWO RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
+ * implied by the fact that both are tested. This paragraph counted ONE producer when PostgreSQL
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
@@ -1005,17 +895,17 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * key in `providers/keyvalue/etcd/objects.ts`. Every producer sits on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
- * So rules 1 and 3 still have NO live producer, and for the same reason as before: the only thing
- * that can build their population is a DEFECTIVE or a future provider, and the unit tests construct
- * it deliberately, which is this module's own ENFORCE-rather-than-trust precedent and not an
- * oversight.
+ * So rule 2 still has NO live producer, and for the same reason as before: the only thing that can
+ * build its population is a DEFECTIVE or a future provider, and the unit tests construct it
+ * deliberately, the enforce-rather-than-trust precedent the host core's `checkSourceAnswer` and
+ * `boundSourceAnswer` hold for the document's shape and bound, and not an oversight.
  *
- * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
+ * Rule 1's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
  * stated at `RedisProvider.readObjectSource` in `redis.ts`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
- * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
+ * it there would be answering a property of the REQUEST as a property of the object. Rule 1 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
  * re-read are what make it safe on the other two.
  *
@@ -1050,26 +940,27 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * WHAT THIS CANNOT COVER ON THE READ PATH ITSELF, said out loud rather than left for a reader to
  * assume the opposite.
- * It kills the class on the ROUTE path ONLY. A HOST cannot reach here at all, MEASURED and already
- * recorded on `boundSourceDocument`: `handleObjectRequest` takes its provider from
- * `getOrCreateProvider`, which resolves through a closed `switch (connection.type)` in
- * `src/lib/db/factory.ts` with no registration point for anyone else, and the embedded shell has
- * no API routes, so a host implementing the workspace source seam answers its document straight to
- * the pane. The EMBEDDED half is the client-side predicate in
- * `src/components/object-source/source-editable.ts`, which asks the same three questions of the
- * document it was handed. Two halves, deliberately, because neither one covers the other's
- * population.
+ * It kills the class on the ROUTE path ONLY. A HOST cannot reach here at all, MEASURED:
+ * `handleObjectRequest` takes its provider from `getOrCreateProvider`, which resolves through a
+ * closed `switch (connection.type)` in `src/lib/db/factory.ts` with no registration point for
+ * anyone else, and the embedded shell has no API routes, so a host implementing the workspace
+ * source seam answers its document straight to the pane. The EMBEDDED half is the client-side
+ * predicate in `src/components/object-source/source-editable.ts`, which reads the affordance of
+ * the document it was handed from that document alone, a refusal part drawn before it and a hybrid
+ * refused by `isSourceDocumentShape`, since no host core checked that document. Two halves,
+ * deliberately, because neither one covers the other's population.
  *
  * The delete is a REST SPREAD and not a `delete` statement, so the answered part is a new object
- * and the provider's own is not mutated. `Object.hasOwn` and never `in`, on standing ruling 5g,
- * and never `part.edit !== undefined`: a part carrying an explicit `edit: undefined` has the key,
- * and `JSON.stringify` would drop it anyway, but a reader asking "does this part offer an edit"
- * gets the same answer either way only while the question is asked about the KEY.
+ * and the provider's own is not mutated. Each member is read by its VALUE, as the tree's readers
+ * read theirs: the host core rebuilt each part to the form its check read it (`boundSourceAnswer`
+ * drops every member holding no value), so a part reaching here holds `edit` and `truncated` only
+ * with a value (clauses C-62 and C-115).
  */
 function stripEdit(part: ObjectSourcePart, kindEditable: boolean): ObjectSourcePart {
   if (
-    Object.hasOwn(part, "edit") &&
-    (isSourcePartUnavailable(part) || Object.hasOwn(part, "truncated") || !kindEditable)
+    "edit" in part &&
+    part.edit !== undefined &&
+    (("truncated" in part && part.truncated !== undefined) || !kindEditable)
   ) {
     const { edit: _dropped, ...rest } = part as ObjectSourcePart & { edit?: unknown };
     return rest as ObjectSourcePart;

@@ -594,11 +594,11 @@ const LEGACY_MAINTENANCE_ANSWER =
 
 /**
  * The reason the legacy bridge's source read is no crossing of its own: the bridge hands the provider's document by
- * reference to the host core's source call, which checks and cuts it and answers it to no route yet; the source route
- * reads the provider's own reader and answers its document through `scrubSourceDocument`.
+ * reference to the host core's source call, which checks and cuts it, and the source route answers the core's document
+ * through `scrubSourceDocument`.
  */
 const LEGACY_SOURCE_ANSWER =
-  "a legacy source document carried by reference to the host core's source call, which no route reads yet";
+  "a legacy source document carried by reference to the host core's source call and objectSource, whose route answers it through scrubSourceDocument";
 
 /**
  * The reason the server engine catalog's refusal of a connection's type is no provider text: `legacyProviderRefusal`
@@ -700,8 +700,6 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the request body's own failure; each connection's failure is answered in its own item",
   [`${join("src", "lib", "query-events", "sink.ts")}: recordQueryEvent: logger.error(error)`]:
     "the query event builder's own refusal of an input",
-  [`${objectRoute}: boundText: part.truncated.reason`]:
-    "a source part's sentence the source route scrubbed before bounding it",
   [`${childHandlers}: runTarget: error.message`]: "the run target rule's RangeError, Studio's",
   [`${agent("tools.ts")}: walkObjectInventory: tree.countObjects`]:
     "the grounding's counts, read through the host core's tree call, whose sentences walkObjectInventory scrubs with scrubProviderText",
@@ -709,8 +707,6 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a batch read through the host core's tree call, whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
   [`${mcp("tools", "inspect-schema.ts")}: inspectTable: tree.describeObject`]:
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
-  [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:
-    "the source reader, whose document the source route answers through scrubSourceDocument",
   [`${childHandlers}: selectStatement: tree.describeObject`]:
     "a description of which selectStatement reads only the columns, database content",
   [`${mcp("tools", "list-connections.ts")}: listed: refusal.message`]: ENGINE_CATALOG_REFUSAL,

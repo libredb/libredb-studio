@@ -193,9 +193,10 @@ describe("an asset is a document, and nothing else is", () => {
     const document = await provider.readObjectSource([LATHE, "TOOL-1722"], "asset");
     const [part] = document.parts;
     expect(part?.id).toBe("asset");
-    // The readable arm is reached the way every reader reaches it: `isSourcePartUnavailable` asks
-    // `"unavailable" in part`, so negating it is what narrows the union. Asserted rather than cast,
-    // because a part that came back unavailable would make every expectation below vacuous.
+    // The readable arm is reached the way every reader reaches it: `isSourcePartUnavailable` reads
+    // the part's `unavailable` member by its value, so negating it is what narrows the union.
+    // Asserted rather than cast, because a part that came back unavailable would make every
+    // expectation below vacuous.
     expect(part && !isSourcePartUnavailable(part)).toBe(true);
     if (!part || isSourcePartUnavailable(part)) return;
     expect(part?.language).toBe("xml");

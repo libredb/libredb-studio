@@ -40,7 +40,12 @@ import {
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
-import { isCountSampled, isCountUnavailable, isIndexesUnavailable } from "@/lib/db/object-kinds";
+import {
+  isCountSampled,
+  isCountUnavailable,
+  isIndexesUnavailable,
+  isSourcePartUnavailable,
+} from "@/lib/db/object-kinds";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
@@ -200,9 +205,12 @@ export function scrubObjectDetail(words: ProviderWords, detail: ObjectDetail): O
   return { ...detail, indexes: { unavailable: providerSentence(words, detail.indexes.unavailable) } };
 }
 
-/** One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. */
+/**
+ * One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. Its
+ * form is read by the value of its `unavailable`, as the host core's check read it (`isSourcePartUnavailable`).
+ */
 function scrubSourcePart(scrub: ProviderTextScrub, part: ObjectSourcePart): ObjectSourcePart {
-  if ("unavailable" in part) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
+  if (isSourcePartUnavailable(part)) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
   return {
     ...part,
     ...(part.truncated === undefined
@@ -219,12 +227,10 @@ function scrubSourcePart(scrub: ProviderTextScrub, part: ObjectSourcePart): Obje
  * provider's own sentences. A part's text, label and statement flag and an offered edit are kept, and `parts` stays a
  * non-empty tuple in the same order.
  *
- * The source route scrubs a provider's document before its bound (`boundSourceDocument`) checks the document's shape,
- * so a document with no parts, which the type does not admit and a provider can answer, holds no sentence and
- * is answered as given, for the bound to refuse by name.
+ * The source route scrubs the document the host core's source call checked and cut (`sourceCall` in
+ * src/lib/provider-host/core/objects.ts), which holds at least one part, each in the form the check read it.
  */
 export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSourceDocument): ObjectSourceDocument {
-  if (document.parts.length === 0) return document;
   // Destructured rather than mapped, because `parts` is a non-empty tuple and `Array.prototype.map` answers a plain
   // array that no longer satisfies it.
   const [first, ...rest] = document.parts;
