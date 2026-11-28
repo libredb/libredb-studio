@@ -150,7 +150,6 @@ mock.module("@/lib/db/factory", () => ({
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
-  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mock(),
   removeProvider: mock(),
   clearProviderCache: mock(),

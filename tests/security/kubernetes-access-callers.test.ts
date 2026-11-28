@@ -374,7 +374,7 @@ const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
       origin: "src/lib/db/factory.ts",
       form: "re-export",
       reason:
-        "the provider barrel re-exports getOrCreateProvider, getOrCreateMetadataProvider, createDatabaseProvider and readProviderDeclarations from the factory; the census gates the barrel for all four, so every importer through it is a reviewed caller above",
+        "the provider barrel re-exports getOrCreateProvider, createDatabaseProvider and readProviderDeclarations from the factory; the census gates the barrel for all three, so every importer through it is a reviewed caller above",
     },
   ],
   "src/exports/providers.ts": [
@@ -1165,7 +1165,6 @@ describe("the census reads every import form", () => {
   test("a module that re-exports a gated function is gated for it, through every barrel above it", () => {
     expect([...(GATED.get("src/lib/db/index.ts") ?? [])].sort()).toEqual([
       ["createDatabaseProvider", ["createDatabaseProvider"]],
-      ["getOrCreateMetadataProvider", ["getOrCreateMetadataProvider"]],
       ["getOrCreateProvider", ["getOrCreateProvider"]],
       ["readProviderDeclarations", ["readProviderDeclarations"]],
     ]);

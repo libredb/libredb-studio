@@ -68,7 +68,6 @@ mock.module("@/lib/auth", () => ({
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
-  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),

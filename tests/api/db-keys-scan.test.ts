@@ -116,7 +116,6 @@ mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   // The maintenance openings read a legacy provider's declarations through the barrel; no request here opens one.
   readProviderDeclarations: () => Promise.reject(new Error("no request of this suite reads a provider's declarations")),
-  getOrCreateMetadataProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(),
   removeProvider: mock(),
   clearProviderCache: mock(),
