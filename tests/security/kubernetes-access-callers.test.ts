@@ -82,6 +82,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "cachedEditorProvider",
   ],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
+  "src/lib/api/maintenance-route.ts": ["handleMaintenanceRequest"],
   "src/lib/api/test-connection.ts": ["testConnection"],
 };
 
@@ -108,6 +109,10 @@ const BUILDS_WHAT_THE_ROUTE_RESOLVED =
 /** A db/objects route or db/keys/scan: handleObjectRequest is its whole body. */
 const OBJECT_ROUTE =
   "hands its request to handleObjectRequest, which resolves the connection through resolveConnection or resolveServedConnection before it builds anything";
+
+/** The maintenance route or its preview: handleMaintenanceRequest is its whole path past the guard and admin check. */
+const MAINTENANCE_ROUTE =
+  "hands its request to handleMaintenanceRequest after its guard and admin check, which resolves the connection through resolveServedConnection before it opens anything";
 
 /** The agent runtime: its principal carries no identity provider subject. */
 const AGENT_RUNTIME =
@@ -162,8 +167,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/cancel/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/disconnect/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
-    "src/app/api/db/maintenance/preview/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
-    "src/app/api/db/maintenance/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/monitoring/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/pool-stats/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
@@ -173,6 +176,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, edit and key scan requests' connection here before it builds",
+    "src/lib/api/maintenance-route.ts":
+      "handleMaintenanceRequest, the shared path of the maintenance route and its preview, resolves the request's connection here before it opens anything",
   },
   connectionsUnderAccessReview: {
     "src/lib/governance/visible.ts":
@@ -244,7 +249,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/editor-provider.ts":
-      "editorMaintenanceOpening and metadataMaintenanceOpening read a legacy provider's declarations for the connection their caller hands them, and every caller is a route listed under them here, which resolved it through resolveServedConnection first",
+      "editorMaintenanceOpening and metadataMaintenanceOpening read a legacy provider's declarations for the connection their caller hands them, and their one caller is the maintenance route helper listed under them here, which resolved it through resolveServedConnection first",
   },
   openEngine: {
     "src/lib/db/factory.ts":
@@ -265,7 +270,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
-      "metadataTreeTarget, metadataMonitoringTarget and metadataMaintenanceOpening open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest and a route listed under metadataMonitoringTarget or metadataMaintenanceOpening here through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
+      "metadataTreeTarget, metadataMonitoringTarget and metadataMaintenanceOpening open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest, a route listed under metadataMonitoringTarget and the maintenance route helper listed under metadataMaintenanceOpening here through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -276,7 +281,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateEditorSession: {
     "src/lib/api/editor-provider.ts":
-      "editorTarget, editorMonitoringTarget, editorConsoleTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query or a route listed under editorMonitoringTarget, editorConsoleTarget or editorMaintenanceOpening here, resolved it through resolveServedConnection first",
+      "editorTarget, editorMonitoringTarget, editorConsoleTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query, a route listed under editorMonitoringTarget or editorConsoleTarget or the maintenance route helper listed under editorMaintenanceOpening here, resolved it through resolveServedConnection first",
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
@@ -311,11 +316,12 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/cancel/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   editorMaintenanceOpening: {
-    "src/app/api/db/maintenance/preview/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
-    "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/lib/api/maintenance-route.ts":
+      "handleMaintenanceRequest opens the request's editor session only after resolving its connection through resolveServedConnection",
   },
   metadataMaintenanceOpening: {
-    "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/lib/api/maintenance-route.ts":
+      "handleMaintenanceRequest opens the record's metadata session for a run's kill only after resolving the request's connection through resolveServedConnection",
   },
   metadataTreeTarget: {
     "src/lib/api/object-route.ts":
@@ -338,6 +344,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/objects/list/route.ts": OBJECT_ROUTE,
     "src/app/api/db/objects/search/route.ts": OBJECT_ROUTE,
     "src/app/api/db/objects/source/route.ts": OBJECT_ROUTE,
+  },
+  handleMaintenanceRequest: {
+    "src/app/api/db/maintenance/preview/route.ts": MAINTENANCE_ROUTE,
+    "src/app/api/db/maintenance/route.ts": MAINTENANCE_ROUTE,
   },
   testConnection: {
     "src/app/api/db/test-connection/route.ts":

@@ -425,7 +425,7 @@ describe("who wrote a refusal", () => {
 
 /**
  * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
- * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the caller
+ * route, the object routes' and the maintenance routes' shared handlers, the fleet health check and the shared steps behind them (the caller
  * facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
  * extension's backend child.
  */
@@ -438,6 +438,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "app", "api", "db"),
   join("src", "app", "api", "admin", "fleet-health"),
   join("src", "lib", "api", "object-route.ts"),
+  join("src", "lib", "api", "maintenance-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "editor-transaction.ts"),
   join("src", "lib", "api", "object-tree.ts"),
@@ -459,6 +460,7 @@ const mcp = (...path: string[]) => join("src", "lib", "mcp", ...path);
 const api = (...path: string[]) => join("src", "app", "api", "agent", ...path);
 const dbRoute = (...path: string[]) => join("src", "app", "api", "db", ...path, "route.ts");
 const objectRoute = join("src", "lib", "api", "object-route.ts");
+const maintenanceRoute = join("src", "lib", "api", "maintenance-route.ts");
 const fleetHealth = join("src", "app", "api", "admin", "fleet-health", "route.ts");
 const recordedRun = join("src", "lib", "query-events", "recorded-run.ts");
 const editorQuery = join("src", "lib", "api", "editor-query.ts");
@@ -535,9 +537,8 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [dbRoute("provider-meta"), "POST", "connectionTextScrub"],
   [dbRoute("monitoring"), "POST", "connectionTextScrub"],
   [dbRoute("monitoring"), "POST", "scrubMonitoringData"],
-  [dbRoute("maintenance"), "POST", "connectionTextScrub"],
+  [maintenanceRoute, "handleMaintenanceRequest", "connectionTextScrub"],
   [dbRoute("maintenance"), "POST", "scrubMaintenanceResult"],
-  [dbRoute("maintenance", "preview"), "POST", "connectionTextScrub"],
   [dbRoute("maintenance", "preview"), "POST", "scrubMaintenancePreview"],
   [dbRoute("keys", "scan"), "POST", "scrubKeyScanPage"],
   [dbRoute("statement", "analyze"), "POST", "connectionTextScrub"],

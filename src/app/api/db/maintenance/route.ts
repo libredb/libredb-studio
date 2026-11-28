@@ -1,19 +1,13 @@
 import { NextResponse } from "next/server";
-import type { MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
-import { createErrorResponse } from "@/lib/api/errors";
-import { connectionTextScrub, type ProviderTextScrub, scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
+import { scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
-import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
-import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorMaintenanceOpening, metadataMaintenanceOpening } from "@/lib/api/editor-provider";
-import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
+import { handleMaintenanceRequest, type MaintenanceRouteForm } from "@/lib/api/maintenance-route";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
 import { type EngineConnection, legacyProviderType } from "@/lib/db/server-catalog";
 import { QueryCancelledError } from "@/lib/db/errors";
-import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 import { clientAddress } from "@/lib/api/client-address";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { UserPayload } from "@/lib/auth";
@@ -27,14 +21,29 @@ import { logger } from "@/lib/logger";
 const ROUTE = "POST /api/db/maintenance";
 
 /**
+ * The run's form of the shared path: a `target` text or absent, an empty one the whole-database form, so no provider is
+ * sent empty text; a kill on the record's metadata session.
+ */
+const RUN: MaintenanceRouteForm<string | undefined> = {
+  route: ROUTE,
+  errorRoute: "api/db/maintenance",
+  readTarget: (target) =>
+    target !== undefined && typeof target !== "string"
+      ? { refusal: `"target" must be a string naming the object to run against` }
+      : { target: target || undefined },
+  killOnMetadata: true,
+};
+
+/**
  * Runs one maintenance operation, for an admin, on any engine the server serves: a legacy provider's bridged session or
  * a provider package's own (docs/providers/CONTRACT.md, clause C-107). The request is checked in this order, and
- * nothing is run or recorded for a request refused on the way: the guard and the admin check; a JSON object body; the
- * connection and the record of its engine (`resolveServedConnection`); `type` present and text; `container` and
- * `target` text or absent; the operation listed in the record's maintenance, before any session opens
- * (`400 FACET_NOT_OFFERED`, outcome not-sent); a catalog the record does not offer, refused by name before any open
- * (clause C-111); then, on the opened session, the operation its server accepts (the same code and outcome, before any
- * call) and the placement its spec declares.
+ * nothing is run or recorded for a request refused on the way: the guard and the admin check; the checks the preview
+ * shares, in `handleMaintenanceRequest` (src/lib/api/maintenance-route.ts): a JSON object body; the connection and the
+ * record of its engine (`resolveServedConnection`); `type` present and text; `container` and `target` text or absent;
+ * the operation listed in the record's maintenance, before any session opens (`400 FACET_NOT_OFFERED`, outcome
+ * not-sent); a catalog the record does not offer, refused by name before any open (clause C-111); then, on the opened
+ * session, the operation its server accepts (the same code and outcome, before any call); and the placement its spec
+ * declares.
  *
  * The run goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route builds the
  * opening's target, which for a legacy provider reads its declarations as the query route reads them, and runs the
@@ -65,89 +74,12 @@ export async function POST(request: Request) {
     return adminRequiredResponse();
   }
 
-  // Core's scrub of the resolved connection and the request's record of a package's failures, held out here for the
-  // `catch` below: before the connection resolves no provider ran.
-  let scrub: ProviderTextScrub | undefined;
-  let answers: PackageAnswers | undefined;
-  try {
-    // A body that is not JSON, or JSON that is not an object (`null`, an array, a number), is the caller's mistake and
-    // answers 400 in a fixed sentence, rather than reaching the destructuring below as a raw runtime error.
-    const body = await request.json().catch(() => null);
-    if (body === null || typeof body !== "object" || Array.isArray(body)) {
-      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-    }
-    const { type, target, container } = body;
+  return await handleMaintenanceRequest(request, guard.session, RUN, async (served) => {
+    const { connection, engine, type, target, container: requestedContainer, answers, words } = served;
+    const capabilities = served.accepted;
 
-    const { connection, engine } = await resolveServedConnection(body, guard.session);
-    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
-    answers = packageAnswers(engine, scrub, ROUTE);
-    const opening = answers;
-
-    if (!type) {
-      return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
-    }
-
-    // A `type` that is not text names no operation, and the refusal below quotes the operation, so it is answered here
-    // in a fixed sentence that repeats nothing of the value.
-    if (typeof type !== "string") {
-      return NextResponse.json({ error: `"type" must be a string naming a maintenance operation` }, { status: 400 });
-    }
-
-    // `container` is the row's `schemaName`: a string naming the container the target lives in,
-    // or absent for a request that names none. A non-string one is a malformed request, and it
-    // is answered HERE rather than allowed through to a provider, where the first use - an
-    // `identifier.replace` - threw a TypeError and the client read a 500 for a request this
-    // route could have refused by reading the field's type (#1091 review). Nothing is opened
-    // and nothing is run for it.
-    if (container !== undefined && typeof container !== "string") {
-      return NextResponse.json(
-        { error: `"container" must be a string naming the target's container` },
-        { status: 400 },
-      );
-    }
-
-    // `target` is the same kind of field: a string naming the object the operation runs against,
-    // or absent for the whole-database form. A non-string one reached the provider, where a number
-    // failed as `identifier.replace is not a function` and the client read a 500 quoting provider
-    // source, and the audit row below recorded the serialized value. It is refused here, before
-    // any provider opens and before any audit row.
-    if (target !== undefined && typeof target !== "string") {
-      return NextResponse.json(
-        { error: `"target" must be a string naming the object to run against` },
-        { status: 400 },
-      );
-    }
-
-    // An EMPTY string reads as the absence of a container, the same way an empty `target` reads
-    // as the whole-database form below. Nothing here may hand a provider a value that its own
-    // falsy test would have refused anyway, because the audit row below records what arrived.
-    const requestedContainer: string | undefined = container || undefined;
-    // The same reading for `target`: an empty one is the whole-database form, so no provider is sent empty text.
-    const requestedTarget: string | undefined = target || undefined;
-
-    // The record's maintenance list (FND-4), read before any session opens: an operation the engine does not offer is
-    // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
-    assertMaintenanceOffered(engine, type);
-
-    // A kill runs on the record's metadata session (docs/providers/CONTRACT.md, clause C-66), so it never waits for a
-    // connection the editor's statements hold; every other operation runs on the editor's session. A failure of the
-    // open is the package's open's.
-    const catalog = requestCatalog(body);
-    const opened = await (type === "kill"
-      ? metadataMaintenanceOpening(guard.session, connection, engine, catalog)
-      : editorMaintenanceOpening(guard.session, connection, engine, catalog)
-    ).catch((error: unknown) => {
-      throw opening.answer("open", error);
-    });
-    const capabilities = opened.accepted();
-
-    // The opened session's server may accept fewer operations than the record lists (PostgreSQL and MySQL narrow at
-    // connect, a package's open may refine its maintenance), so what it accepts is read, and a refusal answers the same
-    // code.
-    assertMaintenanceAccepted(engine, type, capabilities);
-
-    // `maintenanceOperations` above says only that the operation EXISTS here. What KIND of
-    // target it takes is a separate declaration - `maintenanceOperationSpecs` - and until
+    // The session's `maintenanceOperations`, checked on the shared path, says only that the
+    // operation EXISTS here. What KIND of target it takes is a separate declaration - `maintenanceOperationSpecs` - and until
     // U20 this route never read it, while both UI surfaces gated on it. The gap is the one
     // the U20 backlog entry reports from a live SQLite run: POST {type:"vacuum",
     // target:"users"} answered 200 and vacuumed the whole file, which is exactly the reading
@@ -159,8 +91,8 @@ export async function POST(request: Request) {
     // surfaces about what a provider declared.
     //
     // A non-empty `target` is the "perEntity" request and its absence the "global" one - the
-    // same reading the audit row below already uses (`target || "all"`), so `target: ""` is a
-    // whole-database request, not an unnamed object.
+    // same reading the audit row below uses (`target ?? "all"`), and `RUN` reads `target: ""`
+    // as absent, so it is a whole-database request, not an unnamed object.
     //
     // Both halves false is NOT "takes no target": every provider that declares `kill`
     // declares it false/false because its target is a session or query id, which neither a
@@ -173,11 +105,11 @@ export async function POST(request: Request) {
     // callers (`TableItem`, `OperationsTab`) resolve it before sending - the request carries
     // the resolved operation id, never the literal `vacuum`. Rewriting a caller's stated
     // operation into a different one is the opposite of what a gate does, and it would make
-    // the `FACET_NOT_OFFERED` refusal above unreachable for exactly the four providers
+    // the shared path's `FACET_NOT_OFFERED` refusal unreachable for exactly the four providers
     // whose vacuum wording names something else.
     const placement: MaintenancePlacement = target ? "perEntity" : "global";
-    const perEntityControl = maintenanceControl(capabilities, type as MaintenanceOperation, "perEntity");
-    const globalControl = maintenanceControl(capabilities, type as MaintenanceOperation, "global");
+    const perEntityControl = maintenanceControl(capabilities, type, "perEntity");
+    const globalControl = maintenanceControl(capabilities, type, "global");
     const requestedControl = placement === "perEntity" ? perEntityControl : globalControl;
 
     if (!requestedControl.offered && (perEntityControl.offered || globalControl.offered)) {
@@ -201,7 +133,7 @@ export async function POST(request: Request) {
 
     // The target the run is made on, built only now the checks above passed: a legacy provider's reads its
     // maintenance as declared before it connects, as the query route reads it, under the session's editor posture.
-    const runTarget = await opened.target();
+    const runTarget = await served.opened.target();
     const maintenance = providerMaintenance(runTarget, answers, request.signal);
 
     // The engine principal the session acts as, where it names one (spec 3.11, clause C-67): a user name, never any part
@@ -213,7 +145,7 @@ export async function POST(request: Request) {
     const auditFields = {
       type: type === "kill" ? "kill_session" : "maintenance",
       action: type.toUpperCase(),
-      target: target || "all",
+      target: target ?? "all",
       // The container the request named, omitted when it named none. `app.orders` and
       // `public.orders` recorded identically while this row carried only `target`, and an
       // operator reconstructing what was done to a database could not tell the two apart
@@ -242,7 +174,7 @@ export async function POST(request: Request) {
     const startTime = Date.now();
     let outcome: MaintenanceRunOutcome;
     try {
-      outcome = await maintenance.run(type as MaintenanceOperation, requestedTarget, requestedContainer);
+      outcome = await maintenance.run(type, target, requestedContainer);
     } catch (error) {
       recordMaintenanceEvent("error");
       // A run that THREW is still a run: it may have reached the engine before it failed, and
@@ -300,8 +232,8 @@ export async function POST(request: Request) {
 
     // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result
     // is already decided by the time this runs, so a broken audit sink must never turn a
-    // completed maintenance operation into a 500 that invites the client to retry it - the outer
-    // catch below is for failures of the operation itself, not for failures to record it.
+    // completed maintenance operation into a 500 that invites the client to retry it - the shared
+    // path's catch is for failures of the operation itself, not for failures to record it.
     try {
       emitAuditEvent({
         ...auditFields,
@@ -322,10 +254,8 @@ export async function POST(request: Request) {
     // The message is the engine's sentence, answered under the record's grant of its words: through the connection's
     // scrub, or Studio's sentence where no register row grants a package its words; the verdict above reads
     // `success`, which neither changes.
-    return NextResponse.json(scrubMaintenanceResult({ scrub, ownWords: engine.grants.ownWords, route: ROUTE }, result));
-  } catch (error) {
-    return createErrorResponse(error, { route: "api/db/maintenance", scrub, logged: answers?.logged(error) === true });
-  }
+    return NextResponse.json(scrubMaintenanceResult(words, result));
+  });
 }
 
 /**
