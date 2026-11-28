@@ -587,8 +587,23 @@ describe("the transaction route on a provider package's engine", () => {
         String(refusedOpen.password),
       );
 
-      // The session still holds the begun transaction, which a ROLLBACK ends.
-      hooksFor(engine, { transaction: () => Promise.resolve({ sessionState: "not-in-transaction" }) });
+      // The session still holds the begun transaction. Its ROLLBACK rejects: answered by the grant, logged once,
+      // and a code-only package's words reach no answer.
+      const rollback = `the rollback failed ${randomUUID()}`;
+      hooksFor(engine, {
+        transaction: (request) => (request.action === "rollback" ? Promise.reject(new Error(rollback)) : undefined),
+      });
+      const rolledBack = await post("transaction", { connection, action: "rollback" });
+      expect([rolledBack.status, (rolledBack.body as { error: string }).error]).toEqual([
+        500,
+        sentence("transaction", rollback),
+      ]);
+      expect(lines().map(([message]) => message)).toEqual(["A provider package's transaction failed"]);
+      if (!granted) expect(JSON.stringify(rolledBack.body)).not.toContain(rollback);
+
+      // A begun transaction's ROLLBACK that the package answers ends it.
+      hooksFor(engine);
+      expect((await post("transaction", { connection, action: "begin" })).status).toBe(200);
       expect((await post("transaction", { connection, action: "rollback" })).status).toBe(200);
     }
   });
