@@ -8,16 +8,21 @@
  * every statement tool from this registry and names no language; neither this module nor any facet imports from
  * `src/lib/mcp/`, since the MCP module depends on the language packs and never the reverse.
  *
- * The record holds every module language (`AgentModuleLanguageId`), as `SERVER_PACKS` in `server.ts` does, so a module
+ * The record holds every module language (`AgentModuleLanguageId`), as the server packs in `server.ts` do, so a module
  * language that joins agent mode does not compile until it declares its facet: a tool, or null while it has none. Then
- * it holds each language the bundled declarations state agent data for (`DECLARED_AGENT_LANGUAGES` in `client.ts`): its
- * facet composed from its data's MCP part by `declared-mcp.ts`, or null where that part is null. The tool names MCP's
- * own unions (the audit actions, `list_connections`' `read_tool`, the route's schema map) are derived from these
- * facets: each module facet's tool as a literal, and a declared tool as `AgentDeclaredMcpTool`.
+ * it holds each language the installed server catalog grants a served engine as data (`servedLanguageData` in
+ * src/lib/db/operations/served-language-data.ts, branded by `composeDeclaredLanguages` in `client.ts`): its facet
+ * composed from its data's MCP part by `declared-mcp.ts`, or null where that part is null. The record is composed after
+ * boot, on its first read, once per installed catalog (`agentLanguageMcpFacets`), and nothing declared is composed when
+ * this module loads. The tool names MCP's own unions (the audit actions, `list_connections`' `read_tool`, the route's
+ * schema map) are derived from these facets: each module facet's tool as a literal, and a declared tool as
+ * `AgentDeclaredMcpTool`.
  */
 import type { z } from "zod";
+import { servedLanguageData } from "@/lib/db/operations/served-language-data";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
-import { DECLARED_AGENT_LANGUAGES } from "./client";
+import { composeDeclaredLanguages } from "./client";
+import type { DeclaredAgentLanguage } from "./declared-client";
 import { CYPHER_MCP_FACET } from "./cypher/mcp";
 import { declaredMcpFacets } from "./declared-mcp";
 import { ETCDCTL_MCP_FACET } from "./etcdctl/mcp";
@@ -143,7 +148,8 @@ declare const declaredMcpTool: unique symbol;
 
 /**
  * The name of an MCP statement tool a language declares as data, branded so a bare string is not one. Only
- * `composeDeclaredMcpFacet` in `declared-mcp.ts` brands a name, at load, from data the manifest validator admitted.
+ * `composeDeclaredMcpFacet` in `declared-mcp.ts` brands a name, when the facets are composed, from data the manifest
+ * validator admitted.
  */
 export type AgentDeclaredMcpTool = string & { readonly [declaredMcpTool]: true };
 
@@ -158,21 +164,41 @@ export type AgentLanguageMcpDeclaredFacet =
   | NonNullable<(typeof MODULE_MCP_FACETS)[AgentModuleLanguageId]>
   | AgentLanguageMcpComposedFacet;
 
+/** Each composition of `agentLanguageMcpFacets`, by the branded list of declared languages it was composed from. */
+const SERVED_MCP_FACETS = new WeakMap<
+  readonly DeclaredAgentLanguage[],
+  Readonly<Record<AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null>>
+>();
+
 /**
  * Each statement language's MCP facet, or null where the language has no MCP tool: the module languages' facets, then
- * each language declared as data, its facet composed from its data, or null where its data states no MCP statement
- * tool. A declared tool a module language's tool holds, or one two declared languages state, fails here by name
- * (`declaredMcpFacets`).
+ * each language the installed catalog serves as data, its facet composed from its data, or null where its data states
+ * no MCP statement tool; composed once per installed catalog. A declared tool a module language's tool holds, or one
+ * two declared languages state, fails here by name (`declaredMcpFacets`).
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language or the tool, where a granted name or tool is a module language's or two served
+ *   engines state it.
  */
-export const AGENT_LANGUAGE_MCP_FACETS: Readonly<
+export function agentLanguageMcpFacets(): Readonly<
   Record<AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null>
-> = Object.freeze({
-  ...MODULE_MCP_FACETS,
-  ...declaredMcpFacets(
-    DECLARED_AGENT_LANGUAGES,
-    Object.values(MODULE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
-  ),
-});
+> {
+  const declared = composeDeclaredLanguages(servedLanguageData());
+  let facets = SERVED_MCP_FACETS.get(declared);
+  if (facets === undefined) {
+    facets = Object.freeze({
+      ...MODULE_MCP_FACETS,
+      ...declaredMcpFacets(
+        declared,
+        Object.values(MODULE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
+      ),
+    });
+    SERVED_MCP_FACETS.set(declared, facets);
+  }
+  return facets;
+}
 
 /** The statement tools' names, from the facets: each is an MCP tool and an audit action of its own. */
 export type AgentLanguageMcpTool = AgentLanguageMcpDeclaredFacet["tool"];

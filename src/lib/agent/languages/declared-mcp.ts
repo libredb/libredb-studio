@@ -83,7 +83,8 @@ export function composeDeclaredMcpFacet(
 
 /**
  * Each of `languages`' MCP facets by language, in their order: the composed facet, or null where its data states no MCP
- * statement tool. Read once, at load, by `mcp.ts` on the declared languages of `client.ts`.
+ * statement tool. Read by `agentLanguageMcpFacets` in `mcp.ts`, once per installed catalog, on the declared languages
+ * that catalog serves.
  *
  * @throws {Error} Naming the tool, where a declared tool is one of `moduleTools`, the module languages' tools this
  * build holds, or where two declared languages state one tool. Each is a host defect, never a precedence.

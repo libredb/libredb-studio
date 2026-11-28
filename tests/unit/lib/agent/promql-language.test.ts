@@ -11,7 +11,7 @@ import {
   LANGUAGE_BASE_DEFINITIONS,
   languageServer,
   languageServerPack,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -88,8 +88,8 @@ describe("the prompt texts", () => {
   });
 
   test("the rules, the grounding advice and the ungrounded note carry every withheld item's reason", () => {
-    expect(WORKFLOW_TOOL_RULES.promql.investigation).toContain(WITHHELD);
-    expect(WORKFLOW_TOOL_RULES.promql["data-analysis"]).toContain("call present_answer");
+    expect(workflowToolRules().promql.investigation).toContain(WITHHELD);
+    expect(workflowToolRules().promql["data-analysis"]).toContain("call present_answer");
     const grounding = languageServerPack("promql").grounding;
     expect(grounding.omissionAdvice).toStartWith(
       "Metrics are listed with their label names, and rules, scrape pools and targets by name, never with a value.",
@@ -106,7 +106,7 @@ describe("the prompt texts", () => {
     expect(PROMETHEUS_AGENT_PROJECTION.residual).toStartWith("The projection goes by a value's shape");
     expect(PROMETHEUS_AGENT_PROJECTION.residual).toContain("label_replace");
     expect(PROMETHEUS_AGENT_PROJECTION.residual).toContain("a label matcher selects on the value the server stores");
-    expect(WORKFLOW_TOOL_RULES.promql.investigation).toContain(PROMETHEUS_AGENT_PROJECTION.residual);
+    expect(workflowToolRules().promql.investigation).toContain(PROMETHEUS_AGENT_PROJECTION.residual);
     expect(languageServerPack("promql").grounding.omissionAdvice).toContain(PROMETHEUS_AGENT_PROJECTION.residual);
   });
 

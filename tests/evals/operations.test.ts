@@ -169,7 +169,7 @@ describe("an operations run is grounded in the objects its readings will name (#
     });
 
     test(`${engine}: the run's own rules say an inventory was captured where the engine can be read`, async () => {
-      // `WORKFLOW_TOOL_RULES.operations` opened with "and no schema inventory was
+      // The `operations` rule of `workflowToolRules()` opened with "and no schema inventory was
       // captured for you" until #411, which captures one. The rules are the same string
       // for every run of the workflow while the grounding is not, so they hedge on the
       // engine and the per-run truth lives in the opening note — and nothing pinned

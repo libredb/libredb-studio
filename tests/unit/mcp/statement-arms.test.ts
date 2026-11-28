@@ -10,12 +10,12 @@ import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import {
-  AGENT_LANGUAGE_MCP_FACETS,
+  agentLanguageMcpFacets,
   type AgentDeclaredMcpTool,
   type AgentLanguageMcpFacet,
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
-import { languageServer } from "@/lib/agent/languages/server";
+import { languageServer, serverLanguageClientPack } from "@/lib/agent/languages/server";
 import { namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -104,7 +104,7 @@ describe("the statement arms", () => {
   });
 
   test("every declared facet has its arm, keyed by the facet's language and named by the facet's tool", () => {
-    for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+    for (const [language, facet] of Object.entries(agentLanguageMcpFacets())) {
       if (facet === null) continue;
       const arm = BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]];
       expect(arm?.tool).toBe(facet.tool);
@@ -122,7 +122,7 @@ describe("the statement arms", () => {
   });
 
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
-    const idle = Object.entries(AGENT_LANGUAGE_MCP_FACETS).filter(([, facet]) => facet === null);
+    const idle = Object.entries(agentLanguageMcpFacets()).filter(([, facet]) => facet === null);
     expect(idle).not.toEqual([]);
     for (const [language] of idle) {
       expect(BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]]).toBeNull();
@@ -131,9 +131,23 @@ describe("the statement arms", () => {
     }
   });
 
+  test("an arm's argument and refusal noun are its language's composed copy, the browser projection's own for every bundled language", () => {
+    expect(ARMS.length).toBeGreaterThan(0);
+    for (const language of Object.keys(AGENT_LANGUAGE_COPY) as (keyof typeof AGENT_LANGUAGE_COPY)[]) {
+      // The copy the server composes for each language is the very object the browser's projection holds.
+      expect([language, serverLanguageClientPack(language).copy === AGENT_LANGUAGE_COPY[language]]).toEqual([
+        language,
+        true,
+      ]);
+    }
+    for (const arm of ARMS)
+      expect([arm.tool, arm.argument]).toEqual([arm.tool, AGENT_LANGUAGE_COPY[arm.language].argument]);
+    expect(() => serverLanguageClientPack("acmenone" as never)).toThrow("no client facet for acmenone");
+  });
+
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
-    expect(Object.keys(BUNDLED_ARMS)).toEqual(Object.keys(AGENT_LANGUAGE_MCP_FACETS));
-    for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+    expect(Object.keys(BUNDLED_ARMS)).toEqual(Object.keys(agentLanguageMcpFacets()));
+    for (const [language, facet] of Object.entries(agentLanguageMcpFacets())) {
       const arm = BUNDLED_ARMS[language as keyof McpStatementSurface["arms"]];
       expect(arm === null).toBe(facet === null);
       if (facet === null) continue;
@@ -148,7 +162,7 @@ describe("the statement arms", () => {
 
   test("takes the shared least timeout, 500 ms, unless its facet declares one, and refuses below it in its words", () => {
     for (const arm of ARMS) {
-      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      const facet = agentLanguageMcpFacets()[arm.language] as AgentLanguageMcpFacet;
       const least = facet.leastTimeout?.ms ?? 500;
       const timeoutIssues = (timeout_ms: number) =>
         (arm.inputSchema.safeParse({ connection_id: "seed:c", timeout_ms }).error?.issues ?? [])
@@ -163,7 +177,7 @@ describe("the statement arms", () => {
       }
     }
     expect(
-      ARMS.filter((arm) => (AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet).leastTimeout).map(
+      ARMS.filter((arm) => (agentLanguageMcpFacets()[arm.language] as AgentLanguageMcpFacet).leastTimeout).map(
         (arm) => arm.tool,
       ),
     ).toEqual(["run_mqtt_read", "run_sparkplug_read"]);
@@ -171,7 +185,7 @@ describe("the statement arms", () => {
 
   test("carries the provider's warnings as notes only where its facet says they are Studio's own sentences", () => {
     for (const arm of ARMS) {
-      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      const facet = agentLanguageMcpFacets()[arm.language] as AgentLanguageMcpFacet;
       expect(arm.answersWarnings).toBe(facet.answersWarnings === true);
     }
     // The window tools say what a window cannot; SNMP names the withheld subtrees a read stepped over or answered; S3
@@ -191,7 +205,7 @@ describe("the statement arms", () => {
 
   test("leaves a connection's database setting out of list_connections only where its facet says it is a stored value", () => {
     for (const arm of ARMS) {
-      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      const facet = agentLanguageMcpFacets()[arm.language] as AgentLanguageMcpFacet;
       expect(arm.withholdsDatabase).toBe(facet.withholdsDatabase === true);
     }
     expect(ARMS.filter((arm) => arm.withholdsDatabase).map((arm) => arm.tool)).toEqual([

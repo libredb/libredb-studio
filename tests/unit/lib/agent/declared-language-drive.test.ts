@@ -13,21 +13,26 @@ import { acmereadData } from "../../../helpers/declared-agent-language";
  * rules and posture read its composed text, MCP offers its declared statement tool, and a read is admitted or refused
  * by its declared request form before any provider is acquired, in agent mode and on the MCP path alike.
  *
- * This file substitutes the statement language projection (`@/lib/db/engine-catalog/statement-language.generated`)
- * with the shipped one plus `acmeread`, stated under Spark, and `acmeplain`, a language with no agent part, stated under
- * Snowflake, and grants MQTT `acmeread`: in the browser by substituting the grant reader's legacy grants of MQTT
- * (`legacyEngineGrants`), and on the server by a crafted catalog. MQTT rather than an engine whose
- * declaration states its language as data, so no such engine's test reads a substituted language. Spark and Snowflake
- * state no statement language of their own and Studio holds no code row for either, so the confirmation gate's
- * resolver, which compiles a row from each engine's stated data and refuses an engine holding both, loads in this
- * process; both follow every shipped engine stating its language as data in the projection's id order, so `acmeread`
- * is the last declared language. The real grant reader and projection are captured as plain objects before the
- * substitution, because a namespace follows its replacement.
+ * The browser and the server compose a declared language from different sources, so this file plants `acmeread` in
+ * both. The browser's composition reads the statement language projection
+ * (`@/lib/db/engine-catalog/statement-language.generated`), which this file substitutes with the shipped one plus
+ * `acmeread`, stated under Spark, and `acmeplain`, a language with no agent part, stated under Snowflake, and it reads
+ * MQTT's grant of `acmeread` from the substituted legacy grants of MQTT (`legacyEngineGrants`). The server's
+ * registries compose the language data of each served record whose grant names it (`servedLanguageData`), so the
+ * server half installs a crafted catalog whose MQTT record is granted `acmeread` and states the projection's very
+ * `acmeread` data object; Spark's record states it too, through the substituted projection, but no grant names it
+ * there, so the server composes it once, from MQTT's record, into the client facet the browser holds. MQTT rather than
+ * an engine whose declaration states its language as data, so no such engine's test reads a substituted language.
+ * Spark and Snowflake state no statement language of their own and Studio holds no code row for either, so the
+ * confirmation gate's resolver, which compiles a row from each engine's stated data and refuses an engine holding both,
+ * loads in this process; both follow every shipped engine stating its language as data in the projection's id order,
+ * so `acmeread` is the last declared language. The real grant reader and projection are captured as plain objects
+ * before the substitution, because a namespace follows its replacement.
  * `mock.module` is process-wide, so the substitutions are made before anything that reads them is loaded: every such
  * module is imported dynamically below them, and the runner gives this file its own process. The crafted catalog is
- * installed before those imports too, though MCP's statement arms read their served engines from the catalog installed
- * when they are read (`mcpStatementSurface`), not when their module loads, so every module this file loads reads the
- * one crafted catalog from its first read.
+ * installed before those imports too, though the server's language registries and MCP's statement arms read the
+ * catalog installed when they are read (`servedLanguageData`, `mcpStatementSurface`), not when their modules load, so
+ * every module this file loads reads the one crafted catalog from its first read.
  */
 
 const ACMEREAD = acmereadData();
@@ -53,8 +58,13 @@ mock.module("@/lib/db/claim-grants", () => ({
 }));
 
 const { forgetServerCatalog, installServerCatalog } = await import("@/lib/db/server-catalog");
-const { craftedCatalog } = await import("../../../helpers/package-catalog");
-installServerCatalog(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }));
+const { craftedCatalog, withEngineRecord } = await import("../../../helpers/package-catalog");
+installServerCatalog(
+  withEngineRecord(craftedCatalog({ mqtt: { statementLanguage: "acmeread" } }), "mqtt", (engine) => ({
+    ...engine,
+    statementLanguageData: ACMEREAD,
+  })),
+);
 
 const {
   AGENT_LANGUAGE_COPY,
@@ -72,12 +82,12 @@ const {
   isAgentStatementLanguage,
   languageClientPack,
 } = await import("@/lib/agent/languages/client");
-const { LANGUAGE_BASE_DEFINITIONS, languageServer, languageServerPack, WORKFLOW_TOOL_RULES } = await import(
+const { LANGUAGE_BASE_DEFINITIONS, languageServer, languageServerPack, workflowToolRules } = await import(
   "@/lib/agent/languages/server"
 );
-const { agentLanguagePack, LANGUAGE_TOOL_ARMS } = await import("@/lib/agent/languages/index");
+const { agentLanguagePack, languageToolArms } = await import("@/lib/agent/languages/index");
 const { declaredAgentLanguages } = await import("@/lib/agent/languages/declared-client");
-const { AGENT_LANGUAGE_MCP_FACETS } = await import("@/lib/agent/languages/mcp");
+const { agentLanguageMcpFacets } = await import("@/lib/agent/languages/mcp");
 const { agentEnginePack } = await import("@/lib/agent/languages/engines/index");
 const { AgentRunDeadline } = await import("@/lib/agent/deadline");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
@@ -145,8 +155,8 @@ describe("a data-declared language in the language registries", () => {
     expect(AGENT_LANGUAGE_COPY[ACME]).toBe(client.copy);
     expect(AGENT_WORKFLOW_VARIANTS[ACME]).toBe(client.variants);
     expect(AGENT_PLAN_ESTIMATE_OPERATION[ACME]).toBeNull();
-    expect(WORKFLOW_TOOL_RULES[ACME]).toBe(server.workflowToolRules);
-    expect(LANGUAGE_TOOL_ARMS[ACME]).toBe(pack.execution.arms);
+    expect(workflowToolRules()[ACME]).toBe(server.workflowToolRules);
+    expect(languageToolArms()[ACME]).toBe(pack.execution.arms);
     expect(Object.keys(AGENT_LANGUAGE_COPY).at(-1)).toBe("acmeread");
     expect(Object.keys(AGENT_LANGUAGE_COPY)).not.toContain("acmeplain");
     // A declared language adds nothing to the tables merged across languages.
@@ -156,11 +166,11 @@ describe("a data-declared language in the language registries", () => {
 
     // The MCP facet is composed from the data's MCP part, after the module languages' facets, and the arm is built
     // from it; a declared language whose agent part is null has neither.
-    const facet = AGENT_LANGUAGE_MCP_FACETS[ACME];
+    const facet = agentLanguageMcpFacets()[ACME];
     expect<string | undefined>(facet?.tool).toBe("run_acme_read");
     expect(facet?.title).toBe(AGENT.mcp?.text.title as string);
-    expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS).at(-1)).toBe("acmeread");
-    expect(Object.keys(AGENT_LANGUAGE_MCP_FACETS)).not.toContain("acmeplain");
+    expect(Object.keys(agentLanguageMcpFacets()).at(-1)).toBe("acmeread");
+    expect(Object.keys(agentLanguageMcpFacets())).not.toContain("acmeplain");
     expect<string | undefined>(mcpStatementSurface().arms[ACME]?.tool).toBe("run_acme_read");
 
     // The load check, read on the module languages this build holds: every language but the declared ones.
@@ -200,7 +210,7 @@ describe("a data-declared language in the language registries", () => {
     expect(
       selectAgentTools({ mode: "agent", workflowType: "investigation", statementLanguage: ACME }).map((t) => t.name),
     ).toEqual(["run_read_query", "compose_report"]);
-    expect(WORKFLOW_TOOL_RULES[ACME]?.investigation).toBe(AGENT.text.investigation.toolRule as string);
+    expect(workflowToolRules()[ACME]?.investigation).toBe(AGENT.text.investigation.toolRule as string);
 
     const bounds = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
     expect(agentPosture({ mode: "agent", engine: "mqtt", engineLabel: "MQTT", handover: true })).toEqual({

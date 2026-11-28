@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { namedList } from "@/lib/agent/engine-support";
-import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MQTT_COMPLETENESS } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
@@ -319,7 +319,7 @@ describe("timeout_ms", () => {
       return { minimum: timeout?.minimum, maximum: timeout?.maximum };
     };
     // run_read_query's facet raises no least, so its bounds are the shared ones.
-    expect((AGENT_LANGUAGE_MCP_FACETS.sql as AgentLanguageMcpFacet).leastTimeout).toBeUndefined();
+    expect((agentLanguageMcpFacets().sql as AgentLanguageMcpFacet).leastTimeout).toBeUndefined();
     expect(bounds("inspect_schema")).toEqual(bounds("run_read_query"));
     expect(bounds("inspect_schema")).toEqual({ minimum: 500, maximum: 30_000 });
     expect(tools.find((tool) => tool.name === "inspect_schema")?.inputSchema.properties?.timeout_ms?.default).toBe(

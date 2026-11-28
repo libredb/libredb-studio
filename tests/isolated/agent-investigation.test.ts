@@ -2540,7 +2540,7 @@ describe("planning mode runs no statement of the user's", () => {
 
     /*
       The SQL variants are TOTAL over `AgentRunWorkflowType`, the same way
-      `WORKFLOW_TOOL_RULES` is, so a workflow added to the union stops
+      the SQL record of `workflowToolRules()` is, so a workflow added to the union stops
       `agent-manifest.ts` compiling until someone decides what a plan of it
       produces. The compiler enforces that a key exists; this asserts that the key is
       worth having — that every workflow's plan rules actually name a deliverable

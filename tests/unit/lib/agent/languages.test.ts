@@ -22,14 +22,14 @@ import {
   languageClientPack,
   projectClientPacks,
 } from "@/lib/agent/languages/client";
-import { AGENT_EVIDENCE_TOOLS, LANGUAGE_TOOL_ARMS, agentLanguagePack } from "@/lib/agent/languages/index";
+import { AGENT_EVIDENCE_TOOLS, languageToolArms, agentLanguagePack } from "@/lib/agent/languages/index";
 import {
   LANGUAGE_BASE_DEFINITIONS,
   LANGUAGE_SHORTFALL_NOTICES,
   LANGUAGE_USAGE_BAR_NOTICE,
   LANGUAGE_USAGE_BAR_TOOL,
   REFERENCE_RECOMMENDATION_CARD,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
   languageServer,
   languageServerPack,
 } from "@/lib/agent/languages/server";
@@ -275,12 +275,12 @@ describe("the language packs", () => {
       expect(Object.isFrozen(pack.execution.arms)).toBe(true);
       expect(Object.isFrozen(pack.execution.evidenceTools)).toBe(true);
       expect(pack.server).toBe(languageServerPack(id));
-      expect(LANGUAGE_TOOL_ARMS[id]).toBe(pack.execution.arms);
+      expect(languageToolArms()[id]).toBe(pack.execution.arms);
     },
   );
 
   test("the arms projection holds every language, in the order the packs are declared", () => {
-    expect(Object.keys(LANGUAGE_TOOL_ARMS)).toEqual([
+    expect(Object.keys(languageToolArms())).toEqual([
       "sql",
       "kubectl",
       "mongo",
@@ -306,7 +306,7 @@ describe("the language packs", () => {
       "sparkplugread",
       "kafkaread",
     ]);
-    expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
+    expect(Object.isFrozen(languageToolArms())).toBe(true);
   });
 
   test.each(["gremlin", "toString"])("an id no pack holds (%s) is a named error", (id) => {
@@ -443,7 +443,7 @@ describe("the prompt tables the packs hold", () => {
   });
 
   test("the workflow rules projection holds each pack's own frozen record, in the order the packs are declared", () => {
-    expect(Object.keys(WORKFLOW_TOOL_RULES)).toEqual([
+    expect(Object.keys(workflowToolRules())).toEqual([
       "sql",
       "kubectl",
       "mongo",
@@ -469,12 +469,12 @@ describe("the prompt tables the packs hold", () => {
       "sparkplugread",
       "kafkaread",
     ]);
-    expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
+    expect(Object.isFrozen(workflowToolRules())).toBe(true);
     for (const id of ids) {
-      expect(WORKFLOW_TOOL_RULES[id]).toBe(languageServerPack(id).workflowToolRules);
-      expect(Object.isFrozen(WORKFLOW_TOOL_RULES[id])).toBe(true);
+      expect(workflowToolRules()[id]).toBe(languageServerPack(id).workflowToolRules);
+      expect(Object.isFrozen(workflowToolRules()[id])).toBe(true);
       // `operations` sends no statement in any language, so every pack holds the one shared rule.
-      expect(WORKFLOW_TOOL_RULES[id].operations).toBe(OPERATIONS_TOOL_RULE);
+      expect(workflowToolRules()[id].operations).toBe(OPERATIONS_TOOL_RULE);
     }
   });
 
@@ -497,7 +497,7 @@ describe("the prompt tables the packs hold", () => {
     expect(languageServerPack("sql").grounding.planningRules).toBeUndefined();
     expect(languageServerPack("kubectl").grounding.planningRules).toBeUndefined();
     const [collectionRule] = languageServerPack("mongo").grounding.planningRules ?? [];
-    expect(WORKFLOW_TOOL_RULES.mongo.investigation).toContain(collectionRule as string);
+    expect(workflowToolRules().mongo.investigation).toContain(collectionRule as string);
   });
 });
 

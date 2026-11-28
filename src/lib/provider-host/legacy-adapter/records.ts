@@ -18,6 +18,8 @@
  *   row compiled from the data where the declaration states some, else the code row (`typeStatementLanguageRow`). The
  *   row is the one object the browser reads by type, compiled once when that module loads, frozen, and read here once,
  *   when the record is composed;
+ * - `statementLanguageData`: its declaration's statement language data as projected into
+ *   `BUNDLED_STATEMENT_LANGUAGE_DATA`, by reference, null where it states none;
  * - `explainReading`: `"declared"`, the explain value its grammar declares;
  * - `source`: the legacy identity (./identity), with no digest and no package;
  * - `offers`: `LEGACY_OFFERS`, every offer a legacy provider makes today.
@@ -37,6 +39,7 @@ import {
   BUNDLED_READS_TRUST_MATERIAL,
 } from "@/lib/db/engine-catalog/connection-flags.generated";
 import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-form.generated";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import {
   BUNDLED_CONNECTION_FIELDS,
   BUNDLED_CREDENTIAL_WARNINGS,
@@ -106,6 +109,7 @@ function legacyRecord(id: DatabaseType): EngineRecord {
     grants: legacyEngineGrants(id),
     statementGrammar: sqlGrammarFor(id).grammar,
     statementLanguageRow: typeStatementLanguageRow(id),
+    statementLanguageData: BUNDLED_STATEMENT_LANGUAGE_DATA[id],
     explainReading: "declared",
     offers: LEGACY_OFFERS,
   });

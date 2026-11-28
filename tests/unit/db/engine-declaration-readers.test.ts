@@ -194,7 +194,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/agent/languages/client.ts",
     members: STATEMENT_LANGUAGE_MEMBERS,
     reason:
-      "the languages the bundled declarations state agent data for, read from the statement language projection and composed into the agent's client facets; agent mode sends a language only where the engine's grants grant it",
+      "the browser's composition of the languages the bundled declarations state agent data for, read from the statement language projection and composed into the agent's client facets; agent mode sends a language only where the engine's grants grant it",
   },
   {
     path: "src/lib/db/claim-grants.ts",
@@ -353,12 +353,6 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "each engine's migration DDL row, composed from the generated migration DDL and Studio's migration DDL function table, which binds each named function",
   },
   {
-    path: "src/lib/db/operations/descriptors.ts",
-    members: STATEMENT_LANGUAGE_MEMBERS,
-    reason:
-      "the generic read descriptor of each language the bundled declarations state agent data for, read from the statement language projection; a run reaches it only under a language the engine's grants grant",
-  },
-  {
     path: "src/lib/db/query-dialects.ts",
     members: ["editor.dialect"],
     reason: "each query dialect's row, read from the generated query dialect record",
@@ -432,9 +426,15 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
   },
   {
     path: "src/lib/provider-host/legacy-adapter/records.ts",
-    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS, ...CONNECTION_FLAG_MEMBERS, "connection.tls"],
+    members: [
+      ...CATALOG_MEMBERS,
+      ...CONNECTION_TABLE_MEMBERS,
+      ...CONNECTION_FLAG_MEMBERS,
+      "connection.tls",
+      ...STATEMENT_LANGUAGE_MEMBERS,
+    ],
     reason:
-      "composes the legacy adapter's record of each of Studio's own engines from the generated catalog, connection tables and flags, and its declared TLS modes, the members the server catalog's composer projects a package's declaration into; its field rules, grants and grammar it reads from Studio's composed tables, never from a projection",
+      "composes the legacy adapter's record of each of Studio's own engines from the generated catalog, connection tables and flags, its declared TLS modes and its statement language data, the members the server catalog's composer projects or holds of a package's declaration; its field rules, grants and grammar it reads from Studio's composed tables, never from a projection, and the server's agent registries compose its language data only where its grants grant that language",
   },
   {
     path: "src/lib/sql/fence-tags.ts",

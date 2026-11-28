@@ -28,7 +28,8 @@
  * grant it `readsSqlText: false` and `decidesAlone` under its language data), and its statement language and the
  * claims that loosen the confirmation gate with the digest of the statement language data it declares
  * (`declaredLanguageDataRequest`), so a row grants them only for the data it reviewed, compiles its statement language
- * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none), reads its
+ * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none) and holds the
+ * data itself by reference, reads its
  * grammar's explain claim under either value, and gives each the package's source, its digest and the session its
  * declaration states, and the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot
  * hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a
@@ -328,6 +329,8 @@ export function composeServerCatalog(
         // The row compiled from the statement language data the declaration states, which the gate counts only as the
         // grants above grant it; Studio holds no code row of a package's engine, whose id is never a legacy id.
         statementLanguageRow: statementLanguageRow(id, engine.statementLanguageData, null),
+        // The data itself, by reference, which the agent's registries compose only where the grants above name it.
+        statementLanguageData: engine.statementLanguageData,
         // Neither explain value is the restrictive one, so the gate reads a package's statements under both (S-8).
         explainReading: "either",
         offers: PACKAGE_OFFERS,

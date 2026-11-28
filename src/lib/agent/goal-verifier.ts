@@ -422,7 +422,7 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
  *    workflow's rules ask for exactly that order. No valid answer is excluded: whatever
  *    the presentation, whatever the hand-over, and whether the answer is a chart, a
  *    table, one row or one number, the claim about it can cite it.
- *  - **Told (#350).** Stated in every language's `data-analysis` rules (`WORKFLOW_TOOL_RULES`
+ *  - **Told (#350).** Stated in every language's `data-analysis` rules (`workflowToolRules()`
  *    in `languages/server.ts`), in
  *    `present_answer`'s own description, and again in what that tool says back when it
  *    records the answer — where it can name the very id to cite.

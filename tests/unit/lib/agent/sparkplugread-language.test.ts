@@ -17,7 +17,7 @@ import {
   LANGUAGE_BASE_DEFINITIONS,
   languageServer,
   languageServerPack,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -111,7 +111,7 @@ describe("the prompt texts", () => {
   });
 
   test("the rule reads a named object directly, never guesses one, and never reports one absent or offline", () => {
-    const rule = WORKFLOW_TOOL_RULES.sparkplugread.investigation as string;
+    const rule = workflowToolRules().sparkplugread.investigation as string;
     expect(rule).toContain("When the question names a group, an edge node or a device in full, read it directly");
     expect(rule).toContain(
       "for the totals of one window over the whole namespace (or, when the connection names one group, that group alone)",

@@ -1100,7 +1100,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/agent/declared-language-pack.test.ts": [
         "a data-declared language's client, server and MCP facets are composed from its data, with no module of its own",
         "a declared text naming a placeholder Studio does not fill is refused by name",
-        "a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused at load by name",
+        "a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused by name when the registries are composed",
       ],
       "tests/unit/lib/agent/declared-language-drive.test.ts": [
         "a crafted data-declared language on a legacy engine is fenced on the MCP path with its declared sentence and offered as its statement tool",

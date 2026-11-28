@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AGENT_EVIDENCE_TOOLS } from "@/lib/agent/languages/index";
-import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets } from "@/lib/agent/languages/mcp";
 import {
   AGENT_TOOL_DEFINITIONS,
   type AgentToolDefinition,
@@ -52,7 +52,7 @@ describe("no agent or MCP tool reaches provider management", () => {
     const schemas = Object.values(mcpToolInputSchemas());
     expect(schemas.length).toBeGreaterThan(0);
     expect(schemas.filter((schema) => !allowed.has(schema))).toEqual([]);
-    const fences = Object.values(AGENT_LANGUAGE_MCP_FACETS)
+    const fences = Object.values(agentLanguageMcpFacets())
       .filter((facet) => facet !== null)
       .map((facet) => facet.fence);
     expect(fences.filter((fence) => fence !== "read-only-statement" && fence !== "language-admission")).toEqual([]);
@@ -60,7 +60,7 @@ describe("no agent or MCP tool reaches provider management", () => {
 
   test("every agent tool drives a registered read operation or reaches no database", () => {
     const registry = createCanonicalOperationRegistry();
-    const languages = Object.keys(AGENT_LANGUAGE_MCP_FACETS) as AgentStatementLanguageId[];
+    const languages = Object.keys(agentLanguageMcpFacets()) as AgentStatementLanguageId[];
     const workflows = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowType[];
     const names = Object.keys(AGENT_TOOL_DEFINITIONS) as AgentToolName[];
     const definitions: AgentToolDefinition[] = [

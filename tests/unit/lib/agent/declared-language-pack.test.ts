@@ -27,7 +27,7 @@ import {
 } from "@/lib/agent/languages/declared-client";
 import { composeDeclaredMcpFacet, declaredMcpFacets } from "@/lib/agent/languages/declared-mcp";
 import { composeDeclaredServerPack } from "@/lib/agent/languages/declared-server";
-import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
 import { RABBITREAD_MCP_FACET } from "@/lib/agent/languages/rabbitread/mcp";
 import { canonicalText, OPERATIONS_TOOL_RULE } from "@/lib/agent/languages/shared";
 import { OPERATIONS_VARIANT } from "@/lib/agent/workflow-tool-sets";
@@ -215,7 +215,7 @@ describe("the composer of a data-declared language", () => {
 
     // Every module tool fenced by its language's admission says what a refused statement never reached as its
     // language's copy does, so the composed facet's single source is the one every module language keeps.
-    for (const [language, moduleFacet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+    for (const [language, moduleFacet] of Object.entries(agentLanguageMcpFacets())) {
       if (moduleFacet?.fence !== "language-admission") continue;
       const copy = AGENT_LANGUAGE_COPY[language as keyof typeof AGENT_LANGUAGE_COPY];
       expect({ language, reached: moduleFacet.words.reached }).toEqual({ language, reached: copy.reached });
@@ -339,8 +339,8 @@ describe("the composer of a data-declared language", () => {
     });
   });
 
-  test("a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused at load by name", () => {
-    const moduleTools = Object.values(AGENT_LANGUAGE_MCP_FACETS).flatMap((facet) =>
+  test("a declared MCP tool whose name a module language's tool or another declared language's tool holds is refused by name when the registries are composed", () => {
+    const moduleTools = Object.values(agentLanguageMcpFacets()).flatMap((facet) =>
       facet === null ? [] : [facet.tool],
     );
     expect(moduleTools).toContain("run_rabbitmq_read");
@@ -444,7 +444,7 @@ describe("the composer of a data-declared language", () => {
       const declared = declarations.find(({ data }) => data.name === id);
       if (declared?.data.agent == null) throw new Error(`no committed declaration states the agent part of ${id}`);
       const composed = composeDeclaredMcpFacet(declared.data.agent);
-      const facet = AGENT_LANGUAGE_MCP_FACETS[id];
+      const facet = agentLanguageMcpFacets()[id];
       expect([id, facet === null ? null : servedShape(facet)]).toEqual([
         id,
         composed === null ? null : servedShape(composed),
@@ -465,7 +465,7 @@ describe("the composer of a data-declared language", () => {
     );
     // A census pin: the languages the committed declarations state as data, a set that leaves with their engines.
     expect(projected.map(({ name }) => name)).toEqual(["kafkaread"]);
-    // The registries compose exactly the projection's languages that state an agent part, in its order.
+    // The browser's registries compose exactly the projection's languages that state an agent part, in its order.
     expect<readonly string[]>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id)).toEqual(
       projected.filter((data) => data.agent !== null).map(({ name }) => name),
     );

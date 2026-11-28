@@ -6,7 +6,7 @@
  */
 import type { AgentDeclaredLanguageId } from "@/lib/agent/agent-manifest";
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
-import { AGENT_LANGUAGE_MCP_FACETS, type AgentDeclaredMcpTool } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets, type AgentDeclaredMcpTool } from "@/lib/agent/languages/mcp";
 
 /**
  * Agent mode's id of `name`, a statement language a shipped declaration states agent data for, as the registries
@@ -21,13 +21,13 @@ export function shippedDeclaredLanguage(name: string): AgentDeclaredLanguageId {
 }
 
 /**
- * MCP's name of the statement tool `name`'s shipped declaration states (`AGENT_LANGUAGE_MCP_FACETS`): a test names a
+ * MCP's name of the statement tool `name`'s shipped declaration states (`agentLanguageMcpFacets()`): a test names a
  * declared tool through it, since the name is branded.
  *
  * @throws {Error} Naming `name`, where its data states no MCP statement tool.
  */
 export function shippedDeclaredMcpTool(name: string): AgentDeclaredMcpTool {
-  const facet = AGENT_LANGUAGE_MCP_FACETS[shippedDeclaredLanguage(name)];
+  const facet = agentLanguageMcpFacets()[shippedDeclaredLanguage(name)];
   if (facet === null)
     throw new Error(`The shipped declaration of ${JSON.stringify(name)} states no MCP statement tool.`);
   return facet.tool as AgentDeclaredMcpTool;

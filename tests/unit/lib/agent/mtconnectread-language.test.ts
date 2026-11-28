@@ -16,7 +16,7 @@ import {
   languageServer,
   languageServerPack,
   LANGUAGE_BASE_DEFINITIONS,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -103,7 +103,7 @@ describe("the prompt texts", () => {
   });
 
   test("the rule lets the agent read what the question names without walking the model first", () => {
-    const rule = WORKFLOW_TOOL_RULES.mtconnectread.investigation as string;
+    const rule = workflowToolRules().mtconnectread.investigation as string;
     expect(rule).toContain("Read what the question names directly");
     expect(rule).toContain('/current?path=//DataItem[@id="<data item id>"]');
     expect(rule).toContain("read /probe only to find a data item the question and the inventory do not name");

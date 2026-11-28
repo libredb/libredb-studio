@@ -24,6 +24,7 @@ import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
+import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   DatabaseConfigError,
@@ -97,6 +98,7 @@ const RECORD_KEYS = [
   "offers",
   "source",
   "statementGrammar",
+  "statementLanguageData",
   "statementLanguageRow",
 ];
 
@@ -433,6 +435,35 @@ describe("one engine record for every engine", () => {
     expect(Object.keys(legacy.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(packaged.engine.offers).sort()).toEqual(OFFER_KEYS);
     expect(Object.keys(legacy.engine.source).sort()).toEqual(Object.keys(packaged.engine.source).sort());
+  });
+
+  test("every record carries the statement language data its declaration states, by reference: a legacy engine's projected data, a package's admitted data, null where none is stated", () => {
+    let stating = 0;
+    for (const [id, engine] of LEGACY_ENGINES) {
+      const projected = BUNDLED_STATEMENT_LANGUAGE_DATA[id as DatabaseType];
+      expect([id, engine.statementLanguageData === projected]).toEqual([id, true]);
+      if (projected !== null) stating += 1;
+    }
+    // Vacuity: a legacy engine states data, and most state none.
+    expect(stating).toBeGreaterThan(0);
+    expect(stating).toBeLessThan(LEGACY_ENGINES.size);
+
+    const declaring = admittedManifest("acmedatarecord", (engine) => withStatementLanguageData(engine));
+    const silent = admittedManifest("acmenodatarecord");
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-datarecord", declaring), admittedFor("acme-nodatarecord", silent)],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
+    );
+    const stated = declaring.engines[0]?.statementLanguageData;
+    if (stated === null || stated === undefined) throw new Error("the fixture declares no statement language data");
+    expect(servedRecord("acmedatarecord").statementLanguageData).toBe(stated);
+    expect(servedRecord("acmenodatarecord").statementLanguageData).toBeNull();
+    for (const id of LEGACY_ENGINES.keys()) {
+      expect(servedRecord(id).statementLanguageData).toBe(LEGACY_ENGINES.get(id)?.statementLanguageData ?? null);
+    }
   });
 
   test("an engine record offers no statementVocabulary and no consoleTextBound; its console bound is its statement language row's", () => {

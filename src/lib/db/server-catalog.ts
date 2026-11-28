@@ -45,6 +45,10 @@
  *   the statement language data its declaration states and for a legacy engine from Studio's code row of its id, once,
  *   when the record is composed; null where the engine's statements are SQL, or where it states no SQL text and no
  *   statement language data;
+ * - `statementLanguageData`: the statement language data the engine's declaration states, by reference, or null: a
+ *   legacy engine's from the projection Studio generates from its declaration, a package engine's from its admitted
+ *   declaration. It is no grant: the server's agent registries compose it only where `grants.statementLanguage` names
+ *   it (`servedLanguageData` in ./operations/served-language-data);
  * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
  *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
@@ -96,7 +100,13 @@
  * src/lib/mcp/tools/statement-arms.ts).
  * `servedEngines` answers the Map of every served record, in catalog order, for such a composition.
  */
-import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
+import type {
+  CredentialWarning,
+  FieldName,
+  ProviderManifest,
+  StatementLanguageData,
+  TlsMode,
+} from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { EngineGrants } from "@/lib/db/claim-grants";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
@@ -252,6 +262,13 @@ export interface EngineRecord {
    * only as `grants` grant them.
    */
   readonly statementLanguageRow: DestructiveVocabulary | null;
+  /**
+   * The statement language data the engine's declaration states, by reference, or null where it states none: a legacy
+   * engine's from the projection Studio generates from its declaration, a package engine's from its admitted
+   * declaration. It is no grant: the server's agent registries compose it only where `grants.statementLanguage` names
+   * it (`servedLanguageData` in ./operations/served-language-data).
+   */
+  readonly statementLanguageData: StatementLanguageData;
   /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */
   readonly explainReading: StatementReading["explainReading"];
   readonly offers: EngineOffers;
