@@ -1324,7 +1324,7 @@ export async function getOrCreateProvider(
  *
  * The class decides only which session a tree, monitoring or health read, or a kill, runs on and authorizes nothing:
  * every refusal here is `getOrCreateProvider`'s own, raised by the same check. The metadata session takes no catalog: a
- * caller that takes a catalog scopes it (`metadataProvider` and `metadataMonitoringTarget` in
+ * caller that takes a catalog scopes it (`metadataMonitoringTarget` and `metadataMaintenanceOpening` in
  * src/lib/api/editor-provider.ts). No caller waits for its open with a signal of its own, so it takes no wait. It opens
  * once per key (C-44), leaves with the idle sweep and with every removal that names its connection, its owner or its
  * record's key, is torn down with the caches under the teardown's deadlines (C-45), and keeps the connection's SSH

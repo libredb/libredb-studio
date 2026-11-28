@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { getOrCreateMetadataProvider, readProviderDeclarations } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { connectionTextScrub, type ProviderTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
+import { metadataMonitoringTarget } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
-import { providerMonitoringTarget } from "@/lib/api/session-target";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { legacyConnection, legacyProviderType } from "@/lib/db/server-catalog";
 
 /**
  * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
@@ -82,17 +82,23 @@ export async function POST(request: Request) {
         let scrub: ProviderTextScrub | undefined;
         try {
           /*
-           * Every item goes through `resolveConnection`, the caller's own connections included: a
+           * Every item goes through `resolveServedConnection`, the caller's own connections included: a
            * managed seed by its id, which injects the operator's credentials on the server, and
-           * anything else as the inline record it is, which `resolveConnection` refuses while
+           * anything else as the inline record it is, which the resolve refuses while
            * ALLOW_CUSTOM_CONNECTIONS is off and resolves from the seed file when its id claims the
            * `seed:` namespace. This line used to hand an inline record straight to the factory, the
            * one path in the product that opened a caller's connection without passing that gate. A
-           * refused item is reported as that item's error, beside the health of the rest.
+           * refused item is reported as that item's error, beside the health of the rest. The resolve
+           * answers the record of the connection's engine too, so any engine the server serves is
+           * health-checked, a provider package's through its package (docs/providers/CONTRACT.md,
+           * clause C-107).
            */
-          const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
-          scrub = providerTextScrub(resolved, "any");
-          const execution = editorExecutionContext(guard.session, resolved);
+          const { connection: resolved, engine } = await resolveServedConnection(
+            buildConnectionPayload(conn),
+            guard.session,
+          );
+          scrub = connectionTextScrub(resolved, legacyProviderType(engine), "any");
+          const answers = packageAnswers(engine, scrub, "api/admin/fleet-health");
           /*
            * The capability is read through `readProviderDeclarations`, the provider-meta pattern, which
            * builds the provider without connecting it or opening its tunnel and hands back data: a
@@ -101,29 +107,37 @@ export async function POST(request: Request) {
            * every dashboard refresh would keep it awake and billed. The factory logs its
            * "[DB] Creating <type> provider" line for this build, once per row on every refresh,
            * as provider-meta does; the declaration is read each time because an edit of the
-           * connection can change it.
+           * connection can change it. It is read only where the record offers per-connection
+           * declarations (`connectionDeclarations`): a provider package's engine states none, so its
+           * rows are health-checked.
            */
-          const declarations = await readProviderDeclarations(resolved, execution);
-          if (declarations.capabilities.resumesBilledCompute) {
-            return {
-              connectionId: conn.id,
-              connectionName: conn.name,
-              type: conn.type,
-              environment: conn.environment,
-              status: "not-checked",
-              latencyMs: 0,
-            };
+          if (engine.offers.connectionDeclarations) {
+            const declarations = await readProviderDeclarations(
+              legacyConnection(engine, resolved),
+              editorExecutionContext(guard.session, resolved),
+            );
+            if (declarations.capabilities.resumesBilledCompute) {
+              return {
+                connectionId: conn.id,
+                connectionName: conn.name,
+                type: conn.type,
+                environment: conn.environment,
+                status: "not-checked",
+                latencyMs: 0,
+              };
+            }
           }
-          // Health and the overview are read on the connection's metadata session (docs/providers/CONTRACT.md, clause
+          // Health and the overview are read on the record's metadata session (docs/providers/CONTRACT.md, clause
           // C-66), opened under the posture the declarations were read with, so a row never waits for a connection the
           // editor's statements hold; each read goes through the monitoring facade and the host core (clause C-75)
-          // under its own deadline, the statement timeout plus 10 s, and the request's signal.
-          const provider = await getOrCreateMetadataProvider(resolved, {}, execution);
-          const monitoring = providerMonitoring(
-            providerMonitoringTarget(provider),
-            packageAnswers(servedEngineRecord(resolved.type), scrub, "api/admin/fleet-health"),
-            request.signal,
+          // under its own deadline, the statement timeout plus 10 s, and the request's signal. A package's failure, of
+          // its open or of a read, is answered and logged once through the item's `PackageAnswers` (clause C-112).
+          const target = await metadataMonitoringTarget(guard.session, resolved, engine, undefined).catch(
+            (error: unknown) => {
+              throw answers.answer("open", error);
+            },
           );
+          const monitoring = providerMonitoring(target, answers, request.signal);
           const health = await monitoring.readHealth();
           const latencyMs = Date.now() - start;
 

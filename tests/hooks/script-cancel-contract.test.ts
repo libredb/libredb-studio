@@ -93,6 +93,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  // The maintenance openings read a legacy provider's declarations through the barrel; no request here opens one.
+  readProviderDeclarations: () => Promise.reject(new Error("no request of this suite reads a provider's declarations")),
   createDatabaseProvider: mock(async () => provider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),

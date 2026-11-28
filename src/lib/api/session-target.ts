@@ -11,6 +11,8 @@
  * factory module (src/lib/db/factory.ts), so the VS Code backend, which is handed the factory's functions and imports
  * none of them, builds its targets here too; the builders that open through the factory live in
  * src/lib/api/editor-provider.ts and call these.
+ * A provider package's entry's maintenance opening is built here too (`packageMaintenanceOpening`); a legacy
+ * provider's reads the factory's declarations.
  *
  * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
@@ -42,6 +44,7 @@ import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import { HostDefectError } from "@/lib/provider-host/access";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
+import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
 import type { DatabaseType } from "@/lib/types";
 
 /** How a call on a target ended, as its marks read it: undefined for a call that threw, which has settled. */
@@ -94,9 +97,26 @@ export interface MaintenanceTarget extends SessionTarget<Omit<MaintenanceSession
   /**
    * The session's maintenance, read when a call is made: a legacy provider's is its declaration narrowed by what the
    * connected provider accepts (`bridgedMaintenance`), which the SDK refuses as `CallRefusalError` for a narrowing its
-   * declaration cannot have, so a run answers that refusal as not sent, after the route admitted it.
+   * declaration cannot have, so a run answers that refusal as not sent, after the route admitted it; a provider
+   * package's is the maintenance its open narrowed, which its open already checked.
    */
   maintenance(): EngineMaintenance;
+  /**
+   * The engine principal the session acts as, read when asked: a user name, never any part of a secret, which the
+   * maintenance audit names (docs/providers/CONTRACT.md, clause C-67); undefined where the session names none.
+   */
+  engineUser(): string | undefined;
+}
+
+/** What a maintenance request opened: the maintenance its server accepts, and the target its call is made on. */
+export interface MaintenanceOpening {
+  /** The maintenance the opened session's server accepts, read when asked: the route's accepted and placement checks. */
+  accepted(): AcceptedMaintenance;
+  /**
+   * The target the request's call is made on, built when asked, after those checks passed: a legacy provider's reads
+   * its declarations first, so a refused request reads none.
+   */
+  target(): Promise<MaintenanceTarget>;
 }
 
 /** A session target of the console cancel (`cancelEditorRun` in src/lib/api/editor-query.ts). */
@@ -175,8 +195,9 @@ export function providerMonitoringTarget(provider: DatabaseProvider): Monitoring
 
 /**
  * The maintenance target of `provider`: one bridged session of it, built when this is called, as
- * `providerMonitoringTarget` builds it, and its maintenance read when a call reads it, `declared`, the provider's
- * maintenance before it connected, narrowed by what the connected provider accepts at that call (`bridgedMaintenance`).
+ * `providerMonitoringTarget` builds it, its maintenance read when a call reads it, `declared`, the provider's
+ * maintenance before it connected, narrowed by what the connected provider accepts at that call (`bridgedMaintenance`),
+ * and its engine user the provider's, read when asked.
  */
 export function providerMaintenanceTarget(
   provider: DatabaseProvider,
@@ -185,6 +206,7 @@ export function providerMaintenanceTarget(
   return {
     session: bridgedConsole(provider, {}).session,
     maintenance: () => bridgedMaintenance(provider, declared),
+    engineUser: () => provider.engineUser?.(),
     ...providerFields(provider),
   };
 }
@@ -350,4 +372,31 @@ export function entryMonitoringTarget(entry: CachedSession, connection: EngineCo
  */
 export function raisedByTreeRead(raised: ReadonlySet<unknown>, error: unknown): boolean {
   return raised.has(error) || error instanceof HostDefectError;
+}
+
+/**
+ * The maintenance opening of `entry`, an entry of the provider factory's caches for `connection` holding `opened`, a
+ * provider package's session: the maintenance it accepts is the session's narrowed maintenance (`acceptedOf`), and its
+ * target is the session with its declared environment, the connection's own statement timeout or Studio's default,
+ * the marks of each call on the entry, the session's narrowed maintenance, and the engine user its open answered. A
+ * legacy provider's opening reads the factory's declarations, so it is built where the factory is imported
+ * (`editorMaintenanceOpening` in src/lib/api/editor-provider.ts).
+ */
+export function packageMaintenanceOpening(
+  entry: CachedSession,
+  opened: OpenedPackageSession,
+  connection: EngineConnection,
+): MaintenanceOpening {
+  const { session } = opened;
+  return {
+    accepted: () => acceptedOf(session),
+    target: async () => ({
+      session,
+      env: opened.env,
+      timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
+      maintenance: () => session.maintenance,
+      engineUser: () => opened.engineUser,
+      ...entryMarks(entry),
+    }),
+  };
 }

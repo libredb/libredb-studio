@@ -322,7 +322,9 @@ export type MaintenancePlacement = "perEntity" | "global";
  * existed. `preview` travels on the same terms, for the per-row dialog (spec 3.11).
  */
 export function maintenanceControl(
-  capabilities: ProviderCapabilities | undefined,
+  capabilities:
+    | Pick<ProviderCapabilities, "supportsMaintenance" | "maintenanceOperations" | "maintenanceOperationSpecs">
+    | undefined,
   type: MaintenanceOperation,
   placement: MaintenancePlacement,
   kind?: string,

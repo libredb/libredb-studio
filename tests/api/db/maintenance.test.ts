@@ -8,6 +8,9 @@ import type { EtcdAlarm, EtcdMember, EtcdStatus } from "@/lib/db/providers/keyva
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseProvider } from "@/lib/db/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { buildQueryEvent } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import {
@@ -93,13 +96,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
+    // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });
@@ -147,27 +157,31 @@ mock.module("@/lib/db", () => ({
 /**
  * The metadata session a kill runs on (docs/providers/CONTRACT.md, clause C-66), answered by default with the same
  * `mockProvider` the editor's stand-in answers, so a kill test written against the editor's provider passes unchanged.
- * It records what it built, as the barrel's `getOrCreateProvider` wrapper does, so the declarations read agrees.
+ * The route opens the editor's session through `getOrCreateEditorSession` and the metadata session through
+ * `getOrCreateMetadataSession`, whose stand-ins answer the entry a legacy record's open answers for the provider the
+ * barrel's `getOrCreateProvider` stand-in, or `mockGetOrCreateMetadataProvider`, answers with the same arguments. Each
+ * records what it built, so the declarations read agrees.
  */
 const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<never>>(async () => mockProvider as never);
+/** The provider `build` answers for `connection` under `execution`, recorded as the last one built. */
+async function built(
+  build: (...given: unknown[]) => Promise<unknown>,
+  connection: unknown,
+  execution: unknown,
+): Promise<DatabaseProvider> {
+  const provider = (await build(connection, {}, execution)) as DatabaseProvider;
+  lastBuilt = provider;
+  return provider;
+}
 mock.module("@/lib/db/factory", () => ({
-  getOrCreateMetadataProvider: async (...args: unknown[]) => {
-    const built = await (
-      mockGetOrCreateMetadataProvider as (...given: unknown[]) => Promise<{ getCapabilities(): unknown }>
-    )(...args);
-    lastBuilt = built;
-    return built;
-  },
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
   findCachedProvider: mock(() => null),
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
-  getOrCreateEditorSession: mock(async () => {
-    throw new Error("getOrCreateEditorSession is not read by this route");
-  }),
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no object tree.
-  getOrCreateMetadataSession: mock(async () => {
-    throw new Error("getOrCreateMetadataSession is not read by this route");
-  }),
+  getOrCreateEditorSession: async (connection: unknown, _engine: unknown, execution: unknown) =>
+    editorEntryOf(
+      await built(mockGetOrCreateProvider as (...given: unknown[]) => Promise<unknown>, connection, execution),
+    ),
+  getOrCreateMetadataSession: async (connection: unknown, _engine: unknown, execution: unknown) =>
+    editorEntryOf(await built(mockGetOrCreateMetadataProvider, connection, execution)),
 }));
 
 // ─── Mock the query event sink and the admission gate (docs/GOVERNANCE.md#query-events) ───
@@ -700,7 +714,8 @@ describe("POST /api/db/maintenance", () => {
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 
-  // FND-4: the engine facets row is read before any provider is built, so an operation the engine does not offer
+  // FND-4: the record's maintenance list, the engine facets row of a legacy engine, is read before any provider is
+  // built, so an operation the engine does not offer
   // opens no provider, no SSH tunnel and no connection, and is refused by name.
   test("an operation the engine does not offer is refused FACET_NOT_OFFERED by name before any provider is built", async () => {
     const res = await POST(

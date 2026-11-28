@@ -2630,7 +2630,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   "C-66": {
     tests: {
       "tests/api/db/monitoring-package-engine.test.ts": [
-        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+        "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
         "a package engine's metadata session opens once per key through its package, beside its editor session",
@@ -2722,6 +2722,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies",
+      ],
+      "tests/isolated/factory-package-engines.test.ts": [
+        "a package engine's cached session carries the engine user its open answered",
+      ],
+      "tests/api/db/monitoring-package-engine.test.ts": [
+        "a package engine's maintenance audit row names the engine user its open answered, and a row of an open that answered none has no such key",
       ],
     },
     schema: [
@@ -3164,7 +3170,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
-        "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
+        "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
+        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, and never answer 501",
+        "fleet health reads a package engine's health",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
@@ -3174,7 +3182,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel and disconnect routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, maintenance, preview and fleet health routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3256,6 +3264,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
+        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, and never answer 501",
+        "a maintenance run a package engine's session refuses before the call answers Studio's not-sent error, logged as Studio's own, with no audit row",
       ],
       "tests/unit/lib/api/object-tree.test.ts": [
         "the tree facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each read on the entry",
@@ -3297,9 +3307,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
+        "a package's open failure and each maintenance call's failure answer the one answer, code-only and granted, logged once, and the run's and the preview's sentences reach the client as Studio's sentence where no row grants the words",
       ],
       "tests/unit/db/operations/provider-text.test.ts": [
         "a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once",
+        "a maintenance run's message and a preview's summary, refusal and note are scrubbed where the record grants its words and Studio's sentence where it does not, logged once, and every legacy record grants its words scrubbed",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a code-only package's sentences in a tree answer reach the client as Studio's sentence, and a granted one's through core's scrub",

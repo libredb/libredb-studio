@@ -32,6 +32,7 @@ import {
 } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
 import { logger } from "@/lib/logger";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import {
   engineAuthor,
   errorRecord,
@@ -655,10 +656,10 @@ describe("the success sentences of a provider's answers", () => {
       rows: [{ section: "server", key: "redis_version", value: "7.2.4" }],
       fields: ["section", "key", "value"],
     };
-    expect(scrubMaintenanceResult(scrub, result)).toEqual({ ...result, message: PROVIDER_TEXT_WITHHELD });
+    expect(scrubMaintenanceResult(scrubbed(scrub), result)).toEqual({ ...result, message: PROVIDER_TEXT_WITHHELD });
     const clean: MaintenanceResult = { success: true, executionTime: 1, message: "VACUUM completed" };
-    expect(scrubMaintenanceResult(scrub, clean)).toEqual(clean);
-    expect("rows" in scrubMaintenanceResult(scrub, clean)).toBe(false);
+    expect(scrubMaintenanceResult(scrubbed(scrub), clean)).toEqual(clean);
+    expect("rows" in scrubMaintenanceResult(scrubbed(scrub), clean)).toBe(false);
   });
 
   test("scrubMaintenancePreview withholds a summary, refusal or note that holds the connection's credential and keeps the facts", () => {
@@ -668,16 +669,63 @@ describe("the success sentences of a provider's answers", () => {
       refusal: `the server refused ${password}`,
       note: `GetMetrics failed for ${password}`,
     };
-    expect(scrubMaintenancePreview(scrub, preview)).toEqual({
+    expect(scrubMaintenancePreview(scrubbed(scrub), preview)).toEqual({
       summary: PROVIDER_TEXT_WITHHELD,
       facts: [{ label: "Rows", value: "1200" }],
       refusal: PROVIDER_TEXT_WITHHELD,
       note: PROVIDER_TEXT_WITHHELD,
     });
     const bare: MaintenancePreview = { summary: "Loads orders into memory", facts: [] };
-    const answered = scrubMaintenancePreview(scrub, bare);
+    const answered = scrubMaintenancePreview(scrubbed(scrub), bare);
     expect(answered).toEqual(bare);
     expect(Object.keys(answered).sort()).toEqual(["facts", "summary"]);
+  });
+
+  test("a maintenance run's message and a preview's summary, refusal and note are scrubbed where the record grants its words and Studio's sentence where it does not, logged once, and every legacy record grants its words scrubbed", () => {
+    for (const [id, engine] of LEGACY_ENGINES) expect([id, engine.grants.ownWords]).toEqual([id, "scrubbed"]);
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const own = `the engine vacuumed ${generated()}`;
+      const result: MaintenanceResult = {
+        success: true,
+        executionTime: 2,
+        message: own,
+        rows: [{ key: "pages", value: "12" }],
+        fields: ["key", "value"],
+      };
+      const preview: MaintenancePreview = {
+        summary: own,
+        facts: [{ label: "Rows", value: "1200" }],
+        refusal: `refused for ${password}`,
+        note: own,
+      };
+      // Granted: through core's scrub, logged nowhere.
+      expect(scrubMaintenanceResult(scrubbed(scrub), result)).toEqual(result);
+      expect(scrubMaintenancePreview(scrubbed(scrub), preview)).toEqual({
+        ...preview,
+        refusal: PROVIDER_TEXT_WITHHELD,
+      });
+      expect(warn).not.toHaveBeenCalled();
+
+      // Code-only: Studio's sentence for each, the words logged once each through core's scrub under the route.
+      const codeOnly: ProviderWords = { scrub, ownWords: "code-only", route: "POST /api/db/maintenance" };
+      expect(scrubMaintenanceResult(codeOnly, result)).toEqual({ ...result, message: PACKAGE_SENTENCE_WITHHELD });
+      expect(scrubMaintenancePreview(codeOnly, preview)).toEqual({
+        summary: PACKAGE_SENTENCE_WITHHELD,
+        facts: preview.facts,
+        refusal: PACKAGE_SENTENCE_WITHHELD,
+        note: PACKAGE_SENTENCE_WITHHELD,
+      });
+      const bare = scrubMaintenancePreview(codeOnly, { summary: own, facts: [] });
+      expect(Object.keys(bare).sort()).toEqual(["facts", "summary"]);
+      const line = (reason: string): [string, { route: string; reason: string }] => [
+        "A provider package's answer gave a reason",
+        { route: "POST /api/db/maintenance", reason },
+      ];
+      expect(warn.mock.calls).toEqual([line(own), line(own), line(PROVIDER_TEXT_WITHHELD), line(own), line(own)]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("scrubKeyScanPage withholds a skipped reason, an end reason or a proven loss that holds the connection's credential and keeps the keys, the counts and the scope", () => {
@@ -931,9 +979,9 @@ describe("the success sentences of a provider's answers", () => {
       rows: [{ key: "requirepass", value: password }],
       fields: ["key", "value"],
     };
-    expect(scrubMaintenanceResult(scrub, result)).toEqual(result);
+    expect(scrubMaintenanceResult(scrubbed(scrub), result)).toEqual(result);
     const preview: MaintenancePreview = { summary: "Loads orders", facts: [{ label: password, value: password }] };
-    expect(scrubMaintenancePreview(scrub, preview)).toEqual(preview);
+    expect(scrubMaintenancePreview(scrubbed(scrub), preview)).toEqual(preview);
     const page: KeyScanPage = {
       keys: [password],
       cursor: password,
@@ -1016,8 +1064,8 @@ describe("the success sentences of a provider's answers", () => {
     ];
     const before = structuredClone({ data, result, preview, page, refusal, plan, preimage, outcomes });
     scrubMonitoringData(scrub, data);
-    scrubMaintenanceResult(scrub, result);
-    scrubMaintenancePreview(scrub, preview);
+    scrubMaintenanceResult(scrubbed(scrub), result);
+    scrubMaintenancePreview(scrubbed(scrub), preview);
     scrubKeyScanPage(scrub, page);
     scrubObjectEditRefusal(scrub, refusal);
     scrubObjectEditPlan(scrub, plan);
@@ -1027,8 +1075,8 @@ describe("the success sentences of a provider's answers", () => {
 
     const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
     expect(scrubMonitoringData(clean, data)).toEqual(data);
-    expect(scrubMaintenanceResult(clean, result)).toEqual(result);
-    expect(scrubMaintenancePreview(clean, preview)).toEqual(preview);
+    expect(scrubMaintenanceResult(scrubbed(clean), result)).toEqual(result);
+    expect(scrubMaintenancePreview(scrubbed(clean), preview)).toEqual(preview);
     expect(scrubKeyScanPage(clean, page)).toEqual(page);
     expect(scrubObjectEditRefusal(clean, refusal)).toEqual(refusal);
     expect(scrubObjectEditPlan(clean, plan)).toEqual(plan);

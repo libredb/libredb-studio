@@ -426,14 +426,20 @@ describe("on every route that resolves the calling connection", () => {
         errors: { slowQueries: `permission denied for ${form}` },
       });
       expect(monitoring.errors).toEqual({ slowQueries: PROVIDER_TEXT_WITHHELD });
-      const result = scrubMaintenanceResult(scrub, { success: false, executionTime: 1, message: `refused ${form}` });
+      const result = scrubMaintenanceResult(
+        { scrub, ownWords: "scrubbed", route: "provider-text" },
+        { success: false, executionTime: 1, message: `refused ${form}` },
+      );
       expect(result.message).toBe(PROVIDER_TEXT_WITHHELD);
-      const preview = scrubMaintenancePreview(scrub, {
-        summary: `Loads ${form}`,
-        facts: [],
-        refusal: `refused ${form}`,
-        note: `stale for ${form}`,
-      });
+      const preview = scrubMaintenancePreview(
+        { scrub, ownWords: "scrubbed", route: "provider-text" },
+        {
+          summary: `Loads ${form}`,
+          facts: [],
+          refusal: `refused ${form}`,
+          note: `stale for ${form}`,
+        },
+      );
       expect(preview).toEqual({
         summary: PROVIDER_TEXT_WITHHELD,
         facts: [],

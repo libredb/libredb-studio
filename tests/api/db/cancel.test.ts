@@ -96,6 +96,8 @@ mock.module("@/lib/db/factory", () => ({
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  // The maintenance openings read a legacy provider's declarations through the barrel; no request here opens one.
+  readProviderDeclarations: () => Promise.reject(new Error("no request of this suite reads a provider's declarations")),
   createDatabaseProvider: mock(async () => mockCancelProvider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),

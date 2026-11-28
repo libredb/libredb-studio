@@ -84,7 +84,7 @@ const PROVIDER_ROUTES = DB_ROUTES.filter(([key]) => !(key in ROUTES_THAT_BUILD_N
  */
 const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
   "admin/fleet-health":
-    "resolves every item through resolveConnection before the factory sees it; the fleet health case below sends it a caller's connection",
+    "resolves every item through resolveServedConnection before the factory sees it; the fleet health case below sends it a caller's connection",
   "agent/runs/[runId]/handover":
     "opens only the run's recorded connectionId, resolved as a seed id under the run's own actor; the request carries no connection (tests/api/agent/handover.test.ts)",
   "agent/runs":
@@ -98,7 +98,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget, metadataProvider, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget and editorConsoleTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts":
@@ -121,10 +121,11 @@ const PROVIDER_BUILDERS = [
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So do
  * `editorProvider`, which every editor route but the query route opens its provider through (#1530), `editorTarget`,
- * which the query route opens every engine through, `metadataProvider`, which the maintenance route opens the
- * connection's metadata session through, `metadataMonitoringTarget` and `editorMonitoringTarget`, which the
- * monitoring and health routes open every engine's metadata session through and the pool statistics route its editor
- * session, `editorConsoleTarget`, which the cancel route opens every engine's editor session through, and so does
+ * which the query route opens every engine through, `metadataMonitoringTarget` and `editorMonitoringTarget`, which the
+ * monitoring, health and fleet health routes open every engine's metadata session through and the pool statistics route
+ * its editor session, `editorConsoleTarget`, which the cancel route opens every engine's editor session through,
+ * `editorMaintenanceOpening` and `metadataMaintenanceOpening`, which the maintenance and preview routes open every
+ * engine's editor session through and a kill its metadata session, and so does
  * `testConnection`, the Test Connection core, which opens the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
@@ -133,10 +134,11 @@ const ROUTE_BUILDS = new RegExp(
     "handleObjectRequest",
     "editorProvider",
     "editorTarget",
-    "metadataProvider",
     "metadataMonitoringTarget",
     "editorMonitoringTarget",
     "editorConsoleTarget",
+    "editorMaintenanceOpening",
+    "metadataMaintenanceOpening",
     "testConnection",
   ].join("|")})\\s*\\(`,
 );
@@ -313,7 +315,7 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
 
   test("the route detector sees a route that builds only through the metadata session", () => {
     const routes = [
-      "const provider = await metadataProvider(guard.session, connection, requestCatalog(body));",
+      "const opened = await metadataMaintenanceOpening(guard.session, connection, engine, catalog);",
       "const provider = await getOrCreateMetadataProvider(resolved, {}, execution);",
       "const target = await metadataMonitoringTarget(guard.session, connection, engine, requestCatalog(body));",
     ];

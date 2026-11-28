@@ -3,6 +3,7 @@ import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer, sanitizeAuditInput } from "@/lib/audit";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 /**
  * Threat: a non-string value reaching the authoritative stdout audit line unbounded, breaking the
@@ -45,13 +46,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
+    // engine's, as the server catalog holds it.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });

@@ -232,6 +232,29 @@ describe("the factory's editor cache and a provider package's engine", () => {
     await clearProviderCache();
   });
 
+  test("a package engine's cached session carries the engine user its open answered", async () => {
+    await clearProviderCache();
+    const engine = engineOf("acmecached");
+    const engineUser = `user-${randomUUID()}`;
+    hooks = {
+      ...packageHooks(),
+      open: () => Promise.resolve({ handle: { session: randomUUID() }, engineUser }),
+    };
+    const connection = packageConnection();
+    const editor = await getOrCreateEditorSession(connection, engine, ADMIN);
+    const metadata = await getOrCreateMetadataSession(connection, engine, ADMIN);
+    expect(metadata).not.toBe(editor);
+    expect(openedSession(editor.opened).engineUser).toBe(engineUser);
+    expect(openedSession(metadata.opened).engineUser).toBe(engineUser);
+    expect(openedSession(editor.opened)).toEqual({ session: expect.anything(), env: expect.anything(), engineUser });
+
+    hooks = packageHooks();
+    const unnamed = await getOrCreateEditorSession(packageConnection(), engine, ADMIN);
+    expect("engineUser" in openedSession(unnamed.opened)).toBe(false);
+    expect("engineUser" in unnamed.opened).toBe(false);
+    await clearProviderCache();
+  });
+
   test("the editor session of a legacy record is the provider getOrCreateProvider answers, in one entry", async () => {
     await clearProviderCache();
     const sqlite = sqliteConnection();

@@ -9,7 +9,8 @@
  * within 1,000 ms while the editor's waits for the holders, and exits non-zero on any failure.
  *
  * Then, on hold rounds of their own, it runs a session kill as POST /api/db/maintenance runs it: on the metadata session
- * (`metadataProvider` in src/lib/api/editor-provider.ts), its declarations read under the same posture, through
+ * (`metadataSessionProvider` below, the provider `metadataMaintenanceOpening` in src/lib/api/editor-provider.ts opens
+ * for a legacy record), its declarations read under the same posture, through
  * `providerMaintenance` and the host core, against one of the editor statements holding the editor's pool. Once on the
  * connection above, its shared pool of 10 held ("kill, pinned"), and once in the catalog `postgres` of a server-level
  * copy of it, the editor's catalog session of 3 held ("kill, catalog"). Each fails unless the editor's pool is full at
@@ -18,7 +19,7 @@
  * out.
  *
  * Last, on hold rounds of their own, it reads a dashboard and a health check as POST /api/db/monitoring and POST
- * /api/db/health read them: on the metadata session (`metadataProvider`), through `providerMonitoring` and the host
+ * /api/db/health read them: on the metadata session (`metadataSessionProvider`), through `providerMonitoring` and the host
  * core, while editor statements hold every connection of the editor's pool, once on the pinned connection's shared pool
  * of 10 ("monitoring, pinned") and once in the catalog `postgres` of the server-level copy, its editor catalog session
  * of 3 held ("monitoring, catalog"). Each fails unless the editor's pool statistics show the pool full and idle at
@@ -36,12 +37,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
+import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { packageAnswers } from "@/lib/api/package-errors";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
 import { providerMaintenanceTarget, providerMonitoringTarget } from "@/lib/api/session-target";
+import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import {
@@ -55,6 +57,20 @@ import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseProvider, EditorExecutionContext, MonitoringData } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+
+/**
+ * The connection's metadata session in `catalog`, opened as a legacy record's maintenance and monitoring openings open
+ * it (`metadataMaintenanceOpening` and `metadataMonitoringTarget` in src/lib/api/editor-provider.ts): the metadata
+ * cache's provider under the session's editor posture, scoped to the catalog through `scopeToCatalog`.
+ */
+async function metadataSessionProvider(
+  session: { role: string },
+  connection: DatabaseConnection,
+  catalog: string | undefined,
+): Promise<DatabaseProvider> {
+  const connected = await getOrCreateMetadataProvider(connection, {}, editorExecutionContext(session, connection));
+  return scopeToCatalog(connected, catalog);
+}
 
 const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb-live-metadata-session-pg"}-${randomBytes(4).toString("hex")}`;
 /** A fresh password for each run: the check starts its own container. */
@@ -223,7 +239,7 @@ async function heldEditorKill(
 ) {
   const session = { role: "admin" };
   const editor = await editorProvider(session, connection, catalog);
-  const metadata = await metadataProvider(session, connection, catalog);
+  const metadata = await metadataSessionProvider(session, connection, catalog);
   if (metadata === editor) throw new Error(`${label}: the metadata session is the editor's provider`);
 
   const tag = `held_${randomBytes(4).toString("hex")}`;
@@ -303,7 +319,7 @@ async function heldEditorMonitoring(
 ) {
   const session = { role: "admin" };
   const editor = await editorProvider(session, connection, catalog);
-  const metadata = await metadataProvider(session, connection, catalog);
+  const metadata = await metadataSessionProvider(session, connection, catalog);
   if (metadata === editor) throw new Error(`${label}: the metadata session is the editor's provider`);
   if (!(editor instanceof PostgresProvider)) throw new Error(`${label}: the editor's provider is not a PostgreSQL one`);
 

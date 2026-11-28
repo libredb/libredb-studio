@@ -158,15 +158,15 @@ export class PackageEngineUnsupportedError extends DatabaseError {
 }
 
 /**
- * A facet a request can name a member of: a maintenance operation of an engine's `ENGINE_FACETS` row, or a call group of
- * the provider contract a provider package's session does not offer (`console`, `objects`, `monitoring`), whose member
+ * A facet a request can name a member of: a maintenance operation of an engine's record (its `maintenance` list), or a
+ * call group of the provider contract a provider package's session does not offer (`console`, `objects`, `monitoring`), whose member
  * is the call or the request field (docs/providers/CONTRACT.md, clause C-51).
  */
 export type DeclaredFacet = "maintenance" | "console" | "objects" | "monitoring";
 
 /**
- * A request names a member of a facet the connection's engine does not offer: before any provider is built, an
- * operation its `ENGINE_FACETS` row does not list, or, after connect, one the connected server does not accept; or,
+ * A request names a member of a facet the connection's engine does not offer: before any session opens, an operation its
+ * record's maintenance list does not list, or, after the open, one the session's server does not accept; or,
  * before a call is made, a call or a request field a provider package's session does not offer (clause C-51).
  * Answered 400 `FACET_NOT_OFFERED` with its sentence, which names the member. A `DatabaseError` and not a
  * `DatabaseConfigError`: no setting of the connection is wrong, so a configuration error's remedy does not apply.

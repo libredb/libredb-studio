@@ -51,6 +51,8 @@
  *   it (`servedLanguageData` in ./operations/served-language-data);
  * - `explainReading`: how the gate reads the statement grammar's explain claim, `"declared"` for a legacy engine and
  *   `"either"` for a package's (`StatementReading` in src/lib/sql/dangerous-query.ts);
+ * - `maintenance`: the maintenance operations the engine offers before Studio connects, a legacy engine's engine facets
+ *   row's list and a package engine's declared one, which the maintenance routes read before any open;
  * - `offers`: what the engine offers each server path that tells a legacy engine from a package's today, one member
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *
@@ -61,7 +63,7 @@
  * A refused package's engine is refused there as `ProviderUnavailableError`, an engine whose record offers no legacy
  * provider as `PackageEngineUnsupportedError` until the request serves package engines, and every other value exactly
  * as `assertDatabaseType` refuses it. Only Test Connection, the query route and its cancel, a disconnect, the object
- * tree's reads, the monitoring, health and pool statistics reads and MCP serve an engine whose record offers no legacy
+ * tree's reads, the monitoring, health and maintenance requests and MCP serve an engine whose record offers no legacy
  * provider in this Studio: each reads the type through `servedEngineRecord`, the routes when they resolve the
  * connection with its record through `resolveServedConnection` (src/lib/seed/resolve-connection.ts); Test Connection
  * then runs one test for every record, which reads what differs from the record's offers and grants (`testConnection`
@@ -70,10 +72,15 @@
  * src/lib/api/editor-query.ts), the cancel route cancels a run on that session with one cancel (`editorConsoleTarget`,
  * `cancelEditorRun`), a disconnect removes every cache entry the record's key names (`editorCacheKey` in ./factory),
  * the six tree routes read every record's metadata session through one tree facade (`metadataTreeTarget` in
- * src/lib/api/editor-provider.ts, `objectTree` in src/lib/api/object-tree.ts), and the monitoring and health routes
- * read every record's metadata session, and the pool statistics route its editor session, through one monitoring facade
+ * src/lib/api/editor-provider.ts, `objectTree` in src/lib/api/object-tree.ts), the monitoring and health routes read
+ * every record's metadata session, and the pool statistics route its editor session, through one monitoring facade
  * (`metadataMonitoringTarget` and `editorMonitoringTarget` in src/lib/api/editor-provider.ts, `providerMonitoring` in
- * src/lib/api/provider-monitoring.ts), all over the provider factory's opens of any record (`openEngineOnce`,
+ * src/lib/api/provider-monitoring.ts), fleet health reads each row's metadata session through the same facade, reading
+ * a legacy provider's per-connection declarations only where the record offers them (`connectionDeclarations`), and the
+ * maintenance and preview routes run on every record's editor session, a kill on its metadata session, through one
+ * maintenance facade, refusing an operation outside the record's maintenance list before any open
+ * (`editorMaintenanceOpening` and `metadataMaintenanceOpening` in src/lib/api/editor-provider.ts, `providerMaintenance`
+ * in src/lib/api/provider-maintenance.ts), all over the provider factory's opens of any record (`openEngineOnce`,
  * `getOrCreateEditorSession` and `getOrCreateMetadataSession` in ./factory). MCP's availability
  * (src/lib/mcp/availability.ts), which `list_connections` and every MCP tool answer before any open, reads
  * `servedEngineRefusal`'s message and then the record's grants, and the open checks of MCP's connection context
@@ -125,6 +132,7 @@ import type { DeclaredSession } from "@/lib/provider-host/core/contract-session"
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
+import type { MaintenanceOperation } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import {
   PackageEngineUnsupportedError,
@@ -201,7 +209,7 @@ export interface EngineSource {
 export interface EngineOffers {
   /**
    * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection, the
-   * query route and its cancel, a disconnect, the object tree's reads, the monitoring, health and pool statistics reads
+   * query route and its cancel, a disconnect, the object tree's reads, the monitoring, health and maintenance requests
    * and MCP's schema reads reads one, through `legacyProviderEngine`.
    */
   readonly legacyProvider: boolean;
@@ -209,7 +217,7 @@ export interface EngineOffers {
   readonly explain: boolean;
   /** A key-space `database` on a query, read from a legacy provider's declarations. */
   readonly database: boolean;
-  /** A server-level `catalog` on a query or a monitoring read, a legacy catalog session. */
+  /** A server-level `catalog` on a query, a monitoring read or a maintenance request, a legacy catalog session. */
   readonly catalog: boolean;
   /** An unbounded page (`options.unlimited`); the provider contract always pumps a bounded one. */
   readonly unboundedPage: boolean;
@@ -227,6 +235,12 @@ export interface EngineOffers {
    * (src/lib/mcp/tools/served-engines.ts).
    */
   readonly executionProfiles: boolean;
+  /**
+   * A provider built without connecting that answers its per-connection facts (`readProviderDeclarations` in
+   * ./factory): fleet health reads whether a connection resumes billed compute from it before it reads the
+   * connection's health. A package's engine states no per-connection fact (M-63), so its rows are health-checked.
+   */
+  readonly connectionDeclarations: boolean;
   /**
    * The object edit plan and the edit apply (`POST /api/db/objects/edit-plan` and `/edit-apply`), built by a legacy
    * provider's edit builder; the provider contract has no edit call yet, so a package's engine is refused them by this
@@ -281,6 +295,13 @@ export interface EngineRecord {
   readonly statementLanguageData: StatementLanguageData;
   /** How the confirmation gate reads the statement grammar's explain claim (`StatementReading.explainReading`). */
   readonly explainReading: StatementReading["explainReading"];
+  /**
+   * The maintenance operations the engine offers before Studio connects, in its declaration's order: a legacy engine's
+   * `ENGINE_FACETS` row (./engine-facets), which the facets census holds equal to its declaration, and a package
+   * engine's declared `facets.maintenance`. The maintenance routes refuse any other operation by name before any open
+   * (`assertMaintenanceOffered` in ./engine-facets/maintenance).
+   */
+  readonly maintenance: readonly MaintenanceOperation[];
   readonly offers: EngineOffers;
 }
 
@@ -312,7 +333,7 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: "begun" | "un
 /** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
-    "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's reads, the monitoring, health and pool statistics reads and MCP in this LibreDB Studio, and this is another request.",
+    "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's reads, the monitoring, health and maintenance requests and MCP in this LibreDB Studio, and this is another request.",
   open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 

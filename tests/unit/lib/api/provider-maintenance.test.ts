@@ -511,6 +511,7 @@ function packageMaintenanceTarget(timeout = 2_000) {
       reads.push(read);
       return read;
     },
+    engineUser: () => undefined,
     env,
     timeout: () => timeout,
     started: () => {
