@@ -173,10 +173,21 @@ jobs:
       - name: Check that the packed CLI locks a providers directory (lib:lock)
         run: bun run lib:lock
 
-  test:
-    name: Unit & Integration Tests
+  # The suite as four shards, each running every fourth test file with coverage
+  # (`bun run test --coverage --shard=I/4`, docs/TOOLCHAIN.md "Coverage
+  # measurement"). Not themselves required: the `test` job below is the required
+  # check, and it fails unless every shard passed. fail-fast is off so a red pull
+  # request shows every failing file in one run. Each shard uploads its raw
+  # per-file reports, and only when it passed: the merge refuses a missing shard.
+  # overwrite: re-running one shard replaces its own artifact.
+  test-shard:
+    name: Unit & Integration Tests Shard ${{ matrix.shard }} of 4
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout code
@@ -212,12 +223,12 @@ jobs:
       - name: Build chart dependencies
         run: helm dependency build charts/libredb-studio --skip-refresh
 
-      - name: Run the test suite with coverage
-        # tests/run-tests.ts runs every test file in its own bun process, several
-        # at a time, and merges the per-file lcov reports. It is the same command
-        # a contributor runs (`bun run test`) with coverage turned on, which is
-        # the point: the gate and the documented command cannot drift apart.
-        run: bun run test:coverage
+      - name: Run this shard of the test suite with coverage
+        # tests/run-tests.ts runs every test file of this shard in its own bun
+        # process, several at a time, and writes one lcov report per file. It is
+        # the command a contributor runs (`bun run test`) with coverage and a
+        # shard, so `bun run test --shard=I/4` reproduces this job locally.
+        run: bun run test --coverage --shard=${{ matrix.shard }}/4
         env:
           # Optional on a contributor's machine, mandatory here: this job installs Helm and
           # builds the chart dependency, so a chart test that did not run is a defect, and the
@@ -228,6 +239,66 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
+
+      - name: Upload this shard's raw coverage reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-raw-${{ matrix.shard }}
+          path: coverage/raw/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # The required check. It needs every shard, runs unless the run was cancelled,
+  # and fails first on any shard result but success: a job skipped because a job
+  # it needs failed reports "skipped", which branch protection accepts like
+  # success, so the result is checked here rather than left to `needs`.
+  # The shards' raw reports are merged once, as one unsharded run merges them,
+  # because the merge is not associative (tests/runner/shard.ts).
+  test:
+    name: Unit & Integration Tests
+    needs: [test-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Require every test shard to have passed
+        env:
+          SHARDS: ${{ needs.test-shard.result }}
+        run: |
+          if [ "$SHARDS" != "success" ]; then
+            echo "::error::The test shards ended '$SHARDS', not 'success'; see the failing shard's log."
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node
+        # The merge and the coverage gate run under Node, on the product's
+        # baseline, as the shards' suite does (#709).
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Download every shard's raw coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-raw-*
+          merge-multiple: true
+          path: coverage/raw
+
+      - name: Merge the shards' coverage
+        run: bun tests/run-tests.ts --merge-shards=4 --merge-into=coverage/lcov.info
 
       # The project holds 100% line coverage (#196). Fail fast with the exact
       # uncovered file:line ranges instead of letting coverage erode silently.
@@ -285,11 +356,13 @@ jobs:
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
         # fails for a non-obvious reason (e.g. malformed report, merge bug).
+        # overwrite: this job re-runs whenever a shard is re-run.
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
           path: coverage/lcov.info
+          overwrite: true
 
       # Codecov publishes the same merged lcov for PR annotations and the README
       # badge. It is NOT the coverage gate: `coverage:check` above is, and it runs
@@ -313,7 +386,7 @@ jobs:
           fail_ci_if_error: false
 
   # The same suite, on the two platforms the project has never measured. Linux is
-  # covered by the `test` job above, which runs the identical runner with coverage.
+  # covered by the `test-shard` jobs above, which run the identical runner with coverage.
   #
   # A SEPARATE job rather than a matrix on `test`: GitHub appends the matrix values
   # to a matrix job's name, so matrixing `test` would rename the required check

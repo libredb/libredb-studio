@@ -687,7 +687,7 @@ bun run test:coverage
 
 * **E2E**: Playwright는 Chromium에서 전체 테스트를 실행하고 WebKit에서는 `security-headers` spec(`webkit-security`)을 실행합니다. 모두 production build(`bun run build && bun start`)를 대상으로 합니다.
 
-* **CI**: GitHub Actions에서는 lint + typecheck + build, Ubuntu에서 반드시 통과해야 하는 `Unit & Integration Tests` job(`bun run test:coverage` 실행 후 `bun run coverage:check`), windows-latest 및 macos-latest에서 필수가 아닌 `Cross-platform Tests` job, E2E 테스트, SonarCloud 분석을 실행합니다.
+* **CI**: GitHub Actions에서는 lint + typecheck + build, Ubuntu에서 반드시 통과해야 하는 `Unit & Integration Tests` job(4개 shard의 `bun run test --coverage --shard=I/4`를 병합한 뒤 `bun run coverage:check`), windows-latest 및 macos-latest에서 필수가 아닌 `Cross-platform Tests` job, E2E 테스트, SonarCloud 분석을 실행합니다.
 
 * **Coverage**: `bun run test:coverage`는 동일한 runner에 `--coverage`를 적용한 것입니다. 각 테스트 파일이 개별 lcov 파일을 생성하고 `scripts/merge-lcov.mjs`가 이를 `coverage/lcov.info`로 병합해 coverage 기준 검사와 SonarCloud에서 사용합니다.
 

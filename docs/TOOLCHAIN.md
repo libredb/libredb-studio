@@ -644,6 +644,11 @@ coverage produced on Windows merges as the same file as coverage produced on Lin
 second file the source filter then drops.
 The source filter keeps `src/` (minus `src/components/ui/`) and each workspace package's `packages/<name>/src/` ("Workspace packages (`packages/`)" below).
 
+CI runs the suite as four shards, each a job running `bun run test --coverage --shard=I/4`, and the required `Unit & Integration Tests` job waits for all four and merges them.
+A shard is every fourth file of the sorted selection, round-robin, so `bun run test --shard=2/4` reproduces shard 2 and `--list` with `--shard` names its files.
+Each shard ships its raw per-file reports and a `shard-I-of-4.txt` record of the files it ran, and the merge job runs `bun tests/run-tests.ts --merge-shards=4 --merge-into=coverage/lcov.info`, which refuses to merge unless the records list every selected file once, and then makes the one merge an unsharded run makes.
+The shards are merged once from their raw reports, never as four merged reports, because the merge below is not associative: a merge of merges could elect a different authority record and change which lines count as coverable.
+
 Holding 100% honestly requires knowing how bun measures:
 
 1. **Per-function granularity (V8 semantics).** Functions that executed in a process get a precise
@@ -669,7 +674,8 @@ Holding 100% honestly requires knowing how bun measures:
    bare punctuation; these are removed against the actual source before SonarCloud reads the report.
 5. **Diagnosis recipe:** when a file shows stubborn uncovered lines, compare its records across
    `coverage/raw/file-*/lcov.info` - one directory per test file, numbered by that file's position
-   in the sorted selection, so line N of `bun tests/run-tests.ts --list` is what wrote `file-N`. If
+   in the whole sorted selection, so line N of `bun tests/run-tests.ts --list` is what wrote `file-N`,
+   in a shard too. If
    the zero lines are absent from the record with the most hits, they are measurement phantoms (fix
    the merge inputs), not test gaps.
 6. **Mock fidelity over stubs:** hover/portal-dependent branches are closed by making test mocks

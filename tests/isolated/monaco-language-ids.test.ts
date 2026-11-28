@@ -45,7 +45,7 @@
  * WHY THIS READS `node_modules/monaco-editor/min/vs` AND NOT THE SERVED COPY. The plan's snippet
  * said `public/monaco/vs/language`. MEASURED, and the plan is wrong: `/public/monaco/` is
  * gitignored (`.gitignore:30`) and is produced by `scripts/copy-monaco.mjs`, which is wired into
- * the `dev` and `build` scripts only. The CI test job runs `bun run test:coverage` with no staging
+ * the `dev` and `build` scripts only. The CI test shards run `bun run test --coverage` with no staging
  * step, so on a fresh checkout that directory does not exist and a test reading it would either
  * fail in CI or be written to skip and pass vacuously. `stageMonacoAssets` copies
  * `node_modules/monaco-editor/min/vs` verbatim into `public/monaco/vs`, and the two copies of the

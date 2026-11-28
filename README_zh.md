@@ -665,7 +665,7 @@ bun run test:coverage
 - **为什么每个文件一个进程**：bun 的 `mock.module()` 是进程级且无法撤销的，而整模块 mock 是 `tests/api/` 里的标准写法，所以共享进程的文件会互相污染。在 20 核的 Linux 上用 bun 1.4.2，整套测试一次跑一个文件耗时 211 秒，一次 4 个 61 秒，一次 20 个 36 秒，测量时间是 2026-09-15，覆盖当时仓库里的 538 个文件；backlog D86 记着同样这三个数字和同样的口径。
 - **到哪都是同一条命令**：runner 用 TypeScript 而不是 shell 写，这样告诉贡献者的命令在 Linux、macOS 和 Windows 各自的 shell 里都能用。它替掉的那些 bash 脚本做不到：其中一个用了 `mapfile`，那是 bash 4 的内建命令，macOS 的 bash 3.2 没有。
 - **E2E**：Playwright 在 Chromium 上跑全套，在 WebKit 上跑 `security-headers` 这个 spec（`webkit-security`），都是针对生产构建（`bun run build && bun start`）
-- **CI**：GitHub Actions 跑 lint + typecheck + build、ubuntu 上必过的 `Unit & Integration Tests` 任务（先 `bun run test:coverage` 再 `bun run coverage:check`）、windows-latest 与 macos-latest 上非必过的 `Cross-platform Tests` 任务、E2E 测试，以及 SonarCloud 分析
+- **CI**：GitHub Actions 跑 lint + typecheck + build、ubuntu 上必过的 `Unit & Integration Tests` 任务（先合并 4 个分片的 `bun run test --coverage --shard=I/4`，再 `bun run coverage:check`）、windows-latest 与 macos-latest 上非必过的 `Cross-platform Tests` 任务、E2E 测试，以及 SonarCloud 分析
 - **覆盖率**：`bun run test:coverage` 就是同一个 runner 加 `--coverage`，每个测试文件写一份 lcov；`scripts/merge-lcov.mjs` 把它们合并成 `coverage/lcov.info`，供门禁和 SonarCloud 使用
 
 > **重要**：始终用 `bun run test`，不要对整个目录裸跑 `bun test`。`bun test tests/api` 会把所有文件塞进一个进程，于是一个文件的模块 mock 就成了所有文件的。要跑单个文件，把它交给 runner：`bun tests/run-tests.ts tests/api/proxy.test.ts`。

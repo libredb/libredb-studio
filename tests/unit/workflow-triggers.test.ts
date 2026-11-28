@@ -164,10 +164,17 @@ describe("what a pull request runs", () => {
     "channel-e2e",
     "sonarcloud",
   ];
-  const PULL_REQUEST = ["lint-and-build", "test", "engine-payload", "out-of-tree-acceptance", "helm-lint"];
+  const PULL_REQUEST = [
+    "lint-and-build",
+    "test-shard",
+    "test",
+    "engine-payload",
+    "out-of-tree-acceptance",
+    "helm-lint",
+  ];
 
   /** The `if` a job behind a required check may carry; every other one carries none. */
-  const ALLOWED_IF: Readonly<Record<string, string>> = {};
+  const ALLOWED_IF: Readonly<Record<string, string>> = { test: "${{ !cancelled() }}" };
 
   function needsOf(job: Job): string[] {
     if (job.needs === undefined) return [];
@@ -249,5 +256,75 @@ describe("the main-only cross-platform legs", () => {
         expect({ id, run: step.run ?? "" }).not.toEqual({ id, run: expect.stringContaining("--file-timeout") });
       }
     }
+  });
+});
+
+describe("the sharded suite", () => {
+  const ci = workflow("ci.yml");
+  const shard = ci.jobs["test-shard"] as Job & {
+    strategy?: { "fail-fast"?: boolean; matrix?: { shard?: number[] } };
+  };
+  const fanIn = ci.jobs.test as Job;
+  const shards = shard?.strategy?.matrix?.shard ?? [];
+  const count = shards.length;
+
+  test("the shard matrix is 1 to N and every shard runs its own part with coverage", () => {
+    expect(count).toBeGreaterThan(1);
+    expect(shards).toEqual(Array.from({ length: count }, (_, index) => index + 1));
+    // fail-fast off: a red pull request shows every failing file in one run.
+    expect(shard.strategy?.["fail-fast"]).toBe(false);
+    const suite = shard.steps?.find((step) => step.run?.startsWith("bun run test"));
+    expect(suite?.run).toBe(`bun run test --coverage --shard=\${{ matrix.shard }}/${count}`);
+    expect(suite?.env?.LIBREDB_REQUIRE_HELM).toBe("1");
+  });
+
+  test("the required check needs every shard, runs unless cancelled and fails on any shard result but success", () => {
+    expect(fanIn.name).toBe("Unit & Integration Tests");
+    expect(fanIn.needs).toEqual(["test-shard"]);
+    // A job skipped because a job it needs failed reports "skipped", which branch
+    // protection takes as success; so the job runs unless cancelled, and its first
+    // step fails it on any shard result but success.
+    expect(fanIn.if).toBe("${{ !cancelled() }}");
+    const check = fanIn.steps?.[0];
+    expect(check?.env?.SHARDS).toBe("${{ needs.test-shard.result }}");
+    for (const [result, passes] of [
+      ["success", true],
+      ["failure", false],
+      ["cancelled", false],
+      ["skipped", false],
+    ] as const) {
+      const ran = Bun.spawnSync(["bash", "-e", "-c", check?.run ?? "exit 3"], {
+        env: { PATH: process.env.PATH, SHARDS: result },
+      });
+      expect({ result, passed: ran.exitCode === 0 }).toEqual({ result, passed: passes });
+    }
+  });
+
+  test("the required check merges exactly N shards and then holds the 100% gate", () => {
+    const steps = fanIn.steps ?? [];
+    const merge = steps.findIndex(
+      (step) => step.run === `bun tests/run-tests.ts --merge-shards=${count} --merge-into=coverage/lcov.info`,
+    );
+    const gate = steps.findIndex((step) => step.run === "bun run coverage:check");
+    const upload = steps.findIndex((step) => step.with?.name === "coverage");
+    expect(merge).toBeGreaterThan(0);
+    expect(gate).toBeGreaterThan(merge);
+    expect(upload).toBeGreaterThan(gate);
+    expect(steps[upload]?.with?.overwrite).toBe(true);
+  });
+
+  test("every shard uploads its own raw reports and the fan-in downloads all of them", () => {
+    const upload = shard.steps?.find((step) => step.uses?.startsWith("actions/upload-artifact@"));
+    expect(upload?.with).toEqual({
+      name: "coverage-raw-${{ matrix.shard }}",
+      path: "coverage/raw/",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+      overwrite: true,
+    });
+    // A failed shard uploads nothing, so the merge refuses an incomplete set.
+    expect(upload?.if).toBeUndefined();
+    const download = fanIn.steps?.find((step) => step.uses?.startsWith("actions/download-artifact@"));
+    expect(download?.with).toEqual({ pattern: "coverage-raw-*", "merge-multiple": true, path: "coverage/raw" });
   });
 });

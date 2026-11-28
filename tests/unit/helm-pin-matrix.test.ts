@@ -63,11 +63,11 @@ const HELM_3 = "v3.16.0";
  * disappears, and a site that is added without being classified all fail.
  */
 const EXPECTED_PINS: Record<string, string> = {
-  // Required "Unit & Integration Tests" check: spawns `helm template` from the
-  // helm-chart-*.test.ts files. Produces no published byte.
-  "ci.yml:test": HELM_4,
+  // The shards of the required "Unit & Integration Tests" check: spawn
+  // `helm template` from the helm-chart-*.test.ts files. Produces no published byte.
+  "ci.yml:test-shard": HELM_4,
   // The same suite on windows-latest and macos-latest, not a required check.
-  // Same pin as ci.yml:test for the same reason the two suite sites below share
+  // Same pin as ci.yml:test-shard for the same reason the two suite sites below share
   // one: the helm-chart tests assert on what `helm template` renders, so a
   // platform leg on a different client would report a difference that is the
   // client's, not the platform's.
@@ -75,7 +75,7 @@ const EXPECTED_PINS: Record<string, string> = {
   // Advisory chart lint + a conditional kind `ct install`. Raised on purpose so
   // chart-testing under Helm 4 is exercised somewhere non-blocking.
   "ci.yml:helm-lint": HELM_4,
-  // Runs the same helm-touching suite as ci.yml:test - see the drift test below.
+  // Runs the same helm-touching suite as ci.yml:test-shard - see the drift test below.
   "npm-publish.yml:validate": HELM_4,
   // THE DELIBERATE ODD ONE OUT. Do not "fix" this. See the header.
   "helm-release.yml:lint-test": HELM_3,
@@ -91,7 +91,7 @@ const EXPECTED_PINS: Record<string, string> = {
 const HELM3_PINNED_SITE = "helm-release.yml:lint-test";
 
 /** The jobs that run the helm-touching test suite; #434 was their drift. */
-const SUITE_SITES = ["ci.yml:test", "ci.yml:test-cross-platform", "npm-publish.yml:validate"];
+const SUITE_SITES = ["ci.yml:test-shard", "ci.yml:test-cross-platform", "npm-publish.yml:validate"];
 
 interface HelmPin {
   site: string;
