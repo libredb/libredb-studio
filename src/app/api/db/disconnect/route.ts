@@ -6,10 +6,10 @@ import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import type { UserPayload } from "@/lib/auth";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { logger } from "@/lib/logger";
 
-/** The namespace `resolveConnection` fills from the operator's configuration (src/lib/seed/resolve-connection.ts). */
+/** The namespace the connection resolve fills from the operator's configuration (src/lib/seed/resolve-connection.ts). */
 const SEED_NAMESPACE = "seed:";
 
 /**
@@ -20,16 +20,17 @@ const SEED_NAMESPACE = "seed:";
  *
  * Without governance every caller of a connection shares its provider, so there is no owner to scope by, and removing
  * every provider of the id would let any signed-in user tear down other users' providers and SSH tunnels by naming it
- * (docs/SECURITY.md, note 0.9). A connection of the user's own is resolved from the record the request carries, as
- * every route resolves it, and only the entries its own provider key names go, the editor's and the execution profiles'
- * (`removeProvider`): the key frames the server and the credentials, so a record naming another user's connection id
- * names entries of its own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the
+ * (docs/SECURITY.md, note 0.9). A connection of the user's own is resolved from the record the request carries, for
+ * any engine the server serves (`resolveServedConnection`), and only the entries its own key names go
+ * (`removeProvider`): a legacy provider's editor and execution-profile entries, and a provider package's editor and
+ * metadata sessions, whose entries are framed by the same key (`editorCacheKey`). The key frames the server and the
+ * credentials, so a record naming another user's connection id names entries of its own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the
  * idle sweep reclaims it.
  *
  * Answers whether it asked the factory to remove anything, so the route logs what the disconnect did.
  */
 async function removeCallersProviders(
-  body: Parameters<typeof resolveConnection>[0],
+  body: Parameters<typeof resolveServedConnection>[0],
   connectionId: string,
   session: UserPayload,
 ): Promise<boolean> {
@@ -39,7 +40,7 @@ async function removeCallersProviders(
     return true;
   }
   if (connectionId.startsWith(SEED_NAMESPACE)) return false;
-  const connection = await resolveConnection(body, session);
+  const { connection } = await resolveServedConnection(body, session);
   const key = await editorCacheKey(connection, editorExecutionContext(session, connection));
   await removeProvider(connection.id, { key });
   return true;

@@ -20,6 +20,9 @@ import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import type { DatabaseProvider } from "@/lib/db/types";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -69,15 +72,26 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
-      return body.connection;
+      const connection = body.connection as { type: string };
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
 });
+
+// The cancel opens the editor's session of any record (`getOrCreateEditorSession`); for these legacy connections it
+// answers the provider-form entry of the provider `mockGetOrCreateProvider` hands out, with the same arguments after
+// the record, so each case reads the open's execution context and wait where it always did.
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateEditorSession: async (connection: unknown, _engine: unknown, execution: unknown, wait: unknown) =>
+    editorEntryOf((await mockGetOrCreateProvider(connection, {}, execution, wait)) as DatabaseProvider),
+}));
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module("@/lib/db", () => ({

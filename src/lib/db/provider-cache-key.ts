@@ -1,11 +1,6 @@
 import { connectionFingerprint } from "./connection-fingerprint";
 import { type EngineConnection, servedEngineRecord } from "./server-catalog";
-import {
-  type DatabaseConnection,
-  LITERAL_SEED_FILE,
-  type WithLiteralSeedFile,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { LITERAL_SEED_FILE, type WithLiteralSeedFile, type WithTunnelFarEnd } from "@/lib/types";
 
 /**
  * The key `providerCache` holds a live provider under, and why it is not `connection.id`
@@ -95,7 +90,7 @@ import {
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export async function providerCacheKey(
-  connection: DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile,
+  connection: EngineConnection & WithTunnelFarEnd & WithLiteralSeedFile,
   allowExternalFileAccess?: boolean,
   owner?: string,
 ): Promise<string> {
@@ -160,7 +155,7 @@ export async function frameCacheKey(
  * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no engine the server knows.
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
-export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
+export function providerOwner(connection: EngineConnection, owner: string | undefined): string | undefined {
   return servedEngineRecord(connection.type).grants.singleWriterFile ? undefined : owner;
 }
 

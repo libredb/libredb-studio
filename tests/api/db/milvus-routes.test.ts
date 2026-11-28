@@ -42,6 +42,8 @@ import {
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -79,8 +81,24 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  return { resolveConnection: mock(async (body: Record<string, unknown>) => body.connection), SeedConnectionError };
+  return {
+    resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    // The cancel route serves every engine the catalog serves: it reads the connection with its engine's record.
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => ({
+      connection: body.connection,
+      engine: servedEngineRecord((body.connection as DatabaseConnection).type),
+    })),
+    SeedConnectionError,
+  };
 });
+
+// The cancel opens the editor's session of any record (`getOrCreateEditorSession`): the provider-form entry of the
+// provider the case built.
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateEditorSession: async () => editorEntryOf(provider),
+}));
 
 mock.module("@/lib/audit", () => ({
   getServerAuditBuffer: () => ({ push: (event: Record<string, unknown>) => auditEvents.push(event) }),

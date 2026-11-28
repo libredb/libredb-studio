@@ -242,6 +242,35 @@ describe("the factory's editor cache and a provider package's engine", () => {
     await clearProviderCache();
   });
 
+  test("a package engine's record keys its editor session by the frame editorCacheKey answers", async () => {
+    await clearProviderCache();
+    hooks = packageHooks();
+    seen.length = 0;
+    const connection = packageConnection();
+    const engine = engineOf("acmecached");
+    const owned = { owner: "alice-subject", ownerPoolMax: 2 };
+    for (const execution of [ADMIN, owned]) {
+      const editor = await getOrCreateEditorSession(connection, engine, execution);
+      const metadata = await getOrCreateMetadataSession(connection, engine, execution);
+      const key = await editorCacheKey(connection, execution);
+      expect([editor.frame, metadata.frame]).toEqual([key, key]);
+    }
+    // The other owner's key names other entries, so a removal by one record's key closes that record's two sessions.
+    expect(await editorCacheKey(connection, owned)).not.toBe(await editorCacheKey(connection, ADMIN));
+    await removeProvider(connection.id, { key: await editorCacheKey(connection, ADMIN) });
+    expect(seen.filter((name) => name === "close")).toHaveLength(2);
+    expect(getProviderCacheStats().size).toBe(1);
+
+    // A package's connection without an id is refused by name before anything is framed, naming no legacy provider.
+    const refusal = await editorCacheKey({ ...connection, id: "" }, ADMIN).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect([(refusal as DatabaseConfigError).message, (refusal as DatabaseConfigError).provider]).toEqual([
+      "Connection ID is required",
+      undefined,
+    ]);
+    await clearProviderCache();
+  });
+
   test("openEngineOnce answers a legacy record's provider built and not connected, and a package's connected session, never cached", async () => {
     await clearProviderCache();
     const within = () => ({ deadline: Date.now() + 1_000, signal: new AbortController().signal });

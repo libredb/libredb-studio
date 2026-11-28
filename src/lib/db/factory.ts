@@ -66,7 +66,9 @@ import {
   type EngineConnection,
   type EngineRecord,
   legacyProviderEngine,
+  legacyProviderType,
   offersLegacyProvider,
+  servedEngineRecord,
   servedPackage,
 } from "./server-catalog";
 import {
@@ -1583,8 +1585,9 @@ async function openEditorProvider(
 /**
  * The key `getOrCreateProvider` caches the provider of `connection` under for `execution`: {@link providerCacheKey} of
  * the connection, of its file-access posture as a definite boolean, absent read as deny, and of the owner that
- * `providerOwner` answers. A connection without an id is refused before the key frames it, as in `getOrCreateProvider`
- * (#1539).
+ * `providerOwner` answers. For a provider package's record it is the frame its editor session and its metadata session
+ * are cached with (`openPackageEntry`), so a removal by this key names both. A connection without an id is refused
+ * before the key frames it, as in `getOrCreateProvider` (#1539), naming its engine's legacy provider where it has one.
  *
  * Exported for two callers that must name a cached entry without deriving a second key, as `profiledCacheKey` is for its
  * own. The transaction route records the key a governed `begin` resolved, and a later request that resolves another
@@ -1595,10 +1598,12 @@ async function openEditorProvider(
  * re-export it.
  */
 export async function editorCacheKey(
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   execution: EditorExecutionContext = {},
 ): Promise<string> {
-  assertConnectionIdPresent(connection);
+  if (!connection.id) {
+    throw new DatabaseConfigError("Connection ID is required", legacyProviderType(servedEngineRecord(connection.type)));
+  }
   return providerCacheKey(
     connection,
     execution.allowExternalFileAccess === true,
