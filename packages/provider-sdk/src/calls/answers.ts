@@ -1006,9 +1006,15 @@ type PanelForms = {
   readonly [P in MonitoringPanelRequest["panel"]]: Extract<MonitoringPanelAnswer, Record<P, unknown>>;
 };
 
+/** The form of an answer to a request whose panel is outside the vocabulary: refused at the top level, whatever it is. */
+const unknownPanelForm: Form = (_value, pointer, out) => {
+  refuse(out, pointer);
+};
+
 /**
  * The form of the answer to `request`: a closed record of the request's panel alone, holding that panel's member, the
- * slow queries and the sessions at most the request's `limit` long.
+ * slow queries and the sessions at most the request's `limit` long. A panel outside the vocabulary has no form, and an
+ * answer to it is refused at the top level (`unknownPanelForm`).
  */
 function panelAnswerForm(request: MonitoringPanelRequest): Form {
   switch (request.panel) {
@@ -1036,6 +1042,8 @@ function panelAnswerForm(request: MonitoringPanelRequest): Form {
       return recordForm<PanelForms["storage"]>({
         storage: required(closedListForm(storageStatsForm, ANSWER_LIST_MAX.storage)),
       });
+    default:
+      return unknownPanelForm;
   }
 }
 
@@ -1045,7 +1053,9 @@ function panelAnswerForm(request: MonitoringPanelRequest): Form {
  * `panel-answer-unreadable` otherwise: a plain record whose one key is the request's panel, another key named, holding
  * that panel's member closed over the SDK's monitoring types, every count a non-negative safe integer, every time,
  * ratio and rate a finite non-negative number, every date a valid `Date`, and the slow queries and the sessions at most
- * the request's `limit` long, a limit `checkMonitoringPanelRequest` admitted before the call. Never throws.
+ * the request's `limit` long, a limit `checkMonitoringPanelRequest` admitted before the call. An answer to a request
+ * whose panel is outside the vocabulary, which that check refuses before any call, is refused at the top level. Never
+ * throws.
  */
 export function checkPanelAnswer(request: MonitoringPanelRequest, answer: unknown): AnswerCheck<MonitoringPanelAnswer> {
   const out: Refusals = { rule: "panel-answer-unreadable", list: [] };
@@ -1143,9 +1153,10 @@ function rowForm(fields: ReadonlySet<string> | undefined): Form {
 /**
  * `answer`, what a `maintenance.run` call answered, read as the SDK's `MaintenanceRunAnswer` closed: the answer itself,
  * typed, where nothing is refused, and its refusals as `maintenance-run-answer-unreadable` otherwise. Its members are
- * read in the answer's order, its rows last: rows with no fields are refused at `/fields`, and each row is read
- * (`rowForm`) against the answer's fields where they were read whole as a list of text, since a key can be named
- * outside them only then. Never throws.
+ * read in the answer's order, its rows last: rows with no fields are refused at `/fields`, unless the fields were
+ * already refused there, behind an accessor, so a member is refused once, and each row is read (`rowForm`) against the
+ * answer's fields where they were read whole as a list of text, since a key can be named outside them only then. Never
+ * throws.
  */
 export function checkMaintenanceRunAnswer(answer: unknown): AnswerCheck<MaintenanceRunAnswer> {
   const out: Refusals = { rule: "maintenance-run-answer-unreadable", list: [] };
@@ -1172,7 +1183,7 @@ export function checkMaintenanceRunAnswer(answer: unknown): AnswerCheck<Maintena
     }),
   })(answer, "", out);
   if (read.rows !== undefined) {
-    if (read.fields === undefined) refuse(out, "/fields");
+    if (read.fields === undefined && !out.list.some((refusal) => refusal.pointer === "/fields")) refuse(out, "/fields");
     const fields = read.fieldsRead ? read.fields : undefined;
     closedListForm(rowForm(fields), ANSWER_LIST_MAX.rows)(read.rows.value, read.rows.pointer, out);
   }

@@ -1620,6 +1620,13 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
       panelUnreadable("/activeSessions"),
     ]);
 
+    // A request whose panel is outside the vocabulary, which checkMonitoringPanelRequest refuses before any call, has
+    // no form: whatever is answered to it is refused at the top level, and the check does not throw.
+    const unknown = { panel: marker() } as unknown as MonitoringPanelRequest;
+    for (const answer of [{}, { overview: overviewOf() }, null]) {
+      expect(panel(unknown, answer)).toEqual([panelUnreadable("")]);
+    }
+
     // No refusal, and no sentence of one, carries a value of the answer.
     const value = marker();
     const refusals = panel(requests.overview, { overview: overviewOf({ version: 3, uptime: value, [value]: value }) });
@@ -1747,6 +1754,10 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
     ]);
     expect(refusalsOf(checkMaintenanceRunAnswer(runOf({ rows: [withAccessor({}, "a", reads, 1)] })))).toEqual([
       runUnreadable("/rows/0/a"),
+    ]);
+    // Fields behind an accessor beside rows are refused once, at the accessor, not again as rows without fields.
+    expect(refusalsOf(checkMaintenanceRunAnswer(withAccessor(runOf(), "fields", reads, ["a"])))).toEqual([
+      runUnreadable("/fields"),
     ]);
     expect(refusalsOf(checkMaintenancePreviewAnswer(withAccessor(previewOf(), "summary", reads)))).toEqual([
       previewUnreadable("/summary"),
