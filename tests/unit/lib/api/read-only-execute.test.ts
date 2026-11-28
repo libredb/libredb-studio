@@ -732,6 +732,20 @@ describe("a provider package's read-only statement session", () => {
     expect(entry.running).toBe(0);
   });
 
+  test("an estimating plan of every row on a provider package's session asks every row and answers a plan longer than the row budget whole", async () => {
+    const plan = [[1], [2], [3], [4], [5]];
+    const { seen, target } = await packageSession(PKG, () => answerOf([{ name: "op" }], plan));
+    const answer = await runReadOnlyPage(target, {
+      ...callOf({ type: PKG, budget: budgetOf({ maxResultRows: 1 }), mode: "estimate-plan" }),
+      page: { unlimited: true },
+    });
+    // A plan's rows are the optimizer's operators, held to the bytes alone (clause C-78), so the page is every row.
+    expect(seen.map(({ request }) => request.page)).toEqual([{ unlimited: true }]);
+    expect(answer.result.rows).toEqual(plan.map(([op]) => ({ op })));
+    expect(answer.result.rowCount).toBe(5);
+    expect(answer.pageApplied).toBe(false);
+  });
+
   test("a package's warnings reach the answer by its record's words grant, and a page the host cut by bytes answers none of its rows", async () => {
     const marker = randomUUID();
     const warned = {

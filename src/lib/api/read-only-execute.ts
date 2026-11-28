@@ -74,9 +74,10 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * On a provider package's read-only statement session (`readOnlySessionPage`), which the provider factory opened through
  * the package under the read-only statement policy (clauses C-78 and C-109), the call is the same one host core
  * execute, with the session's declared environment, counted on its cache entry while it runs and until a stopped call
- * settles (`markedCall`). The contract pumps only a bounded page, so a call of every row asks for one row past the row
- * budget from the first row, which makes an answer past the budget a refusal, never a cut, and a paged call sends the
- * caller's page; the host core refuses a non-zero offset the package does not honour before the call, which the
+ * settles (`markedCall`). A call of every row asks for one row past the row budget from the first row, which makes an
+ * answer past the budget a refusal, never a cut, except an estimating plan, which asks every row and is held to the
+ * host's 32 MiB page alone, so a plan longer than the row budget is answered whole as the provider arm answers it; a
+ * paged call sends the caller's page; the host core refuses a non-zero offset the package does not honour before the call, which the
  * accessor answers as `StudioOffsetRefusal`, not-sent (clause C-111). The request carries the budget's rows and bytes and the caller's mode in `readOnly` and no billed-read
  * allowance, which stays with the host (clause C-78). The page is read into a result (`readOnlyPageResult` in
  * ./session-target), a page the host cut at its 32 MiB refused as `StudioByteBudgetRefusal` with none of its rows, held
@@ -244,8 +245,10 @@ async function readOnlySessionPage(
       `A read-only execute named the engine "${type}" on the read-only statement session of "${engine.id}": a host defect.`,
     );
   }
-  // Every row is one row past the row budget from the first row: the contract pumps only a bounded page.
-  const page = "unlimited" in call.page ? { limit: budget.maxResultRows + 1, offset: 0 } : call.page;
+  // Every row of an executing statement is one row past the row budget from the first row, so an answer past the
+  // budget is refused, never cut; every row of an estimating plan is every row, held to the page's bytes alone.
+  const page: PageBound =
+    "unlimited" in call.page && mode !== "estimate-plan" ? { limit: budget.maxResultRows + 1, offset: 0 } : call.page;
   const deadline = Date.now() + budget.statementTimeoutMs;
   const request: ExecuteRequest = {
     statement,
@@ -259,7 +262,8 @@ async function readOnlySessionPage(
   let columns: readonly Column[] = [];
   const pumpLimits = (answer: ExecuteAnswer): PumpLimits => {
     columns = answer.results[0]?.columns ?? [];
-    return { maxRows: page.limit, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
+    const maxRows = "unlimited" in page ? Number.MAX_SAFE_INTEGER : page.limit;
+    return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
   };
   const packageAnswer = (error: unknown) => packageFailureAnswer(engine, "execute", error, scrub, call.route);
   const view = budgetViewOf(call, undefined);
