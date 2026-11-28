@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { cancelEditorRun, runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import {
@@ -112,7 +113,9 @@ describe("one host core per process", () => {
     forgetHostCore();
     const [ran, cancelled] = await Promise.all([
       runEditorQuery({ form: "provider", provider }, run).catch((error: unknown) => error),
-      cancelEditorRun(provider, randomUUID(), new AbortController().signal, "test").catch((error: unknown) => error),
+      cancelEditorRun(providerConsoleTarget(provider), randomUUID(), new AbortController().signal, "test").catch(
+        (error: unknown) => error,
+      ),
     ]);
 
     expect(() => hostCore()).toThrow(HostCoreBootOrderError);

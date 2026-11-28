@@ -3,13 +3,14 @@
  * the environment every call of it is given, its statement timeout and the run marks of the cache entry it lives in.
  *
  * Every builder of a legacy provider's session target lives here, the object tree's (`providerTreeTarget`), the object
- * source's (`providerSourceTarget`), the monitoring and health reads' (`providerMonitoringTarget`) and the maintenance
- * calls' (`providerMaintenanceTarget`), so this is the one module of the caller facades that builds a bridged session
- * for them (`bridgedConsole` and `bridgedMaintenance` in src/lib/provider-host/legacy-bridge.ts), and every builder of
- * a target from a cache entry of the provider factory, by the entry's form, so no facade and no route forks on who
- * serves an engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code
- * backend, which is handed the factory's functions and imports none of them, builds its targets here too; the builders
- * that open through the factory live in src/lib/api/editor-provider.ts and call these.
+ * source's (`providerSourceTarget`), the monitoring and health reads' (`providerMonitoringTarget`), the maintenance
+ * calls' (`providerMaintenanceTarget`) and the console cancel's (`providerConsoleTarget`), so this is the one module of
+ * the caller facades that builds a bridged session for them (`bridgedConsole` and `bridgedMaintenance` in
+ * src/lib/provider-host/legacy-bridge.ts), and every builder of a target from a cache entry of the provider factory, by
+ * the entry's form, so no facade and no route forks on who serves an engine. This module value-imports no provider
+ * factory module (src/lib/db/factory.ts), so the VS Code backend, which is handed the factory's functions and imports
+ * none of them, builds its targets here too; the builders that open through the factory live in
+ * src/lib/api/editor-provider.ts and call these.
  *
  * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
@@ -35,7 +36,7 @@ import {
   type ObjectReadOptions,
   type ProviderCapabilities,
 } from "@/lib/db/types";
-import type { StoppedRecord } from "@/lib/provider-host/core/console";
+import type { ConsoleSession, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
@@ -97,6 +98,9 @@ export interface MaintenanceTarget extends SessionTarget<Omit<MaintenanceSession
    */
   maintenance(): EngineMaintenance;
 }
+
+/** A session target of the console cancel (`cancelEditorRun` in src/lib/api/editor-query.ts). */
+export type ConsoleTarget = SessionTarget<ConsoleSession>;
 
 /** A legacy provider reads no declared environment, so its calls get a reader of none. */
 const NO_ENVIRONMENT = envReader([], () => undefined);
@@ -182,6 +186,31 @@ export function providerMaintenanceTarget(
     session: bridgedConsole(provider, {}).session,
     maintenance: () => bridgedMaintenance(provider, declared),
     ...providerFields(provider),
+  };
+}
+
+/**
+ * The console target of `provider`: one bridged session of it, built when this is called, whose `console.cancel` is
+ * offered exactly where the provider can cancel; no environment, no marks, and, when asked, the provider's statement
+ * timeout.
+ */
+export function providerConsoleTarget(provider: DatabaseProvider): ConsoleTarget {
+  return { session: bridgedConsole(provider, {}).session, ...providerFields(provider) };
+}
+
+/**
+ * The console target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
+ * provider's through `providerConsoleTarget`; a provider package's session with its declared environment, the
+ * connection's own statement timeout or Studio's default, and the marks of each call on the entry.
+ */
+export function entryConsoleTarget(entry: CachedSession, connection: EngineConnection): ConsoleTarget {
+  const { opened } = entry;
+  if (opened.form === "provider") return providerConsoleTarget(opened.provider);
+  return {
+    session: opened.session,
+    env: opened.env,
+    timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
+    ...entryMarks(entry),
   };
 }
 

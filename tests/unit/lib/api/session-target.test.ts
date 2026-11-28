@@ -8,8 +8,10 @@ import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { CallRefusalError } from "@libredb/provider-sdk/calls";
 import {
+  entryConsoleTarget,
   entryMonitoringTarget,
   markedCall,
+  providerConsoleTarget,
   providerMaintenanceTarget,
   providerMonitoringTarget,
   providerTreeTarget,
@@ -234,5 +236,55 @@ describe("the monitoring target of a cache entry", () => {
     expect(target.accepted()).toBe(fresh as never);
     expect(capabilities.mock.calls.length).toBe(before + 1);
     expect(providerMonitoringTarget(provider).accepted()).toBe(fresh as never);
+  });
+});
+
+describe("the console target", () => {
+  test("a provider's console target is one bridged session with no environment and no marks, and an entry's is its session by form, the package's counting each call on the entry", async () => {
+    // A provider's: one bridged session, which offers the cancel exactly where the provider can cancel.
+    const provider = providerOf(4_000);
+    Object.assign(provider, { cancelQuery: mock(async () => true) });
+    const target = providerConsoleTarget(provider);
+    expect(target.session.calls.console.cancel).toBe("offered");
+    expect(target.session.calls).toEqual(bridgedConsole(provider, {}).session.calls);
+    expect(target.env).toBe(providerTreeTarget(provider).env);
+    expect(target.timeout()).toBe(4_000);
+    expect(target.started()).toBeUndefined();
+    expect(target.ended({ kind: "answered" })).toBeUndefined();
+    expect(providerConsoleTarget(providerOf()).session.calls.console.cancel).toBe("not-offered");
+
+    // A provider entry's: the provider's console target, its statement timeout the provider's own.
+    const providerEntry = { opened: { form: "provider", provider }, running: 0 } as unknown as CachedSession;
+    const connection = { id: "p", name: "p", type: "acmecon", queryTimeout: 1234 } as unknown as EngineConnection;
+    const fromProvider = entryConsoleTarget(providerEntry, connection);
+    expect(fromProvider.session.calls).toEqual(target.session.calls);
+    expect(fromProvider.env).toBe(target.env);
+    expect(fromProvider.timeout()).toBe(4_000);
+    fromProvider.started();
+    fromProvider.ended({ kind: "answered" });
+    expect(providerEntry.running).toBe(0);
+
+    // A package entry's: its session, its declared environment, the connection's timeout or Studio's default, and
+    // each call counted on the entry until it answered, or until the call a stop answered has settled.
+    const session = { calls: { console: { cancel: "offered" } }, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session, env }, running: 0, lastUsed: 0 } as unknown as CachedSession;
+    const packaged = entryConsoleTarget(entry, connection);
+    expect(packaged.session as unknown).toBe(session);
+    expect(packaged.env as unknown).toBe(env);
+    expect(packaged.timeout()).toBe(1234);
+    expect(entryConsoleTarget(entry, { ...connection, queryTimeout: undefined }).timeout()).toBe(DEFAULT_QUERY_TIMEOUT);
+    packaged.started();
+    expect(entry.running).toBe(1);
+    packaged.ended({ kind: "answered" });
+    expect([entry.running, entry.lastUsed > 0]).toEqual([0, true]);
+    const settled = Promise.withResolvers<void>();
+    packaged.started();
+    packaged.ended({ kind: "stopped", settled: settled.promise });
+    expect(entry.running).toBe(1);
+    settled.resolve();
+    await settled.promise;
+    await Promise.resolve();
+    expect(entry.running).toBe(0);
   });
 });

@@ -8,7 +8,7 @@ import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseErr
 import { cancelEditorRun, checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { objectTree } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
+import { providerConsoleTarget, providerTreeTarget } from "@/lib/api/session-target";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-token";
@@ -576,8 +576,14 @@ export function createHandlers(
           const provider = await openWithinCall(controller.signal, record.connection.type, (wait) =>
             providerWithin(record, wait),
           );
-          // Through the provider host core's cancel call, bounded by its cleanup deadline and the request's signal.
-          const answer = await cancelEditorRun(provider, queryId, controller.signal, CANCEL_ROUTE);
+          // Through the provider host core's cancel call on the provider's bridged session, bounded by its cleanup
+          // deadline and the request's signal.
+          const answer = await cancelEditorRun(
+            providerConsoleTarget(provider),
+            queryId,
+            controller.signal,
+            CANCEL_ROUTE,
+          );
           if (!answer.offered) {
             throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
           }

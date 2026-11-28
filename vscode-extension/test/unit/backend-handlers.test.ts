@@ -2047,7 +2047,7 @@ describe("query/cancel", () => {
         ["cancelQuery", "q-8"],
       ],
     );
-    assert.match(source, /await cancelEditorRun\(provider, queryId, /);
+    assert.match(source, /await cancelEditorRun\(providerConsoleTarget\(provider\), queryId, /);
     assert.doesNotMatch(source, /provider\.cancelQuery\(/);
   });
 

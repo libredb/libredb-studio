@@ -7,6 +7,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { cancelEditorRun, openWithinCall } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
     // already aborted calls nothing and answers 499. A provider without the same `supportsQueryCancel` that
     // `/api/db/provider-meta` reports is not offered the cancel, so the editor does not offer a Cancel this refuses
     // (#1364).
-    const answer = await cancelEditorRun(provider, queryId, req.signal, "api/db/cancel");
+    const answer = await cancelEditorRun(providerConsoleTarget(provider), queryId, req.signal, "api/db/cancel");
     if (!answer.offered) {
       return NextResponse.json(
         { error: "Query cancellation is not supported for this database type", cancelled: false },

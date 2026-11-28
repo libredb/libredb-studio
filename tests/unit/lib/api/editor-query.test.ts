@@ -7,8 +7,11 @@ import {
   PAGE_MAX_BYTES,
   type ResultSource,
 } from "@libredb/provider-sdk/calls";
+import { randomUUID } from "node:crypto";
+import type { Calls } from "@libredb/provider-sdk/manifest";
 import {
   callContext,
+  cancelEditorRun,
   checkEditorQuery,
   contextOn,
   type EditorQueryRefusal,
@@ -18,6 +21,7 @@ import {
   runEditorQuery,
 } from "@/lib/api/editor-query";
 import { databaseErrorBody } from "@/lib/api/error-body";
+import { type ConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
 import { probePastPage } from "@/lib/api/page-probe";
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
@@ -38,7 +42,7 @@ import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types"
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { standInRecord } from "../../../helpers/stand-in-record";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
-import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import { HOST_DEFECT_PREFIX, HostDefectError } from "@/lib/provider-host/access";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -1436,3 +1440,86 @@ describe("the core's import closure stays free of Next", () => {
     );
   });
 });
+
+describe("cancelEditorRun", () => {
+  test("the cancel runs on any session its target states, a package's and the bridge's alike, and one that does not offer console.cancel is answered not offered without a call", async () => {
+    const queryId = randomUUID();
+    const env = envReader([], () => undefined);
+
+    // A package's session: the cancel is sent with the run id under the target's environment and the cleanup deadline,
+    // between the target's marks, and answers the session's outcome.
+    const seen: { request: unknown; ctx: CallContext }[] = [];
+    const marks: string[] = [];
+    const packaged: ConsoleTarget = {
+      session: {
+        calls: cancelCallsOf("offered"),
+        readOnlyStatements: false,
+        execute: () => Promise.reject(new Error("the cancel ran an execute")),
+        cancel: async (request, ctx) => {
+          seen.push({ request, ctx });
+          marks.push("called");
+          return { cancelled: false };
+        },
+      },
+      env,
+      timeout: () => 1,
+      started: () => {
+        marks.push("started");
+      },
+      ended: (record) => {
+        marks.push(`ended ${record?.kind}`);
+      },
+    };
+    const before = Date.now();
+    expect(await cancelEditorRun(packaged, queryId, new AbortController().signal, "test")).toEqual({
+      offered: true,
+      cancelled: false,
+    });
+    expect(seen.map(({ request }) => request)).toEqual([{ runId: queryId }]);
+    expect(seen[0]?.ctx.env).toBe(env);
+    expect(seen[0]?.ctx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(marks).toEqual(["started", "called", "ended answered"]);
+
+    // The bridge's session of a provider that cancels: the provider's own cancel, with the run id.
+    const cancelQuery = mock(async (_queryId: string) => true);
+    const provider = Object.assign(createMockProvider(), { cancelQuery });
+    expect(
+      await cancelEditorRun(providerConsoleTarget(provider), queryId, new AbortController().signal, "test"),
+    ).toEqual({ offered: true, cancelled: true });
+    expect(cancelQuery.mock.calls).toEqual([[queryId]]);
+
+    // A session that does not offer console.cancel: not offered, nothing called, and the marks still bracket the call.
+    marks.length = 0;
+    const bare: ConsoleTarget = { ...packaged, session: { ...packaged.session, calls: cancelCallsOf("not-offered") } };
+    expect(await cancelEditorRun(bare, queryId, new AbortController().signal, "test")).toEqual({ offered: false });
+    expect(seen).toHaveLength(1);
+    expect(marks).toEqual(["started", "ended refused"]);
+    expect(
+      await cancelEditorRun(providerConsoleTarget(createMockProvider()), queryId, new AbortController().signal, "test"),
+    ).toEqual({ offered: false });
+
+    // A malformed answer is a host defect naming the rule, never an answer.
+    const malformed: ConsoleTarget = {
+      ...packaged,
+      session: { ...packaged.session, cancel: async () => ({ cancelled: "yes" }) as unknown as { cancelled: boolean } },
+    };
+    let caught: unknown;
+    try {
+      await cancelEditorRun(malformed, queryId, new AbortController().signal, "test");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HostDefectError);
+    expect((caught as HostDefectError).refusals).toEqual([{ rule: "cancel-answer-unreadable", pointer: "/cancelled" }]);
+  });
+});
+
+/** A session's calls with `console.cancel` as `cancel` and nothing else beside the execute. */
+function cancelCallsOf(cancel: "offered" | "not-offered"): Calls {
+  return {
+    console: { execute: { honours: [] }, cancel, endScope: "not-offered", transaction: "not-offered" },
+    objects: { tree: "not-offered", source: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  };
+}
