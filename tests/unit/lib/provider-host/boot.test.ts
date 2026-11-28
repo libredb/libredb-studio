@@ -19,7 +19,10 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { admitted } from "@libredb/provider-loader";
+import { parseGrantRegister } from "@libredb/grant-register";
 import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { languageDataSha256 } from "@/lib/db/language-digest";
 import {
   forgetServerCatalog,
   serverCatalogBooting,
@@ -43,7 +46,14 @@ import {
   writeArtifact,
   writeLock,
 } from "../../../helpers/provider-artifacts";
-import { rawManifest } from "../../../helpers/package-catalog";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
+import { acmereadData } from "../../../helpers/declared-agent-language";
+import {
+  type EditableEngine,
+  packageRow,
+  rawManifest,
+  withStatementLanguageData,
+} from "../../../helpers/package-catalog";
 
 /** The banner's advice line: the channels that serve the lock command, and nothing else. */
 const ADVICE =
@@ -403,7 +413,7 @@ describe("boot admission", () => {
     const logs = spyLogs();
     let answer: Awaited<ReturnType<typeof bootAdmission>>;
     try {
-      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
+      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
       const calls = logs.error.mock.calls.filter(([message]) => message.includes(thrower.name));
       expect(calls.length).toBe(1);
       const [message, cause, context] = calls[0] as [string, unknown, unknown];
@@ -433,7 +443,7 @@ describe("boot admission", () => {
       });
     });
     try {
-      const answer = await bootAdmission(providers, 50);
+      const answer = await bootAdmission(providers, 50, STUDIO_GRANT_REGISTER);
       if (!answer.read) throw new Error("the lock was refused");
       expect(answer.refused.map(({ code }) => code)).toEqual(["PROVIDER_LOAD_FAILED"]);
       expect(logs.warn.mock.calls.filter(([message]) => message.includes(late.name)).length).toBe(1);
@@ -480,6 +490,53 @@ describe("boot admission", () => {
     expect(servedBy(quiet.id)).toBe(quiet.name);
   });
 
+  test("packages granted one statement language name are logged with PROVIDER_CATALOG_CONFLICT and none is admitted", async () => {
+    const providers = freshProviders();
+    const language = `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    // Each package's own data of the one name, so each row reviews its own data's digest.
+    const data = [acmereadData(language), acmereadData(language)] as const;
+    const stating = (index: 0 | 1) => (engine: Record<string, Record<string, unknown>>) => {
+      engine.agent = { statementLanguage: language, overlay: { dialect: null, grounding: null } };
+      withStatementLanguageData(engine as EditableEngine, data[index]);
+    };
+    const [first, second, quiet] = writePackages(providers, [{ engine: stating(0) }, { engine: stating(1) }, {}]) as [
+      Written,
+      Written,
+      Written,
+    ];
+    // Each row grants its package the name under the digest of the data written, keyed by its lock entry.
+    const register = parseGrantRegister(
+      ([first, second] as const).map((pkg, index) =>
+        packageRow({ name: pkg.name, version: "1.0.0", digest: pkg.digest }, pkg.id, {
+          statementLanguage: language,
+          languageSha256: languageDataSha256(data[index as 0 | 1]),
+        }),
+      ),
+      LEGACY_ENGINE_IDS,
+    );
+    const logs = spyLogs();
+    let answer: Awaited<ReturnType<typeof bootAdmission>>;
+    try {
+      answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register);
+      const lines = logs.warn.mock.calls.map(([message]) => message).filter((line) => line.includes("CATALOG"));
+      expect(lines).toEqual(
+        [first, second].map(
+          (pkg) =>
+            `${named("PROVIDER_CATALOG_CONFLICT", pkg)}it is granted a statement language Studio's catalog holds or another engine is granted`,
+        ),
+      );
+      expect(lines.join(" ")).not.toContain(language);
+    } finally {
+      logs.restore();
+    }
+    if (!answer.read) throw new Error("the lock written here is refused");
+    expect(answer.admitted.map(({ name }) => name)).toEqual([quiet.name]);
+    expect(answer.refused.map(({ name, code }) => `${name} ${code}`)).toEqual([
+      `${first.name} PROVIDER_CATALOG_CONFLICT`,
+      `${second.name} PROVIDER_CATALOG_CONFLICT`,
+    ]);
+  });
+
   test("a package a set rule refuses is absent from the loader's registry, which names exactly the packages the catalog serves", async () => {
     const providers = freshProviders();
     const alias = `acmereg${randomUUID().replaceAll("-", "").slice(0, 8)}`;
@@ -512,7 +569,7 @@ describe("boot admission", () => {
     const compile = spyOn(admission, "hostManifestValidator");
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
       expect(compile.mock.calls.length).toBe(1);
       const [bytes] = compile.mock.calls[0] as [Uint8Array];
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(MANIFEST_SCHEMA_SHA256);
@@ -525,7 +582,7 @@ describe("boot admission", () => {
     writeLock(empty, []);
     const none = spyOn(admission, "hostManifestValidator");
     try {
-      await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS);
+      await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
       expect(none.mock.calls.length).toBe(0);
     } finally {
       none.mockRestore();
@@ -536,7 +593,7 @@ describe("boot admission", () => {
     forgetPackageDirectories();
     const empty = freshProviders();
     writeLock(empty, []);
-    await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS);
+    await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
     expect(packagesInStack(() => "")).toBeNull();
 
     const providers = freshProviders();
@@ -546,7 +603,7 @@ describe("boot admission", () => {
     ];
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
     } finally {
       logs.restore();
     }
@@ -622,7 +679,7 @@ describe("boot admission", () => {
     });
     const logs = spyLogs();
     try {
-      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
     } finally {
       admit.mockRestore();
       logs.restore();

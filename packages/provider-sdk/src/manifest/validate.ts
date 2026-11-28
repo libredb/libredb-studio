@@ -1090,11 +1090,12 @@ export const AGENT_WORKFLOW_TOOLS = Object.freeze({
 
 /**
  * The tools of `AGENT_TOOL_NAMES` that `text`, a rule text, names, in the vocabulary's order: each name as a whole word,
- * except one written as an absence ("there is no inspect_schema"), which says what a run does not hold. A tool name is
- * lower-case letters and underscores, so it is written into the expression as it stands.
+ * except one written as an absence, the whole word "no" in any letter case before it ("there is no inspect_schema",
+ * "No inspect_schema" at a sentence start), which says what a run does not hold. A tool name is lower-case letters and
+ * underscores, so it is written into the expression as it stands and matched as written.
  */
 export function agentToolsNamedIn(text: string): AgentToolVocabularyName[] {
-  return AGENT_TOOL_NAMES.filter((tool) => new RegExp(`(?<!\\bno )\\b${tool}\\b`).test(text));
+  return AGENT_TOOL_NAMES.filter((tool) => new RegExp(`(?<!\\b[Nn][Oo] )\\b${tool}\\b`).test(text));
 }
 
 /**

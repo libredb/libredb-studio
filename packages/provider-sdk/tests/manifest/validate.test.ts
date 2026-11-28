@@ -4830,6 +4830,23 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(ruled(["Read with ", "run_read_query", "."]))).toEqual([]);
   });
 
+  test("a tool written as an absence is no naming, its no in any letter case and a sentence's first word among them", () => {
+    const RULE = `${TEXT}/investigation/toolRule`;
+    const ruled = (rule: unknown) => textManifest((t) => (t.investigation.toolRule = rule));
+
+    expect(agentToolsNamedIn("No inspect_schema is held here; read with run_read_query.")).toEqual(["run_read_query"]);
+    expect(agentToolsNamedIn("NO inspect_plan")).toEqual([]);
+    expect(agentToolsNamedIn("nO profile_table")).toEqual([]);
+    // Only a whole word "no" is an absence: a word ending in it, or one beginning with it, still names the tool.
+    expect(agentToolsNamedIn("Know inspect_schema")).toEqual(["inspect_schema"]);
+    expect(agentToolsNamedIn("nobody calls inspect_usage")).toEqual(["inspect_usage"]);
+
+    expect(refusalsFor(ruled("No inspect_schema: read with run_read_query."))).toEqual([]);
+    expect(refusalsFor(ruled("No inspect_schema. Use inspect_plan."))).toEqual([
+      refusal("agent-tool-not-offered", RULE),
+    ]);
+  });
+
   test("an agent text holds no control character and no character that makes text read other than it is written", () => {
     const SUBJECT = `${TEXT}/copy/subject`;
     const BODY = `${TEXT}/posture/body`;

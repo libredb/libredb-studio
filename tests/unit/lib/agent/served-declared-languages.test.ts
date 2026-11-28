@@ -55,6 +55,7 @@ import {
   admittedManifest,
   declaredLanguageSha256,
   packageRow,
+  withEngineRecord,
   withStatementLanguageData,
 } from "../../../helpers/package-catalog";
 
@@ -296,9 +297,19 @@ describe("the server's declared language registries", () => {
   });
 
   test("a granted language two served engines declare, or one a module language holds, fails the registries' first read by name", () => {
+    // The catalog's set rules refuse both compositions at boot (`statement-language`). The registries' named error
+    // remains the host defect for a catalog composed past the rule, crafted here, and for bundled declarations.
     const one = languagePackage("acme-one", "acmeone", acmereadData());
     const two = languagePackage("acme-two", "acmetwo", acmereadData());
-    installServerCatalog(catalogOf([one, two], [grantingRow(one), grantingRow(two)]));
+    expect(() => catalogOf([one, two], [grantingRow(one), grantingRow(two)])).toThrow(
+      "the admitted packages still conflict (acme-one 1.0.0 statement-language, acme-two 1.0.0 statement-language)",
+    );
+    // Each package composed on its own, the second's record added to the first's catalog.
+    const engines = new Map(catalogOf([one], [grantingRow(one)]).engines);
+    const second = catalogOf([two], [grantingRow(two)]).engines.get(two.engine);
+    if (second === undefined) throw new Error(`the composition of ${two.pkg.name} holds no record of ${two.engine}`);
+    engines.set(two.engine, second);
+    installServerCatalog(Object.freeze({ engines, unavailable: new Map() }));
     for (const read of [() => languageServerPack(ACME), () => agentLanguageMcpFacets(), () => workflowToolRules()]) {
       expect(read).toThrow('The statement language "acmeread" is declared as data twice.');
     }
@@ -308,7 +319,16 @@ describe("the server's declared language registries", () => {
     // whose name no declaration may state.
     const moduleLanguage = Object.keys(languageToolArms())[1] as string;
     const named = languagePackage("acme-module", "acmemodule", acmereadData(moduleLanguage));
-    installServerCatalog(catalogOf([named], [grantingRow(named)]));
+    expect(() => catalogOf([named], [grantingRow(named)])).toThrow(
+      "the admitted packages still conflict (acme-module 1.0.0 statement-language)",
+    );
+    // Composed with no row, its record then given the grant the rule refuses.
+    installServerCatalog(
+      withEngineRecord(catalogOf([named], []), named.engine, (engine) => ({
+        ...engine,
+        grants: Object.freeze({ ...engine.grants, statementLanguage: moduleLanguage }),
+      })),
+    );
     for (const read of [
       () => languageServerPack(moduleLanguage as AgentDeclaredLanguageId),
       () => agentLanguageMcpFacets(),

@@ -11,7 +11,9 @@
  * data of every record whose data is stated and whose `grants.statementLanguage` names it, each by reference. A record
  * grants a language only where its register row reviewed the data it declares (its digest), so an admitted package's
  * data its row does not grant enters no registry, and a name no review saw cannot collide with a language Studio
- * holds. With nothing installed it answers the legacy records' data, which is the bundled set the browser composes.
+ * holds; a granted name that does is refused at boot by the catalog's set rules (`statement-language`,
+ * src/lib/db/server-catalog-compose.ts). With nothing installed it answers the legacy records' data, which is the
+ * bundled set the browser composes.
  *
  * The answer is frozen and memoized per installed catalog, keyed by the Map of served records, so one catalog answers
  * one array and a newly installed catalog its own; each registry reading it memoizes its composition by that array.

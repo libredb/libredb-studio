@@ -19,18 +19,19 @@
  * the boot that did not finish rather than a pending one.
  * Each composition is handed Studio's grant register, `STUDIO_GRANT_REGISTER` (src/lib/db/claim-grants.ts), in which
  * the composer looks up each admitted package engine's row by the package's name, version and the digest its lock
- * entry pins, which the lock's read verified.
+ * entry pins, which the lock's read verified, and so are the catalog's set rules, which read each admitted engine's
+ * grant of its statement language from it.
  *
- * `bootAdmission(directory, deadlineMs)` reads the lock (`readProvidersLock`), logs each package the lock refused, and,
- * when at least one package passed it, records the directory of each such package for the uncaught-exception line
- * (./package-directories, clause C-108), compiles the manifest validator once from the SDK's schema text, whose digest
- * the validator checks, then admits each verified package in package-name order, the order the lock's read answers,
- * one at a time, each import under `deadlineMs` (`admitPackage`, ./admission), each manifest's explain formats, query
- * dialects, query languages, Monaco languages and formatter languages held to Studio's own tables, `STUDIO_HELD_NAMES`
- * (src/lib/db/studio-held-names.ts). The catalog's set rules
- * (`catalogConflicts`) then run over every admitted package, each package they refuse is logged with
- * `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are registered (`registerAdmission`), so the loader's
- * registry and the server's catalog name the same packages.
+ * `bootAdmission(directory, deadlineMs, register)` reads the lock (`readProvidersLock`), logs each package the lock
+ * refused, and, when at least one package passed it, records the directory of each such package for the
+ * uncaught-exception line (./package-directories, clause C-108), compiles the manifest validator once from the SDK's
+ * schema text, whose digest the validator checks, then admits each verified package in package-name order, the order
+ * the lock's read answers, one at a time, each import under `deadlineMs` (`admitPackage`, ./admission), each
+ * manifest's explain formats, query dialects, query languages, Monaco languages and formatter languages held to
+ * Studio's own tables, `STUDIO_HELD_NAMES` (src/lib/db/studio-held-names.ts). The catalog's set rules
+ * (`catalogConflicts`) then run over every admitted package and its rows of `register`, each package they refuse is
+ * logged with `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are registered (`registerAdmission`), so
+ * the loader's registry and the server's catalog name the same packages.
  *
  * Every refused package is logged once, by its refusal's one-line sentence: at warn, or at error with the value the
  * entry threw as the logged error for `import-threw`, so the thrown value is never in the sentence. An admitted package
@@ -39,6 +40,7 @@
  */
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { GrantRegister } from "@libredb/grant-register";
 import type { ManifestValidator } from "@libredb/provider-sdk/manifest";
 import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
@@ -101,9 +103,14 @@ function refusedOf(refusal: PackageRefusal, engines: readonly string[]): Refused
 
 /**
  * Reads the lock of the providers directory `directory`, admits each package it verified with each import under
- * `deadlineMs`, runs the catalog's set rules and registers the packages they keep; see the module's docblock.
+ * `deadlineMs`, runs the catalog's set rules against `register` and registers the packages they keep; see the
+ * module's docblock.
  */
-export async function bootAdmission(directory: string, deadlineMs: number): Promise<BootAdmission> {
+export async function bootAdmission(
+  directory: string,
+  deadlineMs: number,
+  register: GrantRegister,
+): Promise<BootAdmission> {
   const lock = providersLock.readProvidersLock(directory);
   if (!lock.read) return Object.freeze({ read: false, refusal: lock.refusal });
   const refused: RefusedForCatalog[] = [];
@@ -159,7 +166,10 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
       manifest: answer.manifest,
       record: answer.record,
     });
-  const conflicts = catalogConflicts(admittedPackages.map(({ pkg, answer }) => forCatalog(pkg, answer)));
+  const conflicts = catalogConflicts(
+    admittedPackages.map(({ pkg, answer }) => forCatalog(pkg, answer)),
+    register,
+  );
   const kept: AdmittedForCatalog[] = [];
   for (const { pkg, answer } of admittedPackages) {
     // The first rule a package breaks names its refusal; conflicts are sorted by name, then by rule.
@@ -220,7 +230,7 @@ async function admitAndInstall(): Promise<boolean> {
     installServerCatalog(composeServerCatalog([], [], STUDIO_GRANT_REGISTER));
     return true;
   }
-  const answer = await bootAdmission(directory, PROVIDER_IMPORT_DEADLINE_MS);
+  const answer = await bootAdmission(directory, PROVIDER_IMPORT_DEADLINE_MS, STUDIO_GRANT_REGISTER);
   if (!answer.read) return refuseBoot(answer.refusal);
   installServerCatalog(composeServerCatalog(answer.admitted, answer.refused, STUDIO_GRANT_REGISTER));
   return true;
