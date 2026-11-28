@@ -15,7 +15,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
 import type { providerMonitoring, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import type { providerMonitoringTarget } from "@/lib/api/session-target";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
+import type { providerTextScrub } from "@/lib/db/operations/provider-text";
+import type { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
 import { boundedChild } from "../../../helpers/bounded-node-child";
@@ -24,6 +27,9 @@ interface ChildDeps {
   readonly providerMonitoring: typeof providerMonitoring;
   readonly readGrantedPanel: typeof readGrantedPanel;
   readonly readGrantedHealth: typeof readGrantedHealth;
+  readonly providerMonitoringTarget: typeof providerMonitoringTarget;
+  readonly servedEngineRecord: typeof servedEngineRecord;
+  readonly providerTextScrub: typeof providerTextScrub;
   readonly EXECUTE_SLACK_MS: typeof EXECUTE_SLACK_MS;
   readonly createHostCore: typeof createHostCore;
   readonly installHostCore: typeof installHostCore;
@@ -40,6 +46,9 @@ const child = boundedChild({
       from: path.join(SRC, "lib", "api", "provider-monitoring.ts"),
       names: ["providerMonitoring", "readGrantedPanel", "readGrantedHealth"],
     },
+    { from: path.join(SRC, "lib", "api", "session-target.ts"), names: ["providerMonitoringTarget"] },
+    { from: path.join(SRC, "lib", "db", "server-catalog.ts"), names: ["servedEngineRecord"] },
+    { from: path.join(SRC, "lib", "db", "operations", "provider-text.ts"), names: ["providerTextScrub"] },
     { from: path.join(SRC, "lib", "api", "editor-query.ts"), names: ["EXECUTE_SLACK_MS"] },
     { from: path.join(SRC, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SRC, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
@@ -62,7 +71,8 @@ const child = boundedChild({
       getHealth: never,
       runMaintenance: never,
       getCapabilities: () => ({}),
-    } as unknown as Parameters<typeof deps.providerMonitoring>[0];
+    } as unknown as Parameters<typeof deps.providerMonitoringTarget>[0];
+    const target = deps.providerMonitoringTarget(provider);
     // The clock sets each read's deadline 50 ms from now: the statement timeout and the slack already spent.
     const clock = () => Date.now() + 50 - queryTimeout - deps.EXECUTE_SLACK_MS;
     // A granted read's grant is 50 ms, and its hold is handed the stopped call's settlement, which never comes.
@@ -79,14 +89,21 @@ const child = boundedChild({
       if (name === "granted-panel" || name === "granted-health") {
         const read =
           name === "granted-panel"
-            ? deps.readGrantedPanel(provider, { panel: "storage" }, grant)
-            : deps.readGrantedHealth(provider, grant);
+            ? deps.readGrantedPanel(target, { panel: "storage" }, grant)
+            : deps.readGrantedHealth(target, grant);
         await read.catch((error: unknown) => {
           throw Object.assign(error as Error, { message: `${(error as Error).message} held ${held}` });
         });
         return "answered";
       }
-      const monitoring = deps.providerMonitoring(provider, new AbortController().signal, "bounds", clock);
+      const monitoring = deps.providerMonitoring(
+        target,
+        deps.servedEngineRecord("postgres"),
+        deps.providerTextScrub(provider.config, "any"),
+        new AbortController().signal,
+        "bounds",
+        clock,
+      );
       await (name === "health" ? monitoring.readHealth() : monitoring.readDashboard({}));
       return "answered";
     } catch (error) {

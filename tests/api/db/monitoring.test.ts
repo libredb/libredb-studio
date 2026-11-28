@@ -767,9 +767,9 @@ describe("what the monitoring route answers today, which the host core keeps", (
         maintenanceOperationSpecs: { vacuum: { label: "Vacuum", perEntity: true, global: true } },
       },
     });
-    // Once for the route's maintenance declaration, and once for the object model of each of the two bridged sessions
-    // the route builds: the pool statistics offer's and the dashboard's.
-    expect(provider.getCapabilities).toHaveBeenCalledTimes(3);
+    // Once for the route's maintenance declaration, and once for the object model of the one bridged session of the
+    // route's monitoring target, which the pool statistics offer and the dashboard both read.
+    expect(provider.getCapabilities).toHaveBeenCalledTimes(2);
   });
 
   test("a dashboard whose every panel fails answers the first panel's error by its class, and several sentences answer one database error naming each", async () => {

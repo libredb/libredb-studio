@@ -8,6 +8,8 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { metadataProvider } from "@/lib/api/editor-provider";
 import { livenessResponse } from "@/lib/api/liveness";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 /**
  * GET /api/db/health
@@ -52,7 +54,13 @@ export async function POST(req: NextRequest) {
     // The health read runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so the
     // connection pulse never waits for a connection the editor's statements hold.
     const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
-    const health = await providerMonitoring(provider, req.signal, "api/db/health").readHealth();
+    const health = await providerMonitoring(
+      providerMonitoringTarget(provider),
+      servedEngineRecord(connection.type),
+      scrub,
+      req.signal,
+      "api/db/health",
+    ).readHealth();
 
     return NextResponse.json(health);
   } catch (error) {

@@ -3224,6 +3224,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the tree facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each read on the entry",
         "a target whose session does not offer objects.tree is refused when the facade is built, before any read",
       ],
+      "tests/unit/lib/api/provider-monitoring.test.ts": [
+        "the monitoring facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each call on the entry",
+        "a target whose session does not offer monitoring.panel is refused the dashboard by name before any call, not-sent, while its health is still read",
+      ],
+      "tests/unit/lib/api/provider-maintenance.test.ts": [
+        "the maintenance facade reads any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each call on the entry, its maintenance read when the call is made",
+      ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
       ],
@@ -3289,6 +3296,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/api/provider-maintenance.test.ts": [
         "a run or a preview whose answer the core refused is thrown as a defect of Studio's bridge, never answered as a run not sent",
+        "a package's failure of a maintenance run or preview reaches the caller as packageFailureAnswer answers it, a run whose answer the core refused thrown as the package's defect, and a legacy record's failure as the same object",
+      ],
+      "tests/unit/lib/api/provider-monitoring.test.ts": [
+        "a package's failure of a panel, pool statistics or health read reaches the caller as packageFailureAnswer answers it, a dashboard's failed panel holding Studio's sentence where the package's words are code-only, and a legacy record's failure as the same object",
       ],
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",

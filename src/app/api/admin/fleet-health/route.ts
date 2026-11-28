@@ -8,6 +8,8 @@ import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
+import { providerMonitoringTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 /**
  * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
@@ -116,7 +118,13 @@ export async function POST(request: Request) {
           // editor's statements hold; each read goes through the monitoring facade and the host core (clause C-75)
           // under its own deadline, the statement timeout plus 10 s, and the request's signal.
           const provider = await getOrCreateMetadataProvider(resolved, {}, execution);
-          const monitoring = providerMonitoring(provider, request.signal, "api/admin/fleet-health");
+          const monitoring = providerMonitoring(
+            providerMonitoringTarget(provider),
+            servedEngineRecord(resolved.type),
+            scrub,
+            request.signal,
+            "api/admin/fleet-health",
+          );
           const health = await monitoring.readHealth();
           const latencyMs = Date.now() - start;
 

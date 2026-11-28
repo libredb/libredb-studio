@@ -11,7 +11,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
 import type { providerMaintenance } from "@/lib/api/provider-maintenance";
+import type { providerMaintenanceTarget } from "@/lib/api/session-target";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
+import type { providerTextScrub } from "@/lib/db/operations/provider-text";
+import type { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
 import { boundedChild } from "../../../helpers/bounded-node-child";
@@ -19,6 +22,9 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 interface ChildDeps {
   readonly EXECUTE_SLACK_MS: typeof EXECUTE_SLACK_MS;
   readonly providerMaintenance: typeof providerMaintenance;
+  readonly providerMaintenanceTarget: typeof providerMaintenanceTarget;
+  readonly servedEngineRecord: typeof servedEngineRecord;
+  readonly providerTextScrub: typeof providerTextScrub;
   readonly errorKind: typeof errorKind;
   readonly errorOutcome: typeof errorOutcome;
   readonly createHostCore: typeof createHostCore;
@@ -32,6 +38,9 @@ const child = boundedChild({
   imports: [
     { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["EXECUTE_SLACK_MS"] },
     { from: path.join(SOURCE, "lib", "api", "provider-maintenance.ts"), names: ["providerMaintenance"] },
+    { from: path.join(SOURCE, "lib", "api", "session-target.ts"), names: ["providerMaintenanceTarget"] },
+    { from: path.join(SOURCE, "lib", "db", "server-catalog.ts"), names: ["servedEngineRecord"] },
+    { from: path.join(SOURCE, "lib", "db", "operations", "provider-text.ts"), names: ["providerTextScrub"] },
     { from: path.join(SOURCE, "lib", "db", "error-record.ts"), names: ["errorKind", "errorOutcome"] },
     { from: path.join(SOURCE, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SOURCE, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
@@ -40,16 +49,18 @@ const child = boundedChild({
     deps.installHostCore(deps.createHostCore(), "test");
     const queryTimeout = 1_000;
     const declared = { maintenanceOperations: ["vacuum"], maintenanceOperationSpecs: {} };
+    const config = { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout } as const;
     // A provider whose maintenance run never settles.
     const provider = {
       type: "postgres",
-      config: { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout },
+      config,
       getCapabilities: () => ({ supportsMaintenance: true, ...declared }),
       runMaintenance: () => new Promise<never>(() => {}),
     } as never;
     const maintenance = deps.providerMaintenance(
-      provider,
-      declared as never,
+      deps.providerMaintenanceTarget(provider, declared as never),
+      deps.servedEngineRecord("postgres"),
+      deps.providerTextScrub(config, "any"),
       new AbortController().signal,
       "bounds",
       // The run's deadline, the statement timeout plus the slack, ends 50 ms from now.

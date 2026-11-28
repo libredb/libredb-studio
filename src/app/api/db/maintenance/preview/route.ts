@@ -9,6 +9,8 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
+import { providerMaintenanceTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 
 const ROUTE = "POST /api/db/maintenance/preview";
@@ -112,7 +114,13 @@ export async function POST(request: Request) {
       connection,
       editorExecutionContext(guard.session, connection),
     );
-    const maintenance = providerMaintenance(provider, declared, request.signal, ROUTE);
+    const maintenance = providerMaintenance(
+      providerMaintenanceTarget(provider, declared),
+      servedEngineRecord(connection.type),
+      scrub,
+      request.signal,
+      ROUTE,
+    );
 
     // A provider that declares a preview and holds no `previewMaintenance`: the bridged session does not offer one.
     if (!maintenance.previewOffered) {

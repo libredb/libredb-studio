@@ -40,6 +40,9 @@ import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
+import { providerMaintenanceTarget, providerMonitoringTarget } from "@/lib/api/session-target";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import {
   clearProviderCache,
   getOrCreateMetadataProvider,
@@ -243,10 +246,13 @@ async function heldEditorKill(
   const execution = editorExecutionContext(session, connection);
   const { capabilities: declared } = await readProviderDeclarations(connection, execution);
   const started = performance.now();
-  const outcome = await providerMaintenance(metadata, declared, new AbortController().signal, "live").run(
-    "kill",
-    String(target),
-  );
+  const outcome = await providerMaintenance(
+    providerMaintenanceTarget(metadata, declared),
+    servedEngineRecord(connection.type),
+    providerTextScrub(connection, "any"),
+    new AbortController().signal,
+    "live",
+  ).run("kill", String(target));
   const ms = Math.round(performance.now() - started);
   const ends = await Promise.all(holders);
 
@@ -313,11 +319,19 @@ async function heldEditorMonitoring(
     throw new Error(`${label}: the editor's pool is not held: ${JSON.stringify(held)}`);
   }
 
-  const monitoring = providerMonitoring(metadata, new AbortController().signal, "live");
+  const monitoringOf = (provider: DatabaseProvider) =>
+    providerMonitoring(
+      providerMonitoringTarget(provider),
+      servedEngineRecord(connection.type),
+      providerTextScrub(connection, "any"),
+      new AbortController().signal,
+      "live",
+    );
+  const monitoring = monitoringOf(metadata);
   const dashboard = await timedRead(() => monitoring.readDashboard({}));
   const health = await timedRead(() => monitoring.readHealth());
   await Promise.all(holders);
-  const onEditor = await providerMonitoring(editor, new AbortController().signal, "live").readDashboard({});
+  const onEditor = await monitoringOf(editor).readDashboard({});
 
   const states = panelStates(dashboard.answer);
   console.log(
