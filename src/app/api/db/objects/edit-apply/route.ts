@@ -158,9 +158,8 @@ export async function POST(req: NextRequest) {
         type: provider.type,
       });
       // BOUND to the provider: read off the instance as a value, a method reaching its own pool
-      // through `this` would be called with no receiver. The
-      // absence is refused BEFORE the decision event, so an apply that could never run leaves no
-      // record claiming it was about to.
+      // through `this` would be called with no receiver. The absence is refused BEFORE the
+      // decision event, so an apply that could never run leaves no record claiming it was about to.
       const applyEdit = provider.applyObjectEdit;
       if (applyEdit === undefined) {
         throw new ObjectRouteError(`${provider.type} declares no edit applier for kind "${plan.kind}"`, 400);

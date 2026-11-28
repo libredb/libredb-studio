@@ -68,9 +68,10 @@ describe("isSourceDocumentShape", () => {
   });
 
   test("rejects a part carrying BOTH text and unavailable, because the text would be dropped in silence", () => {
-    // `isSourcePartUnavailable` asks `"unavailable" in part`, so such a part narrows to the
-    // refusal and the editor never sees the text. A host can build one; our compiler cannot,
-    // and TypeScript's excess-property check on a union admits the key on either arm.
+    // `isSourcePartUnavailable` reads the part's `unavailable` member by its value, and here it
+    // holds a sentence, so such a part narrows to the refusal and the editor never sees the text.
+    // A host can build one; our compiler cannot, and TypeScript's excess-property check on a
+    // union admits the key on either arm.
     expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, unavailable: "nope" }] })).toBe(false);
   });
 
