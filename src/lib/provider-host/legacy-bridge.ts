@@ -42,13 +42,14 @@
  * pool statistics, health, run and preview answer the bridge hands over with its call's SDK check (clause C-112), as it
  * reads a package's, so a legacy answer outside the SDK's types is refused as a defect of Studio's bridge.
  *
- * The session's maintenance is `bridgedMaintenance`'s answer, which the caller lays beside the session: the provider's
- * maintenance as declared before it connects, in the engine declaration's form, narrowed through the SDK's own
- * `sessionMaintenance` by a refinement the bridge answers from the connected provider's capabilities. The refinement
- * names, for each declared operation with a spec, the placements both the declaration and the connected provider say
- * true, both false when the connected provider no longer lists the operation, and only where that differs from the
- * declaration, so it never names an operation the declaration does not list and never widens it
- * (tests/unit/provider-sdk/call-surface-parity.test.ts holds it to `narrowMaintenance` for every shipped spec).
+ * The session's maintenance is `bridgedMaintenance`'s answer, which the maintenance target of a legacy provider reads
+ * when a call reads it (`providerMaintenanceTarget` in src/lib/api/session-target.ts): the provider's maintenance as
+ * declared before it connects, in the engine declaration's form, narrowed through the SDK's own `sessionMaintenance` by
+ * a refinement the bridge answers from the connected provider's capabilities. The refinement names, for each declared
+ * operation with a spec, the placements both the declaration and the connected provider say true, both false when the
+ * connected provider no longer lists the operation, and only where that differs from the declaration, so it never names
+ * an operation the declaration does not list and never widens it (tests/unit/provider-sdk/call-surface-parity.test.ts
+ * holds it to `narrowMaintenance` for every shipped spec).
  *
  * Its tree call runs the provider's own member for the action with today's arguments: `listContainers` with one
  * argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and
@@ -209,7 +210,7 @@ export interface AnsweredRun {
 
 /**
  * A bridged session, the run its execute fills, and the page limits read from that run. The session's maintenance is
- * not the bridge's to hold: the caller lays it beside the session.
+ * not the bridge's to hold: the maintenance target reads it when a call is made (`providerMaintenanceTarget`).
  */
 export interface BridgedConsole {
   readonly session: ConsoleSession &

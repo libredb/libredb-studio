@@ -1,9 +1,11 @@
 /**
  * The maintenance caller facade (src/lib/api/provider-maintenance.ts; docs/providers/CONTRACT.md, clause C-70): each
- * maintenance run and preview of the two maintenance routes is one host core maintenance call on the legacy bridge's
- * session, its maintenance the provider's declaration narrowed by what the connected provider accepts, under a deadline
- * of its own, the statement timeout plus ten seconds from that call's start, and the caller's signal, and answers the
- * provider's own answer by reference.
+ * maintenance run and preview of the two maintenance routes is one host core maintenance call on the session of the
+ * target its caller hands it, a legacy provider's bridged session (`providerMaintenanceTarget` in
+ * src/lib/api/session-target.ts) or a provider package's, its maintenance read when the call is made, a legacy
+ * provider's its declaration narrowed by what the connected provider accepts, under a deadline of its own, the
+ * statement timeout plus ten seconds from that call's start, and the caller's signal, and answers the provider's own
+ * answer by reference.
  *
  * The real host core is installed for the file; a case that needs a record the real core would answer only at a real
  * deadline installs a core of its own around the real one and restores it. Every double signals when the call reaches

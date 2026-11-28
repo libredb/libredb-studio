@@ -1,9 +1,10 @@
 /**
  * The monitoring caller facade (src/lib/api/provider-monitoring.ts; docs/providers/CONTRACT.md, clause C-74): each
- * panel read of the monitoring dashboard and each pool statistics read is one host core monitoring call on the legacy
- * bridge's session, under a deadline of its own, the statement timeout plus ten seconds from that read's start, and the
- * caller's signal; the dashboard is the declared panels' one orchestration over those calls, and every answer is the
- * provider's own by reference.
+ * panel read of the monitoring dashboard and each pool statistics read is one host core monitoring call on the session
+ * of the target its caller hands it, a legacy provider's bridged session (`providerMonitoringTarget` in
+ * src/lib/api/session-target.ts) or a provider package's, under a deadline of its own, the statement timeout plus ten
+ * seconds from that read's start, and the caller's signal; the dashboard is the declared panels' one orchestration over
+ * those calls, and every answer is the provider's own by reference.
  *
  * The real host core is installed for the file; a case that needs a record the real core would answer only at a real
  * deadline installs a core of its own around the real one and restores it. Every double signals when the call reaches
