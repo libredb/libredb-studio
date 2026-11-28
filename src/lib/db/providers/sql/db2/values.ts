@@ -101,10 +101,25 @@ function largeObjectEditWarning(types: readonly (readonly [string, string])[]): 
 }
 
 /**
+ * The count of SQLERRD(3) that means Db2 did not return one. IBM documents it for a TRUNCATE:
+ * "SQLERRD(3) in the SQLCA is set to -1 for the truncate operation. The number of rows that were
+ * deleted from the table is not returned." (Db2 LUW 11.5, TRUNCATE statement, Notes), and "For a
+ * TRUNCATE statement, the value will be -1." (Db2 LUW 12.1, SQLCA field descriptions). db2-node
+ * 1.0.25 documents its `rowCount` as a number only, so whichever statement reports -1 answers the
+ * count of the rows it returned, as the editor query answers a result that carries no count
+ * (`runEditorQuery`). Any other negative still reaches the host core's answer check, which refuses
+ * it by name.
+ */
+const COUNT_NOT_RETURNED = -1;
+
+/**
  * One driver result, read with `rowMode: "array"`, as the product's `QueryResult` without its
  * execution time. Array rows are what keep a duplicated column's every value (K15, fixed in
  * 1.0.25): an object row keys by name and keeps the last. `SELECT 1 AS A, 2 AS A` really declares
  * two columns named `A`, so the repeat is numbered while the record is built.
+ *
+ * A statement with no result set answers the driver's count, except -1, which answers the rows
+ * returned (`COUNT_NOT_RETURNED`).
  */
 export function readResult(result: Db2ArrayQueryResult, sql: string): Omit<QueryResult, "executionTime"> {
   const fields = uniqueFieldNames(result.columns.map((column) => column.name));
@@ -121,8 +136,10 @@ export function readResult(result: Db2ArrayQueryResult, sql: string): Omit<Query
     rows,
     fields,
     // A statement with no result set reports the driver's count of changed rows, which 1.0.24
-    // reads from SQLERRD3: an UPDATE that matched nothing answers 0 (K19, fixed).
-    rowCount: isResultSet ? rows.length : result.rowCount,
+    // reads from SQLERRD3: an UPDATE that matched nothing answers 0 (K19, fixed). SQLERRD3 -1 is
+    // a count Db2 did not return, as after a TRUNCATE, so it answers the rows returned
+    // (`COUNT_NOT_RETURNED`).
+    rowCount: isResultSet || result.rowCount === COUNT_NOT_RETURNED ? rows.length : result.rowCount,
     ...declaredColumnTypes(types),
     ...(warnings.length > 0 ? { warnings } : {}),
   };

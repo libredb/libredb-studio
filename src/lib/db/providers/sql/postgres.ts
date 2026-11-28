@@ -499,10 +499,14 @@ interface ContainerRow {
   is_session_default: number;
 }
 
-/** One row of `COUNTS_SQL`. `count(*)::int` arrives as a JS number, not a string. */
+/**
+ * One row of `COUNTS_SQL`. PostgreSQL answers `count(*)::int` as INT4, which pg reads as a
+ * JS number. CockroachDB's `INT` is INT8 (OID 20), which pg answers as decimal text, so
+ * `n` arrives as a string there and `kindCountOf()` converts it.
+ */
 interface KindCountRow {
   kind: string;
-  n: number;
+  n: number | string;
 }
 
 /**
@@ -1974,10 +1978,33 @@ function unavailableCounts(ids: readonly string[], error: unknown): Record<strin
   return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
 }
 
+/** Decimal text with no sign, no leading zero, no fraction and no exponent. */
+const DECIMAL_COUNT = /^(0|[1-9][0-9]*)$/;
+
+/**
+ * The count one GROUP BY row answered, as the number a `KindCount` holds: a number is kept,
+ * decimal text (CockroachDB's INT8, see `KindCountRow`) is read as its number, and the result
+ * must be a non-negative safe integer. Anything else is refused by name, never filed as an
+ * unavailable count: `unavailableCounts()` holds the server's own sentence, and this one is
+ * Studio's. The sentence carries no server value.
+ *
+ * @throws {QueryError} When the count is not a non-negative whole number of at most 2^53 - 1.
+ */
+function kindCountOf(row: KindCountRow): number {
+  const n = typeof row.n === "string" && DECIMAL_COUNT.test(row.n) ? Number(row.n) : row.n;
+  if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0) {
+    throw new QueryError(
+      `Studio cannot read the object counts: the count of the kind "${row.kind}" the server answered is not a non-negative whole number of at most 2^53 - 1.`,
+      "postgres",
+    );
+  }
+  return n;
+}
+
 /** Overwrites the seeded zeros with what the GROUP BY actually answered. */
 function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
   for (const row of rows) {
-    counts[row.kind] = { count: row.n };
+    counts[row.kind] = { count: kindCountOf(row) };
   }
 }
 
@@ -4214,8 +4241,11 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
+      // Only the query sits inside each `try`: a row `kindCountOf()` refuses is Studio's
+      // refusal, raised to the caller, never filed as the server's unavailable sentence.
+      let rows: KindCountRow[];
       try {
-        applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL, schema)).rows);
+        rows = (await this.queryCounts(client, COUNTS_SQL, schema)).rows;
       } catch (error) {
         if (!isMissingProkindError(error)) {
           return unavailableCounts(
@@ -4225,8 +4255,9 @@ export class PostgresProvider extends SQLBaseProvider {
         }
         const routines = declared.filter((kind) => kind.role === "routine");
         const rest = declared.filter((kind) => kind.role !== "routine");
+        let retryRows: KindCountRow[] | undefined;
         try {
-          applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL_WITHOUT_ROUTINES, schema)).rows);
+          retryRows = (await this.queryCounts(client, COUNTS_SQL_WITHOUT_ROUTINES, schema)).rows;
         } catch (retryError) {
           Object.assign(
             counts,
@@ -4236,6 +4267,7 @@ export class PostgresProvider extends SQLBaseProvider {
             ),
           );
         }
+        if (retryRows !== undefined) applyKindCounts(counts, retryRows);
         Object.assign(
           counts,
           unavailableCounts(
@@ -4243,7 +4275,9 @@ export class PostgresProvider extends SQLBaseProvider {
             error,
           ),
         );
+        return counts;
       }
+      applyKindCounts(counts, rows);
       return counts;
     } finally {
       client.release();
