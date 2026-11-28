@@ -2,7 +2,7 @@
 // mssql") into an extensions directory of their own: @vscode/test-cli installs every installExtensions entry into the
 // shared .vscode-test/extensions, so mssql would load into every other e2e host after it. The leg downloads from the
 // Marketplace, so it runs in the coexistence subset only (LIBREDB_E2E_SUBSET=coexistence), in the daily workflow and
-// by hand, never in the pull request job; a failed install fails the run and never skips the leg.
+// by hand, never in ci.yml's job; a failed install fails the run and never skips the leg.
 
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -135,3 +135,95 @@ describe("superseded runs", () => {
     expect(new Set(prefixes).size).toBe(prefixes.length);
   });
 });
+
+describe("what a pull request runs", () => {
+  const ci = workflow("ci.yml");
+  const security = workflow("security-scan.yml");
+
+  /** The five checks main's branch protection requires, by job name, and the file each lives in. */
+  const REQUIRED = [
+    ["ci.yml", "Lint, Typecheck and Build"],
+    ["ci.yml", "Unit & Integration Tests"],
+    ["ci.yml", "Engine Smoke - Build Payload"],
+    ["ci.yml", "Out-of-tree Provider Acceptance"],
+    ["security-scan.yml", "Secret Scan"],
+  ] as const;
+
+  /**
+   * The ci.yml jobs a pull request does not run. Each one runs on push to main and by
+   * dispatch. A new job lands in this list or in PULL_REQUEST below, never in neither.
+   */
+  const MAIN_ONLY = [
+    "test-cross-platform",
+    "vscode-extension",
+    "e2e",
+    "functional-smoke",
+    "engine-smoke",
+    "shutdown-signal-live",
+    "host-core-live",
+    "channel-e2e",
+    "sonarcloud",
+  ];
+  const PULL_REQUEST = ["lint-and-build", "test", "engine-payload", "out-of-tree-acceptance", "helm-lint"];
+
+  /** The `if` a job behind a required check may carry; every other one carries none. */
+  const ALLOWED_IF: Readonly<Record<string, string>> = {};
+
+  function needsOf(job: Job): string[] {
+    if (job.needs === undefined) return [];
+    return typeof job.needs === "string" ? [job.needs] : [...job.needs];
+  }
+
+  /** The job ids behind the required ci.yml checks: each required job and every job it needs, transitively. */
+  function requiredClosure(): string[] {
+    const ids = new Set<string>();
+    const pending = Object.entries(ci.jobs)
+      .filter(([, job]) => REQUIRED.some(([file, name]) => file === "ci.yml" && name === job.name))
+      .map(([id]) => id);
+    while (pending.length > 0) {
+      const id = pending.pop() as string;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      pending.push(...needsOf(ci.jobs[id] as Job));
+    }
+    return [...ids].sort();
+  }
+
+  test("the five required checks keep their names", () => {
+    // Branch protection binds the check by the job's name, not its id: a renamed job
+    // leaves every pull request waiting for a check that can no longer report.
+    for (const [file, name] of REQUIRED) {
+      const jobs = Object.values(workflow(file).jobs).filter((job) => job.name === name);
+      expect(jobs.length).toBe(1);
+    }
+  });
+
+  test("every required check, and every job it needs, runs on a pull request", () => {
+    // A job skipped by its condition reports "skipped", which branch protection takes
+    // as success, so a required check gated off pull requests would pass unexamined.
+    const closure = requiredClosure();
+    expect(closure.length).toBeGreaterThanOrEqual(4);
+    for (const id of closure) {
+      expect({ id, if: ci.jobs[id]?.if }).toEqual({ id, if: ALLOWED_IF[id] });
+    }
+    const secretScan = Object.values(security.jobs).find((job) => job.name === "Secret Scan");
+    expect(secretScan?.if ?? "").not.toContain("pull_request");
+    expect(Object.keys(ci.on)).toContain("pull_request");
+    expect(Object.keys(security.on)).toContain("pull_request");
+  });
+
+  test("every other ci.yml job runs on main only, and a new job must be classified", () => {
+    const ids = Object.keys(ci.jobs);
+    const gated = ids.filter((id) => (ci.jobs[id]?.if ?? "").includes("github.event_name != 'pull_request'"));
+    expect(gated.sort()).toEqual([...MAIN_ONLY].sort());
+    expect(ids.filter((id) => !gated.includes(id)).sort()).toEqual([...PULL_REQUEST].sort());
+    expect([...MAIN_ONLY, ...PULL_REQUEST].sort()).toEqual([...ids].sort());
+  });
+
+  test("ci.yml runs on pull requests, on push to main and by dispatch", () => {
+    // The dispatch is how a branch runs the main-only jobs before it merges:
+    // `gh workflow run ci.yml --ref <branch>`.
+    expect(Object.keys(ci.on)).toEqual(expect.arrayContaining(["pull_request", "push", "workflow_dispatch"]));
+    expect((ci.on.push as { branches: string[] }).branches).toContain("main");
+  });
+});

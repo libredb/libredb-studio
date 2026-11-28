@@ -946,7 +946,7 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   `configurationsFor` in `.vscode-test.mjs` gives it one `vscode-<version>-coexistence` configuration per build, whose `--extensions-dir` is `COEXISTENCE_EXTENSIONS_DIR` (`.vscode-test/extensions-coexistence`): `@vscode/test-cli` installs every `installExtensions` entry into the shared `.vscode-test/extensions`, so mssql installed there would load into every other e2e host.
   `scripts/coexistence-extensions.mjs` installs the pinned `COEXISTENCE_EXTENSIONS` into that directory from the Marketplace before `vscode-test` starts, and installs nothing outside the subset.
   mssql declares an extension pack of four more extensions, so `COEXISTENCE_EXTENSIONS` pins each of them beside mssql in the same install call, and `listingViolations` fails the run when the directory then lists anything but that pinned set.
-  Because it downloads from the Marketplace, the subset runs in the daily workflow and by hand, never in the pull request job.
+  Because it downloads from the Marketplace, the subset runs in the daily workflow and by hand, never in the CI job.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
   The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
@@ -1020,13 +1020,13 @@ The build also writes the 128 by 128 Marketplace icon `media/icon.png` from the 
 
 ### The CI job
 
-`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job.
+`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job, on push to `main` and by dispatch, not on a pull request.
 Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, the browser leg, both integration runtimes, the e2e leg, `npm run package` and `npm run test:vsix`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
-`.github/workflows/vscode-extension-release.yml` calls the same file as its `gates` job on a pushed `vscode-extension-*` tag, so a release passes the gates a pull request does; its release runbook is in `docs/DISTRIBUTION.md`, "VS Code extension (Marketplace)".
+`.github/workflows/vscode-extension-release.yml` calls the same file as its `gates` job on a pushed `vscode-extension-*` tag, so a release passes the gates `main` runs; its release runbook is in `docs/DISTRIBUTION.md`, "VS Code extension (Marketplace)".
 The browser leg's Chromium comes from `bunx playwright install --with-deps chromium` at the repository root, because the job does not run in Playwright's image; the root's Playwright is the extension's version, so the extension's own Playwright finds that browser.
 The smoke and Insiders runs have no browser leg: the webview is the same bytes on every OS and VS Code build.
 It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
-The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left, and a fork's pull request restores none.
+The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left.
 `.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
 Its `coexistence` job runs the coexistence subset on the pinned builds on the same schedule.
 Dependabot watches `vscode-extension/` through its own `npm` entry, with `@types/vscode` held at the `engines.vscode` floor.

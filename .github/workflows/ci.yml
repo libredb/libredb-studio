@@ -1,5 +1,13 @@
 name: CI
 
+# What a pull request runs: only the jobs behind the required checks (Lint,
+# Typecheck and Build; Unit & Integration Tests; Engine Smoke - Build Payload;
+# Out-of-tree Provider Acceptance) and Helm Chart Lint, which takes a minute.
+# Every other job carries `if: github.event_name != 'pull_request'` and runs on
+# push to main and by dispatch: the cross-platform, extension, e2e, smoke, live
+# and SonarCloud jobs. A branch runs them before it merges with
+# `gh workflow run ci.yml --ref <branch>`. tests/unit/workflow-triggers.test.ts
+# holds the split, so a new job has to be put on one side of it.
 on:
   push:
     branches:
@@ -7,6 +15,10 @@ on:
       - main
   pull_request:
     types: [opened, synchronize, reopened]
+  # Runs every job on a branch before it merges, the main-only ones included:
+  # `gh workflow run ci.yml --ref <branch>`. A dispatch run adds evidence; it
+  # cannot report a pull request's required check.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -309,9 +321,11 @@ jobs:
   # forever for a check that can no longer report. This job is deliberately not a
   # required check yet; promote it once it has a history of being green.
   #
-  # It uses no secrets, so it runs on fork pull requests like any other job.
+  # It runs on push to main and by dispatch, not on a pull request.
   test-cross-platform:
     name: Cross-platform Tests (${{ matrix.os }})
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -388,10 +402,14 @@ jobs:
   # Not a required check until the owner adds it to main's branch protection.
   vscode-extension:
     name: VS Code Extension
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/vscode-extension.yml
 
   e2e:
     name: E2E Tests
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [lint-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -479,6 +497,8 @@ jobs:
   # path.
   functional-smoke:
     name: Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [lint-and-build]
     runs-on: ubuntu-latest
     # Raised from 30 with the six provider live checks below. THIS NUMBER IS A BUDGET AND
@@ -1156,6 +1176,8 @@ jobs:
 
   engine-smoke:
     name: Engine Smoke (Node ${{ matrix.node-version }})
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [engine-payload]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1201,6 +1223,8 @@ jobs:
   # exit, which reach a pipe synchronously only there.
   shutdown-signal-live:
     name: Shutdown Signal Live Check (Node ${{ matrix.node-version }})
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [engine-payload]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1248,6 +1272,8 @@ jobs:
   # inline SQLite connection in a temporary directory, so no database service.
   host-core-live:
     name: Host Core Live Check (Node ${{ matrix.node-version }})
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [engine-payload]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1344,6 +1370,8 @@ jobs:
   # (e.g. a payload missing seed-assets/). scripts/channel-embedded-sample-e2e.sh
   channel-e2e:
     name: Channel E2E (tarball + npx)
+    # Main only (see the note at the top of this file).
+    if: github.event_name != 'pull_request'
     needs: [engine-payload]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1488,31 +1516,9 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     needs: [test]
-    # Runs only where SONAR_TOKEN can actually be read, because the scanner
-    # fails rather than degrades without it ("Not authorized or project not
-    # found", exit 3) and that red is pure noise on a pull request nobody can
-    # fix. Two populations cannot read it:
-    #
-    #   Forks - a fork pull request gets no secrets at all. Already guarded
-    #   below; this is the check that used to hard-block fork contributors.
-    #
-    #   Dependabot - its branches live in this repository, so the fork guard
-    #   says yes, but GitHub serves runs it triggers from the *Dependabot*
-    #   secret store rather than Actions secrets, and SONAR_TOKEN is not in it.
-    #   Every bot pull request therefore carried a red SonarCloud.
-    #
-    # Gated on the actor, not the branch name, and the distinction is load
-    # bearing: push a commit of your own onto a `dependabot/**` branch and the
-    # run is yours, Actions secrets come back, and the analysis is both
-    # possible and wanted. PR #394 is the worked example - red while Dependabot
-    # owned it, green on the very next human push to the same branch.
-    # The SonarCloud project belongs to the canonical repository; fork-owned
-    # runs cannot authenticate to it, including pushes and fork-local PRs.
-    if: >-
-      github.repository == 'libredb/libredb-studio'
-      && github.actor != 'dependabot[bot]'
-      && (github.event.pull_request.head.repo.full_name == github.repository
-        || github.event_name == 'push')
+    # Main only, and on the canonical repository's pushes and dispatches, where
+    # SONAR_TOKEN is readable: the scanner fails rather than degrades without it.
+    if: github.repository == 'libredb/libredb-studio' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
