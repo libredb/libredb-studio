@@ -1212,7 +1212,7 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection, the query route, the object tree's reads, the monitoring, health and pool statistics reads and MCP, its session opening through its package (C-109); the object edit and key scan requests, which the contract has no call for yet, refuse it before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+An admitted package's engine is served by Test Connection, the query route and its cancel, a disconnect, the object tree's reads, the monitoring, health and pool statistics reads and MCP, its session opening through its package (C-109); the object edit and key scan requests, which the contract has no call for yet, refuse it before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
 `PROVIDER_UNAVAILABLE` and `PACKAGE_ENGINE_UNSUPPORTED` are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
 
 ### C-109 (normative): A package's open receives only the context core builds
@@ -1233,7 +1233,7 @@ An answer with no handle is the package's defect, a widening refinement (C-10) i
 
 A session of a package's engine has a member exactly for each call it offers after its refinement, and each member calls the package's function with the session's handle first.
 Core never calls a package for a call its session does not offer, nor with a request field it does not honour, bound params or a non-zero offset among them: each is refused before the call, outcome not-sent.
-The host core's execute, cancel on a stop, end of a scope, tree, source, maintenance, monitoring and health calls run on such a session as on any other.
+The host core's execute, cancel, end of a scope, tree, source, maintenance, monitoring and health calls run on such a session as on any other.
 
 ### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 

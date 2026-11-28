@@ -2140,6 +2140,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a request field or a console facet the session does not offer is refused before any frame",
       ],
       "tests/api/db/cancel.test.ts": ["provider without cancelQuery returns 400"],
+      "tests/api/db/rest-package-engine.test.ts": [
+        "a package engine whose session does not offer console.cancel answers the cancel route's one refusal, cancelled false, calling nothing",
+      ],
       "tests/unit/lib/provider-host/host-rules.test.ts": [
         "an engine that cannot cancel is reported still running, and nothing is called",
       ],
@@ -3155,6 +3158,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-107": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "cancel runs on a package engine's session through the console's cancel",
+        "disconnect removes every cache entry of a package engine's record, and no other record's",
+        "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
@@ -3175,6 +3183,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "Test Connection runs one test for a legacy and a package engine, told apart only by the record's offers",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
+        "a package engine's record keys its editor session by the frame editorCacheKey answers",
         "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build",
         "an admitted package's engine is refused at each factory entry point that answers a legacy provider, its session opening through the factory's editor session",
       ],
@@ -3236,6 +3245,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-111": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "cancel runs on a package engine's session through the console's cancel",
+      ],
+      "tests/unit/lib/api/editor-query.test.ts": [
+        "the cancel runs on any session its target states, a package's and the bridge's alike, and one that does not offer console.cancel is answered not offered without a call",
+      ],
+      "tests/unit/lib/api/session-target.test.ts": [
+        "a provider's console target is one bridged session with no environment and no marks, and an entry's is its session by form, the package's counting each call on the entry",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
@@ -3274,6 +3292,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "the cancel route answers a package's open failure as not-sent, its cancel failure by its grant, and a malformed cancel answer as the package's defect",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
       ],
