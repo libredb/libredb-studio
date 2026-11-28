@@ -3,7 +3,8 @@ import type { AgentToolName } from "@/lib/agent/tools";
 
 /**
  * The tools a rule text tells the model to use: every tool name it contains, except one written as an absence
- * ("there is no inspect_schema"), which is the operations rules saying what the run does not hold.
+ * ("there is no inspect_schema", or "No inspect_schema" at a sentence start), which is a rule saying what the run does
+ * not hold.
  *
  * The SDK's reading (`agentToolsNamedIn`), the one its validator refuses a declared tool rule by, so a rule is read the
  * same way here and at admission; tests/unit/lib/agent/tool-offer-census.test.ts holds the SDK's tool names equal to

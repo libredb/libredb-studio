@@ -1245,6 +1245,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "a tool rule naming a tool its workflow does not offer is refused at its pointer",
+        "a tool written as an absence is no naming, its no in any letter case and a sentence's first word among them",
       ],
       "tests/unit/lib/provider-host/admission.test.ts": [
         "admission refuses a declared tool rule naming a tool its workflow does not offer as PROVIDER_SCHEMA_INVALID at the rule's pointer",
