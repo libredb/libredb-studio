@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, requireObjectPath, requireString } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
 import { scrubObjectDetail } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
@@ -60,22 +59,22 @@ export const dynamic = "force-dynamic";
  * The description is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
  * request's signal.
  *
- * The description runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so it
- * never waits for the editor's statements, except on a connection that serves one session (docs/providers/CONTRACT.md,
- * clause C-66).
+ * The description runs on the record's metadata session (`{ reads: "tree" }`), a provider package's through its package,
+ * beside the editor's, so it never waits for the editor's statements, except on a connection that serves one session
+ * (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(
     req,
     "api/db/objects/describe",
-    async (provider, body, context) => {
+    async (target, body, context) => {
       const path = requireObjectPath(body);
       const kind = requireString(body, "kind");
       return scrubObjectDetail(
-        context.scrub,
-        await objectTree(providerTreeTarget(provider), req.signal, context.route).describeObject(path, kind),
+        context.words,
+        await objectTree(target, req.signal, context.route).describeObject(path, kind),
       );
     },
-    { session: "metadata" },
+    { reads: "tree" },
   );
 }

@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { assertContainerAddress, handleObjectRequest, requireStringArray } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
 import { scrubKindCounts } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
@@ -22,20 +21,20 @@ export const dynamic = "force-dynamic";
  * The count is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
  * request's signal.
  *
- * The count runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so it never
- * waits for the editor's statements, except on a connection that serves one session (docs/providers/CONTRACT.md,
- * clause C-66).
+ * The count runs on the record's metadata session (`{ reads: "tree" }`), a provider package's through its package,
+ * beside the editor's, so it never waits for the editor's statements, except on a connection that serves one session
+ * (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(
     req,
     "api/db/objects/counts",
-    async (provider, body, context) => {
+    async (target, body, context) => {
       const container = requireStringArray(body, "container");
-      const tree = objectTree(providerTreeTarget(provider), req.signal, context.route);
-      assertContainerAddress(tree.objectModel, provider.type, "container", container);
-      return scrubKindCounts(context.scrub, await tree.countObjects(container));
+      const tree = objectTree(target, req.signal, context.route);
+      assertContainerAddress(tree.objectModel, context.engine.id, "container", container);
+      return scrubKindCounts(context.words, await tree.countObjects(container));
     },
-    { session: "metadata" },
+    { reads: "tree" },
   );
 }

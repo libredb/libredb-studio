@@ -2624,6 +2624,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-66": {
     tests: {
+      "tests/isolated/factory-package-engines.test.ts": [
+        "a package engine's metadata session opens once per key through its package, beside its editor session",
+        "a package engine's metadata session opens with a pool of at most two that opens none until asked, shared and owned, and a one-session package reads on its editor session",
+        "a package engine's metadata session leaves with a removal, the idle sweep and the cache close, and is kept while a read runs",
+      ],
       "tests/unit/db/session-capacity.test.ts": [
         "every shipped engine's session capacity is one exactly where Studio's record names a reason",
         "an in-memory database serves one session on every engine that opens a local file",
@@ -2659,6 +2664,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/api/editor-provider.test.ts": [
         "opens the connection's metadata session with the editor's connection and posture, and without a catalog runs on it",
         "a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one",
+        "the metadata tree target is the record's metadata session by its form, and a provider's target is one bridged session",
       ],
       "tests/api/db/maintenance.test.ts": [
         "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider",
@@ -3144,9 +3150,14 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-107": {
     tests: {
+      "tests/api/db/objects/package-engine-tree.test.ts": [
+        "each tree route answers a package engine's tree through its package",
+        "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
+        "the edit plan, the edit apply and the key scan refuse a package engine by the record's offer before any open",
+      ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused on a route that does not serve package engines, by name, and accepted by the package-aware resolve",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit and key scan routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3179,6 +3190,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-109": {
     tests: {
+      "tests/isolated/factory-package-engines.test.ts": [
+        "a package engine's metadata session opens with a pool of at most two that opens none until asked, shared and owned, and a one-session package reads on its editor session",
+      ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
         "each open check refuses before the package's open is called and before any file is read",
@@ -3191,6 +3205,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "trust material is read only for a declaration that reads it, and egress is core's decision",
         "the environment reader answers a declared name from the process and refuses any other by name, never reading it",
         "the pool is core's default for a shared session and the owner's share for an owned one",
+        "the pool is the metadata session's smaller pool when the open asks for it, shared and owned",
       ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "a refinement narrows the calls and the maintenance; a widening one is refused and the handle is closed under a cleanup context",
@@ -3203,6 +3218,14 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-111": {
     tests: {
+      "tests/unit/lib/api/object-tree.test.ts": [
+        "the tree facades read any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each read on the entry",
+        "a target whose session does not offer objects.tree is refused when the facade is built, before any read",
+      ],
+      "tests/api/db/objects/package-engine-tree.test.ts": [
+        "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
+        "the edit plan, the edit apply and the key scan refuse a package engine by the record's offer before any open",
+      ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
         "the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged",
@@ -3224,6 +3247,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "tests/unit/db/operations/provider-text.test.ts": [
+        "a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once",
+      ],
+      "tests/api/db/objects/package-engine-tree.test.ts": [
+        "a code-only package's sentences in a tree answer reach the client as Studio's sentence, and a granted one's through core's scrub",
+        "a tree route answers a package's open failure as not-sent and a malformed tree answer as the package's defect",
+      ],
       "packages/provider-sdk/tests/calls/answers.test.ts": [
         "an execute answer's result list, first row count, execution time, warning list or warning outside the SDK's types is refused as execute-answer-unreadable at its pointer, a getter never called",
         "an execute answer's refusal sentence names the pointer and the key, never a value",

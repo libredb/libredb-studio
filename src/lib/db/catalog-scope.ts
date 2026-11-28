@@ -1,7 +1,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** Whether Studio honours the catalog sessions a provider declares on one connection, and if not, why. */
 type CatalogChoice = "honoured" | "not-declared" | "engine-not-recorded" | "names-database";
@@ -82,13 +82,16 @@ export async function scopeToCatalog(
 
 /**
  * Refuses a walk over every container of a server-level connection (#1530): it would open every database. It reads
- * the provider's own `catalogSessions`, not `catalogChoice`, since here a declaration only refuses more (M-57).
+ * the tree target's `wholeServer` (src/lib/api/session-target.ts), the legacy provider's own `catalogSessions`, not
+ * `catalogChoice`, since here a declaration only refuses more (M-57); a provider package's session reaches no other
+ * database, its record offering no catalog session.
  */
-export function assertNotWholeServer(provider: DatabaseProvider): void {
-  if (provider.getCapabilities().catalogSessions === true) {
+export function assertNotWholeServer(target: { wholeServer(): DatabaseType | null }): void {
+  const type = target.wholeServer();
+  if (type !== null) {
     throw new DatabaseConfigError(
-      `This ${provider.type} connection reaches every database on its server: name the containers to read`,
-      provider.type,
+      `This ${type} connection reaches every database on its server: name the containers to read`,
+      type,
     );
   }
 }

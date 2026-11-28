@@ -74,79 +74,84 @@ export const dynamic = "force-dynamic";
  * than asking the server for one unbounded walk.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/keys/scan", async (provider, body, context) => {
-    const capabilities = provider.getCapabilities();
-    const capability = capabilities.keyScan;
-    if (capability === undefined) {
-      throw new ObjectRouteError(
-        `${provider.type} declares no key-space walk: its objects are enumerated from a catalog, so there is nothing to page`,
-        400,
-      );
-    }
+  return handleObjectRequest(
+    req,
+    "api/db/keys/scan",
+    async (provider, body, context) => {
+      const capabilities = provider.getCapabilities();
+      const capability = capabilities.keyScan;
+      if (capability === undefined) {
+        throw new ObjectRouteError(
+          `${provider.type} declares no key-space walk: its objects are enumerated from a catalog, so there is nothing to page`,
+          400,
+        );
+      }
 
-    const walk = provider.scanKeysPage;
-    if (walk === undefined) {
-      throw new ObjectRouteError(`${provider.type} declares keyScan but implements no scanKeysPage`, 500);
-    }
+      const walk = provider.scanKeysPage;
+      if (walk === undefined) {
+        throw new ObjectRouteError(`${provider.type} declares keyScan but implements no scanKeysPage`, 500);
+      }
 
-    const shape = keyScanShape(capability);
-    // A level declaration on a walk that is not an uncounted prefix walk is a defect of the DECLARATION
-    // (Keys panel levels, spec 3.3), so it is refused on every request, whether or not the request asks
-    // for a level, in the words the method check above uses for the same kind of state.
-    if (capability.levels !== undefined && (shape.pattern !== "prefix" || shape.totalScope !== "none")) {
-      throw new ObjectRouteError(
-        `${provider.type} declares levels on a walk that is not an uncounted prefix walk: ` +
-          `levels need pattern "prefix" and totalScope "none"`,
-        500,
+      const shape = keyScanShape(capability);
+      // A level declaration on a walk that is not an uncounted prefix walk is a defect of the DECLARATION
+      // (Keys panel levels, spec 3.3), so it is refused on every request, whether or not the request asks
+      // for a level, in the words the method check above uses for the same kind of state.
+      if (capability.levels !== undefined && (shape.pattern !== "prefix" || shape.totalScope !== "none")) {
+        throw new ObjectRouteError(
+          `${provider.type} declares levels on a walk that is not an uncounted prefix walk: ` +
+            `levels need pattern "prefix" and totalScope "none"`,
+          500,
+        );
+      }
+      const options = {
+        cursor: readCursor(body, shape),
+        pattern: readPattern(body, shape),
+        count: readCount(body, capability),
+        // Absent means the provider's own session database, which is the provider's answer to give:
+        // `SELECT` state lives on the connection and not in this route.
+        database: optionalDatabase(body, "database"),
+      };
+      if (options.database !== undefined && containerDepth(capabilities) === 0) {
+        throw new ObjectRouteError(
+          `${provider.type} walks one key space and declares no database level: "database" names the numbered ` +
+            `database to walk, and this engine has none to name`,
+          400,
+        );
+      }
+      // Read after the database refusal, so a request that engine refused before "level" existed is
+      // refused in the same words now.
+      const level = readLevel(body);
+      if (level && capability.levels === undefined) {
+        throw new ObjectRouteError(
+          `${provider.type} declares no folder listing: its walk pages keys only, so "level" has nothing to ask for`,
+          400,
+        );
+      }
+      // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
+      // always did, with no `level` key at all.
+      const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
+      // One `key-scan` event per page, which reads key names (docs/GOVERNANCE.md#query-events), with the keys it answered
+      // as its row count.
+      return await runRecorded(
+        {
+          source: "key-scan",
+          session: context.session,
+          connection: context.connection,
+          statement: scanStatement(forwarded),
+          statementType: "OTHER",
+        },
+        async () => {
+          const page = await walk.call(provider, forwarded);
+          checkAnswer(provider.type, page, forwarded, shape.separator);
+          // The skipped and read outcome sentences are the provider's own words, answered through the connection's
+          // scrub; the keys the check read and the row count reads are kept.
+          return scrubKeyScanPage(context.scrub, page);
+        },
+        (page) => page.keys.length,
       );
-    }
-    const options = {
-      cursor: readCursor(body, shape),
-      pattern: readPattern(body, shape),
-      count: readCount(body, capability),
-      // Absent means the provider's own session database, which is the provider's answer to give:
-      // `SELECT` state lives on the connection and not in this route.
-      database: optionalDatabase(body, "database"),
-    };
-    if (options.database !== undefined && containerDepth(capabilities) === 0) {
-      throw new ObjectRouteError(
-        `${provider.type} walks one key space and declares no database level: "database" names the numbered ` +
-          `database to walk, and this engine has none to name`,
-        400,
-      );
-    }
-    // Read after the database refusal, so a request that engine refused before "level" existed is
-    // refused in the same words now.
-    const level = readLevel(body);
-    if (level && capability.levels === undefined) {
-      throw new ObjectRouteError(
-        `${provider.type} declares no folder listing: its walk pages keys only, so "level" has nothing to ask for`,
-        400,
-      );
-    }
-    // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
-    // always did, with no `level` key at all.
-    const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
-    // One `key-scan` event per page, which reads key names (docs/GOVERNANCE.md#query-events), with the keys it answered
-    // as its row count.
-    return await runRecorded(
-      {
-        source: "key-scan",
-        session: context.session,
-        connection: context.connection,
-        statement: scanStatement(forwarded),
-        statementType: "OTHER",
-      },
-      async () => {
-        const page = await walk.call(provider, forwarded);
-        checkAnswer(provider.type, page, forwarded, shape.separator);
-        // The skipped and read outcome sentences are the provider's own words, answered through the connection's
-        // scrub; the keys the check read and the row count reads are kept.
-        return scrubKeyScanPage(context.scrub, page);
-      },
-      (page) => page.keys.length,
-    );
-  });
+    },
+    { request: "keyScan" },
+  );
 }
 
 /**

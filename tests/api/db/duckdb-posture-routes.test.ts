@@ -90,6 +90,10 @@ mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   getOrCreateEditorSession: mockGetOrCreateEditorSession,
   getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
+  // The tree routes' open of any record's metadata session: a legacy record's entry holds the provider the metadata
+  // stand-in answers for the same connection and execution context, so its calls read what each route handed.
+  getOrCreateMetadataSession: async (connection: unknown, _engine: unknown, execution: unknown) =>
+    editorEntryOf(await mockGetOrCreateMetadataProvider(connection, {}, execution)),
   createDatabaseProvider: mockCreateDatabaseProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
   findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,

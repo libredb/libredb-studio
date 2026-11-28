@@ -6,8 +6,8 @@
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
- * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`,
- * `scrubSourceDocument`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
+ * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`, which read them
+ * under the record's grant of a package's own words, `providerSentence`, and `scrubSourceDocument`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
  * `scrubMaintenancePreview`, `scrubKeyScanPage`, and an object edit's `scrubObjectEditRefusal`, `scrubObjectEditPlan`,
  * `scrubObjectEditPreimage` and `scrubObjectEditOutcome`), before any fence, prompt, ledger row, response or log line.
  * A code a record keeps goes through `recordedProviderCode`. It reads the secret-class values
@@ -41,7 +41,9 @@ import {
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
 import { isCountSampled, isCountUnavailable, isIndexesUnavailable } from "@/lib/db/object-kinds";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
+import { logger } from "@/lib/logger";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
 import type {
   KeyScanPage,
@@ -139,20 +141,49 @@ export function withScrubbedWarnings(scrub: ProviderTextScrub, result: QueryResu
 }
 
 /**
- * The counts of an object count read with each `unavailable` and `sampledFrom` sentence scrubbed: a provider writes
- * them in its own words. Every count is kept, and the value given is not changed. Each count's arm is read by its
- * member's value (`isCountUnavailable`, `isCountSampled`): a member present with no value reads as absent
- * (docs/providers/CONTRACT.md, clause C-62).
+ * How a provider's sentences in a success answer reach the client (docs/providers/CONTRACT.md, clause C-112): core's
+ * scrub of the connection, how the engine's record grants its own words (`grants.ownWords`, the register row's grant;
+ * a legacy engine's row grants `"scrubbed"`), and the route a sentence Studio withholds is logged under.
+ */
+export interface ProviderWords {
+  readonly scrub: ProviderTextScrub;
+  readonly ownWords: EngineRecord["grants"]["ownWords"];
+  readonly route: string;
+}
+
+/** Studio's sentence in place of a provider package's own sentence in an answer, where its record grants no words. */
+export const PACKAGE_SENTENCE_WITHHELD = "The provider package gave a reason; the server's log holds its words.";
+
+/**
+ * A sentence a provider wrote in an answer, as the client receives it under `words`: through core's scrub where the
+ * record grants the engine its own words (`"scrubbed"`), and otherwise Studio's sentence, `PACKAGE_SENTENCE_WITHHELD`,
+ * the words logged once under the route through core's scrub. A name, a path, a kind and a flag of an answer are data,
+ * never read here.
+ */
+export function providerSentence(words: ProviderWords, text: string): string {
+  if (words.ownWords === "scrubbed") return scrubProviderText(words.scrub, text);
+  logger.warn("A provider package's answer gave a reason", {
+    route: words.route,
+    reason: scrubProviderText(words.scrub, text),
+  });
+  return PACKAGE_SENTENCE_WITHHELD;
+}
+
+/**
+ * The counts of an object count read with each `unavailable` and `sampledFrom` sentence read under `words`
+ * (`providerSentence`): a provider writes them in its own words. Every count is kept, and the value given is not
+ * changed. Each count's arm is read by its member's value (`isCountUnavailable`, `isCountSampled`): a member present
+ * with no value reads as absent (docs/providers/CONTRACT.md, clause C-62).
  */
 export function scrubKindCounts(
-  scrub: ProviderTextScrub,
+  words: ProviderWords,
   counts: Readonly<Record<string, KindCount>>,
 ): Record<string, KindCount> {
   return Object.fromEntries(
     Object.entries(counts).map(([kind, count]): [string, KindCount] => {
-      if (isCountUnavailable(count)) return [kind, { unavailable: scrubProviderText(scrub, count.unavailable) }];
+      if (isCountUnavailable(count)) return [kind, { unavailable: providerSentence(words, count.unavailable) }];
       if (isCountSampled(count)) {
-        return [kind, { count: count.count, sampledFrom: scrubProviderText(scrub, count.sampledFrom) }];
+        return [kind, { count: count.count, sampledFrom: providerSentence(words, count.sampledFrom) }];
       }
       return [kind, count];
     }),
@@ -160,12 +191,13 @@ export function scrubKindCounts(
 }
 
 /**
- * An object's description with its `indexes.unavailable` sentence scrubbed, the provider's own words; a description
- * whose indexes are a list is answered as given. Columns, keys and the path are database content, never scrubbed.
+ * An object's description with its `indexes.unavailable` sentence read under `words` (`providerSentence`), the
+ * provider's own words; a description whose indexes are a list is answered as given. Columns, keys and the path are
+ * database content, never scrubbed.
  */
-export function scrubObjectDetail(scrub: ProviderTextScrub, detail: ObjectDetail): ObjectDetail {
+export function scrubObjectDetail(words: ProviderWords, detail: ObjectDetail): ObjectDetail {
   if (!isIndexesUnavailable(detail.indexes)) return detail;
-  return { ...detail, indexes: { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) } };
+  return { ...detail, indexes: { unavailable: providerSentence(words, detail.indexes.unavailable) } };
 }
 
 /** One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. */

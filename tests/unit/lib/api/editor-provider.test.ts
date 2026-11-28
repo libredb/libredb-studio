@@ -232,7 +232,7 @@ describe("metadataProvider", () => {
 
 /** The object tree's session of any record: the record's metadata session by its form (C-66). */
 describe("metadataTreeTarget", () => {
-  const legacyEngine = { id: "postgres", offers: { legacyProvider: true } } as unknown as EngineRecord;
+  const legacyEngine = { id: connection.type, offers: { legacyProvider: true } } as unknown as EngineRecord;
   const packageEngine = { id: "acmeps", offers: { legacyProvider: false } } as unknown as EngineRecord;
   const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
 
@@ -249,7 +249,7 @@ describe("metadataTreeTarget", () => {
     expect(legacy.session.calls.objects.tree).toBe("offered");
     expect(legacy.session.objectModel).toEqual(providerTreeTarget(server).session.objectModel);
     expect(() => legacy.env.get("PATH")).toThrow();
-    expect([legacy.timeout(), legacy.wholeServer()]).toEqual([60_000, "postgres"]);
+    expect([legacy.timeout(), legacy.wholeServer()]).toEqual([60_000, connection.type]);
     expect(providerTreeTarget(providerOf({})).wholeServer()).toBeNull();
     expect(providerTreeTarget({ ...providerOf({}), config: { ...connection, queryTimeout: 5 } }).timeout()).toBe(5);
     legacy.started();

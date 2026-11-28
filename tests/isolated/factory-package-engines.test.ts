@@ -401,7 +401,7 @@ describe("the factory's metadata session of a provider package's engine", () => 
 
     // A legacy record's metadata session is the provider getOrCreateMetadataProvider answers, in one entry.
     const sqlite = sqliteConnection();
-    const legacy = await getOrCreateMetadataSession(sqlite, engineOf("sqlite"), ADMIN);
+    const legacy = await getOrCreateMetadataSession(sqlite, engineOf(sqlite.type), ADMIN);
     expect(openedProvider(legacy.opened)).toBe(await getOrCreateMetadataProvider(sqlite, {}, ADMIN));
     await clearProviderCache();
   });

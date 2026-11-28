@@ -372,20 +372,26 @@ describe("on every route that resolves the calling connection", () => {
       "any",
     );
     for (const form of forms) {
-      const counts = scrubKindCounts(scrub, {
-        table: { unavailable: `refused for ${form}` },
-        view: { count: 4, sampledFrom: `sampled as ${form}` },
-      });
+      const counts = scrubKindCounts(
+        { scrub, ownWords: "scrubbed", route: "provider-text-scrub" },
+        {
+          table: { unavailable: `refused for ${form}` },
+          view: { count: 4, sampledFrom: `sampled as ${form}` },
+        },
+      );
       expect(counts).toEqual({
         table: { unavailable: PROVIDER_TEXT_WITHHELD },
         view: { count: 4, sampledFrom: PROVIDER_TEXT_WITHHELD },
       });
-      const detail = scrubObjectDetail(scrub, {
-        path: ["orders"],
-        columns: [],
-        indexes: { unavailable: `index read refused for ${form}` },
-        foreignKeys: [],
-      });
+      const detail = scrubObjectDetail(
+        { scrub, ownWords: "scrubbed", route: "provider-text-scrub" },
+        {
+          path: ["orders"],
+          columns: [],
+          indexes: { unavailable: `index read refused for ${form}` },
+          foreignKeys: [],
+        },
+      );
       expect(detail.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
       const document: ObjectSourceDocument = {
         path: ["report"],

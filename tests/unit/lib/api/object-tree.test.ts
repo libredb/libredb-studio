@@ -1,8 +1,9 @@
 /**
  * The object tree's caller facade (src/lib/api/object-tree.ts; docs/providers/CONTRACT.md, clause C-65): each tree read
- * of the object routes and the VS Code backend is one host core tree call on the legacy bridge's session, under a
- * deadline of its own, the statement timeout plus ten seconds from that read's start, and the caller's signal, and
- * answers the provider's own answer by reference.
+ * of the object routes and the VS Code backend is one host core tree call on the session of the target its caller hands
+ * it, a legacy provider's bridged session (`providerTreeTarget` in src/lib/api/session-target.ts) or a provider
+ * package's, under a deadline of its own, the statement timeout plus ten seconds from that read's start, and the
+ * caller's signal, and answers the session's own answer by reference.
  *
  * The real host core is installed for the file; a case that needs a record the real core would answer only at a real
  * deadline installs a core of its own around the real one and restores it. Every double signals when the read reaches
@@ -541,7 +542,7 @@ describe("grantedObjectTree", () => {
     expect(grant.hold).not.toHaveBeenCalled();
   });
 
-  test("a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none", async () => {
+  test("a granted read hands the target's read allowance to the bridge by reference, and none where the target has none", async () => {
     const readAllowance = new RunReadAllowance(5);
     const billed = providerOf();
     const tree = grantedObjectTree(providerTreeTarget(billed, { readAllowance }), grantOf());
@@ -1042,9 +1043,9 @@ describe("the tree facades on a session target", () => {
 
     // A session that offers the tree and states no object model is the host's defect, named, before any read.
     const unstated = packageTarget();
-    const { objectModel: _unread, ...withoutModel } = unstated.target.session;
+    const { calls: offered, tree } = unstated.target.session;
     expect(() =>
-      objectTree({ ...unstated.target, session: withoutModel }, new AbortController().signal, ROUTE),
+      objectTree({ ...unstated.target, session: { calls: offered, tree } }, new AbortController().signal, ROUTE),
     ).toThrow("The session offers objects.tree and states no object model, a defect of the host's session.");
     expect(unstated.calls).toEqual([]);
   });

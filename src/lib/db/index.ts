@@ -17,9 +17,8 @@
 // Factory (Primary API)
 // ============================================================================
 
-// `getOrCreateMetadataProvider` is here for the object routes' handler (src/lib/api/object-route.ts), which resolves the
-// tree routes' provider on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), and for fleet
-// health, which reads each row there; the package surface (src/exports/providers.ts) does not re-export it.
+// `getOrCreateMetadataProvider` is here for fleet health, which reads each row on the connection's metadata session
+// (docs/providers/CONTRACT.md, clause C-66); the package surface (src/exports/providers.ts) does not re-export it.
 export {
   getOrCreateProvider,
   getOrCreateMetadataProvider,

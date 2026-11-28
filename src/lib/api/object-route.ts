@@ -1,11 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateMetadataProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider } from "@/lib/db";
 import { readBoundedJson } from "@/lib/api/bounded-json";
+import { metadataTreeTarget } from "@/lib/api/editor-provider";
 import { createErrorResponse } from "@/lib/api/errors";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
+import type { TreeTarget } from "@/lib/api/session-target";
+import { resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import {
+  connectionTextScrub,
+  type ProviderTextScrub,
+  type ProviderWords,
+  providerTextScrub,
+} from "@/lib/db/operations/provider-text";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderType,
+} from "@/lib/db/server-catalog";
 import { SOURCE_PART_LIMIT, applySourceBound, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   acceptedContainerShapes,
@@ -65,21 +80,58 @@ import type { UserPayload } from "@/lib/auth";
  * would be a second way to reach one behaviour and would put the bound's NUMBER in this file,
  * where it has no business being.
  *
- * `options.session` names which session the provider is resolved on, as a value and never a function a route hands
- * in, so the routes import no provider builder: `"editor"`, the default, resolves the editor's provider through
- * `getOrCreateProvider`, and `"metadata"`, which the six tree routes pass, resolves the connection's metadata session
- * through `getOrCreateMetadataProvider`, so a tree read never waits for the editor's statements except on a connection
- * that serves one session (docs/providers/CONTRACT.md, clause C-66). Either is resolved after the guard, the body read
- * and the connection's resolution, with the same execution context.
+ * `options` decides how the request is resolved and what `run` is handed, as a value and never a function a route
+ * hands in, so the routes import no provider builder:
+ *
+ * - `{ reads: "tree" }`, which the six tree routes pass: the connection and its engine's record are resolved through
+ *   `resolveServedConnection`, so a provider package's engine resolves too, and `run` is handed the tree target of the
+ *   record's metadata session (`metadataTreeTarget` in ./editor-provider), beside the editor's, so a tree read never
+ *   waits for the editor's statements except on a connection that serves one session (docs/providers/CONTRACT.md,
+ *   clause C-66). A package's session that does not offer `objects.tree` is opened and then refused by the session's
+ *   offer when the route builds its tree (`objectTree` in ./object-tree), never as the route-level 501. A failure of
+ *   the open and of the run is answered by the record (`packageFailureAnswer` in ./package-errors): a legacy record's
+ *   as raised, a package's open failure as a not-sent `ConnectionError`, a refusal of what a package answered as the
+ *   package's defect, and a package's own error by its record's grant of its words, logged once there. The context
+ *   carries the record and how a provider's sentences in an answer reach the client (`TreeRequestContext.words`).
+ * - `{ request: "editPlan" | "editApply" | "keyScan", readBody? }`, which the edit plan, the edit apply and the key
+ *   scan pass: resolved through `resolveServedConnection` too, and a record that does not offer the request
+ *   (`EngineOffers.objectEdit`, `EngineOffers.keyScan`) is refused before any open as `FacetNotOfferedError` naming the
+ *   request, 400, outcome not-sent; no provider package's record offers either, since the provider contract has no
+ *   edit or key scan call yet. Every other record opens the editor's provider through `getOrCreateProvider`.
+ * - no options, which the source read passes until it is a contract call on the record's session: the connection is
+ *   resolved through `resolveConnection`, which refuses a provider package's engine as `PACKAGE_ENGINE_UNSUPPORTED`,
+ *   501, and the editor's provider is opened through `getOrCreateProvider`.
+ *
+ * Every arm opens after the guard, the body read and the connection's resolution, with the execution context of the
+ * guard's session and the resolved connection.
  */
+export async function handleObjectRequest(
+  req: NextRequest,
+  route: string,
+  run: (tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>,
+  options: { readonly reads: "tree" },
+): Promise<NextResponse>;
 export async function handleObjectRequest(
   req: NextRequest,
   route: string,
   run: (provider: DatabaseProvider, body: Record<string, unknown>, context: ObjectRequestContext) => Promise<unknown>,
   options?: {
+    readonly request?: ProviderRequest;
     readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>>;
-    readonly session?: "editor" | "metadata";
   },
+): Promise<NextResponse>;
+export async function handleObjectRequest(
+  req: NextRequest,
+  route: string,
+  run:
+    | ((tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>)
+    | ((provider: DatabaseProvider, body: Record<string, unknown>, context: ObjectRequestContext) => Promise<unknown>),
+  options?:
+    | { readonly reads: "tree" }
+    | {
+        readonly request?: ProviderRequest;
+        readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>>;
+      },
 ): Promise<NextResponse> {
   // Ahead of body parsing: an unauthenticated caller never gets a body parsed on its behalf, and
   // the rate limiter sees the request before any work is done for it. Same ordering, and the same
@@ -88,34 +140,37 @@ export async function handleObjectRequest(
   if ("response" in guard) return guard.response;
 
   // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
-  // provider ran.
-  let scrub: ProviderTextScrub | undefined;
+  // provider ran. `failing` is the record's call a failure is answered by, once the tree arm reached it.
+  const state: { scrub?: ProviderTextScrub; failing?: FailingCall } = {};
   try {
-    const body = await (options?.readBody === undefined ? readDefaultBody(req) : options.readBody(req));
+    const readBody = options !== undefined && "readBody" in options ? options.readBody : undefined;
+    const body = await (readBody === undefined ? readDefaultBody(req) : readBody(req));
 
-    // The body goes to `resolveConnection` as-is, unlike the schema routes, which also accept a
+    // The body goes to the resolve as-is, unlike the schema routes, which also accept a
     // bare connection object AS the whole body. These routes always carry named fields beside the
     // connection (`container`, `kind`, `path`, `term`), so a body that names neither `connection`
     // nor `connectionId` is a caller mistake, and reading it as a connection would turn that
     // mistake into a confusing provider error further down.
-    const connection = await resolveConnection(body as ObjectRequestBody, guard.session);
-    const connectionScrub = providerTextScrub(connection, "any");
-    scrub = connectionScrub;
-
-    if (!connection.type) {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
+    const reads = options !== undefined && "reads" in options;
+    const request = options === undefined || "reads" in options ? undefined : options.request;
+    // The source read: no tree and no request a record offers, so the legacy resolve.
+    if (!reads && request === undefined) {
+      const connection = await resolveConnection(body as ObjectRequestBody, guard.session);
+      if (!connection.type) return untypedConnection();
+      state.scrub = providerTextScrub(connection, "any");
+      return await providerRun(run as ProviderRun, body, connection, state.scrub, guard.session, route);
     }
-
-    // Covers all nine object routes and keys/scan: the DuckDB editor file-access posture is
-    // derived from the verified session role and the resolved connection (non-admin DuckDB file access), so a non-admin
-    // browsing or editing objects on a DuckDB connection opens a handle with external access off.
-    const execution = editorExecutionContext(guard.session, connection);
-    const provider = await (options?.session === "metadata"
-      ? getOrCreateMetadataProvider(connection, {}, execution)
-      : getOrCreateProvider(connection, {}, execution));
-    return NextResponse.json(
-      await run(provider, body, { connection, session: guard.session, route, scrub: connectionScrub }),
-    );
+    const { connection, engine } = await resolveServedConnection(body as ObjectRequestBody, guard.session);
+    if (!connection.type) return untypedConnection();
+    const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    state.scrub = scrub;
+    // A tree read, the one arm that names no request.
+    if (request === undefined) {
+      return await treeRun(run as TreeRun, body, { connection, engine, scrub, session: guard.session, route }, state);
+    }
+    assertRequestOffered(engine, request);
+    const legacy = legacyConnection(engine, connection);
+    return await providerRun(run as ProviderRun, body, legacy, scrub, guard.session, route);
   } catch (error) {
     if (error instanceof ObjectRouteError) {
       // `{ error }`, the shape this handler's own body-shape refusals above already use, plus
@@ -124,8 +179,110 @@ export async function handleObjectRequest(
       // have to know that to predict the wire shape.
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
     }
-    return createErrorResponse(error, { route, scrub });
+    const { failing, scrub } = state;
+    if (failing === undefined || scrub === undefined) return createErrorResponse(error, { route, scrub });
+    // A provider package's failure is logged once where it is answered (`isPackageFailure`), so it gets no second line.
+    const logged = isPackageFailure(failing.engine, error);
+    return createErrorResponse(packageFailureAnswer(failing.engine, failing.call, error, scrub, route), {
+      route,
+      scrub,
+      logged,
+    });
   }
+}
+
+/** The refusal of a resolved connection that names no type. */
+function untypedConnection(): NextResponse {
+  return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
+}
+
+/** A provider route's `run`. */
+type ProviderRun = (
+  provider: DatabaseProvider,
+  body: Record<string, unknown>,
+  context: ObjectRequestContext,
+) => Promise<unknown>;
+
+/** A tree route's `run`. */
+type TreeRun = (tree: TreeTarget, body: Record<string, unknown>, context: TreeRequestContext) => Promise<unknown>;
+
+/** The call of the tree arm a failure is answered by: the record's open, then its tree read. */
+interface FailingCall {
+  readonly engine: EngineRecord;
+  readonly call: "open" | "tree read";
+}
+
+/**
+ * The provider arm: the editor's provider of `connection`, opened under the guard's session's editor posture, and
+ * `run`'s answer on it.
+ */
+async function providerRun(
+  run: ProviderRun,
+  body: Record<string, unknown>,
+  connection: DatabaseConnection,
+  scrub: ProviderTextScrub,
+  session: ObjectRequestContext["session"] & { readonly role: string },
+  route: string,
+): Promise<NextResponse> {
+  // Covers the source read, the edit routes and keys/scan: the DuckDB editor file-access posture is
+  // derived from the verified session role and the resolved connection (non-admin DuckDB file access), so a non-admin
+  // browsing or editing objects on a DuckDB connection opens a handle with external access off.
+  const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(session, connection));
+  return NextResponse.json(await run(provider, body, { connection, session, route, scrub }));
+}
+
+/**
+ * The tree arm: the tree target of the record's metadata session, and `run`'s answer on it, `state.failing` naming the
+ * record's call a failure is answered by.
+ */
+async function treeRun(
+  run: TreeRun,
+  body: Record<string, unknown>,
+  resolved: {
+    readonly connection: EngineConnection;
+    readonly engine: EngineRecord;
+    readonly scrub: ProviderTextScrub;
+    readonly session: ObjectRequestContext["session"] & { readonly role: string };
+    readonly route: string;
+  },
+  state: { failing?: FailingCall },
+): Promise<NextResponse> {
+  const { connection, engine, scrub, session, route } = resolved;
+  state.failing = { engine, call: "open" };
+  const tree = await metadataTreeTarget(session, connection, engine);
+  state.failing = { engine, call: "tree read" };
+  const words: ProviderWords = { scrub, ownWords: engine.grants.ownWords, route };
+  return NextResponse.json(await run(tree, body, { connection, engine, session, route, scrub, words }));
+}
+
+/** A request a provider route serves that a provider package's record offers none of yet, by its operation. */
+export type ProviderRequest = "editPlan" | "editApply" | "keyScan";
+
+/** The record's offer each provider request reads, and how its refusal names it. */
+const PROVIDER_REQUESTS: Readonly<Record<ProviderRequest, { offer: "objectEdit" | "keyScan"; noun: string }>> =
+  Object.freeze({
+    editPlan: { offer: "objectEdit", noun: "object edit plan" },
+    editApply: { offer: "objectEdit", noun: "object edit" },
+    keyScan: { offer: "keyScan", noun: "key scan" },
+  });
+
+/**
+ * Refuses `request` for `engine` when its record does not offer it, before any open: `FacetNotOfferedError` of the
+ * object facet naming the request, outcome not-sent (docs/providers/CONTRACT.md, clause C-111).
+ *
+ * @throws {FacetNotOfferedError} Not-sent, when the record does not offer the request.
+ */
+function assertRequestOffered(engine: EngineRecord, request: ProviderRequest): void {
+  const { offer, noun } = PROVIDER_REQUESTS[request];
+  if (engine.offers[offer]) return;
+  const error = new FacetNotOfferedError(
+    `This connection's engine offers no ${noun} in this LibreDB Studio, so Studio opened nothing.`,
+    legacyProviderType(engine),
+    "objects",
+    request,
+  );
+  markNotSent(error);
+  throw error;
 }
 
 /**
@@ -158,8 +315,8 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
 /**
  * What a route gets BESIDE the provider and the body, and the reason each field is here (#789).
  *
- * `connection` is the RESOLVED connection, after `resolveConnection` has turned a `connectionId`
- * into a stored connection or accepted an inline one. The edit-plan route digests it, and a
+ * `connection` is the RESOLVED connection, after `resolveConnection` or `resolveServedConnection` has turned a
+ * `connectionId` into a stored connection or accepted an inline one. The edit-plan route digests it, and a
  * fingerprint computed from a second resolution would be a fingerprint of a possibly different
  * server.
  *
@@ -169,8 +326,8 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  * `route` is the same string the caller passed, repeated here so a route that needs it for an
  * audit event does not have to hold a second copy of its own name.
  *
- * `scrub` is core's scrub of the resolved connection (`providerTextScrub`), so a route answers a
- * provider's sentences through the same scrub its errors are answered with.
+ * `scrub` is core's scrub of the resolved connection (`providerTextScrub`, `connectionTextScrub`), so a route answers
+ * a provider's sentences through the same scrub its errors are answered with.
  *
  * The session is a read-only view of the three `UserPayload` fields a consumer reads: the role and
  * username an audit line writes, and the identity provider subject a query event names its caller
@@ -181,6 +338,18 @@ export interface ObjectRequestContext {
   readonly session: Readonly<Pick<UserPayload, "role" | "username" | "idpSubject">>;
   readonly route: string;
   readonly scrub: ProviderTextScrub;
+}
+
+/**
+ * What a tree route gets beside its tree target and the body: the context a provider route gets, with the connection of
+ * any engine the server serves, the record of its engine, whose id the route's sentences name the engine by, and how a
+ * provider's sentences in a tree answer reach the client (`providerSentence` in src/lib/db/operations/provider-text.ts):
+ * through `scrub` where the record grants the engine its own words, and as Studio's sentence where it does not.
+ */
+export interface TreeRequestContext extends Omit<ObjectRequestContext, "connection"> {
+  readonly connection: EngineConnection;
+  readonly engine: EngineRecord;
+  readonly words: ProviderWords;
 }
 
 /**

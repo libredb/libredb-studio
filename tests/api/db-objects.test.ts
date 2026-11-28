@@ -63,6 +63,8 @@ import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-cor
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { UserPayload } from "@/lib/auth";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import type { TreeTarget } from "@/lib/api/session-target";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
 // NOTE: the mocks below are inline rather than in a shared helper, and the request is built by
@@ -109,9 +111,41 @@ const mockResolveConnection = mock(async (body: Record<string, unknown>): Promis
   return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
 });
 
+/**
+ * The served resolve (`resolveServedConnection`), which the tree, edit and key scan routes read: the same resolution,
+ * with the record of the resolved type's engine, a legacy engine's, as the server catalog holds it.
+ */
+const mockResolveServedConnection = mock(async (body: Record<string, unknown>) => {
+  const connection = (await mockResolveConnection(body)) as { type?: unknown };
+  return { connection, engine: connection.type === undefined ? undefined : servedEngineRecord(connection.type) };
+});
+
 mock.module("@/lib/seed/resolve-connection", () => ({
   resolveConnection: mockResolveConnection,
+  resolveServedConnection: mockResolveServedConnection,
   SeedConnectionError,
+}));
+
+/*
+ * The tree routes open the record's metadata session through the factory (`getOrCreateMetadataSession`, read by
+ * `metadataTreeTarget` in src/lib/api/editor-provider.ts): a legacy record's entry holds the provider the file's
+ * `getOrCreateMetadataProvider` stand-in answers for the same connection and execution context. The real factory is
+ * held before its module is mocked, so nothing here reads the mock through its own namespace.
+ */
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateMetadataSession: async (connection: unknown, engine: unknown, execution: unknown) => ({
+    opened: {
+      form: "provider",
+      provider: await (mockGetOrCreateMetadataProvider as (...args: unknown[]) => Promise<DatabaseProvider>)(
+        connection,
+        {},
+        execution,
+      ),
+    },
+    engine,
+  }),
 }));
 
 mock.module("@/lib/db", () => ({
@@ -671,7 +705,10 @@ describe("POST /api/db/objects/counts", () => {
     });
 
     const empty = await countsRoute.POST(
-      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection: { ...connection, type: activeProvider.type }, container: [] },
+      }) as never,
     );
     expect(empty.status).toBe(400);
     expect(await parseResponseJSON<Record<string, string>>(empty)).toEqual({
@@ -682,7 +719,7 @@ describe("POST /api/db/objects/counts", () => {
     const long = await countsRoute.POST(
       createMockRequest("/api/db/objects/counts", {
         method: "POST",
-        body: { connection, container: ["memory", "app", "x"] },
+        body: { connection: { ...connection, type: activeProvider.type }, container: ["memory", "app", "x"] },
       }) as never,
     );
     expect(long.status).toBe(400);
@@ -700,7 +737,7 @@ describe("POST /api/db/objects/counts", () => {
     const named = await countsRoute.POST(
       createMockRequest("/api/db/objects/counts", {
         method: "POST",
-        body: { connection, container: ["main"] },
+        body: { connection: { ...connection, type: activeProvider.type }, container: ["main"] },
       }) as never,
     );
     expect(named.status).toBe(400);
@@ -711,7 +748,10 @@ describe("POST /api/db/objects/counts", () => {
     expect(countObjects).toHaveBeenCalledTimes(0);
 
     const empty = await countsRoute.POST(
-      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection: { ...connection, type: activeProvider.type }, container: [] },
+      }) as never,
     );
     expect(empty.status).toBe(200);
     expect(countObjects).toHaveBeenCalledWith([]);
@@ -2138,7 +2178,10 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     const listObjects = keyValueProvider();
 
     const response = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection, kinds: ["key"] } }) as never,
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection: { ...connection, type: activeProvider.type }, kinds: ["key"] },
+      }) as never,
     );
 
     expect(response.status).toBe(400);
@@ -2152,7 +2195,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     const response = await searchRoute.POST(
       createMockRequest("/api/db/objects/search", {
         method: "POST",
-        body: { connection, term: "app", kinds: ["prefix", "key"] },
+        body: { connection: { ...connection, type: activeProvider.type }, term: "app", kinds: ["prefix", "key"] },
       }) as never,
     );
 
@@ -2169,7 +2212,7 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     const response = await inventoryRoute.POST(
       createMockRequest("/api/db/objects/inventory", {
         method: "POST",
-        body: { connection, kinds: ["value"] },
+        body: { connection: { ...connection, type: activeProvider.type }, kinds: ["value"] },
       }) as never,
     );
 
@@ -3880,33 +3923,33 @@ describe("the tree routes on the metadata session", () => {
         typeof handleObjectRequest
       >[0];
     const answered = async (provider: DatabaseProvider) => ({ editor: provider === activeProvider });
+    // A tree read's target is the bridged session of the metadata session's provider: its model is that provider's.
+    const answeredTree = async (tree: TreeTarget) => ({ editor: false, tree: tree.session.calls.objects.tree });
     const metadata = objectProvider();
     mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
     const context = editorExecutionContext(ADMIN, connection as never);
 
-    const options: [string, Parameters<typeof handleObjectRequest>[3]][] = [
-      ["no options", undefined],
-      ["the editor's session", { session: "editor" }],
-      ["the metadata session", { session: "metadata" }],
-    ];
     const seen: [string, unknown, number, number][] = [];
-    for (const [label, option] of options) {
+    const counted = async (label: string, respond: () => Promise<Response>) => {
       mockGetOrCreateProvider.mockClear();
       mockGetOrCreateMetadataProvider.mockClear();
-      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each resolution count is its own.
-      const response = await handleObjectRequest(request(), probeRoute, answered, option);
+      const response = await respond();
       seen.push([
         label,
-        // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
         await parseResponseJSON(response),
         mockGetOrCreateProvider.mock.calls.length,
         mockGetOrCreateMetadataProvider.mock.calls.length,
       ]);
-    }
+    };
+    await counted("no options", () => handleObjectRequest(request(), probeRoute, answered));
+    await counted("a request the record offers", () =>
+      handleObjectRequest(request(), probeRoute, answered, { request: "keyScan" }),
+    );
+    await counted("the object tree", () => handleObjectRequest(request(), probeRoute, answeredTree, { reads: "tree" }));
     expect(seen).toEqual([
       ["no options", { editor: true }, 1, 0],
-      ["the editor's session", { editor: true }, 1, 0],
-      ["the metadata session", { editor: false }, 0, 1],
+      ["a request the record offers", { editor: true }, 1, 0],
+      ["the object tree", { editor: false, tree: "offered" }, 0, 1],
     ]);
     expect(mockGetOrCreateMetadataProvider.mock.calls as unknown[][]).toEqual([[connection, {}, context]]);
 
@@ -3914,14 +3957,14 @@ describe("the tree routes on the metadata session", () => {
     mockGetSession.mockResolvedValueOnce(null as unknown as { role: string; username: string });
     mockResolveConnection.mockClear();
     mockGetOrCreateMetadataProvider.mockClear();
-    const refused = await handleObjectRequest(request(), probeRoute, answered, { session: "metadata" });
+    const refused = await handleObjectRequest(request(), probeRoute, answeredTree, { reads: "tree" });
     expect(refused.status).toBe(401);
     expect(mockResolveConnection).toHaveBeenCalledTimes(0);
     expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(0);
 
     // A connection that does not resolve is refused before a metadata session is opened.
     mockResolveConnection.mockRejectedValueOnce(new SeedConnectionError("Connection not found", 404));
-    const unresolved = await handleObjectRequest(request(), probeRoute, answered, { session: "metadata" });
+    const unresolved = await handleObjectRequest(request(), probeRoute, answeredTree, { reads: "tree" });
     expect(unresolved.status).toBe(404);
     expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(0);
   });

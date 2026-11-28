@@ -15,7 +15,6 @@ import {
   type ObjectInventory,
 } from "@/lib/api/object-route";
 import { objectTree } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
 import {
   type ContainerEnumeration,
   type ContainerSource,
@@ -26,7 +25,7 @@ import {
 } from "@/lib/db/container-walk";
 import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import { applicableKinds } from "@/lib/db/object-kinds";
-import { scrubObjectDetail, scrubProviderText } from "@/lib/db/operations/provider-text";
+import { providerSentence, scrubObjectDetail } from "@/lib/db/operations/provider-text";
 import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -94,19 +93,19 @@ export const dynamic = "force-dynamic";
  * deadline for it would cut an inventory that answers. The request's signal ends the walk at its
  * next read.
  *
- * Every read of the inventory runs on the connection's metadata session (`{ session: "metadata" }`), beside the
- * editor's, so it never waits for the editor's statements, except on a connection that serves one session
- * (docs/providers/CONTRACT.md, clause C-66).
+ * Every read of the inventory runs on the record's metadata session (`{ reads: "tree" }`), a provider package's
+ * through its package, beside the editor's, so it never waits for the editor's statements, except on a connection that
+ * serves one session (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(
     req,
     "api/db/objects/inventory",
-    async (provider, body, ctx): Promise<ObjectInventory> => {
-      const tree = objectTree(providerTreeTarget(provider), req.signal, ctx.route);
-      const kinds = resolveKinds(tree.objectModel, provider.type, optionalStringArray(body, "kinds"));
+    async (target, body, ctx): Promise<ObjectInventory> => {
+      const tree = objectTree(target, req.signal, ctx.route);
+      const kinds = resolveKinds(tree.objectModel, ctx.engine.id, optionalStringArray(body, "kinds"));
       const named = optionalContainerList(body, "containers");
-      named?.forEach((container) => assertContainerAddress(tree.objectModel, provider.type, "containers", container));
+      named?.forEach((container) => assertContainerAddress(tree.objectModel, ctx.engine.id, "containers", container));
 
       // Deduplicated before the fan-out is built, not after: a repeated container costs one full
       // listing round trip per kind, and a body may name the same one any number of times.
@@ -117,7 +116,7 @@ export async function POST(req: NextRequest) {
       // kinds, the named ones are still asked of the provider, because which kinds a container
       // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
       // not have its namespaced kinds listed there. See `namedEnumeration`.
-      if (named === undefined) assertNotWholeServer(provider);
+      if (named === undefined) assertNotWholeServer(target);
       const enumerated =
         named === undefined ? await enumerateContainers(tree) : await namedEnumeration(tree, dedupePaths(named));
       const containers = dedupePaths(enumerated.containers);
@@ -182,16 +181,16 @@ export async function POST(req: NextRequest) {
           const batch = await (includeDefaultSql
             ? describeObjects(pair.container, pair.kind, bound, { defaultSql: true })
             : describeObjects(pair.container, pair.kind, bound));
-          details.push(...batch.details.map((detail) => scrubObjectDetail(ctx.scrub, detail)));
-          // The provider's own bound, kept in the provider's own words through the connection's scrub,
-          // as each detail's index sentence is. It is reported even when the listing above fitted,
+          details.push(...batch.details.map((detail) => scrubObjectDetail(ctx.words, detail)));
+          // The provider's own bound, kept in the provider's own words as each detail's index sentence is:
+          // through the connection's scrub where the record grants them, Studio's sentence where it does not. It is reported even when the listing above fitted,
           // because a complete list of objects whose columns were cut is still an incomplete answer,
           // and a reader that trusted it would read a missing column as an absent one. The LAST one wins among column bounds: they are all the same statement about
           // the same read, and only the precedence below decides whether any of them is reported.
           if (batch.truncated !== undefined) {
             columnBound = {
               limit: batch.truncated.limit,
-              reason: scrubProviderText(ctx.scrub, batch.truncated.reason),
+              reason: providerSentence(ctx.words, batch.truncated.reason),
             };
           }
         }
@@ -226,7 +225,7 @@ export async function POST(req: NextRequest) {
         ...(defaultContainer === undefined ? {} : { defaultContainer }),
       };
     },
-    { session: "metadata" },
+    { reads: "tree" },
   );
 }
 

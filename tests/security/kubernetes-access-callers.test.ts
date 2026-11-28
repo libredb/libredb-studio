@@ -65,11 +65,18 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "withOneShotTunnel",
     "findCachedProvider",
     "getOrCreateEditorSession",
+    "getOrCreateMetadataSession",
     "openEngineOnce",
   ],
   "src/lib/provider-host/open-engine.ts": ["openEngine"],
   "src/lib/provider-host/legacy-adapter/open.ts": ["openLegacyEngine"],
-  "src/lib/api/editor-provider.ts": ["editorProvider", "editorTarget", "metadataProvider", "cachedEditorProvider"],
+  "src/lib/api/editor-provider.ts": [
+    "editorProvider",
+    "editorTarget",
+    "metadataProvider",
+    "metadataTreeTarget",
+    "cachedEditorProvider",
+  ],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
   "src/lib/api/test-connection.ts": ["testConnection"],
 };
@@ -96,7 +103,7 @@ const BUILDS_WHAT_THE_ROUTE_RESOLVED =
 
 /** A db/objects route or db/keys/scan: handleObjectRequest is its whole body. */
 const OBJECT_ROUTE =
-  "hands its request to handleObjectRequest, which resolves the connection through resolveConnection before it builds anything";
+  "hands its request to handleObjectRequest, which resolves the connection through resolveConnection or resolveServedConnection before it builds anything";
 
 /** The agent runtime: its principal carries no identity provider subject. */
 const AGENT_RUNTIME =
@@ -155,11 +162,13 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/agent/runs/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/object-route.ts":
-      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the request's connection here before it builds",
+      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the source read's connection here before it builds",
   },
   resolveServedConnection: {
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/lib/api/object-route.ts":
+      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, edit and key scan requests' connection here before it builds",
   },
   connectionsUnderAccessReview: {
     "src/lib/governance/visible.ts":
@@ -249,14 +258,16 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/api/editor-provider.ts":
       "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection first",
     "src/lib/api/object-route.ts":
-      "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
+      "handleObjectRequest builds only after resolving the request's connection through resolveConnection or resolveServedConnection",
   },
   getOrCreateMetadataProvider: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/api/editor-provider.ts":
       "metadataProvider builds for the connection its caller hands it, and every caller is a route listed under metadataProvider here, which resolved it through resolveConnection first",
-    "src/lib/api/object-route.ts":
-      "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
+  },
+  getOrCreateMetadataSession: {
+    "src/lib/api/editor-provider.ts":
+      "metadataTreeTarget opens for the connection its caller hands it, and its one caller, handleObjectRequest, resolved it through resolveServedConnection first",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -297,6 +308,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/monitoring/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+  },
+  metadataTreeTarget: {
+    "src/lib/api/object-route.ts":
+      "handleObjectRequest opens the tree routes' metadata session only after resolving the request's connection through resolveServedConnection",
   },
   cachedEditorProvider: {
     "src/app/api/db/transaction/route.ts":
