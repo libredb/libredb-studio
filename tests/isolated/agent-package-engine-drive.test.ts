@@ -25,7 +25,9 @@ import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { ConnectionError, StudioProfileRefusal } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { type EngineConnection, servedEngineRecord } from "@/lib/db/server-catalog";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -467,17 +469,25 @@ describe("an agent run's drive on a provider package's engine", () => {
   test("a package engine's reading failure is answered by its record and logged once, and an agent credential is refused by name before its package opens", async () => {
     const error = spyOn(logger, "error").mockImplementation(() => undefined);
     try {
-      // A code-only row: Studio's sentence reaches the run, the package's words only the log, once.
+      // A code-only row: Studio's sentence reaches the run, the package's words only the log, once, even words that
+      // carry the connection's password.
       const marker = randomUUID();
-      hooksFor(READS, { health: () => Promise.reject(new Error(`the health probe lost ${marker}`)) });
-      const refused = await drive(connectionOf(READS), "agent", "operations", [
+      const coded = connectionOf(READS);
+      hooksFor(READS, {
+        health: () => Promise.reject(new Error(`the health probe lost ${marker} as ${coded.password as string}`)),
+      });
+      const refused = await drive(coded, "agent", "operations", [
         callsTool("inspect_operations", { kind: "health" }, "call_health"),
         answersProse("No report."),
       ]);
       const told = transcriptOf(refused.turns);
-      expect(told).toContain("The provider package's health failed (");
-      expect(told).not.toContain(marker);
-      expect(JSON.stringify(refused.events)).not.toContain(marker);
+      expect(told).toContain(
+        `The provider package's health failed (${ApiErrorCode.INTERNAL_ERROR}); the server's log holds its words.`,
+      );
+      for (const words of [marker, coded.password as string]) {
+        expect(told).not.toContain(words);
+        expect(JSON.stringify(refused.events)).not.toContain(words);
+      }
       expect(linesOf(error, "A provider package's health failed")).toHaveLength(1);
       expect(linesOf(error, "A provider package's health failed")[0]?.[2]).toEqual({
         route: "agent/inspect_operations",
@@ -493,7 +503,26 @@ describe("an agent run's drive on a provider package's engine", () => {
         answersProse("No report."),
       ]);
       expect(transcriptOf(granted.turns)).toContain(own);
-      expect(transcriptOf(granted.turns)).not.toContain(words.password as string);
+      expect(linesOf(error, "A provider package's health failed")).toHaveLength(1);
+
+      // The same row, its words carrying the connection's password: the run is told the scrubbed form, never the
+      // password, and the package's failure is logged once.
+      error.mockClear();
+      const leaked = randomUUID();
+      const leaking = connectionOf(WORDS);
+      hooksFor(WORDS, {
+        health: () => Promise.reject(new Error(`the health probe lost ${leaked} as ${leaking.password as string}`)),
+      });
+      const scrubbed = await drive(leaking, "agent", "operations", [
+        callsTool("inspect_operations", { kind: "health" }, "call_health"),
+        answersProse("No report."),
+      ]);
+      const heard = transcriptOf(scrubbed.turns);
+      expect(heard).toContain(PROVIDER_TEXT_WITHHELD);
+      for (const words of [leaked, leaking.password as string]) {
+        expect(heard).not.toContain(words);
+        expect(JSON.stringify(scrubbed.events)).not.toContain(words);
+      }
       expect(linesOf(error, "A provider package's health failed")).toHaveLength(1);
 
       // The package's open fails: the reading is answered by the record as a failed open, before its call is sent, and
@@ -515,9 +544,10 @@ describe("an agent run's drive on a provider package's engine", () => {
       expect((failed as Error).message).not.toContain(signIn);
       expect(JSON.stringify(unopened.events)).not.toContain(signIn);
       expect(transcriptOf(unopened.turns)).not.toContain(signIn);
-      expect(linesOf(error, "A provider package's open failed").map(([, , context]) => context)).toContainEqual({
-        route: "agent/inspect_operations",
-      });
+      const readingOpens = linesOf(error, "A provider package's open failed").filter(
+        ([, , context]) => (context as { route?: unknown } | undefined)?.route === "agent/inspect_operations",
+      );
+      expect(readingOpens).toHaveLength(1);
 
       // An agent credential: refused by name before the package opens, for the walk and the reading alike.
       const seen = hooksFor(READS);
