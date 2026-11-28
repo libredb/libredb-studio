@@ -2131,6 +2131,13 @@ const HEALTH_SLOW_QUERIES_SQL = `
           LIMIT 5;
         `;
 
+// getHealth: the text a slow query carries where pg_stat_statements answers its `query` NULL, which it does when
+// the server cannot read its query text file (measured 2026-11-28 on postgres:18.6 with that file made unreadable).
+// The health answer's statement text is required, so a NULL is named as such, never an empty string and never a
+// dropped row. Another role's statement, to a role without pg_read_all_stats, is not this case: the server answers
+// its text as "<insufficient privilege>", which passes through as it is.
+const HEALTH_QUERY_TEXT_UNAVAILABLE = "The server did not answer this statement's text.";
+
 // getHealth: recent sessions for the current database ($1 = database).
 const HEALTH_SESSIONS_SQL = `
         SELECT
@@ -5458,9 +5465,11 @@ export class PostgresProvider extends SQLBaseProvider {
       let slowQueries: SlowQuery[] = [];
       try {
         const slowRes = await client.query(HEALTH_SLOW_QUERIES_SQL);
+        // `calls` is a bigint, which pg answers as text, and the health answer's call count is a number; a NULL
+        // `query` is the server's unreadable query text file (`HEALTH_QUERY_TEXT_UNAVAILABLE`).
         slowQueries = slowRes.rows.map((r) => ({
-          query: r.query,
-          calls: r.calls,
+          query: r.query ?? HEALTH_QUERY_TEXT_UNAVAILABLE,
+          calls: parseInt(r.calls),
           avgTime: r.avgtime,
         }));
       } catch {
@@ -5919,8 +5928,10 @@ export class PostgresProvider extends SQLBaseProvider {
       try {
         const res = await client.query(SLOW_QUERIES_SQL, [this.monitoredDatabase(), limit]);
 
+        // pg_stat_statements answers `queryid` NULL for another role's statement to a role without
+        // pg_read_all_stats, and an id nobody published is left undefined, which reads as absent, never a NULL.
         return res.rows.map((r) => ({
-          queryId: r.query_id,
+          queryId: r.query_id ?? undefined,
           query: r.query || "",
           calls: parseInt(r.calls || "0"),
           totalTime: parseFloat(r.total_time || "0"),

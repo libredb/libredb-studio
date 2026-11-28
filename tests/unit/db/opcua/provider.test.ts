@@ -667,6 +667,28 @@ describe("every surface a server does not have", () => {
     expect(overview.version).toBe("IoT Edge OPC UA PLC 2.15.10");
     expect(overview.uptime).not.toBe("unknown");
     expect(overview.databaseSize).toBe("unknown");
+    // OPC UA publishes no connection ceiling, which the overview's own type writes as 0.
+    expect(overview.maxConnections).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("an overview whose ServerStatus read fails still answers the connection ceiling as none published", async () => {
+    const provider = new OpcuaProvider(
+      connection(),
+      {},
+      {},
+      async () => ({
+        ...fakeServer({}, {}, fresh()),
+        read: async () => {
+          throw new Error("the server answered no node");
+        },
+      }),
+      PKI_ROOT,
+    );
+    await provider.connect();
+    const overview = await provider.getOverview();
+    expect(overview.version).toBe("unknown");
+    expect(overview.maxConnections).toBe(0);
     await provider.disconnect();
   });
 
@@ -677,6 +699,7 @@ describe("every surface a server does not have", () => {
     expect(overview.version).toBe("unknown");
     expect(overview.uptime).toBe("unknown");
     expect(overview.databaseSize).toBe("unknown");
+    expect(overview.maxConnections).toBe(0);
     const health = await provider.getHealth();
     expect(health.databaseSize).toBe("unknown");
     expect(health.cacheHitRatio).toBe("unknown");

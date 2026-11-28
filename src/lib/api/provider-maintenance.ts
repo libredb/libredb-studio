@@ -33,12 +33,15 @@ import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-b
  * that does not, a run longer than the deadline is cut, and the engine is not told (the backlog, D730).
  *
  * Answers. A run answers how it ended, since the route writes its audit row and its query event by that and only the
- * facade knows whether the provider was called: answered with the provider's own result by reference; not-sent, the
+ * facade knows whether the provider was called: answered with the provider's own result by reference, which the host
+ * core read with the SDK's `checkMaintenanceRunAnswer` (clause C-112); not-sent, the
  * host refused before the call, with the accessor's error (`QueryCancelledError` or `StudioTimeoutRefusal`, outcome
  * not-sent, or a defect of Studio's bridge), or raised before it, with its own error (a core the process never
  * installed, or a refusal of the session's maintenance); or stopped, the caller left or the deadline passed while the provider ran,
- * with the accessor's error, outcome unknown. A preview answers the provider's own preview by reference and throws
- * every refusal and stop as the accessor's error, as a tree read does. A provider's error passes as the same object,
+ * with the accessor's error, outcome unknown. A run whose answer the core refused ran, so it is thrown as the accessor's
+ * error, a defect of Studio's bridge, as a provider's error is, and the route audits it as a run that failed. A preview
+ * answers the provider's own preview by reference, read with `checkMaintenancePreviewAnswer`, and throws every refusal
+ * and stop as the accessor's error, as a tree read does. A provider's error passes as the same object,
  * by run and by preview, so each route keeps its own mapping of it. A call's failure after its wait ended is logged by
  * route, facet, kind and code, never its text, and a run that answers after its wait ended, which the route audited as
  * an unknown outcome, is logged by route and facet, never its answer.
@@ -146,7 +149,13 @@ export function providerMaintenance(
       }
       const { session, view, ctx, after } = built;
       const record = await core.maintenanceRunCall(session, request, ctx, { late: after.late });
-      if (record.kind === "refused") return { kind: "not-sent", error: refusalError(record, view) };
+      if (record.kind === "refused") {
+        const error = refusalError(record, view);
+        // Refused after the call: the provider ran, and the core refused its answer (`checkMaintenanceRunAnswer`), so it
+        // is thrown as the run's failure, which the route audits as a run, never answered as one not sent.
+        if (record.called) throw error;
+        return { kind: "not-sent", error };
+      }
       if (record.kind === "stopped") {
         // The engine may still complete the run the route audits as an unknown outcome: its answer is logged.
         after.answeredAfter(record.settled);

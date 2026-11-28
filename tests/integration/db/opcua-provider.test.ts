@@ -405,6 +405,7 @@ describe("the surfaces a server does not have", () => {
     const overview = await provider.getOverview();
     expect(overview.version).toBe("unknown");
     expect(overview.uptime).toBe("unknown");
+    expect(overview.maxConnections).toBe(0);
     const health = await provider.getHealth();
     expect(health.cacheHitRatio).toBe("unknown");
     expect(await provider.getActiveSessions()).toEqual([]);

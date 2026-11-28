@@ -9,9 +9,10 @@
  * assertion follows a timer. `monitoring-bounds.test.ts` holds a call that never settles, with a real deadline, in a
  * bounded Node child.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
+  ANSWER_LIST_MAX,
   type CallContext,
   envReader,
   type HealthInfo,
@@ -30,6 +31,8 @@ import {
   panelCall,
   poolStatsCall,
 } from "@/lib/provider-host/core/monitoring";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { createMockProvider } from "../../../../helpers/mock-provider";
 
 const HOUR = 3_600_000;
 const marker = (): string => randomUUID();
@@ -219,6 +222,25 @@ describe("panelCall and poolStatsCall", () => {
         kind: "refused",
         called: false,
         refusals: [{ rule: "request-panel-not-offered", pointer: "/panel" }],
+      });
+    }
+    expect(fx.reads).toEqual([]);
+  });
+
+  test("a slow queries request whose limit is outside its list's bound is refused as a record before the call, by name", async () => {
+    const fx = answering(async () => {
+      throw new Error("never called");
+    });
+    const { ports } = portsOf();
+
+    for (const limit of [0, Number.NaN, ANSWER_LIST_MAX.slowQueries + 1]) {
+      // oxlint-disable-next-line no-await-in-loop -- one limit at a time, so each record is its own call's.
+      const record = await panelCall(fx.session, { panel: "slowQueries", limit }, contextOf(), ports);
+
+      expect(record).toEqual({
+        kind: "refused",
+        called: false,
+        refusals: [{ rule: "request-limit-out-of-range", pointer: "/limit", name: "limit" }],
       });
     }
     expect(fx.reads).toEqual([]);
@@ -417,6 +439,86 @@ function healthSessionOf(health: (ctx: CallContext) => Promise<HealthInfo>) {
 function healthOf(): HealthInfo {
   return { activeConnections: 1, databaseSize: marker(), cacheHitRatio: "0", slowQueries: [], activeSessions: [] };
 }
+
+describe("the answer of a panel, pool statistics or health call", () => {
+  test("a malformed panel, pool statistics or health answer is refused at the core after the call, for a package's session and a bridged one alike", async () => {
+    const { ports, late } = portsOf();
+    const key = marker();
+    const value = marker();
+    // A package's session.
+    const fx = sessionOf(
+      async (request) =>
+        (request.panel === "overview"
+          ? { overview: { ...OVERVIEW, tableCount: -1 }, [key]: value }
+          : {
+              slowQueries: [{ query: value, calls: 1, totalTime: 1, avgTime: 1, rows: 1 }, { query: value }],
+            }) as never,
+      async () => ({ total: 1.5, idle: 0, active: 0, waiting: 0 }),
+    );
+    const panel = await panelCall(fx.session, { panel: "overview" }, contextOf(), ports);
+    const limited = await panelCall(fx.session, { panel: "slowQueries", limit: 1 }, contextOf(), ports);
+    const pooled = await poolStatsCall(fx.session, contextOf(), ports);
+    const health = await healthCall(
+      healthSessionOf(async () => ({ ...healthOf(), [key]: value }) as never).session,
+      contextOf(),
+      ports,
+    );
+
+    expect(fx.reads).toHaveLength(3);
+    expect(panel).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [
+        { rule: "panel-answer-unreadable", pointer: "/overview/tableCount" },
+        { rule: "panel-answer-unreadable", pointer: `/${key}`, name: key },
+      ],
+    });
+    // Past the request's limit, refused at the list before any of its queries is read.
+    expect(limited).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "panel-answer-unreadable", pointer: "/slowQueries" }],
+    });
+    expect(pooled).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "pool-stats-answer-unreadable", pointer: "/total" }],
+    });
+    expect(health).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "health-answer-unreadable", pointer: `/${key}`, name: key }],
+    });
+    expect(JSON.stringify([panel, limited, pooled, health])).not.toContain(value);
+
+    // A legacy provider's own answers through the bridge, held to the same forms.
+    const provider = createMockProvider({
+      overview: { ...OVERVIEW, maxConnections: undefined } as never,
+      health: { ...healthOf(), uptime: value } as never,
+    });
+    Object.assign(provider, { getPoolStats: mock(async () => ({ total: -1, idle: 0, active: 0, waiting: 0 })) });
+    const { session } = bridgedConsole(provider, {});
+    const bridged = [
+      await panelCall(session, { panel: "overview" }, contextOf(), ports),
+      await poolStatsCall(session, contextOf(), ports),
+      await healthCall(session, contextOf(), ports),
+    ];
+    expect(bridged).toEqual([
+      {
+        kind: "refused",
+        called: true,
+        refusals: [{ rule: "panel-answer-unreadable", pointer: "/overview/maxConnections" }],
+      },
+      { kind: "refused", called: true, refusals: [{ rule: "pool-stats-answer-unreadable", pointer: "/total" }] },
+      {
+        kind: "refused",
+        called: true,
+        refusals: [{ rule: "health-answer-unreadable", pointer: "/uptime", name: "uptime" }],
+      },
+    ]);
+    expect(late).toEqual([]);
+  });
+});
 
 describe("healthCall", () => {
   test("a health call whose signal aborted or whose deadline passed is refused as a record, and the session's health is never called", async () => {

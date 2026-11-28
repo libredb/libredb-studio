@@ -6272,7 +6272,14 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
             calls: 1,
             avgTime: "1ms",
           })),
-          activeSessions: Array.from({ length: 10 }, (_unused, index) => ({ pid: index, query: "SELECT 1" })),
+          activeSessions: Array.from({ length: 10 }, (_unused, index) => ({
+            pid: index,
+            user: "app",
+            database: "app",
+            state: "active",
+            query: "SELECT 1",
+            duration: "1s",
+          })),
         })),
       },
     );
@@ -6293,11 +6300,11 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     expect(outcome.modelText).not.toMatch(/slowQuer|sessionCount/i);
   });
 
-  test("a health summary carrying no slow-query list at all is still projected", async () => {
-    // Proof that the projection does not READ the nested lists, which a string
-    // assertion cannot give: a health summary with neither list present must still
-    // complete. Six engines publish no slow-query source at all, and this is the test
-    // that lets `HealthInfo.slowQueries` become optional without touching this layer.
+  test("a health summary carrying no slow-query list at all is refused at the core, never projected", async () => {
+    // `HealthInfo` requires both lists, and the host core reads every health answer with the
+    // SDK's `checkHealthAnswer` before this layer sees it (clause C-112), so an answer
+    // without them reaches the model as Studio's bridge defect naming the pointers, never
+    // as a projection that looks complete.
     const h = curatedHarness(
       {},
       {
@@ -6307,12 +6314,11 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
 
     const outcome = await inspectOperationsTool(h.context, { kind: "health" });
 
-    if (outcome.kind !== "completed") throw new Error("expected completed");
-    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toEqual({
-      activeConnections: 3,
-      databaseSize: "20 MB",
-      cacheHitRatio: "99.1",
-    });
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error("expected a database-error refusal");
+    }
+    expect(outcome.refusal.message).toContain('The health answer value at "/slowQueries" is missing');
+    expect(outcome.refusal.message).toContain('The health answer value at "/activeSessions" is missing');
   });
 
   test("health reports an unmeasurable connection count as null, never a fabricated 0", async () => {
@@ -6600,6 +6606,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
             rowCount: 3,
             tableSize: "1 MB",
             tableSizeBytes: 1,
+            totalSize: "1 MB",
             totalSizeBytes: 1,
           },
           {
@@ -6608,6 +6615,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
             rowCount: 9,
             tableSize: "1 MB",
             tableSizeBytes: 1,
+            totalSize: "1 MB",
             totalSizeBytes: 1,
           },
         ]),
@@ -6636,6 +6644,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
             tableName: "from_pg_class",
             tableSize: "64 KB",
             tableSizeBytes: 1,
+            totalSize: "64 KB",
             totalSizeBytes: 1,
           },
         ]),

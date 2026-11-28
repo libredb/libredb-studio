@@ -10,8 +10,11 @@
  * refusal is answered as a record, `called` false, and the provider is never called. Then the context and the request
  * are frozen in place, `freezeContext` and `freezeData`, so the caller builds both fresh for each call.
  *
- * The call is waited for with `awaitWithin` until the context's signal. An answer is the session's own, by reference.
- * A wait the signal ends answers a stop, the signal's reason by reference, and `settled`, which resolves once the call
+ * The call is waited for with `awaitWithin` until the context's signal. An answer is read once with the SDK's check of
+ * its call (clause C-112), whatever session answered it, a package's or the bridge's: `checkMaintenanceRunAnswer` and
+ * `checkMaintenancePreviewAnswer`. One outside the SDK's types is refused as a record, `called` true, each refusal
+ * naming its call's rule and its pointer, never a value. Past the check the answer is the session's own, by reference,
+ * typed as the check answers it, read under operator trust as the tree call reads its answer. A wait the signal ends answers a stop, the signal's reason by reference, and `settled`, which resolves once the call
  * the host stopped waiting for has settled either way; a failure after the stop reaches `ports.late` once and a later
  * answer is dropped, so no promise the host stopped waiting for is left without a handler. A provider's error passes
  * by reference.
@@ -22,12 +25,15 @@
  * keep no module state.
  */
 import {
+  type AnswerCheck,
   awaitWithin,
   type CallContext,
   type CallRefusal,
   checkCallStart,
   checkMaintenanceFacet,
+  checkMaintenancePreviewAnswer,
   checkMaintenancePreviewRequest,
+  checkMaintenanceRunAnswer,
   checkMaintenanceRunRequest,
   type EngineMaintenance,
   freezeContext,
@@ -61,13 +67,19 @@ export interface MaintenanceSession {
   preview?(request: MaintenancePreviewRequest, ctx: CallContext): Promise<MaintenancePreview>;
 }
 
-/** How a maintenance run call ended: answered with the session's own answer, refused before the call, or stopped. */
+/**
+ * How a maintenance run call ended: answered with the session's own answer, refused before or after the call, or
+ * stopped.
+ */
 export type MaintenanceRunRecord =
   | RefusedRecord
   | StoppedRecord
   | { readonly kind: "answered"; readonly answer: MaintenanceRunAnswer };
 
-/** How a maintenance preview call ended: answered with the session's own preview, refused before the call, or stopped. */
+/**
+ * How a maintenance preview call ended: answered with the session's own preview, refused before or after the call, or
+ * stopped.
+ */
 export type MaintenancePreviewRecord =
   | RefusedRecord
   | StoppedRecord
@@ -94,13 +106,15 @@ function callSession<Request, Answer>(
 
 /**
  * One maintenance call of `facet` on `session`: checked, the facet and then `checkRequest` included, frozen, waited for
- * until `ctx.signal`, answered as a record with what `call` answered by reference.
+ * until `ctx.signal`, what `call` answered read with `checkAnswer`, and answered as a record: refused, `called` true,
+ * with the check's refusals, or answered with the answer by reference.
  */
 async function maintenanceCall<Request extends object, Answer>(
   session: MaintenanceSession,
   facet: MaintenanceFacet,
   checkRequest: (maintenance: EngineMaintenance, request: Request) => readonly CallRefusal[],
-  call: () => Promise<Answer>,
+  call: () => Promise<unknown>,
+  checkAnswer: (answer: unknown) => AnswerCheck<Answer>,
   request: Request,
   ctx: CallContext,
   ports: Pick<HostCallPorts, "late">,
@@ -115,8 +129,9 @@ async function maintenanceCall<Request extends object, Answer>(
   freezeData(request);
   const running = startCall(call);
   try {
-    const answer = await awaitWithin(running, ctx.signal, lateFailure(ctx, ports.late));
-    return { kind: "answered", answer };
+    const check = checkAnswer(await awaitWithin(running, ctx.signal, lateFailure(ctx, ports.late)));
+    if (check.kind === "refused") return { kind: "refused", called: true, refusals: check.refusals };
+    return { kind: "answered", answer: check.answer };
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(running) };
@@ -125,8 +140,9 @@ async function maintenanceCall<Request extends object, Answer>(
 
 /**
  * One `maintenance.run` call on `session`: checked, the facet and the request against the session's maintenance
- * included, frozen, waited for until `ctx.signal`, answered as a record with the session's answer by reference. A
- * failure after the wait ended reaches `ports.late` once, and a later answer is dropped.
+ * included, frozen, waited for until `ctx.signal`, its answer read with `checkMaintenanceRunAnswer`, answered as a
+ * record with the session's answer by reference, or refused, `called` true, when it is not the SDK's
+ * `MaintenanceRunAnswer`. A failure after the wait ended reaches `ports.late` once, and a later answer is dropped.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
  */
@@ -137,13 +153,23 @@ export function maintenanceRunCall(
   ports: Pick<HostCallPorts, "late">,
 ): Promise<MaintenanceRunRecord> {
   const call = () => callSession(session, "run", session.run, request, ctx);
-  return maintenanceCall(session, "run", checkMaintenanceRunRequest, call, request, ctx, ports);
+  return maintenanceCall(
+    session,
+    "run",
+    checkMaintenanceRunRequest,
+    call,
+    checkMaintenanceRunAnswer,
+    request,
+    ctx,
+    ports,
+  );
 }
 
 /**
  * One `maintenance.preview` call on `session`: checked, the facet and the request against the session's maintenance
- * included, frozen, waited for until `ctx.signal`, answered as a record with the session's preview by reference. A
- * failure after the wait ended reaches `ports.late` once, and a later answer is dropped.
+ * included, frozen, waited for until `ctx.signal`, its answer read with `checkMaintenancePreviewAnswer`, answered as a
+ * record with the session's preview by reference, or refused, `called` true, when it is not the SDK's
+ * `MaintenancePreview`. A failure after the wait ended reaches `ports.late` once, and a later answer is dropped.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
  */
@@ -154,7 +180,16 @@ export function maintenancePreviewCall(
   ports: Pick<HostCallPorts, "late">,
 ): Promise<MaintenancePreviewRecord> {
   const call = () => callSession(session, "preview", session.preview, request, ctx);
-  return maintenanceCall(session, "preview", checkMaintenancePreviewRequest, call, request, ctx, ports);
+  return maintenanceCall(
+    session,
+    "preview",
+    checkMaintenancePreviewRequest,
+    call,
+    checkMaintenancePreviewAnswer,
+    request,
+    ctx,
+    ports,
+  );
 }
 
 /** The maintenance calls one host core holds. */

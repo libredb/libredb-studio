@@ -387,6 +387,30 @@ describe("providerMaintenance", () => {
     expect((caught[1] as Error).message).toContain("maintenance.preview");
   });
 
+  test("a run or a preview whose answer the core refused is thrown as a defect of Studio's bridge, never answered as a run not sent", async () => {
+    const provider = providerOf();
+    const key = marker();
+    // The engine ran the operation; its answer has a key the SDK's run answer cannot have.
+    mockOf(provider.runMaintenance).mockImplementation(async () => ({
+      success: true,
+      executionTime: 1,
+      message: "",
+      [key]: 1,
+    }));
+    mockOf(provider.previewMaintenance).mockImplementation(async () => ({ summary: marker() }));
+    const maintenance = providerMaintenance(provider, DECLARED, new AbortController().signal, ROUTE);
+
+    const ran = await failure(() => maintenance.run("vacuum"));
+    const previewed = await failure(() => maintenance.preview("release", ["orders"]));
+
+    expect(mockOf(provider.runMaintenance).mock.calls).toHaveLength(1);
+    expect((ran as Error).message.startsWith(HOST_DEFECT_PREFIX)).toBe(true);
+    expect((ran as Error).message).toContain(JSON.stringify(`/${key}`));
+    expect(errorOutcome(ran)).not.toBe("not-sent");
+    expect((previewed as Error).message.startsWith(HOST_DEFECT_PREFIX)).toBe(true);
+    expect((previewed as Error).message).toContain('"/facts"');
+  });
+
   test("a maintenance call before the host core is installed fails by name and reaches no provider", async () => {
     const provider = providerOf();
     const real = hostCore();

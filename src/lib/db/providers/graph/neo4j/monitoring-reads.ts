@@ -78,8 +78,13 @@ async function orEmpty<T>(read: () => Promise<T>, empty: T): Promise<T> {
   }
 }
 
-function run(client: Runner, statement: string, database: string): Promise<GraphRunResult> {
-  return client.run(statement, { database, timeoutMs: MONITORING_TIMEOUT_MS, maxRows: DEFAULT_QUERY_LIMIT });
+function run(
+  client: Runner,
+  statement: string,
+  database: string,
+  maxRows: number = DEFAULT_QUERY_LIMIT,
+): Promise<GraphRunResult> {
+  return client.run(statement, { database, timeoutMs: MONITORING_TIMEOUT_MS, maxRows });
 }
 
 function wrong(statement: string, field: string, shape: string): QueryError {
@@ -187,11 +192,15 @@ export async function readOverview(
   });
 }
 
-/** The running transactions, by the fixed column list (SR9, E10). */
-export function readActiveSessions(client: Runner, database: string): Promise<ActiveSessionDetails[]> {
+/**
+ * The running transactions, by the fixed column list (SR9, E10): at most `limit` of them when the caller asks for one,
+ * and never more than `DEFAULT_QUERY_LIMIT`, since a sessions panel answer is at most its request's `limit` long.
+ */
+export function readActiveSessions(client: Runner, database: string, limit?: number): Promise<ActiveSessionDetails[]> {
   const statement = NEO4J_MONITORING_STATEMENTS.transactions;
+  const maxRows = limit === undefined ? DEFAULT_QUERY_LIMIT : Math.min(limit, DEFAULT_QUERY_LIMIT);
   return orEmpty(async () => {
-    const { rows } = await run(client, statement, database);
+    const { rows } = await run(client, statement, database, maxRows);
     return toActiveSessions(
       rows.map((row) => {
         const durationMs = isoDurationMs(stringOf(statement, row, "elapsedTime"));

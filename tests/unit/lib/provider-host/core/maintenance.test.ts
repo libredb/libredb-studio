@@ -416,3 +416,40 @@ describe("maintenanceRunCall and maintenancePreviewCall", () => {
     );
   });
 });
+
+describe("the answer of a maintenance run or preview call", () => {
+  test("a malformed maintenance run or preview answer is refused at the core after the call", async () => {
+    const { ports, late } = portsOf();
+    const key = marker();
+    const value = marker();
+    const fx = sessionOf(
+      async () => ({ success: true, executionTime: -1, message: value, rows: [{ [key]: value }] }) as never,
+      async () => ({ summary: value, facts: [{ label: value }] }) as never,
+    );
+
+    const run = await maintenanceRunCall(fx.session, { operation: "vacuum" }, contextOf(), ports);
+    const preview = await maintenancePreviewCall(
+      fx.session,
+      { operation: "release", path: [marker(), marker()] },
+      contextOf(),
+      ports,
+    );
+
+    expect(fx.reads).toHaveLength(2);
+    expect(run).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [
+        { rule: "maintenance-run-answer-unreadable", pointer: "/executionTime" },
+        { rule: "maintenance-run-answer-unreadable", pointer: "/fields" },
+      ],
+    });
+    expect(preview).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "maintenance-preview-answer-unreadable", pointer: "/facts/0/value" }],
+    });
+    expect(JSON.stringify([run, preview])).not.toContain(value);
+    expect(late).toEqual([]);
+  });
+});

@@ -261,6 +261,65 @@ describe("packageFailureAnswer", () => {
     ).toEqual([]);
   });
 
+  test("a health, panel, pool statistics, run or preview answer the core refused is the package's defect on both grants, and a package's own error of each is answered by its grant", () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const thrown = new Error(`refused as ${secret}`);
+    const calls = [
+      ["health", "health-answer-unreadable"],
+      ["panel read", "panel-answer-unreadable"],
+      ["pool statistics read", "pool-stats-answer-unreadable"],
+      ["maintenance run", "maintenance-run-answer-unreadable"],
+      ["maintenance preview", "maintenance-preview-answer-unreadable"],
+    ] as const;
+    for (const [call, rule] of calls) {
+      const malformed = refused([{ rule, pointer: `/${key}`, name: key }]);
+      const sentence = `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(malformed.refusals[0] as CallRefusal)}`;
+
+      // Each read may have reached the engine, so each is answered as an execute's is.
+      for (const [engine, client] of [
+        [CODE_ONLY, codeOnlyDefectSentence(rule)],
+        [GRANTED, sentence],
+      ] as const) {
+        let answered: unknown;
+        let logged: unknown[][] = [];
+        const error = spyOn(logger, "error").mockImplementation(() => undefined);
+        try {
+          answered = packageFailureAnswer(engine, call, malformed, scrub, ROUTE);
+          logged = error.mock.calls.map(([message, value]) => [message, (value as Error).message]);
+        } finally {
+          error.mockRestore();
+        }
+        expect(answered).not.toBeInstanceOf(HostDefectError);
+        expect(answered).not.toBeInstanceOf(ConnectionError);
+        expect([(answered as Error).message, errorOutcome(answered)]).toEqual([client, "unknown"]);
+        expect(logged).toEqual([[`A provider package's ${call} failed`, sentence]]);
+      }
+
+      // A package's own error of the call: Studio's sentence naming the call where no row grants its words, as raised
+      // where one does, logged once through core's scrub on both.
+      for (const [engine, expected] of [
+        [CODE_ONLY, `The provider package's ${call} failed (INTERNAL_ERROR); the server's log holds its words.`],
+        [GRANTED, thrown.message],
+      ] as const) {
+        const error = spyOn(logger, "error").mockImplementation(() => undefined);
+        try {
+          const answered = packageFailureAnswer(engine, call, thrown, scrub, ROUTE);
+          expect((answered as Error).message).toBe(expected);
+          expect(errorOutcome(answered)).toBe("unknown");
+          expect(error.mock.calls.map(([line]) => line)).toEqual([`A provider package's ${call} failed`]);
+          expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+        } finally {
+          error.mockRestore();
+        }
+      }
+
+      // A legacy record's refused answer is Studio's own provider's: as raised, nothing logged here.
+      expect(
+        errorLines(() => expect(packageFailureAnswer(LEGACY, call, malformed, scrub, ROUTE)).toBe(malformed)),
+      ).toEqual([]);
+    }
+  });
+
   test("a granted package's refused member name reaches its client and the log only through core's scrub, on an execute and a tree read", () => {
     // A password holding a slash and a tilde, which a JSON Pointer writes as ~1 and ~0, so it is found as written there too.
     const slashed = `${randomUUID()}/~${randomUUID()}`;

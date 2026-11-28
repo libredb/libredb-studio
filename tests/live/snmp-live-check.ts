@@ -255,16 +255,24 @@ await check("a described table's columns are the ones a walk of it returns", asy
   expect(unknown.length === 0, `the agent answered columns the description lacks: ${unknown.join(",")}`);
 });
 
-await check("health is read from the agent, and the agent's own description comes back", async () => {
-  const health = await withProvider({}, async (p) => p.getHealth());
-  measure("health uptime", health.uptime);
-  measure("health round trip ms", health.roundTripMs);
+await check("health is read from the agent, and the agent's own description comes back in the overview", async () => {
+  const { health, roundTripMs, overview } = await withProvider({}, async (p) => {
+    const sent = Date.now();
+    const read = await p.getHealth();
+    return { health: read, roundTripMs: Date.now() - sent, overview: await p.getOverview() };
+  });
+  measure("overview uptime", overview.uptime);
+  measure("health round trip ms", roundTripMs);
   expect(
-    health.description === "LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161",
-    `sysDescr read as ${JSON.stringify(health.description)}`,
+    overview.version === "LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161",
+    `sysDescr read as ${JSON.stringify(overview.version)}`,
   );
-  expect(Number(health.uptime) > 0, `uptime read as ${JSON.stringify(health.uptime)}`);
+  expect(Number(overview.uptime) > 0, `uptime read as ${JSON.stringify(overview.uptime)}`);
   expect(!("activeConnections" in health), "health claimed a connection count an agent does not report");
+  expect(
+    ["uptime", "description", "roundTripMs"].every((member) => !(member in health)),
+    "health answered a member beside the shared health shape",
+  );
 });
 
 console.log(`${ran - failures} of ${ran} checks passed`);

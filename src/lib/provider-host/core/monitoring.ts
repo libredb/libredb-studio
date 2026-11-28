@@ -5,21 +5,27 @@
  * `panelCall` makes one `monitoring.panel` call on a session and `poolStatsCall` one `monitoring.poolStats` call, and
  * each answers a record of how it ended. Each is checked before it is made: `checkCallStart` refuses a call whose
  * deadline passed or whose signal aborted, then `checkMonitoringFacet` a session that does not offer the facet, then,
- * for a panel, `checkMonitoringPanelRequest` a request for a panel the session's engine does not offer. Each refusal
- * is answered as a record, `called` false, and the provider is never called. Then the context and the panel request
- * are frozen in place, `freezeContext` and `freezeData`, so the caller builds both fresh for each call.
+ * for a panel, `checkMonitoringPanelRequest` a request for a panel the session's engine does not offer or with a limit
+ * outside its list's bound. Each refusal is answered as a record, `called` false, and the provider is never called.
+ * Then the context and the panel request are frozen in place, `freezeContext` and `freezeData`, so the caller builds
+ * both fresh for each call.
  *
- * The call is waited for with `awaitWithin` until the context's signal. An answer is the session's own, by reference:
- * the core does not read a panel answer's form, and the caller reads the member its request names (clause C-74). A
- * wait the signal ends answers a stop, the signal's reason by reference, and `settled`, which resolves once the call
+ * The call is waited for with `awaitWithin` until the context's signal. An answer is read once with the SDK's check of
+ * its call (clause C-112), whatever session answered it, a package's or the bridge's: `checkPanelAnswer` against the
+ * form of the panel its request names, `checkPoolStatsAnswer` and `checkHealthAnswer`. One outside the SDK's types is
+ * refused as a record, `called` true, each refusal naming its call's rule and its pointer, never a value. Past the
+ * check the answer is the session's own, by reference, typed as the check answers it, and the caller reads the member
+ * its request names (clause C-74) and checks nothing of its own; it is read by reference under operator trust, as the
+ * tree call reads its answer. A wait the signal ends answers a stop, the signal's reason by reference, and `settled`, which resolves once the call
  * the host stopped waiting for has settled either way; a failure after the stop reaches `ports.late` once and a later
  * answer is dropped, so no promise the host stopped waiting for is left without a handler. A provider's error passes
  * by reference.
  *
  * `healthCall` makes one `health` call on a session, the mandatory call every session answers (clause C-72), so it is
  * checked only by `checkCallStart`: it reads no facet and has no request. Its context is frozen, it is waited for as
- * the monitoring calls are, and it answers the session's health by reference, a stop with its reason and `settled`, or
- * a provider's error by reference, a later failure reaching `ports.late` once.
+ * the monitoring calls are, and it answers the session's health, read with `checkHealthAnswer`, by reference, a refusal
+ * of it, a stop with its reason and `settled`, or a provider's error by reference, a later failure reaching
+ * `ports.late` once.
  *
  * The three calls share one private helper, `monitoringCall`, and read the core's call machinery from the console calls
  * (src/lib/provider-host/core/console.ts): `refusedBefore`, `stoppedBy`, `lateFailure`, `settledOf` and `startCall`,
@@ -27,12 +33,16 @@
  * no class and keep no module state.
  */
 import {
+  type AnswerCheck,
   awaitWithin,
   type CallContext,
   type CallRefusal,
   checkCallStart,
+  checkHealthAnswer,
   checkMonitoringFacet,
   checkMonitoringPanelRequest,
+  checkPanelAnswer,
+  checkPoolStatsAnswer,
   freezeContext,
   freezeData,
   type HealthInfo,
@@ -72,16 +82,19 @@ export interface HealthSession {
   health(ctx: CallContext): Promise<HealthInfo>;
 }
 
-/** How a panel call ended: answered with the session's own answer, refused before the call, or stopped. */
+/** How a panel call ended: answered with the session's own answer, refused before or after the call, or stopped. */
 export type PanelRecord =
   | RefusedRecord
   | StoppedRecord
   | { readonly kind: "answered"; readonly answer: MonitoringPanelAnswer };
 
-/** How a pool statistics call ended: answered with the session's own statistics, refused before the call, or stopped. */
+/**
+ * How a pool statistics call ended: answered with the session's own statistics, refused before or after the call, or
+ * stopped.
+ */
 export type PoolStatsRecord = RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: PoolStats };
 
-/** How a health call ended: answered with the session's own health, refused before the call, or stopped. */
+/** How a health call ended: answered with the session's own health, refused before or after the call, or stopped. */
 export type HealthRecord = RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: HealthInfo };
 
 /** `fn`, the session's function for `facet`; a host defect when the session offers the facet and holds no function. */
@@ -96,12 +109,14 @@ function offeredFunction<Fn>(fn: Fn | undefined, facet: MonitoringFacet): Fn {
 
 /**
  * One monitoring call: refused as a record by the first of `checks` that refuses, after the context's own check;
- * otherwise `ctx` and `request` frozen, `call` started and waited for until `ctx.signal`, answered as a record with what
- * it answered by reference.
+ * otherwise `ctx` and `request` frozen, `call` started and waited for until `ctx.signal`, what it answered read with
+ * `checkAnswer`, and answered as a record: refused, `called` true, with the check's refusals, or answered with the
+ * answer by reference.
  */
 async function monitoringCall<Answer>(
   checks: readonly (() => readonly CallRefusal[])[],
-  call: () => Promise<Answer>,
+  call: () => Promise<unknown>,
+  checkAnswer: (answer: unknown) => AnswerCheck<Answer>,
   request: object | undefined,
   ctx: CallContext,
   ports: Pick<HostCallPorts, "late">,
@@ -114,8 +129,9 @@ async function monitoringCall<Answer>(
   if (request !== undefined) freezeData(request);
   const running = startCall(call);
   try {
-    const answer = await awaitWithin(running, ctx.signal, lateFailure(ctx, ports.late));
-    return { kind: "answered", answer };
+    const check = checkAnswer(await awaitWithin(running, ctx.signal, lateFailure(ctx, ports.late)));
+    if (check.kind === "refused") return { kind: "refused", called: true, refusals: check.refusals };
+    return { kind: "answered", answer: check.answer };
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(running) };
@@ -124,7 +140,8 @@ async function monitoringCall<Answer>(
 
 /**
  * One `monitoring.panel` call on `session`: checked, the facet and the request against the session's panels included,
- * frozen, waited for until `ctx.signal`, answered as a record with the session's answer by reference. A failure after
+ * frozen, waited for until `ctx.signal`, its answer read with `checkPanelAnswer`, answered as a record with the
+ * session's answer by reference, or refused, `called` true, when it is not its panel's form. A failure after
  * the wait ended reaches `ports.late` once, and a later answer is dropped.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
@@ -138,6 +155,7 @@ export function panelCall(
   return monitoringCall(
     [() => checkMonitoringFacet(session.calls, "panel"), () => checkMonitoringPanelRequest(session.panels, request)],
     () => offeredFunction(session.panel, "panel").call(session, request, ctx),
+    (answer) => checkPanelAnswer(request, answer),
     request,
     ctx,
     ports,
@@ -146,7 +164,8 @@ export function panelCall(
 
 /**
  * One `monitoring.poolStats` call on `session`: checked, the facet included, frozen, waited for until `ctx.signal`,
- * answered as a record with the session's statistics by reference. A failure after the wait ended reaches `ports.late`
+ * its answer read with `checkPoolStatsAnswer`, answered as a record with the session's statistics by reference, or
+ * refused, `called` true, when it is not the SDK's `PoolStats`. A failure after the wait ended reaches `ports.late`
  * once, and a later answer is dropped.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
@@ -159,6 +178,7 @@ export function poolStatsCall(
   return monitoringCall(
     [() => checkMonitoringFacet(session.calls, "poolStats")],
     () => offeredFunction(session.poolStats, "poolStats").call(session, ctx),
+    checkPoolStatsAnswer,
     undefined,
     ctx,
     ports,
@@ -167,7 +187,8 @@ export function poolStatsCall(
 
 /**
  * One `health` call on `session`: checked for its context only, since every session answers it, frozen, waited for
- * until `ctx.signal`, answered as a record with the session's health by reference. A failure after the wait ended
+ * until `ctx.signal`, its answer read with `checkHealthAnswer`, answered as a record with the session's health by
+ * reference, or refused, `called` true, when it is not the SDK's `HealthInfo`. A failure after the wait ended
  * reaches `ports.late` once, and a later answer is dropped.
  *
  * @throws The provider's error by reference.
@@ -177,7 +198,7 @@ export function healthCall(
   ctx: CallContext,
   ports: Pick<HostCallPorts, "late">,
 ): Promise<HealthRecord> {
-  return monitoringCall([], () => session.health(ctx), undefined, ctx, ports);
+  return monitoringCall([], () => session.health(ctx), checkHealthAnswer, undefined, ctx, ports);
 }
 
 /** The monitoring calls one host core holds, the health call among them. */

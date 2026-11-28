@@ -1,6 +1,6 @@
 /**
- * The host's reading of what a console execute, an object tree call and an object source call answered
- * (docs/providers/CONTRACT.md, clauses C-48, C-62, C-112 and C-115).
+ * The host's reading of what a console execute, an object tree call, an object source call, a monitoring call, a
+ * health call and a maintenance call answered (docs/providers/CONTRACT.md, clauses C-48, C-62, C-112 and C-115).
  *
  * The host passes an execute answer's result list, its first result's columns and row count, its execution time and
  * its warnings on to the caller, so it reads each of them once, here, before it pumps a row: a member that is missing
@@ -22,41 +22,69 @@
  * and no part id twice, each refused at its pointer as `source-answer-unreadable`. A text past the character bound is
  * not refused: the host cuts it (`boundSourceAnswer`).
  *
- * The checks read every member once, with one set of readers. Each list's length is read once, from its own data
+ * The host passes a monitoring panel, pool statistics, health, maintenance run and maintenance preview answer on to the
+ * caller whole, by reference, too, so each is read all at once, here, by its own check against the SDK's type closed,
+ * the same way as a tree answer: `checkPanelAnswer` against its request's panel's form, a record of that panel alone,
+ * its slow queries and sessions at most the request's `limit` long, `checkPoolStatsAnswer`, `checkHealthAnswer`,
+ * `checkMaintenanceRunAnswer`, whose rows need their fields, each row's keys among them and each value in the value
+ * codec's domain, and `checkMaintenancePreviewAnswer`, each refusing as its own rule. Every count is a non-negative safe
+ * integer, every time, ratio and rate a finite non-negative number, and every date a valid `Date`.
+ *
+ * Every check reads every member once, with one set of readers. Each list's length is read once, from its own data
  * descriptor, and a length that is no count, or a list longer than its bound, `ANSWER_LIST_MAX` for its member or a
- * `describeMany` request's `limit`, is refused at the list before any item is read; a list's first hole is refused at
+ * `describeMany` or slow queries or active sessions panel request's `limit`, is refused at the list before any item is
+ * read; a list's first hole is refused at
  * its index and ends the list's reading, so a sparse list of any length is read in as many steps as it holds items
  * before its first hole. A reading that throws, a revoked Proxy or a trap that throws, is refused at the pointer being
- * read, so neither check ever throws.
+ * read, so no check ever throws.
  *
  * Each check answers an `AnswerCheck`: the answer itself, by reference, typed as the form it was read as, where it
  * refuses nothing, and its refusals alone otherwise, so a caller past the check reads the answer typed with no cast of
  * its own.
  *
  * Each reader reads the answer by its own property descriptors: a getter is never called but refused, an inherited
- * property is never read, and no refusal carries a value of the answer. An optional member present as an own data
+ * property is never read, and no refusal carries a value of the answer; a maintenance run row's cell alone is read by
+ * the value codec, which reads a nested record's members as it writes them. An optional member present as an own data
  * property whose value is `undefined` reads as absent, in every answer, since the SDK's optional types admit it, and
  * so does a member of another arm of a union in a tree or a source answer; a required member present so is missing.
  */
 import { isPlainRecord, type OwnRead, pointerTo, readOwn } from "./records";
 import type { CallRefusal } from "./refusals";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "./source";
+import { encodeValue } from "../values/codec";
 import type {
+  ActiveSession,
+  ActiveSessionDetails,
   ColumnSchema,
   Container,
+  DatabaseOverview,
   ExecuteAnswer,
   DatabaseObject,
   ExclusionConstraintSchema,
   ForeignKeySchema,
+  HealthInfo,
   IndexSchema,
+  IndexStats,
   KindCount,
+  MaintenanceFact,
+  MaintenancePreview,
+  MaintenanceRunAnswer,
+  MonitoringPanelAnswer,
+  MonitoringPanelRequest,
   ObjectDetail,
   ObjectDetailBatch,
   ObjectPartEdit,
   ObjectReadRange,
   ObjectSourceDocument,
   ObjectSourcePart,
+  PerformanceMetrics,
+  PoolStats,
+  SessionActivity,
+  SlowQuery,
+  SlowQueryStats,
   SourceRequest,
+  StorageStats,
+  TableStats,
   TreeContainersAnswer,
   TreeCountAnswer,
   TreeDescribeAnswer,
@@ -86,10 +114,13 @@ function checked<Answer>(answer: unknown, refusals: readonly CallRefusal[]): Ans
 
 /**
  * The most items each list of an answer may hold, by the member that holds it (clauses C-62 and C-112): a list longer
- * than its bound is refused at the list before any of its items is read. A list of a database's containers, objects or
- * details may hold 2^20 items, and every other list, one within an answer, an object or a path, 2^16. A `describeMany`
- * request that sends a `limit` bounds its `details` by that limit instead. An index's `columns` takes the bound of
- * `columns`.
+ * than its bound is refused at the list before any of its items is read. A list of a database's containers, objects,
+ * details or tables, or a maintenance run's rows, may hold 2^20 items, and every other list, one within an answer, an
+ * object or a path, 2^16. A `describeMany` request that sends a `limit` bounds its `details` by that limit instead, and
+ * a slow queries or active sessions panel request its list by its `limit`, which `checkMonitoringPanelRequest` holds
+ * to at most the bound here, so their bounds here are a health answer's and the most a panel's limit may be.
+ * An index's `columns`, of an object or of an index statistics row, takes the bound of `columns`, and the index
+ * statistics panel's list the bound of `indexes`.
  */
 export const ANSWER_LIST_MAX = Object.freeze({
   results: 65_536,
@@ -104,6 +135,13 @@ export const ANSWER_LIST_MAX = Object.freeze({
   foreignKeys: 65_536,
   exclusionConstraints: 65_536,
   details: 1_048_576,
+  slowQueries: 65_536,
+  activeSessions: 65_536,
+  tables: 1_048_576,
+  storage: 65_536,
+  rows: 1_048_576,
+  fields: 65_536,
+  facts: 65_536,
 });
 
 /** The members a warning can have: its message, and its optional code and severity. */
@@ -111,7 +149,15 @@ const WARNING_MEMBERS: readonly string[] = Object.freeze(["message", "code", "se
 
 /** Where a reading of an answer puts what it refuses: the rule its check names, and the refusals found so far. */
 interface Refusals {
-  readonly rule: "execute-answer-unreadable" | "tree-answer-unreadable" | "source-answer-unreadable";
+  readonly rule:
+    | "execute-answer-unreadable"
+    | "tree-answer-unreadable"
+    | "source-answer-unreadable"
+    | "panel-answer-unreadable"
+    | "pool-stats-answer-unreadable"
+    | "health-answer-unreadable"
+    | "maintenance-run-answer-unreadable"
+    | "maintenance-preview-answer-unreadable";
   readonly list: CallRefusal[];
 }
 
@@ -394,10 +440,10 @@ interface OptionalMember {
 
 /**
  * One entry per member of the SDK type `T`, `required` or `optional` as the member is: a member is optional exactly
- * when `T` admits a value without it, the rule of the frame reader's `ShapeOf`. So a member added to a tree type, or a
- * member's optionality changed, fails typecheck here until its form names it as the type has it.
+ * when `T` admits a value without it, the rule of the frame reader's `ShapeOf`. So a member added to an answer type, or
+ * a member's optionality changed, fails typecheck here until its form names it as the type has it.
  */
-type TreeShape<T> = {
+type AnswerShape<T> = {
   readonly [K in keyof T]-?: Partial<Pick<T, K>> extends Pick<T, K> ? OptionalMember : RequiredMember;
 };
 
@@ -408,7 +454,7 @@ const required = (form: Form): RequiredMember => ({ required: form });
 const optional = (form: Form): OptionalMember => ({ optional: form });
 
 /** `shape`, declared against the SDK type `T`, as the members of one arm of a union (`chosenForm`). */
-function armOf<T>(shape: TreeShape<T>): Members {
+function armOf<T>(shape: AnswerShape<T>): Members {
   return shape;
 }
 
@@ -444,7 +490,7 @@ function closedForm(members: Members, absentKeys: readonly string[]): Form {
 }
 
 /** A closed record of the SDK type `T`, read as `shape` names its members (`closedForm`). */
-function recordForm<T>(shape: TreeShape<T>): Form {
+function recordForm<T>(shape: AnswerShape<T>): Form {
   return closedForm(shape, []);
 }
 
@@ -817,4 +863,352 @@ function sourceAnswerRefusals(request: SourceRequest, answer: unknown): readonly
  */
 export function checkSourceAnswer(request: SourceRequest, answer: unknown): AnswerCheck<ObjectSourceDocument> {
   return checked(answer, sourceAnswerRefusals(request, answer));
+}
+
+/** A measure, a time, a ratio or a rate: a finite non-negative number, as an execute answer's execution time is read. */
+const measureForm: Form = (value, pointer, out) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) refuse(out, pointer);
+};
+
+/** A date: a `Date` whose time is a number, as the value codec reads one (its `ts` tag). */
+const dateForm: Form = guarded((value, pointer, out) => {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) refuse(out, pointer);
+});
+
+/** A session's id: a count or text. */
+const pidForm: Form = (value, pointer, out) => {
+  if (typeof value !== "string" && !isCount(value)) refuse(out, pointer);
+};
+
+/** The SDK's `SessionActivity`, one entry per word, so a word added to the type fails typecheck here until it is read. */
+const ACTIVITIES: Readonly<Record<SessionActivity, true>> = Object.freeze({
+  active: true,
+  idle: true,
+  "idle-in-transaction": true,
+  waiting: true,
+  other: true,
+});
+
+/** A session's activity: one word of the SDK's `SessionActivity`. */
+const activityForm: Form = (value, pointer, out) => {
+  if (typeof value !== "string" || !Object.hasOwn(ACTIVITIES, value)) refuse(out, pointer);
+};
+
+/** A closed list of `item`, at most `bound` long (`listForm`), as every list of a monitoring or maintenance answer. */
+function closedListForm(item: Form, bound: number): Form {
+  return listForm(item, bound, true);
+}
+
+/** The SDK's `DatabaseOverview`. */
+const overviewForm = recordForm<DatabaseOverview>({
+  version: required(textForm),
+  uptime: required(textForm),
+  startTime: optional(dateForm),
+  activeConnections: optional(countForm),
+  maxConnections: required(countForm),
+  databaseSize: required(textForm),
+  databaseSizeBytes: optional(countForm),
+  tableCount: required(countForm),
+  tableCountSampledFrom: optional(textForm),
+  indexCount: required(countForm),
+});
+
+/** The SDK's `PerformanceMetrics`. */
+const performanceForm = recordForm<PerformanceMetrics>({
+  cacheHitRatio: optional(measureForm),
+  cacheHitAdvice: optional(textForm),
+  transactionsPerSecond: optional(measureForm),
+  queriesPerSecond: optional(measureForm),
+  bufferPoolUsage: optional(measureForm),
+  deadlocks: optional(countForm),
+  checkpointWriteTime: optional(textForm),
+});
+
+/** The SDK's `SlowQueryStats`. */
+const slowQueryStatsForm = recordForm<SlowQueryStats>({
+  queryId: optional(textForm),
+  query: required(textForm),
+  calls: required(countForm),
+  totalTime: required(measureForm),
+  avgTime: required(measureForm),
+  minTime: optional(measureForm),
+  maxTime: optional(measureForm),
+  rows: required(countForm),
+  sharedBlksHit: optional(countForm),
+  sharedBlksRead: optional(countForm),
+});
+
+/** The SDK's `ActiveSessionDetails`. */
+const sessionDetailsForm = recordForm<ActiveSessionDetails>({
+  pid: required(pidForm),
+  user: required(textForm),
+  database: required(textForm),
+  applicationName: optional(textForm),
+  clientAddr: optional(textForm),
+  state: required(textForm),
+  activity: optional(activityForm),
+  query: required(textForm),
+  queryStart: optional(dateForm),
+  duration: required(textForm),
+  durationMs: required(measureForm),
+  waitEventType: optional(textForm),
+  waitEvent: optional(textForm),
+  blocked: optional(flagForm),
+  terminable: optional(flagForm),
+});
+
+/** The SDK's `TableStats`. */
+const tableStatsForm = recordForm<TableStats>({
+  schemaName: required(textForm),
+  tableName: required(textForm),
+  rowCount: optional(countForm),
+  liveRowCount: optional(countForm),
+  deadRowCount: optional(countForm),
+  tableSize: optional(textForm),
+  tableSizeBytes: optional(countForm),
+  indexSize: optional(textForm),
+  indexSizeBytes: optional(countForm),
+  totalSize: required(textForm),
+  totalSizeBytes: required(countForm),
+  lastVacuum: optional(dateForm),
+  lastAnalyze: optional(dateForm),
+  bloatRatio: optional(measureForm),
+});
+
+/** The SDK's `IndexStats`. */
+const indexStatsForm = recordForm<IndexStats>({
+  schemaName: required(textForm),
+  tableName: required(textForm),
+  indexName: required(textForm),
+  indexType: optional(textForm),
+  columns: required(closedListForm(textForm, ANSWER_LIST_MAX.columns)),
+  isUnique: required(flagForm),
+  isPrimary: required(flagForm),
+  indexSize: required(textForm),
+  indexSizeBytes: optional(countForm),
+  scans: required(countForm),
+  usageRatio: optional(measureForm),
+});
+
+/** The SDK's `StorageStats`. */
+const storageStatsForm = recordForm<StorageStats>({
+  name: required(textForm),
+  location: optional(textForm),
+  size: required(textForm),
+  sizeBytes: required(countForm),
+  usagePercent: optional(measureForm),
+  walSize: optional(textForm),
+  walSizeBytes: optional(countForm),
+});
+
+/** A panel answer: one form per panel, each keyed by its panel alone. */
+type PanelForms = {
+  readonly [P in MonitoringPanelRequest["panel"]]: Extract<MonitoringPanelAnswer, Record<P, unknown>>;
+};
+
+/** The form of an answer to a request whose panel is outside the vocabulary: refused at the top level, whatever it is. */
+const unknownPanelForm: Form = (_value, pointer, out) => {
+  refuse(out, pointer);
+};
+
+/**
+ * The form of the answer to `request`: a closed record of the request's panel alone, holding that panel's member, the
+ * slow queries and the sessions at most the request's `limit` long. A panel outside the vocabulary has no form, and an
+ * answer to it is refused at the top level (`unknownPanelForm`).
+ */
+function panelAnswerForm(request: MonitoringPanelRequest): Form {
+  switch (request.panel) {
+    case "overview":
+      return recordForm<PanelForms["overview"]>({ overview: required(overviewForm) });
+    case "performance":
+      return recordForm<PanelForms["performance"]>({ performance: required(performanceForm) });
+    case "slowQueries":
+      return recordForm<PanelForms["slowQueries"]>({
+        slowQueries: required(closedListForm(slowQueryStatsForm, request.limit)),
+      });
+    case "activeSessions":
+      return recordForm<PanelForms["activeSessions"]>({
+        activeSessions: required(closedListForm(sessionDetailsForm, request.limit)),
+      });
+    case "tables":
+      return recordForm<PanelForms["tables"]>({
+        tables: required(closedListForm(tableStatsForm, ANSWER_LIST_MAX.tables)),
+      });
+    case "indexes":
+      return recordForm<PanelForms["indexes"]>({
+        indexes: required(closedListForm(indexStatsForm, ANSWER_LIST_MAX.indexes)),
+      });
+    case "storage":
+      return recordForm<PanelForms["storage"]>({
+        storage: required(closedListForm(storageStatsForm, ANSWER_LIST_MAX.storage)),
+      });
+    default:
+      return unknownPanelForm;
+  }
+}
+
+/**
+ * `answer`, what a `monitoring.panel` call answered `request`, read against its panel's form (clause C-112): the
+ * answer itself, typed as the SDK's `MonitoringPanelAnswer`, where nothing is refused, and its refusals as
+ * `panel-answer-unreadable` otherwise: a plain record whose one key is the request's panel, another key named, holding
+ * that panel's member closed over the SDK's monitoring types, every count a non-negative safe integer, every time,
+ * ratio and rate a finite non-negative number, every date a valid `Date`, and the slow queries and the sessions at most
+ * the request's `limit` long, a limit `checkMonitoringPanelRequest` admitted before the call. An answer to a request
+ * whose panel is outside the vocabulary, which that check refuses before any call, is refused at the top level. Never
+ * throws.
+ */
+export function checkPanelAnswer(request: MonitoringPanelRequest, answer: unknown): AnswerCheck<MonitoringPanelAnswer> {
+  const out: Refusals = { rule: "panel-answer-unreadable", list: [] };
+  panelAnswerForm(request)(answer, "", out);
+  return checked(answer, out.list);
+}
+
+const poolStatsForm = recordForm<PoolStats>({
+  total: required(countForm),
+  idle: required(countForm),
+  active: required(countForm),
+  waiting: required(countForm),
+  max: optional(countForm),
+});
+
+/**
+ * `answer`, what a `monitoring.poolStats` call answered, read as the SDK's `PoolStats` closed, every member a count:
+ * the answer itself, typed, where nothing is refused, and its refusals as `pool-stats-answer-unreadable` otherwise.
+ * Never throws.
+ */
+export function checkPoolStatsAnswer(answer: unknown): AnswerCheck<PoolStats> {
+  const out: Refusals = { rule: "pool-stats-answer-unreadable", list: [] };
+  poolStatsForm(answer, "", out);
+  return checked(answer, out.list);
+}
+
+const healthForm = recordForm<HealthInfo>({
+  activeConnections: optional(countForm),
+  databaseSize: required(textForm),
+  cacheHitRatio: required(textForm),
+  slowQueries: required(
+    closedListForm(
+      recordForm<SlowQuery>({ query: required(textForm), calls: required(countForm), avgTime: required(textForm) }),
+      ANSWER_LIST_MAX.slowQueries,
+    ),
+  ),
+  activeSessions: required(
+    closedListForm(
+      recordForm<ActiveSession>({
+        pid: required(pidForm),
+        user: required(textForm),
+        database: required(textForm),
+        state: required(textForm),
+        query: required(textForm),
+        duration: required(textForm),
+      }),
+      ANSWER_LIST_MAX.activeSessions,
+    ),
+  ),
+});
+
+/**
+ * `answer`, what a `health` call answered, read as the SDK's `HealthInfo` closed, its slow queries and its sessions
+ * closed too: the answer itself, typed, where nothing is refused, and its refusals as `health-answer-unreadable`
+ * otherwise. Never throws.
+ */
+export function checkHealthAnswer(answer: unknown): AnswerCheck<HealthInfo> {
+  const out: Refusals = { rule: "health-answer-unreadable", list: [] };
+  healthForm(answer, "", out);
+  return checked(answer, out.list);
+}
+
+/**
+ * A maintenance run's row: a plain record, refused at its pointer otherwise, whose every own key is read in the row's
+ * order. An accessor is refused at its pointer, a value `undefined` reads as absent, as the value codec leaves it out of
+ * a record, a key outside `fields` is refused by name where the answer's fields were read, and a value the value codec
+ * refuses (`encodeValue`, the codec's own definition of its domain) is refused at its pointer. The codec reads a cell's
+ * nested records by their members, as it reads every value it writes.
+ */
+function rowForm(fields: ReadonlySet<string> | undefined): Form {
+  return guarded((row, pointer, out) => {
+    if (!isPlainRecord(row)) {
+      refuse(out, pointer);
+      return;
+    }
+    for (const key of Object.getOwnPropertyNames(row)) {
+      const at = pointerTo(pointer, key);
+      const read = readAt(row, key, at, out);
+      if (read === undefined) continue;
+      if (read.kind !== "data") {
+        refuse(out, at);
+        continue;
+      }
+      if (read.value === undefined) continue;
+      if (fields !== undefined && !fields.has(key)) refuse(out, at, key);
+      try {
+        encodeValue(read.value);
+      } catch {
+        refuse(out, at);
+      }
+    }
+  });
+}
+
+/**
+ * `answer`, what a `maintenance.run` call answered, read as the SDK's `MaintenanceRunAnswer` closed: the answer itself,
+ * typed, where nothing is refused, and its refusals as `maintenance-run-answer-unreadable` otherwise. Its members are
+ * read in the answer's order, its rows last: rows with no fields are refused at `/fields`, unless the fields were
+ * already refused there, behind an accessor, so a member is refused once, and each row is read (`rowForm`) against the
+ * answer's fields where they were read whole as a list of text, since a key can be named outside them only then. Never
+ * throws.
+ */
+export function checkMaintenanceRunAnswer(answer: unknown): AnswerCheck<MaintenanceRunAnswer> {
+  const out: Refusals = { rule: "maintenance-run-answer-unreadable", list: [] };
+  const read: { rows?: { value: unknown; pointer: string }; fields?: Set<string>; fieldsRead: boolean } = {
+    fieldsRead: true,
+  };
+  recordForm<MaintenanceRunAnswer>({
+    success: required(flagForm),
+    executionTime: required(measureForm),
+    message: required(textForm),
+    rows: optional((value, pointer) => {
+      read.rows = { value, pointer };
+    }),
+    fields: optional((value, pointer, into) => {
+      const names = new Set<string>();
+      const before = into.list.length;
+      const field: Form = (name, at, inner) => {
+        textForm(name, at, inner);
+        if (typeof name === "string") names.add(name);
+      };
+      closedListForm(field, ANSWER_LIST_MAX.fields)(value, pointer, into);
+      read.fields = names;
+      read.fieldsRead = into.list.length === before;
+    }),
+  })(answer, "", out);
+  if (read.rows !== undefined) {
+    if (read.fields === undefined && !out.list.some((refusal) => refusal.pointer === "/fields")) refuse(out, "/fields");
+    const fields = read.fieldsRead ? read.fields : undefined;
+    closedListForm(rowForm(fields), ANSWER_LIST_MAX.rows)(read.rows.value, read.rows.pointer, out);
+  }
+  return checked(answer, out.list);
+}
+
+const previewForm = recordForm<MaintenancePreview>({
+  summary: required(textForm),
+  facts: required(
+    closedListForm(
+      recordForm<MaintenanceFact>({ label: required(textForm), value: required(textForm) }),
+      ANSWER_LIST_MAX.facts,
+    ),
+  ),
+  refusal: optional(textForm),
+  note: optional(textForm),
+});
+
+/**
+ * `answer`, what a `maintenance.preview` call answered, read as the SDK's `MaintenancePreview` closed, its facts closed
+ * too: the answer itself, typed, where nothing is refused, and its refusals as `maintenance-preview-answer-unreadable`
+ * otherwise. Never throws.
+ */
+export function checkMaintenancePreviewAnswer(answer: unknown): AnswerCheck<MaintenancePreview> {
+  const out: Refusals = { rule: "maintenance-preview-answer-unreadable", list: [] };
+  previewForm(answer, "", out);
+  return checked(answer, out.list);
 }

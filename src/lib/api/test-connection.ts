@@ -5,13 +5,7 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
-import {
-  isPackageFailure,
-  isStudioFailure,
-  logPackageFailure,
-  packageErrorSentence,
-  packageFailureAnswer,
-} from "@/lib/api/package-errors";
+import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
 import { type HealthWithin, readHealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
 import { errorCode, errorKind } from "@/lib/db/error-record";
@@ -116,15 +110,21 @@ function testDeadlineSentence(budgetMs: number): string {
   return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
 }
 
-/** The sentence of a health read that failed, by how the engine's own words reach the client (`grants.ownWords`). */
+/**
+ * The sentence of a health read that failed: the error `packageFailureAnswer` answers for it (./package-errors), which
+ * logs a package's failure once, read by how the engine's own words reach the client (`grants.ownWords`). Where they
+ * are `"scrubbed"` its message passes core's scrub; where they are `"code-only"` a package's failure answers Studio's
+ * sentence, naming its code or the rules of an answer the core refused, and any other failure, Studio's own, is raised
+ * as itself.
+ */
 function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: ProviderTextScrub, route: string): string {
+  const answered = packageFailureAnswer(engine, "health", error, scrub, route);
   if (engine.grants.ownWords === "scrubbed") {
-    const withheld = withheldProviderError(scrub, error);
-    return withheld?.message ?? (error instanceof Error ? error.message : String(error));
+    const withheld = withheldProviderError(scrub, answered);
+    return withheld?.message ?? (answered instanceof Error ? answered.message : String(answered));
   }
-  if (isStudioFailure(error)) throw error;
-  logPackageFailure("health", error, scrub, route);
-  return packageErrorSentence("health", error);
+  if (!isPackageFailure(engine, error)) throw error;
+  return (answered as Error).message;
 }
 
 /**
@@ -160,9 +160,11 @@ function healthFailureSentence(engine: EngineRecord, error: unknown, scrub: Prov
  *   Studio's sentence naming its code where it does not, a refusal of what its open answered as the package's defect
  *   naming its rules, logged once as the package's on both grants, while a legacy provider's failure and Studio's own,
  *   a `DatabaseError` or a host defect of Studio's, are raised as themselves;
- * - the words of a health failure (`grants.ownWords`): `"scrubbed"`, its sentence passes core's scrub of
- *   `connection`; `"code-only"`, a package's is logged once as the package's and answered with Studio's sentence naming
- *   its code (`logPackageFailure` in ./package-errors), while Studio's own failure is raised as itself.
+ * - the words of a health failure, answered by `packageFailureAnswer` (./package-errors), which logs a package's once
+ *   as the package's, and read by `grants.ownWords`: `"scrubbed"`, its sentence passes core's scrub of `connection`;
+ *   `"code-only"`, a package's is answered with Studio's sentence naming its code, or, for a health answer the host
+ *   core refused (`checkHealthAnswer`), naming the rules it broke as the package's defect, while Studio's own failure
+ *   is raised as itself.
  * The health read is one host core health call on the session the test holds, a legacy provider's bridged one
  * (`readHealthWithin`, src/lib/api/provider-monitoring.ts; clause C-75) or a package's own (`readSessionHealthWithin`),
  * on the test's own deadline and its deadline signal; a health failure after that deadline is logged by kind and

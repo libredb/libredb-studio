@@ -19,6 +19,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
+  ANSWER_LIST_MAX,
   CALL_REFUSAL_RULES,
   type CallRefusal,
   CallRefusalError,
@@ -359,6 +360,37 @@ describe("checkMonitoringPanelRequest", () => {
     }
     expect(callRefusalSentence(PANEL_NOT_OFFERED)).toBe(
       'The request names at "/panel" a monitoring panel the session\'s engine does not offer, so the call was not made.',
+    );
+  });
+
+  test("a slow queries or active sessions request's limit is held to a whole number from 1 to its list's ANSWER_LIST_MAX bound", () => {
+    const panels: MonitoringPanels = { ...SOME_PANELS, activeSessions: "offered" };
+    const limitRefused: CallRefusal = { rule: "request-limit-out-of-range", pointer: "/limit", name: "limit" };
+    const getter = (panel: "slowQueries" | "activeSessions") =>
+      Object.defineProperty({ panel }, "limit", { get: () => 10, enumerable: true }) as MonitoringPanelRequest;
+    for (const panel of ["slowQueries", "activeSessions"] as const) {
+      const bound = ANSWER_LIST_MAX[panel];
+      for (const limit of [1, 10, bound]) {
+        expect(checkMonitoringPanelRequest(panels, { panel, limit })).toEqual([]);
+      }
+      const refused = [
+        ...[0, -1, 1.5, bound + 1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, "10", null].map(
+          (limit) => ({ panel, limit }) as unknown as MonitoringPanelRequest,
+        ),
+        { panel } as unknown as MonitoringPanelRequest,
+        getter(panel),
+      ];
+      for (const request of refused) expect(checkMonitoringPanelRequest(panels, request)).toEqual([limitRefused]);
+    }
+    // A panel the engine does not offer is refused for that alone; another panel's limit is not read.
+    expect(checkMonitoringPanelRequest(SOME_PANELS, { panel: "activeSessions", limit: Number.NaN })).toEqual([
+      PANEL_NOT_OFFERED,
+    ]);
+    expect(
+      checkMonitoringPanelRequest(SOME_PANELS, { panel: "overview", limit: Number.NaN } as MonitoringPanelRequest),
+    ).toEqual([]);
+    expect(callRefusalSentence(limitRefused)).toBe(
+      'The request carries the field "limit" at "/limit" that is not a whole number from 1 to the bound of the list it limits, so the call was not made.',
     );
   });
 

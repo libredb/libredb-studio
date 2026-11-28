@@ -297,7 +297,8 @@ describe("the other surfaces of an agent-mode handle", () => {
       expect((error as Error).message).toBe(sentence);
     }
     const health = await provider.getHealth();
-    expect(health.description).toBe("a test agent");
+    // The shared health shape only: what the agent says about itself is the overview's, withheld above.
+    expect(Object.keys(health).sort()).toEqual(["activeSessions", "cacheHitRatio", "databaseSize", "slowQueries"]);
     expect(leaks(health)).toBe(false);
     expect((await provider.listObjects([], "table")).length).toBeGreaterThan(0);
   });

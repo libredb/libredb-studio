@@ -568,15 +568,19 @@ async function rawAgent(answer: () => Uint8Array): Promise<number> {
   return (agent.address() as { port: number }).port;
 }
 
+/** The members of the shared health shape an SNMP health answer holds, sorted: every one but `activeConnections`. */
+const HEALTH_MEMBERS = ["activeSessions", "cacheHitRatio", "databaseSize", "slowQueries"];
+
 /**
  * Health is a real read of the agent: one Get of the two objects every agent answers about itself.
  *
- * Only what an agent reports is filled in. Every figure of the shared shape an agent has no notion
- * of says so in a sentence, and the count of connections is left out rather than sent as a zero,
- * which the shared shape's own docblock asks of a provider that cannot measure it.
+ * It answers the shared health shape and nothing beside it. Every figure of the shared shape an agent
+ * has no notion of says so in a sentence, and the count of connections is left out rather than sent as
+ * a zero, which the shared shape's own docblock asks of a provider that cannot measure it. What the
+ * agent says about itself, its description and its uptime, is the overview's.
  */
 describe("health is read from the agent, and claims nothing the agent did not say", () => {
-  test("one Get of the description and the uptime, answered with both and the round trip", async () => {
+  test("one Get of the description and the uptime, answered in the shared health shape only, the two read from the overview", async () => {
     const seen: Seen[] = [];
     const port = await listeningAgent(
       seen,
@@ -593,34 +597,32 @@ describe("health is read from the agent, and claims nothing the agent did not sa
       [SYS_UPTIME.join(".")],
       [SYS_DESCR.join("."), SYS_UPTIME.join(".")],
     ]);
-    expect(health.description).toBe("Linux agent 6.1");
-    expect(health.uptime).toBe("10000000");
-    expect(health.roundTripMs).toBeGreaterThanOrEqual(0);
-    expect(health).not.toHaveProperty("activeConnections");
+    // The shared shape's own members and no other: activeConnections is left out, never a zero.
+    expect(Object.keys(health).sort()).toEqual(HEALTH_MEMBERS);
     expect(health.databaseSize).toMatch(/An SNMP agent reports no database size/);
     expect(health.cacheHitRatio).toMatch(/An SNMP agent reports no cache/);
     expect(health.slowQueries).toEqual([]);
     expect(health.activeSessions).toEqual([]);
+    // The agent's description and uptime are the overview's, read by the same Get.
+    const overview = await opened.getOverview();
+    expect(overview.version).toBe("Linux agent 6.1");
+    expect(overview.uptime).toBe("10000000");
   });
 
-  test("an object the agent does not serve is said to be missing, not rendered as a value", async () => {
+  test("an object the agent does not serve still answers the health read, in the shared shape", async () => {
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
     opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
-    const health = await opened.getHealth();
-    expect(health.uptime).toBe("1");
-    expect(health.description).toBe("unavailable: the agent answered noSuchObject for sysDescr.0");
+    expect(Object.keys(await opened.getHealth()).sort()).toEqual(HEALTH_MEMBERS);
   });
 
-  test("an answer that leaves an object out is said to have answered nothing for it", async () => {
+  test("an answer that leaves an object out still answers the health read, in the shared shape", async () => {
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]), {
       omit: new Set([SYS_DESCR.join(".")]),
     });
     opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
-    const health = await opened.getHealth();
-    expect(health.uptime).toBe("1");
-    expect(health.description).toBe("unavailable: the agent answered nothing for sysDescr.0");
+    expect(Object.keys(await opened.getHealth()).sort()).toEqual(HEALTH_MEMBERS);
   });
 
   /**

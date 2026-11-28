@@ -16,9 +16,16 @@ import {
   awaitWithin,
   type BatchLimit,
   type CallContext,
+  ANSWER_LIST_MAX,
+  type AnswerCheck,
   type CallRefusal,
   CallRefusalError,
   CLEANUP_DEADLINE_MS,
+  checkHealthAnswer,
+  checkMaintenancePreviewAnswer,
+  checkMaintenanceRunAnswer,
+  checkPanelAnswer,
+  checkPoolStatsAnswer,
   checkProviderModule,
   checkSourceAnswer,
   checkTreeAnswer,
@@ -1030,6 +1037,75 @@ describe("serve", () => {
     // Each answer crossed whole before the host's side read it.
     expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
       cases.flatMap(() => ["to-provider objects.tree", "to-host objects.tree"]),
+    );
+  });
+
+  test("a served panel, pool statistics, health, maintenance run or preview answer outside the SDK's types is refused on the host side with the core's refusals", async () => {
+    const fx = fixture({ offersPanels: true, listsMaintenance: true });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const planted = marker();
+    const request: MonitoringPanelRequest = { panel: "overview" };
+    // Each answer is a shape a frame admits, and not what the SDK's types allow there.
+    fx.answers.panel = () => ({ tables: [] });
+    fx.answers.poolStats = () => ({ total: 1.5, idle: 1, active: 0, waiting: 0 });
+    fx.answers.health = () => ({
+      activeConnections: -1,
+      databaseSize: "",
+      cacheHitRatio: "",
+      slowQueries: [],
+      activeSessions: [],
+    });
+    fx.answers.run = () => ({ success: true, executionTime: 1, message: "", rows: [{ [planted]: 1 }], fields: [] });
+    // One fact past its bound.
+    const facts = Array.from({ length: ANSWER_LIST_MAX.facts + 1 }, () => ({ label: "", value: "" }));
+    fx.answers.preview = () => ({ summary: "", facts });
+    const runRequest: MaintenanceRunRequest = { operation: "vacuum" };
+    const previewRequest: MaintenancePreviewRequest = { operation: "release", path: [marker(), marker()] };
+    const cases: [() => Promise<unknown>, CallRefusal[], AnswerCheck<unknown>][] = [
+      [
+        async () => impl.monitoring?.panel?.(opened.handle, request, callContext()),
+        [
+          { rule: "panel-answer-unreadable", pointer: "/tables", name: "tables" },
+          { rule: "panel-answer-unreadable", pointer: "/overview" },
+        ],
+        checkPanelAnswer(request, fx.answers.panel()),
+      ],
+      [
+        async () => impl.monitoring?.poolStats?.(opened.handle, callContext()),
+        [{ rule: "pool-stats-answer-unreadable", pointer: "/total" }],
+        checkPoolStatsAnswer(fx.answers.poolStats()),
+      ],
+      [
+        async () => impl.health(opened.handle, callContext()),
+        [{ rule: "health-answer-unreadable", pointer: "/activeConnections" }],
+        checkHealthAnswer(fx.answers.health()),
+      ],
+      [
+        async () => impl.maintenance?.run?.(opened.handle, runRequest, callContext()),
+        [{ rule: "maintenance-run-answer-unreadable", pointer: `/rows/0/${planted}`, name: planted }],
+        checkMaintenanceRunAnswer(fx.answers.run()),
+      ],
+      [
+        async () => impl.maintenance?.preview?.(opened.handle, previewRequest, callContext()),
+        [{ rule: "maintenance-preview-answer-unreadable", pointer: "/facts" }],
+        checkMaintenancePreviewAnswer(fx.answers.preview()),
+      ],
+    ];
+
+    for (const [call, refusals, check] of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each refusal is its own call's.
+      const refused = await failure(call);
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual(refusals);
+      expect(check).toEqual({ kind: "refused", refusals });
+    }
+    // Each answer crossed whole before the host's side read it.
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      ["monitoring.panel", "monitoring.poolStats", "health", "maintenance.run", "maintenance.preview"].flatMap(
+        (call) => [`to-provider ${call}`, `to-host ${call}`],
+      ),
     );
   });
 

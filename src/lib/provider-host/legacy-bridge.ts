@@ -38,7 +38,9 @@
  * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
  * container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh
  * copy of the frozen request's path, so a legacy member may write what it receives. Each answers the provider's answer
- * by reference, never calls `forCatalog`, and passes a provider's error by reference.
+ * by reference, never calls `forCatalog`, and passes a provider's error by reference. The host core reads each panel,
+ * pool statistics, health, run and preview answer the bridge hands over with its call's SDK check (clause C-112), as it
+ * reads a package's, so a legacy answer outside the SDK's types is refused as a defect of Studio's bridge.
  *
  * The session's maintenance is `bridgedMaintenance`'s answer, which the caller lays beside the session: the provider's
  * maintenance as declared before it connects, in the engine declaration's form, narrowed through the SDK's own

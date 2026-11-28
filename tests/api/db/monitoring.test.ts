@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAl
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { ANSWER_LIST_MAX } from "@libredb/provider-sdk/calls";
 import {
   QueryError,
   DatabaseError,
@@ -1018,13 +1019,17 @@ describe("the monitoring route on the host core", () => {
     expect(partial.overview).toBeDefined();
   });
 
-  test("options with a limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, are refused by name before any connection resolves", async () => {
+  test("options with a limit that is not a whole number from 1 to its list's answer bound, or a schema filter that is not text naming a schema, are refused by name before any connection resolves", async () => {
     const provider = createMockProvider();
+    const slowQueries = `options.slowQueryLimit must be a whole number from 1 to ${ANSWER_LIST_MAX.slowQueries}`;
+    const sessions = `options.sessionLimit must be a whole number from 1 to ${ANSWER_LIST_MAX.activeSessions}`;
     const cases: [Record<string, unknown>, string][] = [
-      [{ slowQueryLimit: 0 }, "options.slowQueryLimit must be a whole number of at least 1"],
-      [{ slowQueryLimit: "10" }, "options.slowQueryLimit must be a whole number of at least 1"],
-      [{ sessionLimit: 1.5 }, "options.sessionLimit must be a whole number of at least 1"],
-      [{ sessionLimit: null }, "options.sessionLimit must be a whole number of at least 1"],
+      [{ slowQueryLimit: 0 }, slowQueries],
+      [{ slowQueryLimit: "10" }, slowQueries],
+      [{ slowQueryLimit: ANSWER_LIST_MAX.slowQueries + 1 }, slowQueries],
+      [{ sessionLimit: 1.5 }, sessions],
+      [{ sessionLimit: null }, sessions],
+      [{ sessionLimit: ANSWER_LIST_MAX.activeSessions + 1 }, sessions],
       [{ schemaFilter: "" }, "options.schemaFilter must name a schema, as text that is not empty"],
       [{ schemaFilter: 7 }, "options.schemaFilter must name a schema, as text that is not empty"],
     ];

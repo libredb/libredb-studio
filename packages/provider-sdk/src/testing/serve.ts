@@ -27,20 +27,23 @@
  * every execute to the read-only policy its session was opened under (`checkReadOnlyRequest`, clause C-78), read from
  * the open context's `policy` and kept with the session,
  * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
- * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers
- * (`checkMonitoringPanelRequest`), every tree request to the object model the session's engine states
- * (`checkTreeRequest`, clause M-89) and every source request to it (`checkSourceRequest`, clause C-115), reads
- * `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine
- * the open context names, which it refuses before any frame when the module's manifest does not declare it,
+ * `checkMaintenancePreviewRequest`), every monitoring panel request to the panels the session's engine offers and its
+ * limit to its list's bound (`checkMonitoringPanelRequest`), every tree request to the object model the session's
+ * engine states (`checkTreeRequest`, clause M-89) and every source request to it (`checkSourceRequest`, clause C-115),
+ * reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the
+ * engine the open context names, which it refuses before any frame when the module's manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
  * The host's side reads a decoded execute answer as the host core does (`checkExecuteAnswer`, clause C-112) and throws
  * a member outside the SDK's types as a `CallRefusalError`, after closing the answer's sources, so a provider's own
  * test refuses what Studio refuses. It reads a decoded tree answer the same way (`checkTreeAnswer`, clause C-62) and
- * throws an answer that is not its request's action's form as a `CallRefusalError`, and a decoded source answer
- * (`checkSourceAnswer`, clause C-115), throwing one that is not the SDK's closed source document. It never cuts a
- * source answer: a text past the character bound crosses whole, and the cut is the host core's (`boundSourceAnswer`).
+ * throws an answer that is not its request's action's form as a `CallRefusalError`, a decoded source answer
+ * (`checkSourceAnswer`, clause C-115), throwing one that is not the SDK's closed source document, and a decoded
+ * monitoring panel, pool statistics, health, maintenance run and maintenance preview answer (`checkPanelAnswer` with
+ * the request it sent, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer`,
+ * `checkMaintenancePreviewAnswer`, clause C-112). It never cuts a source answer: a text past the character bound
+ * crosses whole, and the cut is the host core's (`boundSourceAnswer`).
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
@@ -54,7 +57,17 @@ import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
-import { checkExecuteAnswer, checkSourceAnswer, checkTreeAnswer } from "../calls/answers";
+import {
+  type AnswerCheck,
+  checkExecuteAnswer,
+  checkHealthAnswer,
+  checkMaintenancePreviewAnswer,
+  checkMaintenanceRunAnswer,
+  checkPanelAnswer,
+  checkPoolStatsAnswer,
+  checkSourceAnswer,
+  checkTreeAnswer,
+} from "../calls/answers";
 import { type CallRefusal, CallRefusalError } from "../calls/refusals";
 import {
   checkConsoleFacet,
@@ -83,21 +96,16 @@ import type {
   EndScopeRequest,
   ExecuteAnswer,
   ExecuteRequest,
-  HealthInfo,
   MaintenanceFacet,
   MaintenanceImpl,
-  MaintenancePreview,
   MaintenancePreviewRequest,
-  MaintenanceRunAnswer,
   MaintenanceRunRequest,
   MonitoringImpl,
-  MonitoringPanelAnswer,
   MonitoringPanelRequest,
   ObjectSourceDocument,
   ObjectsImpl,
   OpenAnswer,
   OpenContext,
-  PoolStats,
   ProviderImpl,
   ProviderModule,
   ResultSource,
@@ -206,6 +214,12 @@ function sourceRefusals(session: HostSession, request: SourceRequest): readonly 
     );
   }
   return checkSourceRequest(session.objectModel, request);
+}
+
+/** The answer `check` read on the host's side, or its refusals thrown as a `CallRefusalError`, as the host core refuses them. */
+function checkedAnswer<Answer>(check: AnswerCheck<Answer>): Answer {
+  if (check.kind === "refused") throw new CallRefusalError(check.refusals);
+  return check.answer;
 }
 
 /** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
@@ -718,27 +732,35 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     ...(provider.run === undefined
       ? {}
       : {
-          run: (handle: ServedHandle, request: MaintenanceRunRequest, ctx: CallContext) =>
-            maintenanceCall<MaintenanceRunAnswer>(
-              "maintenance.run",
-              "run",
-              (maintenance) => checkMaintenanceRunRequest(maintenance, request),
-              handle,
-              request,
-              ctx,
+          run: async (handle: ServedHandle, request: MaintenanceRunRequest, ctx: CallContext) =>
+            checkedAnswer(
+              checkMaintenanceRunAnswer(
+                await maintenanceCall<unknown>(
+                  "maintenance.run",
+                  "run",
+                  (maintenance) => checkMaintenanceRunRequest(maintenance, request),
+                  handle,
+                  request,
+                  ctx,
+                ),
+              ),
             ),
         }),
     ...(provider.preview === undefined
       ? {}
       : {
-          preview: (handle: ServedHandle, request: MaintenancePreviewRequest, ctx: CallContext) =>
-            maintenanceCall<MaintenancePreview>(
-              "maintenance.preview",
-              "preview",
-              (maintenance) => checkMaintenancePreviewRequest(maintenance, request),
-              handle,
-              request,
-              ctx,
+          preview: async (handle: ServedHandle, request: MaintenancePreviewRequest, ctx: CallContext) =>
+            checkedAnswer(
+              checkMaintenancePreviewAnswer(
+                await maintenanceCall<unknown>(
+                  "maintenance.preview",
+                  "preview",
+                  (maintenance) => checkMaintenancePreviewRequest(maintenance, request),
+                  handle,
+                  request,
+                  ctx,
+                ),
+              ),
             ),
         }),
   };
@@ -747,39 +769,50 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     ...(panel === undefined
       ? {}
       : {
-          panel: (handle: ServedHandle, request: MonitoringPanelRequest, ctx: CallContext) =>
-            facetCall<MonitoringPanelAnswer>(
-              "monitoring.panel",
-              (session) => {
-                const offered = checkMonitoringFacet(session.calls, "panel");
-                return offered.length > 0 ? offered : checkMonitoringPanelRequest(session.monitoring, request);
-              },
-              panel as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
-              monitoringImpl,
-              handle,
-              request,
-              ctx,
+          panel: async (handle: ServedHandle, request: MonitoringPanelRequest, ctx: CallContext) =>
+            checkedAnswer(
+              checkPanelAnswer(
+                request,
+                await facetCall<unknown>(
+                  "monitoring.panel",
+                  (session) => {
+                    const offered = checkMonitoringFacet(session.calls, "panel");
+                    return offered.length > 0 ? offered : checkMonitoringPanelRequest(session.monitoring, request);
+                  },
+                  panel as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
+                  monitoringImpl,
+                  handle,
+                  request,
+                  ctx,
+                ),
+              ),
             ),
         }),
     ...(poolStats === undefined
       ? {}
       : {
-          poolStats: (handle: ServedHandle, ctx: CallContext) =>
-            contextCall<PoolStats>(
-              "monitoring.poolStats",
-              (session) => checkMonitoringFacet(session.calls, "poolStats"),
-              poolStats as (handle: unknown, ctx: CallContext) => Promise<unknown>,
-              monitoringImpl,
-              handle,
-              ctx,
+          poolStats: async (handle: ServedHandle, ctx: CallContext) =>
+            checkedAnswer(
+              checkPoolStatsAnswer(
+                await contextCall<unknown>(
+                  "monitoring.poolStats",
+                  (session) => checkMonitoringFacet(session.calls, "poolStats"),
+                  poolStats as (handle: unknown, ctx: CallContext) => Promise<unknown>,
+                  monitoringImpl,
+                  handle,
+                  ctx,
+                ),
+              ),
             ),
         }),
   };
   return Object.freeze({
     open,
     close,
-    health: (handle: ServedHandle, ctx: CallContext) =>
-      contextCall<HealthInfo>("health", () => [], provider.health, impl, handle, ctx),
+    health: async (handle: ServedHandle, ctx: CallContext) =>
+      checkedAnswer(
+        checkHealthAnswer(await contextCall<unknown>("health", () => [], provider.health, impl, handle, ctx)),
+      ),
     console: Object.freeze(served),
     objects: Object.freeze(servedObjects),
     maintenance: Object.freeze(servedMaintenance),

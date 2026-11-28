@@ -15,7 +15,12 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { CallContext, HealthInfo, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import {
+  ANSWER_LIST_MAX,
+  type CallContext,
+  type HealthInfo,
+  type MonitoringPanelRequest,
+} from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
 import {
   type GrantedRead,
@@ -63,6 +68,18 @@ function providerOf(queryTimeout?: number, extra: Record<string, unknown> = {}):
     config: { id: "c1", name: "Prod", type: "postgres", host: "db.internal", queryTimeout } as DatabaseConnection,
   });
   return Object.assign(provider, extra);
+}
+
+/** An overview panel's figures, of the SDK's `DatabaseOverview`, its text generated at run time. */
+function overviewOf(): Record<string, unknown> {
+  return {
+    version: marker(),
+    uptime: marker(),
+    maxConnections: 0,
+    databaseSize: marker(),
+    tableCount: 0,
+    indexCount: 0,
+  };
 }
 
 /** The mock behind a provider's member, for its recorded calls and its implementation. */
@@ -168,7 +185,12 @@ describe("providerMonitoring", () => {
   test("a dashboard read answers each panel's own answer by reference in the orchestration's four states, and a pool statistics read the provider's own", async () => {
     const stats = { total: 4, idle: 1, active: 3, waiting: 0, max: 10 };
     const provider = providerOf(undefined, { getPoolStats: mock(() => stats) });
-    const answers = Object.fromEntries(MEMBERS.map((member) => [member, [{ marker: marker() }]]));
+    // Each member's answer of its panel's form, a fresh object each, so each is told apart by reference.
+    const answers: Record<string, unknown> = {
+      ...Object.fromEntries(MEMBERS.map((member) => [member, []])),
+      getOverview: overviewOf(),
+      getPerformanceMetrics: { cacheHitAdvice: marker() },
+    };
     for (const member of MEMBERS) mockOf(provider[member]).mockImplementation(async () => answers[member]);
     const failed = new Error(marker());
     mockOf(provider.getActiveSessions).mockImplementation(async () => {
@@ -573,7 +595,7 @@ describe("the health and overview reads", () => {
 
   test("an overview read is one host core panel call where the engine offers the overview, answering its figures by reference, and reads nothing where it does not", async () => {
     const provider = providerOf(2_000);
-    const overview = { marker: marker() };
+    const overview = overviewOf();
     mockOf(provider.getOverview).mockImplementation(async () => overview);
     const s3 = createMockProvider({ type: "s3" });
     const panels: { request: MonitoringPanelRequest; ctx: CallContext }[] = [];
@@ -898,21 +920,29 @@ describe("granted reads", () => {
 });
 
 describe("monitoringOptionsRefusal", () => {
-  test("the monitoring options are refused by name when a limit is not a whole number of at least 1 or the schema is not text that names one", () => {
+  test("the monitoring options are refused by name when a limit is not a whole number from 1 to its list's answer bound or the schema is not text that names one", () => {
     const schema = marker();
     expect(monitoringOptionsRefusal({})).toBeUndefined();
     expect(
-      monitoringOptionsRefusal({ slowQueryLimit: 1, sessionLimit: 9007199254740991, schemaFilter: schema }),
+      monitoringOptionsRefusal({
+        slowQueryLimit: ANSWER_LIST_MAX.slowQueries,
+        sessionLimit: ANSWER_LIST_MAX.activeSessions,
+        schemaFilter: schema,
+      }),
     ).toBeUndefined();
     expect(
       monitoringOptionsRefusal({ includeTables: false, includeIndexes: true, includeStorage: false }),
     ).toBeUndefined();
 
-    const limit = (name: string) => `options.${name} must be a whole number of at least 1`;
+    const limit = (name: "slowQueryLimit" | "sessionLimit") =>
+      `options.${name} must be a whole number from 1 to ${ANSWER_LIST_MAX[name === "slowQueryLimit" ? "slowQueries" : "activeSessions"]}`;
+    expect(monitoringOptionsRefusal({ slowQueryLimit: 1, sessionLimit: 1 })).toBeUndefined();
     const schemaSentence = "options.schemaFilter must name a schema, as text that is not empty";
     const badLimits: readonly unknown[] = [0, -1, 1.5, "10", Number.NaN, Number.POSITIVE_INFINITY, 1e300, true, null];
-    for (const bad of badLimits) {
+    for (const bad of [...badLimits, Number.MAX_SAFE_INTEGER, ANSWER_LIST_MAX.slowQueries + 1]) {
       expect(monitoringOptionsRefusal({ slowQueryLimit: bad })).toBe(limit("slowQueryLimit"));
+    }
+    for (const bad of [...badLimits, Number.MAX_SAFE_INTEGER, ANSWER_LIST_MAX.activeSessions + 1]) {
       expect(monitoringOptionsRefusal({ sessionLimit: bad })).toBe(limit("sessionLimit"));
     }
     for (const bad of ["", 7, null, []] as const) {

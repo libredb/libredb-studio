@@ -1,4 +1,5 @@
 import {
+  ANSWER_LIST_MAX,
   type CallContext,
   type DatabaseOverview,
   deadlineSignal,
@@ -20,6 +21,7 @@ import {
   budgetRefusalError,
   budgetStopError,
   type CallerView,
+  HostDefectError,
   refusalError,
   stopError,
 } from "@/lib/provider-host/access";
@@ -71,8 +73,9 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * with no call. A read its deadline stopped hands the stopped call's settlement to the grant's `holdUntilSettled`, so
  * the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the grant's sentence.
  *
- * Answers. A read answers the provider's own answer by reference and throws every refusal and stop as the accessor's
- * error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
+ * Answers. A read answers the provider's own answer by reference, which the host core read with its call's SDK check
+ * (`checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, clause C-112), and throws every refusal and stop as
+ * the accessor's error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
  * not-sent when refused before the call and unknown once the provider was called, or a defect of Studio's bridge. A
  * provider's error passes as the same object. A read's failure after its wait ended is logged by route, facet, panel,
  * kind and code, never its text, and a later answer is dropped, since nothing waits on it.
@@ -200,8 +203,9 @@ export function providerMonitoring(
  * Test Connection's health read of `provider`, the provider the test holds: one host core health call on the bridged
  * session, its context's deadline `deadline` and its signal `signal` itself, the test's own wait
  * (docs/providers/CONTRACT.md, clauses C-56 and C-75). The promise answers the provider's health by reference, or
- * `ended` when the wait ended before the call or while it was pending; a failure after the wait ended is logged under
- * `route` by kind and code.
+ * `ended` when the wait ended before the call or while it was pending; a health answer the host core refused
+ * (`checkHealthAnswer`, clause C-112) rejects as the `HostDefectError` naming its refusals, whose author the caller reads
+ * (`packageFailureAnswer` in ./package-errors); a failure after the wait ended is logged under `route` by kind and code.
  *
  * The host core is read and the session built before the call starts, synchronously, so a read made before the core
  * is installed throws `HostCoreBootOrderError` at once rather than as the promise's rejection: the caller starts the
@@ -235,9 +239,12 @@ export function readSessionHealthWithin(
   ctx: CallContext,
   route: string,
 ): Promise<HealthWithin> {
-  return core
-    .healthCall(session, ctx, { late: monitoringLate(route, "health") })
-    .then((record) => (record.kind === "answered" ? { kind: "answered", health: record.answer } : { kind: "ended" }));
+  return core.healthCall(session, ctx, { late: monitoringLate(route, "health") }).then((record): HealthWithin => {
+    if (record.kind === "answered") return { kind: "answered", health: record.answer };
+    // A health call refused once the session was called refused its answer (`checkHealthAnswer`): no wait ended.
+    if (record.kind === "refused" && record.called) throw new HostDefectError(record.refusals);
+    return { kind: "ended" };
+  });
 }
 
 /**
@@ -353,21 +360,27 @@ export function readGrantedHealth(provider: DatabaseProvider, grant: GrantedRead
   return core.healthCall(session, grantedContext(grant), { late }).then((record) => grantedAnswer(record, grant));
 }
 
-/** Whether `value`, a present limit, is a whole number of at least 1 that JavaScript holds exactly. */
-function isLimit(value: unknown): boolean {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+/** The list each monitoring limit option bounds, whose `ANSWER_LIST_MAX` bound is the most that limit may be. */
+const LIMITED_LIST = Object.freeze({ slowQueryLimit: "slowQueries", sessionLimit: "activeSessions" } as const);
+
+/** Whether `value`, a present limit, is a whole number from 1 to `bound`. */
+function isLimit(value: unknown, bound: number): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= bound;
 }
 
 /**
  * The sentence refusing the monitoring `options` a caller sent, or `undefined` when they are taken: a present
- * `slowQueryLimit` or `sessionLimit` that is not a whole number of at least 1, then a present `schemaFilter` that is
- * not text or is empty, the first in that order. An absent option keeps its default. The sentence names the option,
- * never its value. The `include` flags are not read here: they choose which panels are read and reach no provider.
+ * `slowQueryLimit` or `sessionLimit` that is not a whole number from 1 to the `ANSWER_LIST_MAX` bound of the list it
+ * limits, which the host core holds a panel request's limit to (`checkMonitoringPanelRequest`), then a present
+ * `schemaFilter` that is not text or is empty, the first in that order. An absent option keeps its default, which is
+ * within its bound. The sentence names the option and its bound, never its value. The `include` flags are not read
+ * here: they choose which panels are read and reach no provider.
  */
 export function monitoringOptionsRefusal(options: Readonly<Record<string, unknown>>): string | undefined {
   for (const name of ["slowQueryLimit", "sessionLimit"] as const) {
-    if (options[name] !== undefined && !isLimit(options[name])) {
-      return `options.${name} must be a whole number of at least 1`;
+    const bound = ANSWER_LIST_MAX[LIMITED_LIST[name]];
+    if (options[name] !== undefined && !isLimit(options[name], bound)) {
+      return `options.${name} must be a whole number from 1 to ${bound}`;
     }
   }
   const { schemaFilter } = options;

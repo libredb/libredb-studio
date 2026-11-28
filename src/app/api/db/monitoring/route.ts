@@ -60,8 +60,9 @@ export async function POST(req: NextRequest) {
     if (options !== undefined && !isJsonObject(options)) {
       return NextResponse.json({ error: "options must be an object" }, { status: 400 });
     }
-    // A limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, is
-    // refused by name before any connection resolves: it reached the provider as it came (BigQuery's `LIMIT NaN`).
+    // A limit that is not a whole number from 1 to its list's answer bound, or a schema filter that is not text naming
+    // a schema, is refused by name before any connection resolves: it reached the provider as it came (BigQuery's
+    // `LIMIT NaN`), and the host core refuses a panel request whose limit is past that bound as a defect of Studio.
     const optionsRefusal = options === undefined ? undefined : monitoringOptionsRefusal(options);
     if (optionsRefusal !== undefined) {
       return NextResponse.json({ error: optionsRefusal }, { status: 400 });

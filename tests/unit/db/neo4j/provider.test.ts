@@ -5,7 +5,8 @@
  * surface are the graph base's, pinned in tests/unit/db/graph/graph-base-provider.test.ts and end to end in
  * tests/integration/db/neo4j-provider.test.ts.
  */
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { providerMonitoring, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import {
@@ -24,6 +25,8 @@ import { NEO4J_MONITORING_STATEMENTS } from "@/lib/db/providers/graph/neo4j/moni
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { neo4jStatementGate } from "@/lib/db/providers/graph/neo4j/statement-gate";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 import path from "node:path";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
@@ -319,6 +322,64 @@ describe("the monitoring reads", () => {
     ];
     const outcomes = await Promise.allSettled(reads);
     expect(outcomes.map((outcome) => outcome.status)).toEqual(Array(reads.length).fill("rejected"));
+  });
+});
+
+describe("the sessions panel read through the bridge and the host core", () => {
+  beforeAll(() => installHostCore(createHostCore(), "test"));
+  afterAll(forgetHostCore);
+
+  /** A server holding `count` open transactions, whose run reads at most `maxRows` of them as the Bolt client does. */
+  async function holding(count: number) {
+    const transactions = Array.from({ length: count }, (_, at) => ({
+      database: "neo4j",
+      transactionId: `neo4j-transaction-${at}`,
+      username: "neo4j",
+      currentQuery: "RETURN 1",
+      startTime: "2026-10-03T05:18:20.881Z",
+      status: "Running",
+      elapsedTime: "PT0.101000000S",
+    }));
+    const factory = (config: BoltClientConfig): GraphClient => {
+      const recorded = capturedFactory().factory(config);
+      return {
+        ...recorded,
+        async run(statement, options) {
+          if (statement !== NEO4J_MONITORING_STATEMENTS.transactions) return recorded.run(statement, options);
+          return {
+            fields: Object.keys(transactions[0]),
+            rows: transactions.slice(0, options.maxRows),
+            truncated: count > options.maxRows,
+          };
+        },
+      };
+    };
+    const provider = new Neo4jProvider(CONNECTION, {}, {}, factory);
+    await provider.connect();
+    return provider;
+  }
+
+  test("a server with more open transactions than the dashboard's default session limit answers that many", async () => {
+    const provider = await holding(60);
+    const data = await providerMonitoring(provider, new AbortController().signal, "test").readDashboard({});
+    expect(data.errors?.activeSessions).toBeUndefined();
+    expect(data.activeSessions).toHaveLength(50);
+  });
+
+  test("an agent's sessions reading with a limit below the open transactions answers the limit", async () => {
+    const provider = await holding(60);
+    const grant = {
+      deadline: Date.now() + 30_000,
+      deadlineSentence: "The granted reading did not answer within its grant.",
+      route: "test",
+      holdUntilSettled: () => {},
+    };
+    const read = await readGrantedPanel(provider, { panel: "activeSessions", limit: 3 }, grant);
+    expect(read.kind === "answered" ? read.member.map((session) => session.pid) : read.kind).toEqual([
+      "neo4j-transaction-0",
+      "neo4j-transaction-1",
+      "neo4j-transaction-2",
+    ]);
   });
 });
 

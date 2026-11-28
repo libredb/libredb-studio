@@ -223,6 +223,18 @@ describe("readActiveSessions", () => {
     ]);
   });
 
+  test("reads at most the caller's limit of transactions, and at most the row bound without one or past it", async () => {
+    const asked = replacing();
+    await readActiveSessions(asked.client, DATABASE, 3);
+    await readActiveSessions(asked.client, DATABASE);
+    await readActiveSessions(asked.client, DATABASE, DEFAULT_QUERY_LIMIT + 1);
+    expect(asked.calls.map((call) => [call.statement, call.options.maxRows])).toEqual([
+      [transactions, 3],
+      [transactions, DEFAULT_QUERY_LIMIT],
+      [transactions, DEFAULT_QUERY_LIMIT],
+    ]);
+  });
+
   test("a refused read is no sessions; an unreachable server is thrown", async () => {
     expect(await readActiveSessions(replacing({ [transactions]: refused() }).client, DATABASE)).toEqual([]);
     await expect(readActiveSessions(replacing({ [transactions]: unreachable() }).client, DATABASE)).rejects.toThrow(

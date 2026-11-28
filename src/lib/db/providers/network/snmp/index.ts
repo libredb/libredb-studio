@@ -99,23 +99,6 @@ export const SNMP_PROVIDER_SENTENCES = Object.freeze({
  */
 const SILENCE_DEADLINE_MS = 5000;
 
-/**
- * The health this provider reads: the shared shape, plus the three things an agent does report.
- *
- * The shared shape was written for a database and has no field for any of them, so they ride beside
- * it rather than inside a field that means something else. Every shared figure an agent has no notion
- * of is a sentence saying so, and `activeConnections` is left out, which is how the shared shape asks
- * a provider that cannot measure it to say so.
- */
-export interface SnmpHealth extends HealthInfo {
-  /** `sysUpTime.0` as rendered, in hundredths of a second, or why it is missing. */
-  readonly uptime: string;
-  /** `sysDescr.0` as rendered, or why it is missing. */
-  readonly description: string;
-  /** From sending the health read to its answer, measured here. */
-  readonly roundTripMs: number;
-}
-
 /** Why the two shared figures are not numbers. One line each, for the coverage reason `runMaintenance` gives. */
 const NO_DATABASE_SIZE = "An SNMP agent reports no database size: it serves managed objects, not stored data.";
 const NO_CACHE_RATIO = "An SNMP agent reports no cache hit ratio: no standard object publishes one.";
@@ -566,36 +549,28 @@ export class SnmpProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * One Get of `sysDescr.0` and `sysUpTime.0`, through the same exchange and valve as every read.
+   * One Get of `sysDescr.0` and `sysUpTime.0`, through the same exchange and valve as every read,
+   * answered in the shared health shape and nothing beside it.
    *
-   * An agent that does not answer fails the read: a health answer built from nothing would tell the
-   * connection test and the fleet view that a silent device is fine. An agent that answers one of the
-   * two with an exception has that exception named in place of the value.
+   * An agent that does not answer, or answers with a non-zero error-status, fails the read: a health
+   * answer built from nothing would tell the connection test and the fleet view that a silent device
+   * is fine. What the agent says about itself, its description and its uptime, is the overview's,
+   * read by the same Get; every figure of the shared shape an agent has no notion of is a sentence
+   * saying so, and `activeConnections` is left out, which is how the shared shape asks a provider
+   * that cannot measure it to say so.
    */
-  public async getHealth(): Promise<SnmpHealth> {
+  public async getHealth(): Promise<HealthInfo> {
     const exchange = this.exchange;
     if (exchange === undefined) {
       throw new DatabaseConfigError("This connection is not open: `connect` comes before a health read.");
     }
-    const sent = Date.now();
     const answer = await exchange.send(PDU_GET, nextRequestId(), [SYS_DESCR, SYS_UPTIME], undefined);
-    const roundTripMs = Date.now() - sent;
     if (!("varbinds" in answer)) throw new QueryError(`The agent did not answer the health read. ${answer.reason}`);
-    // A non-zero error-status sends the request's own varbinds back with NULL values. Read as
-    // values they would render as two empty strings, a healthy-looking nothing: the status is the answer.
+    // A non-zero error-status sends the request's own varbinds back with NULL values, a
+    // healthy-looking nothing: the status is the answer.
     const refused = failureFromStatus(answer.errorStatus);
     if (refused !== undefined) throw new QueryError(`The agent refused the health read: ${refused.reason}`);
-    const read = (oid: readonly number[], name: string): string => {
-      const varbind = answer.varbinds.find((candidate) => candidate.oid.join(".") === oid.join("."));
-      const exception = varbind === undefined ? "nothing" : EXCEPTION_TAGS[varbind.tag];
-      if (varbind === undefined || exception !== undefined)
-        return `unavailable: the agent answered ${exception} for ${name}`;
-      return renderValue(syntaxFromTag(varbind.tag, varbind.value), varbind.value).display;
-    };
     return {
-      uptime: read(SYS_UPTIME, "sysUpTime.0"),
-      description: read(SYS_DESCR, "sysDescr.0"),
-      roundTripMs,
       databaseSize: NO_DATABASE_SIZE,
       cacheHitRatio: NO_CACHE_RATIO,
       slowQueries: [],
