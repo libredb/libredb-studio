@@ -50,10 +50,18 @@ export interface EngineOpen {
   readonly pool?: PackageOpenRequest["pool"];
 }
 
-/** An opened session of a package's engine, and the package's declared environment its calls are given. */
+/**
+ * An opened session of a package's engine, the package's declared environment its calls are given, and the engine user
+ * its open answered.
+ */
 export interface OpenedPackageSession {
   readonly session: ContractSession;
   readonly env: EnvReader;
+  /**
+   * The engine principal the package's open answered, a user name, never any part of a secret, read once at open
+   * (docs/providers/CONTRACT.md, clause C-67); absent where the open answered none. The maintenance audit names it.
+   */
+  readonly engineUser?: string;
 }
 
 /** What `openEngine` answers: a legacy provider, not connected, or a package's connected session. */
@@ -97,7 +105,11 @@ async function openPackageEngine(
   const record = await openContractSession(served.record.impl, ctx, served.session, late);
   if (record.kind === "stopped") throw record.reason;
   if (record.kind === "refused") throw new HostDefectError(record.refusals);
-  return { session: record.session, env };
+  return {
+    session: record.session,
+    env,
+    ...(record.engineUser !== undefined && { engineUser: record.engineUser }),
+  };
 }
 
 /**
@@ -143,7 +155,7 @@ export function openedProvider(opened: OpenedEngine): DatabaseProvider {
 }
 
 /**
- * The package's session `opened` holds, with its declared environment.
+ * The package's session `opened` holds, with its declared environment and the engine user its open answered.
  *
  * @throws {Error} A host defect, when `opened` is a legacy provider: a caller that reads a package's session of it.
  */
@@ -153,5 +165,9 @@ export function openedSession(opened: OpenedEngine): OpenedPackageSession {
       "The engine opened to a legacy provider, and this caller reads a provider package's session of it: a host defect.",
     );
   }
-  return { session: opened.session, env: opened.env };
+  return {
+    session: opened.session,
+    env: opened.env,
+    ...(opened.engineUser !== undefined && { engineUser: opened.engineUser }),
+  };
 }
