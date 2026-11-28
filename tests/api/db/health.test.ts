@@ -24,6 +24,8 @@ import { logger } from "@/lib/logger";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { HealthRecord } from "@/lib/provider-host/core/monitoring";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -54,13 +56,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
+    // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });
@@ -91,8 +100,10 @@ mock.module("@/lib/db", () => ({
 // ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
 /**
  * The metadata session health is read on (docs/providers/CONTRACT.md, clause C-66), answered by default with the same
- * `mockProvider`, so a title written against the provider the route resolves passes unchanged. The editor's stand-in
- * above stays in the barrel's mock, and the titles below hold that the route never calls it.
+ * `mockProvider`, so a title written against the provider the route resolves passes unchanged. The route opens it
+ * through `getOrCreateMetadataSession`, whose stand-in answers the entry a legacy record's open answers for the
+ * provider this stand-in answers with the same arguments. The editor's stand-in above stays in the barrel's mock, and
+ * the titles below hold that the route never calls it.
  */
 const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<DatabaseProvider>>(
   async () => mockProvider,
@@ -105,10 +116,8 @@ mock.module("@/lib/db/factory", () => ({
   getOrCreateEditorSession: mock(async () => {
     throw new Error("getOrCreateEditorSession is not read by this route");
   }),
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no object tree.
-  getOrCreateMetadataSession: mock(async () => {
-    throw new Error("getOrCreateMetadataSession is not read by this route");
-  }),
+  getOrCreateMetadataSession: async (connection: unknown, _engine: unknown, execution: unknown) =>
+    editorEntryOf(await mockGetOrCreateMetadataProvider(connection, {}, execution)),
 }));
 
 // ─── Import route handlers AFTER mocking ────────────────────────────────────
@@ -256,16 +265,18 @@ describe("POST /api/db/health", () => {
   });
 
   test("returns 400 when connection has no type", async () => {
-    const { resolveConnection } = await import("@/lib/seed/resolve-connection");
-    (resolveConnection as ReturnType<typeof mock>).mockResolvedValueOnce({ id: "x", name: "X" });
-
     const req = createMockRequest("/api/db/health", {
       method: "POST",
       body: { connection: { id: "x", name: "X" } },
     });
 
+    // The served resolve refuses it itself, before any open.
     const res = await POST(req as never);
     expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      code: "PROVIDER_UNKNOWN",
+      error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
+    });
   });
 
   test("returns 500 for generic error", async () => {

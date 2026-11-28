@@ -1,24 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub, scrubMonitoringData } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, type ProviderTextScrub, scrubMonitoringData } from "@/lib/db/operations/provider-text";
 import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { metadataProvider } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
-import { packageAnswers } from "@/lib/api/package-errors";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
 import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
-import { providerMonitoringTarget } from "@/lib/api/session-target";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { legacyProviderType } from "@/lib/db/server-catalog";
+
+const ROUTE = "api/db/monitoring";
 
 /**
  * POST /api/db/monitoring
  * Get comprehensive monitoring data for a database connection: every panel read through the host core's panel calls
  * by `providerMonitoring` (docs/providers/CONTRACT.md, clause C-74), each under its own deadline and the request's
  * signal, so a request that leaves answers 499 `QUERY_CANCELLED` and a read past its deadline 504. The panels are read
- * on the connection's metadata session (clause C-66), never behind the editor's statements.
+ * on the record's metadata session (clause C-66), never behind the editor's statements, for any engine the server
+ * serves: a legacy provider's bridged session or a provider package's own (clause C-107). A catalog the record does
+ * not offer, and a session that does not offer `monitoring.panel`, are refused by name before any call (clause C-111).
+ * A package's failure, of its open or of a read, is answered and logged once through the request's `PackageAnswers`
+ * (clause C-112), so the route writes no second line for it.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of body parsing, matching every other provider-reaching route: an unauthenticated
@@ -36,9 +41,10 @@ export async function POST(req: NextRequest) {
     return adminRequiredResponse();
   }
 
-  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
-  // provider ran.
+  // Core's scrub of the resolved connection and the request's record of a package's failures, held out here for the
+  // `catch` below: before the connection resolves no provider ran.
   let scrub: ProviderTextScrub | undefined;
+  let answers: PackageAnswers | undefined;
   try {
     // Handle empty or aborted requests
     let body;
@@ -70,26 +76,24 @@ export async function POST(req: NextRequest) {
     if (optionsRefusal !== undefined) {
       return NextResponse.json({ error: optionsRefusal }, { status: 400 });
     }
-    const connection = await resolveConnection(body, guard.session);
-    scrub = providerTextScrub(connection, "any");
+    const { connection, engine } = await resolveServedConnection(body, guard.session);
+    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    answers = packageAnswers(engine, scrub, ROUTE);
+    const opening = answers;
 
-    if (!connection.type) {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
-    }
-
-    // The panels run on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so a dashboard
-    // never waits for a connection the editor's statements hold.
-    const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
-    const monitoringData = await providerMonitoring(
-      providerMonitoringTarget(provider),
-      packageAnswers(servedEngineRecord(connection.type), scrub, "api/db/monitoring"),
-      req.signal,
-    ).readDashboard(options ?? {});
-    // The maintenance this connected server accepts (#1387). Read here, off the provider the
+    // The panels run on the record's metadata session (docs/providers/CONTRACT.md, clause C-66), so a dashboard
+    // never waits for a connection the editor's statements hold. A failure of the open is the package's open's.
+    const target = await metadataMonitoringTarget(guard.session, connection, engine, requestCatalog(body)).catch(
+      (error: unknown) => {
+        throw opening.answer("open", error);
+      },
+    );
+    const monitoringData = await providerMonitoring(target, answers, req.signal).readDashboard(options ?? {});
+    // The maintenance this connected server accepts (#1387). Read here, off the session the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer
     // the type id's declaration, which offers PostgreSQL's and MySQL's whole sets to every
     // wire-compatible engine.
-    const { maintenanceOperations, maintenanceOperationSpecs } = provider.getCapabilities();
+    const { maintenanceOperations, maintenanceOperationSpecs } = target.accepted();
 
     // A failed panel's sentence is the engine's own, answered through the connection's scrub.
     return NextResponse.json({
@@ -102,6 +106,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     // A request that left answers 499 by the request's own signal, through the facade's `QueryCancelledError`; a
     // provider error answers by its class, whatever its words.
-    return createErrorResponse(error, { route: "api/db/monitoring", scrub });
+    return createErrorResponse(error, { route: ROUTE, scrub, logged: answers?.logged(error) === true });
   }
 }

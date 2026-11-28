@@ -35,7 +35,10 @@ const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
 });
-/** The query route's one open of any record (`getOrCreateEditorSession`): its entry holds the stand-in provider. */
+/**
+ * The query route's and pool statistics' one open of any record (`getOrCreateEditorSession`): its entry holds the
+ * stand-in provider.
+ */
 const mockGetOrCreateEditorSession = mock(async (...args: unknown[]) => {
   void args;
   return editorEntryOf(mockProvider);
@@ -174,8 +177,11 @@ function onTheMetadataSession(route: string): boolean {
   return READS_THE_TREE.has(route) || MONITORS_ON_THE_METADATA_SESSION.has(route);
 }
 
-/** The routes that open the editor's session of the connection's record rather than its editor provider. */
-const OPENS_THE_EDITOR_SESSION = new Set(["query"]);
+/**
+ * The routes that open the editor's session of the connection's record rather than its editor provider: the query
+ * route, and pool statistics, which reads the editor's pool.
+ */
+const OPENS_THE_EDITOR_SESSION = new Set(["query", "pool-stats"]);
 
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);

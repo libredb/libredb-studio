@@ -98,7 +98,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget, metadataProvider and metadataTreeTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataProvider, metadataTreeTarget, metadataMonitoringTarget and editorMonitoringTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
@@ -120,12 +120,22 @@ const PROVIDER_BUILDERS = [
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So do
  * `editorProvider`, which every editor route but the query route opens its provider through (#1530), `editorTarget`,
- * which the query route opens every engine through, and `metadataProvider`, which the
- * monitoring, health and maintenance routes open the connection's metadata session through, and so does
- * `testConnection`, the Test Connection core, which opens the connection it is handed.
+ * which the query route opens every engine through, `metadataProvider`, which the maintenance route opens the
+ * connection's metadata session through, `metadataMonitoringTarget` and `editorMonitoringTarget`, which the
+ * monitoring and health routes open every engine's metadata session through and the pool statistics route its editor
+ * session, and so does `testConnection`, the Test Connection core, which opens the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
-  `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider", "editorTarget", "metadataProvider", "testConnection"].join("|")})\\s*\\(`,
+  `\\b(${[
+    ...PROVIDER_BUILDERS,
+    "handleObjectRequest",
+    "editorProvider",
+    "editorTarget",
+    "metadataProvider",
+    "metadataMonitoringTarget",
+    "editorMonitoringTarget",
+    "testConnection",
+  ].join("|")})\\s*\\(`,
 );
 
 /** In src/lib, where `handleObjectRequest` is declared, only the factory's entry points count. */
@@ -302,9 +312,10 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
     const routes = [
       "const provider = await metadataProvider(guard.session, connection, requestCatalog(body));",
       "const provider = await getOrCreateMetadataProvider(resolved, {}, execution);",
+      "const target = await metadataMonitoringTarget(guard.session, connection, engine, requestCatalog(body));",
     ];
 
-    expect(routes.map((route) => ROUTE_BUILDS.test(withoutComments(route)))).toEqual([true, true]);
+    expect(routes.map((route) => ROUTE_BUILDS.test(withoutComments(route)))).toEqual([true, true, true]);
   });
 
   test("testConnection has one caller in src, the db/test-connection route its exemption names", () => {

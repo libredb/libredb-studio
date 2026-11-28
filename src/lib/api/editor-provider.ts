@@ -31,8 +31,9 @@ import type { DatabaseConnection } from "@/lib/types";
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
  * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
- * same way, for the reads and the kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
- * the object tree's session of any record. Routes that act on the whole
+ * same way, for the maintenance kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
+ * the object tree's session of any record and `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring
+ * reads' sessions of any record. Routes that act on the whole
  * connection rather than in one database, such as cancel, which finds a statement in whichever session runs it, call
  * `getOrCreateProvider` directly.
  *
@@ -84,8 +85,9 @@ export async function editorTarget(
  * The connection's metadata session (docs/providers/CONTRACT.md, clause C-66), opened under the session's editor
  * posture as `editorProvider` opens the editor's provider: the same connection, credentials, grant and owner, through
  * the same checks, and in `catalog` through the same `scopeToCatalog`. On a connection that serves one session it is
- * the editor's own provider. The monitoring route reads its panels, the health route its health and the maintenance
- * route runs a kill on it, so none of them waits for a connection the editor's statements hold.
+ * the editor's own provider. The maintenance route runs a kill on it, so a kill never waits for a connection the
+ * editor's statements hold; the monitoring and health routes read any record's metadata session through
+ * `metadataMonitoringTarget`.
  */
 export async function metadataProvider(
   session: { role: string; idpSubject?: string },

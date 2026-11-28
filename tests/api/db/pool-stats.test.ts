@@ -8,6 +8,8 @@ import { logger } from "@/lib/logger";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { PoolStatsRecord } from "@/lib/provider-host/core/monitoring";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -40,13 +42,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  });
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
-    }),
+    resolveConnection,
+    // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
+    // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
+    resolveServedConnection: async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as { type?: unknown };
+      return { connection, engine: servedEngineRecord(connection.type) };
+    },
     SeedConnectionError,
   };
 });
@@ -67,10 +76,17 @@ mock.module("@/lib/db/factory", () => ({
   findCachedProvider: mock(() => null),
   // The barrel `@/lib/db` re-exports it from this module too; this route reads no object tree and no panel.
   getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
-  getOrCreateEditorSession: mock(async () => {
-    throw new Error("getOrCreateEditorSession is not read by this route");
-  }),
+  // The route opens the editor's session through it: the entry a legacy record's open answers for the provider the
+  // editor's stand-in answers with the same arguments.
+  getOrCreateEditorSession: async (connection: unknown, _engine: unknown, execution: unknown, wait?: unknown) =>
+    editorEntryOf(
+      await (mockGetOrCreateProvider as (...args: unknown[]) => Promise<typeof mockProvider>)(
+        connection,
+        {},
+        execution,
+        wait,
+      ),
+    ),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no object tree.
   getOrCreateMetadataSession: mock(async () => {
     throw new Error("getOrCreateMetadataSession is not read by this route");
