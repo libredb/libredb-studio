@@ -58,7 +58,7 @@
  *
  * Every server path that needs a legacy `DatabaseProvider` for a connection reads its record through
  * `legacyProviderEngine`, which reads the record's `legacyProvider` offer: `resolveConnection`
- * (src/lib/seed/resolve-connection.ts), the choke point of every route, and the provider factory's entry points
+ * (src/lib/seed/resolve-connection.ts), which no route calls, and the provider factory's entry points
  * (./factory), which read the record's grants and connection tables where they once read Studio's tables keyed by type.
  * A refused package's engine is refused there as `ProviderUnavailableError`, an engine whose record offers no legacy
  * provider as `PackageEngineUnsupportedError` until the request serves package engines, and every other value exactly
