@@ -8,12 +8,17 @@
  * `node:crypto`, which is why they are separate modules and why nothing a client component imports may reach them.
  *
  * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
- * it registers its pack here, and then every language the bundled declarations state agent data for
- * (`DECLARED_AGENT_LANGUAGES` in `client.ts`), composed from its data by `declared-server.ts`; a declared language
- * contributes nothing to the merged tables below. A language id the record does not hold can still arrive from a
- * ledger, and reaching one is a named error rather than a quiet fall back to SQL: a statement fingerprinted as SQL, or
- * refused with a SQL sentence, is a wrong answer that looks like a right one.
+ * it registers its pack here, and then every language the installed server catalog grants a served engine as data
+ * (`servedLanguageData` in src/lib/db/operations/served-language-data.ts, branded by `composeDeclaredLanguages` in
+ * `client.ts`), composed from its data by `declared-server.ts`; a declared language contributes nothing to the merged
+ * tables below. The record is composed after boot, on its first read, once per installed catalog: nothing declared is
+ * composed when this module loads, and every read, a module language's included, refuses a read while boot has begun
+ * and not yet installed the catalog, or after a boot that ended by an error, with the accessor's named errors. A
+ * language id the record does not hold can still arrive from a ledger, and reaching one is a named error rather than
+ * a quiet fall back to SQL: a statement fingerprinted as SQL, or refused with a SQL sentence, is a wrong answer that
+ * looks like a right one.
  */
+import { servedLanguageData } from "@/lib/db/operations/served-language-data";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import { UNAVAILABLE_TEXT } from "../tool-contracts";
@@ -40,9 +45,15 @@ import { OPCUAREAD_SERVER_PACK } from "./opcuaread/server";
 import { MTCONNECTREAD_SERVER_PACK } from "./mtconnectread/server";
 import { MQTTREAD_SERVER_PACK } from "./mqttread/server";
 import { SPARKPLUGREAD_SERVER_PACK } from "./sparkplugread/server";
-import { DECLARED_AGENT_LANGUAGES } from "./client";
+import { composeDeclaredLanguages, declaredClientPack, languageClientPack } from "./client";
+import type { DeclaredAgentLanguage } from "./declared-client";
 import { composeDeclaredServerPack } from "./declared-server";
-import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
+import type {
+  AgentLanguageClientPack,
+  AgentLanguageServerAdapter,
+  AgentLanguageServerPack,
+  EvidenceToolName,
+} from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
 import { SQL_SERVER_PACK } from "./sql/server";
@@ -79,29 +90,91 @@ const MODULE_SERVER_PACKS = Object.freeze({
   sparkplugread: SPARKPLUGREAD_SERVER_PACK,
 } satisfies Record<AgentModuleLanguageId, AgentLanguageServerPack>);
 
-/** Each declared language's server facet, composed from its data, a plan or a profile answered in Studio's words. */
-const DECLARED_SERVER_PACKS: Readonly<Record<string, AgentLanguageServerPack>> = Object.fromEntries(
-  DECLARED_AGENT_LANGUAGES.map(({ id, agent }) => [
-    id,
-    composeDeclaredServerPack(id, agent, UNAVAILABLE_TEXT.ANSWER_NOT_A_DATA_READ),
-  ]),
-);
+/** The server's composition of the declared languages it serves, with each one's server facet. */
+interface ServedServerPacks {
+  readonly declared: readonly DeclaredAgentLanguage[];
+  readonly packs: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerPack>>;
+  readonly workflowToolRules: Readonly<
+    Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
+  >;
+}
 
-const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerPack>> = Object.freeze({
-  ...MODULE_SERVER_PACKS,
-  ...DECLARED_SERVER_PACKS,
-});
+/** Each composition, by the branded list of declared languages it was composed from. */
+const SERVED_SERVER_PACKS = new WeakMap<readonly DeclaredAgentLanguage[], ServedServerPacks>();
 
-/** The server pack for `language`, or a named error when the id is not a language this server knows. */
+/**
+ * The server packs of the installed catalog: the module languages' and each served declared language's, its server
+ * facet composed from its data, a plan or a profile answered in Studio's words; composed once per installed catalog.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language, where a granted name is a module language's or two served engines state it.
+ */
+function servedServerPacks(): ServedServerPacks {
+  const declared = composeDeclaredLanguages(servedLanguageData());
+  let served = SERVED_SERVER_PACKS.get(declared);
+  if (served === undefined) {
+    const packs: Readonly<Record<string, AgentLanguageServerPack>> = Object.fromEntries(
+      declared.map(({ id, agent }) => [
+        id,
+        composeDeclaredServerPack(id, agent, UNAVAILABLE_TEXT.ANSWER_NOT_A_DATA_READ),
+      ]),
+    );
+    served = Object.freeze({
+      declared,
+      packs: Object.freeze({ ...MODULE_SERVER_PACKS, ...packs }),
+      workflowToolRules: Object.freeze({
+        ...MODULE_WORKFLOW_TOOL_RULES,
+        ...Object.fromEntries(Object.entries(packs).map(([id, pack]) => [id, pack.workflowToolRules])),
+      }),
+    });
+    SERVED_SERVER_PACKS.set(declared, served);
+  }
+  return served;
+}
+
+/**
+ * The server pack for `language`, or a named error when the id is not a language this server knows.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
 export function languageServerPack(language: AgentStatementLanguageId): AgentLanguageServerPack {
-  const pack = Object.hasOwn(SERVER_PACKS, language) ? SERVER_PACKS[language] : undefined;
+  const { packs } = servedServerPacks();
+  const pack = Object.hasOwn(packs, language) ? packs[language] : undefined;
   if (pack === undefined) throw new Error(`no server adapter for ${language}`);
   return pack;
 }
 
-/** The server adapter for `language`, or the same named error as `languageServerPack`. */
+/**
+ * The server adapter for `language`, or the same named error as `languageServerPack`.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
 export function languageServer(language: AgentStatementLanguageId): AgentLanguageServerAdapter {
   return languageServerPack(language).adapter;
+}
+
+/**
+ * The client facet the server reads for `language`: a module language's own (`languageClientPack`), or a served
+ * declared language's, composed from the data the installed catalog grants (`declaredClientPack`), the browser's very
+ * facet for a language the bundled declarations state. `index.ts` and MCP's statement arms read a language's client
+ * facts through it, so a language only the installed catalog serves has them on the server.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language, where neither a module language nor a served declared language is `language`.
+ */
+export function serverLanguageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {
+  const declared = servedServerPacks().declared.find(({ id }) => id === language);
+  if (declared !== undefined) return declaredClientPack(declared);
+  if (Object.hasOwn(MODULE_SERVER_PACKS, language)) return languageClientPack(language);
+  throw new Error(`no client facet for ${language}`);
 }
 
 /**
@@ -151,19 +224,8 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
   "LANGUAGE_BASE_DEFINITIONS",
 );
 
-/**
- * The tool rules by language, then by workflow: each pack's own record, the very object it holds, a declared
- * language's after the module languages'. The SQL record is total. A language holds rules for the workflows it has a
- * variant of, and no more: `systemPrompt` throws for an agent-mode run whose language has none, which `requiredVariant`
- * would already have refused. `operations` sends no statement in any language, so every pack holds the SQL rules for
- * it, `OPERATIONS_TOOL_RULE` in `shared.ts`.
- *
- * Exported so `tests/unit/lib/agent/tool-offer-census.test.ts` can hold every rule to the tools its variant offers:
- * a rule naming a tool the run does not hold costs the run a turn on "there is no tool called ..." (#350).
- */
-export const WORKFLOW_TOOL_RULES: Readonly<
-  Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
-> = Object.freeze({
+/** The module languages' tool rules by language, then by workflow: each pack's own record, the very object it holds. */
+const MODULE_WORKFLOW_TOOL_RULES = Object.freeze({
   sql: SQL_SERVER_PACK.workflowToolRules,
   kubectl: KUBECTL_SERVER_PACK.workflowToolRules,
   mongo: MONGO_SERVER_PACK.workflowToolRules,
@@ -187,8 +249,27 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   mtconnectread: MTCONNECTREAD_SERVER_PACK.workflowToolRules,
   mqttread: MQTTREAD_SERVER_PACK.workflowToolRules,
   sparkplugread: SPARKPLUGREAD_SERVER_PACK.workflowToolRules,
-  ...Object.fromEntries(Object.entries(DECLARED_SERVER_PACKS).map(([id, pack]) => [id, pack.workflowToolRules])),
 } satisfies Record<AgentModuleLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
+
+/**
+ * The tool rules by language, then by workflow: each pack's own record, the very object it holds, a served declared
+ * language's after the module languages', composed once per installed catalog. The SQL record is total. A language
+ * holds rules for the workflows it has a variant of, and no more: `systemPrompt` throws for an agent-mode run whose
+ * language has none, which `requiredVariant` would already have refused. `operations` sends no statement in any
+ * language, so every pack holds the SQL rules for it, `OPERATIONS_TOOL_RULE` in `shared.ts`.
+ *
+ * Exported so `tests/unit/lib/agent/tool-offer-census.test.ts` can hold every rule to the tools its variant offers:
+ * a rule naming a tool the run does not hold costs the run a turn on "there is no tool called ..." (#350).
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
+export function workflowToolRules(): Readonly<
+  Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
+> {
+  return servedServerPacks().workflowToolRules;
+}
 
 /**
  * Every pack's shortfall notices. Global by shortfall, because a resumed run is judged by its persisted verdict

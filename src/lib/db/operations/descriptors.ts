@@ -20,13 +20,14 @@
  * statement (epic #325 product decision).
  */
 
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
-import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
 import { cypherAgentReadInput } from "./cypher-admission";
 import { declaredLanguageReadDescriptor } from "./declared-language-read";
+import { servedLanguageData } from "./served-language-data";
 import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
@@ -1302,7 +1303,8 @@ export const clusterWorkloadsReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
-const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.freeze([
+/** The descriptors of the operations Studio's own modules define. */
+const MODULE_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.freeze([
   sqlQueryReadDescriptor,
   sqlExplainEstimateDescriptor,
   sqlExplainAnalyzeDescriptor,
@@ -1336,20 +1338,47 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mtconnectreadQueryReadDescriptor,
   mqttreadQueryReadDescriptor,
   sparkplugreadQueryReadDescriptor,
-  // The read of each language the bundled declarations state agent data for, read from the statement language
-  // projection in its id order: one generic descriptor per language.
-  ...Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).flatMap((data) =>
-    data === null || data.agent === null ? [] : [declaredLanguageReadDescriptor(data)],
-  ),
 ]);
+
+/** Each composition of `canonicalDescriptors`, by the served language data it was composed from. */
+const SERVED_DESCRIPTORS = new WeakMap<
+  readonly NonNullable<StatementLanguageData>[],
+  readonly RegistrableOperationDescriptor[]
+>();
+
+/**
+ * The canonical descriptors of the installed catalog: the module descriptors, then the read of each language the
+ * installed catalog grants a served engine as data and states an agent part for (`servedLanguageData`), one generic
+ * descriptor per language in catalog order; composed once per installed catalog.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
+function canonicalDescriptors(): readonly RegistrableOperationDescriptor[] {
+  const data = servedLanguageData();
+  let descriptors = SERVED_DESCRIPTORS.get(data);
+  if (descriptors === undefined) {
+    descriptors = Object.freeze([
+      ...MODULE_DESCRIPTORS,
+      ...data.flatMap((language) => (language.agent === null ? [] : [declaredLanguageReadDescriptor(language)])),
+    ]);
+    SERVED_DESCRIPTORS.set(data, descriptors);
+  }
+  return descriptors;
+}
 
 /**
  * Whether an operation is a bounded read of a statement the model wrote: data-read, carrying a model statement, and
  * never approval-gated. Derived from the registered descriptors rather than a list of ids, so a later language's
  * read is one by declaring it.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
  */
 export function isStatementReadOperation(id: string): boolean {
-  return CANONICAL_DESCRIPTORS.some(
+  return canonicalDescriptors().some(
     (descriptor) =>
       descriptor.id === id &&
       descriptor.accessLevel === "data-read" &&
@@ -1358,8 +1387,15 @@ export function isStatementReadOperation(id: string): boolean {
   );
 }
 
+/**
+ * A registry holding every canonical descriptor of the installed catalog, new on every call.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
 export function createCanonicalOperationRegistry(): OperationRegistry {
   const registry = new OperationRegistry();
-  for (const descriptor of CANONICAL_DESCRIPTORS) registry.register(descriptor);
+  for (const descriptor of canonicalDescriptors()) registry.register(descriptor);
   return registry;
 }

@@ -1,19 +1,15 @@
 import { z } from "zod";
-import {
-  AGENT_LANGUAGE_COPY,
-  type AgentStatementArgument,
-  type AgentStatementLanguageId,
-} from "@/lib/agent/agent-manifest";
+import type { AgentStatementArgument, AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import { grantedAgentLanguage } from "@/lib/agent/granted-language";
 import {
-  AGENT_LANGUAGE_MCP_FACETS,
+  agentLanguageMcpFacets,
   type AgentLanguageMcpDeclaredFacet,
   type AgentLanguageMcpFacet,
   type AgentLanguageMcpTool,
   type AgentLanguageMcpWords,
 } from "@/lib/agent/languages/mcp";
-import { languageServer } from "@/lib/agent/languages/server";
+import { languageServer, serverLanguageClientPack } from "@/lib/agent/languages/server";
 import {
   type EngineId,
   type EngineRecord,
@@ -39,13 +35,14 @@ import { mcpStatementEngines } from "./served-engines";
 /**
  * The MCP statement tools, one arm per statement language, built from the languages' MCP facets.
  *
- * The record holds every statement language because the facet registry (`AGENT_LANGUAGE_MCP_FACETS` in
+ * The record holds every statement language because the facet registry (`agentLanguageMcpFacets` in
  * `src/lib/agent/languages/mcp.ts`) does, so a module language that joins agent mode does not compile until it decides
  * its MCP arm: a tool, or null while none exists; a language declared as data has the arm of the facet composed from
  * its data, or the null arm where its data states no MCP statement tool. This module names no language: the tool, its
  * words and its input field come from the language's own facet, and an arm's engines come from the one served-engine
- * resolver (`served-engines.ts`), so registration, the handler's gate, the description and `list_connections`'
- * `read_tool` all read one list.
+ * resolver (`served-engines.ts`), and its argument and the noun its refusals name come from the client facet the server
+ * reads for the language (`serverLanguageClientPack`), so registration, the handler's gate, the description and
+ * `list_connections`' `read_tool` all read one list.
  *
  * The arms are read through one accessor, `mcpStatementSurface`, after boot: it composes them, with the statement tools'
  * names and input schemas, from the served records (`servedEngines`), once per installed catalog, keyed by its Map, so a
@@ -56,7 +53,8 @@ import { mcpStatementEngines } from "./served-engines";
  * catalog (`serverCatalogBooting`) is refused as `McpCompositionOrderError`, a defect of Studio's own composition order,
  * since the server serves no request before the install; a read after a boot that ended by an error before its install
  * (`serverCatalogBootUnfinished`) is refused as `McpCatalogBootUnfinishedError`, which names that boot, so no statement
- * tool is served from the bundled set. The arms' languages are still the bundled facets'.
+ * tool is served from the bundled set. The arms' languages are the facets the installed catalog composes
+ * (`agentLanguageMcpFacets`), read inside the same composition, so they are the served records' languages too.
  *
  * An arm whose facet pages with offset keeps `checkReadOnlyStatement` as its fence and the shared refusal texts, so a
  * SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and fences it with
@@ -181,13 +179,14 @@ function languageAdmissionReader(
   own: AgentLanguageMcpWords,
 ): Pick<McpStatementArm, "canonicalize" | "fence" | "tooLarge" | "rowOverCap" | "moreRows"> {
   const server = languageServer(language);
+  const { noun } = serverLanguageClientPack(language).copy;
   return {
     canonicalize: server.canonicalize,
     fence(statement: string) {
       const refusal = server.admit?.(statement) ?? null;
       return refusal === null
         ? null
-        : `The ${AGENT_LANGUAGE_COPY[language].noun} was refused before it reached ${own.reached} (${refusal.code}). ${refusal.message}`;
+        : `The ${noun} was refused before it reached ${own.reached} (${refusal.code}). ${refusal.message}`;
     },
     tooLarge: (statement: string) => ({
       rows: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(statement, "1000")}`,
@@ -217,7 +216,7 @@ function statementArm(
   const records = mcpStatementEngines(language, served);
   const types = records.map((engine) => engine.id);
   const engines = engineNames(records);
-  const argument = AGENT_LANGUAGE_COPY[language].argument;
+  const argument = serverLanguageClientPack(language).copy.argument;
   return Object.freeze({
     language,
     tool: facet.tool,
@@ -283,7 +282,7 @@ function composeStatementSurface(served: ReadonlyMap<string, EngineRecord>): Mcp
   const arms = Object.freeze(
     Object.fromEntries(
       (
-        Object.entries(AGENT_LANGUAGE_MCP_FACETS) as [AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null][]
+        Object.entries(agentLanguageMcpFacets()) as [AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null][]
       ).map(([language, facet]) => [language, facet === null ? null : statementArm(language, facet, served)]),
     ) as Record<AgentStatementLanguageId, McpStatementArm | null>,
   );

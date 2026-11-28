@@ -12,8 +12,8 @@ import {
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
-import { LANGUAGE_TOOL_ARMS } from "@/lib/agent/languages/index";
-import { languageServer, WORKFLOW_TOOL_RULES } from "@/lib/agent/languages/server";
+import { languageToolArms } from "@/lib/agent/languages/index";
+import { languageServer, workflowToolRules } from "@/lib/agent/languages/server";
 import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry, isStatementReadOperation } from "@/lib/db/operations/descriptors";
@@ -33,7 +33,7 @@ describe("the tools a run is offered", () => {
     // MongoDB's profile was offered `fromColumn` and `distribution` and refused both.
     let checked = 0;
     for (const language of LANGUAGES) {
-      const arms: Partial<Record<AgentToolName, { readonly inputSchema: unknown }>> = LANGUAGE_TOOL_ARMS[language];
+      const arms: Partial<Record<AgentToolName, { readonly inputSchema: unknown }>> = languageToolArms()[language];
       for (const { workflow, variant } of variantsOf(language)) {
         for (const tool of variant.tools) {
           const arm = arms[tool];
@@ -51,7 +51,7 @@ describe("the tools a run is offered", () => {
 
   test("an offered tool with an arm in one language has one wherever it is offered in that language", () => {
     for (const language of LANGUAGES) {
-      const arms: Partial<Record<AgentToolName, unknown>> = LANGUAGE_TOOL_ARMS[language];
+      const arms: Partial<Record<AgentToolName, unknown>> = languageToolArms()[language];
       for (const { workflow, variant } of variantsOf(language)) {
         for (const tool of ["inspect_schema", "inspect_plan", "profile_table"] as const) {
           if (!variant.tools.includes(tool)) continue;
@@ -67,7 +67,7 @@ describe("the tool rules a run is told", () => {
     // A rule naming a tool the run does not hold is answered "there is no tool called ..." and costs the run a turn
     // (#350): measured on a MongoDB optimization run told to compare_plans, which its variant does not offer.
     for (const language of LANGUAGES) {
-      const rules: Partial<Record<AgentRunWorkflowType, string>> = WORKFLOW_TOOL_RULES[language];
+      const rules: Partial<Record<AgentRunWorkflowType, string>> = workflowToolRules()[language];
       for (const { workflow, variant } of variantsOf(language)) {
         const text = rules[workflow];
         if (text === undefined) throw new Error(`${language} has a ${workflow} variant and no rules for it`);

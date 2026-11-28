@@ -10,7 +10,7 @@ import {
   languageServer,
   languageServerPack,
   LANGUAGE_BASE_DEFINITIONS,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -95,7 +95,7 @@ describe("the prompt texts", () => {
   });
 
   test("the rule, the grounding advice and the ungrounded note say the inventory is the map, never the device", () => {
-    const rule = WORKFLOW_TOOL_RULES.modbusread.investigation as string;
+    const rule = workflowToolRules().modbusread.investigation as string;
     const fromTheMap =
       "Modbus has no discovery: the inventory lists the points the connection's register map names, read from the map and never from the device, and a connection with no map lists none, which says nothing about what the device holds.";
     expect(rule).toContain(fromTheMap);
@@ -116,7 +116,7 @@ describe("the prompt texts", () => {
     // The inventory names a point by its path, unit first: a browser pass on 2026-10-31 captured `1.banner` for the
     // map's point `banner`, and a model told to name a point exactly as the inventory names it sent
     // {"read": ["1.banner"]}, which the reader refuses because the map has no point of that name.
-    const rule = WORKFLOW_TOOL_RULES.modbusread.investigation as string;
+    const rule = workflowToolRules().modbusread.investigation as string;
     expect(rule).not.toContain("Name a point exactly as the inventory names it");
     expect(rule).toContain(
       'The inventory lists each point after its unit and a dot, such as 1.tank_level for the point tank_level of unit 1, and a points read names the point alone, {"read": ["tank_level"]};',

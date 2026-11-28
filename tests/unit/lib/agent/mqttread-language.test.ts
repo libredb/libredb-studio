@@ -17,7 +17,7 @@ import {
   languageServer,
   languageServerPack,
   LANGUAGE_BASE_DEFINITIONS,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -117,7 +117,7 @@ describe("the prompt texts", () => {
   });
 
   test("the rule reads a named topic directly, never guesses one, and never reports one absent", () => {
-    const rule = WORKFLOW_TOOL_RULES.mqttread.investigation as string;
+    const rule = workflowToolRules().mqttread.investigation as string;
     expect(rule).toContain("When the question names a topic in full, read that topic directly");
     expect(rule).toContain("read the window");
     expect(rule).toContain("only for the broker's totals, never to look for a topic");

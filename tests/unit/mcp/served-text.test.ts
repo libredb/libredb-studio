@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
-import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets } from "@/lib/agent/languages/mcp";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { codeText } from "../../helpers/comment-text";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
@@ -114,7 +114,7 @@ describe("the string literals of MCP's own sources and statement facets", () => 
     // texts above read as MCP serves them.
     const dataDeclared = new Set<string>(DECLARED_AGENT_LANGUAGES.map(({ id }) => id));
     expect(dataDeclared.size).toBeGreaterThan(0);
-    const declared = Object.entries(AGENT_LANGUAGE_MCP_FACETS)
+    const declared = Object.entries(agentLanguageMcpFacets())
       .filter(([language, facet]) => facet !== null && !dataDeclared.has(language))
       .map(([language]) => `src/lib/agent/languages/${language}/mcp.ts`);
     expect(declared.length).toBeGreaterThan(0);

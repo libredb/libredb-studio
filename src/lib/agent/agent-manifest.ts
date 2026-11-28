@@ -71,14 +71,18 @@ declare const declaredLanguage: unique symbol;
 /**
  * A statement language an engine declares as data (`statementLanguageData` of its declaration), with no module of its
  * own: its name, branded so a bare string is not one. Only `declaredAgentLanguages` in `languages/declared-client.ts`
- * brands a name, at load, and `isAgentStatementLanguage` in `languages/client.ts` narrows any other string to one.
+ * brands a name, when a registry composes its declared languages (the browser's at load, from the bundled declarations,
+ * and the server's once per installed catalog), and `isAgentStatementLanguage` in `languages/client.ts` narrows any
+ * other string to one.
  */
 export type AgentDeclaredLanguageId = string & { readonly [declaredLanguage]: true };
 
 /**
- * The statement languages agent mode can send: the module languages, and the languages the bundled declarations state
- * as data. A record over this type is total over the module languages at compile time; it holds a declared language
- * only where the registry building it adds one, which `languages/client.ts` does for every registry it feeds.
+ * The statement languages agent mode can send: the module languages, and the languages declared as data, the bundled
+ * declarations' in the browser and those the installed server catalog grants on the server. A record over this type is
+ * total over the module languages at compile time; it holds a declared language only where the registry building it
+ * adds one: `languages/client.ts` for the browser's registries, and the server's registries from the installed catalog
+ * (`servedLanguageData` in src/lib/db/operations/served-language-data.ts).
  */
 export type AgentStatementLanguageId = AgentModuleLanguageId | AgentDeclaredLanguageId;
 

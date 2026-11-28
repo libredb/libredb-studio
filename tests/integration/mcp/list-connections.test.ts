@@ -12,7 +12,7 @@ import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_RESULT_CAP_BYTES } from "@/lib/mcp/output";
-import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
+import { agentLanguageMcpFacets } from "@/lib/agent/languages/mcp";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
@@ -229,7 +229,7 @@ describe("the answer", () => {
         if (row.read_tool !== null) expect(listed.has(row.read_tool)).toBe(true);
         expect(row.read_tool === null).toBe(!served.has(type));
         const language = statementLanguage[type];
-        const facet = language === null ? null : AGENT_LANGUAGE_MCP_FACETS[language];
+        const facet = language === null ? null : agentLanguageMcpFacets()[language];
         const open = AGENT_EXECUTION.includes(type) && exposable[type] && statementRead[type];
         expect([row.id, row.read_tool]).toEqual([row.id, open && facet !== null ? facet.tool : null]);
       }

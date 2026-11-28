@@ -9,15 +9,24 @@
  * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
  * it registers its client facet here, and then every language the bundled declarations state agent data for, read
  * from the statement language projection (`BUNDLED_STATEMENT_LANGUAGE_DATA`) in its id order, the engines that state
- * none left out, and composed from its data by `declared-client.ts`; the registries in `server.ts`,
- * `index.ts` and `mcp.ts` read the same declared languages from `DECLARED_AGENT_LANGUAGES` here. Its keys are declared
- * in the order the projections in `agent-manifest.ts` list them, the module languages first.
+ * none left out, and composed from its data by `declared-client.ts`: the browser's composition of the bundled
+ * declarations (`DECLARED_AGENT_LANGUAGES`), kept until the browser reads a provider package's language, since a
+ * browser cannot read the server's engine catalog. Its keys are declared in the order the projections in
+ * `agent-manifest.ts` list them, the module languages first.
+ *
+ * The registries in `server.ts`, `index.ts` and `mcp.ts` compose their declared languages from the server's installed
+ * catalog instead, through the same two composers here, `composeDeclaredLanguages(servedLanguageData())`
+ * (src/lib/db/operations/served-language-data.ts) and `declaredClientPack`. Both are memoized, the first per array of
+ * data and the second per agent part, so every server registry reading one catalog reads one branded list, and the
+ * browser's registry and the server's hold one client facet for one declared data object: a legacy engine's record
+ * holds the projection's own data, so its declared language's facet is the one this record holds.
  *
  * It is also where an engine's granted statement language meets the packs: `grantedAgentStatementLanguage` reads the
  * `statementLanguage` grant of the engine it is handed, an engine record on the server or a legacy engine's grants in
  * the browser (`legacyAgentEngine` of `agent-manifest.ts`), so the manifest and the engine registry read the grant
  * through it and no table of Studio's is keyed by an engine here.
  */
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import type { EngineGrants } from "@/lib/db/claim-grants";
 import { BUNDLED_STATEMENT_LANGUAGE_DATA } from "@/lib/db/engine-catalog/statement-language.generated";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
@@ -112,18 +121,56 @@ const MODULE_CLIENT_PACKS = Object.freeze({
   sparkplugread: SPARKPLUGREAD_CLIENT_PACK,
 } satisfies Record<AgentModuleLanguageId, AgentLanguageClientPack>);
 
+/** Each composition of `composeDeclaredLanguages`, by the array of data it was composed from. */
+const DECLARED_LANGUAGES = new WeakMap<
+  readonly NonNullable<StatementLanguageData>[],
+  readonly DeclaredAgentLanguage[]
+>();
+
 /**
- * The languages the bundled declarations state agent data for, in their order, read once at load: a declared name a
- * module language holds, or one two data share, fails here by name (`declaredAgentLanguages`).
+ * The agent languages `data` states, in its order, each name branded (`declaredAgentLanguages`), composed once per
+ * array: a declared name a module language holds, or one two data share, fails here by name.
+ *
+ * @throws {Error} Naming the language, where a declared name is a module language's or two data state one name.
  */
-export const DECLARED_AGENT_LANGUAGES: readonly DeclaredAgentLanguage[] = declaredAgentLanguages(
+export function composeDeclaredLanguages(
+  data: readonly NonNullable<StatementLanguageData>[],
+): readonly DeclaredAgentLanguage[] {
+  let languages = DECLARED_LANGUAGES.get(data);
+  if (languages === undefined) {
+    languages = declaredAgentLanguages(data, Object.keys(MODULE_CLIENT_PACKS));
+    DECLARED_LANGUAGES.set(data, languages);
+  }
+  return languages;
+}
+
+/** Each declared language's client facet, by the agent part it was composed from. */
+const DECLARED_CLIENT_PACKS = new WeakMap<DeclaredAgentLanguage["agent"], AgentLanguageClientPack>();
+
+/**
+ * The client facet of declared language `language`, composed from its text once per agent part
+ * (`composeDeclaredClientPack`), so the browser's registry and the server's hold one facet for one data object.
+ */
+export function declaredClientPack(language: DeclaredAgentLanguage): AgentLanguageClientPack {
+  let pack = DECLARED_CLIENT_PACKS.get(language.agent);
+  if (pack === undefined) {
+    pack = composeDeclaredClientPack(language.agent.text);
+    DECLARED_CLIENT_PACKS.set(language.agent, pack);
+  }
+  return pack;
+}
+
+/**
+ * The languages the bundled declarations state agent data for, in their order: the browser's composition, read once
+ * at load from the projection.
+ */
+export const DECLARED_AGENT_LANGUAGES: readonly DeclaredAgentLanguage[] = composeDeclaredLanguages(
   Object.values(BUNDLED_STATEMENT_LANGUAGE_DATA).filter((data) => data !== null),
-  Object.keys(MODULE_CLIENT_PACKS),
 );
 
 const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>> = Object.freeze({
   ...MODULE_CLIENT_PACKS,
-  ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map(({ id, agent }) => [id, composeDeclaredClientPack(agent.text)])),
+  ...Object.fromEntries(DECLARED_AGENT_LANGUAGES.map((language) => [language.id, declaredClientPack(language)])),
 });
 
 const LIVE_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(Object.keys(CLIENT_PACKS));

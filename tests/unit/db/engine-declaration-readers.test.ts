@@ -194,7 +194,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/agent/languages/client.ts",
     members: STATEMENT_LANGUAGE_MEMBERS,
     reason:
-      "the languages the bundled declarations state agent data for, read from the statement language projection and composed into the agent's client facets; agent mode sends a language only where the engine's grants grant it",
+      "the browser's composition of the languages the bundled declarations state agent data for, read from the statement language projection and composed into the agent's client facets; agent mode sends a language only where the engine's grants grant it",
   },
   {
     path: "src/lib/db/claim-grants.ts",
@@ -351,12 +351,6 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     members: MIGRATION_DDL_MEMBERS,
     reason:
       "each engine's migration DDL row, composed from the generated migration DDL and Studio's migration DDL function table, which binds each named function",
-  },
-  {
-    path: "src/lib/db/operations/descriptors.ts",
-    members: STATEMENT_LANGUAGE_MEMBERS,
-    reason:
-      "the generic read descriptor of each language the bundled declarations state agent data for, read from the statement language projection; a run reaches it only under a language the engine's grants grant",
   },
   {
     path: "src/lib/db/query-dialects.ts",

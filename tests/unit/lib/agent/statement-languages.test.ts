@@ -16,7 +16,7 @@ import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/langu
 import { fingerprintS3api, s3apiRowCapAdvice } from "@/lib/agent/languages/s3api/adapter";
 import { fingerprintFsquery, fsqueryRowCapAdvice } from "@/lib/agent/languages/fsquery/adapter";
 import { fingerprintSnmpget, snmpgetRowCapAdvice } from "@/lib/agent/languages/snmpget/adapter";
-import { languageServer, languageServerPack, WORKFLOW_TOOL_RULES } from "@/lib/agent/languages/server";
+import { languageServer, languageServerPack, workflowToolRules } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
   LIBREDBKV_AGENT_MAX_STATEMENT_CHARS,
@@ -1360,7 +1360,7 @@ describe("the snmpget language's server adapter and admission", () => {
       "Object groups are listed from the bundled MIB modules with their declared columns, never with a value.",
     );
     expect(advice).toContain(WITHHELD);
-    const rule = WORKFLOW_TOOL_RULES.snmpget.investigation as string;
+    const rule = workflowToolRules().snmpget.investigation as string;
     expect(rule).toContain(WITHHELD);
     expect(rule).toContain(
       "a walk or table covering one, such as walk mib-2 (1.3.6.1.2.1) or walk 1.3.6.1.4.1, steps over it",

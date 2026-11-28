@@ -10,7 +10,7 @@ import {
   languageServer,
   languageServerPack,
   LANGUAGE_BASE_DEFINITIONS,
-  WORKFLOW_TOOL_RULES,
+  workflowToolRules,
 } from "@/lib/agent/languages/server";
 import { agentPosture } from "@/lib/agent/posture";
 import {
@@ -94,7 +94,7 @@ describe("the prompt texts", () => {
   });
 
   test("the rule, the grounding advice and the ungrounded note say how the address space is reached and the units rule", () => {
-    const rule = WORKFLOW_TOOL_RULES.opcuaread.investigation as string;
+    const rule = workflowToolRules().opcuaread.investigation as string;
     const browsed =
       'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse the read roots with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
     const units =

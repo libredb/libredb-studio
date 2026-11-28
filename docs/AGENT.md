@@ -3025,6 +3025,7 @@ point exports.
 
 Agent mode reads statements in twenty-four statement languages, `sql`, `kubectl`, `mongo`, `libredbkv`, `influxql`, `weaviateapi`, `qdrantapi`, `cypher`, `milvusrpc`, `rediscli`, `etcdctl`, `oxiacli`, `rabbitread`, `s3api`, `fsquery`, `snmpget`, `netconfrpc`, `modbusread`, `promql`, `opcuaread`, `mtconnectread`, `mqttread`, `sparkplugread` and `kafkaread`, and what it does differently in each lives in that language's pack under `src/lib/agent/languages/<statement-language>/`, never in `src/lib/db`.
 A language an engine's declaration states as data, `kafkaread` today, has no pack module of its own: its request form, text and MCP statement tool are the declaration's `statementLanguageData`, projected into `src/lib/db/engine-catalog/statement-language.generated.ts`, and one engine-neutral composer builds its client, server and MCP facets from them (`declared-client.ts`, `declared-server.ts` and `declared-mcp.ts` under `src/lib/agent/languages/`), registered after the module languages.
+The data is the engine record's in the server's engine catalog, the projection's for a legacy engine: the server's registries compose a language from the records whose grants grant it, after boot and once per installed catalog (`servedLanguageData` in `src/lib/db/operations/served-language-data.ts`), and the browser composes the bundled declarations' languages from the projection.
 The agent imports the database layer, and the database layer never imports the agent.
 The core (`investigation.ts`, `tools.ts` and the modules beside them) names no statement language a pack owns and no engine, which the guard at the end of this section holds.
 
@@ -3035,7 +3036,7 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 | `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture words and the evidence events it writes | `languageClientPack` |
 | `server` | Below `tools.ts`: it never reaches the execution tier | the adapter, the tool overrides and base definitions, the recommendation card, grounding, the tool rules and the shortfall notices | `languageServerPack` |
 | `execution` | Above `tools.ts`: only the run loop reads it | the tool arms and the evidence tools | `agentLanguagePack` |
-| `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts` |
+| `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `agentLanguageMcpFacets()` in `languages/mcp.ts` |
 
 **The three member kinds.**
 
@@ -3142,7 +3143,7 @@ An engine in `GRANTED_AGENT_EXECUTION_ENGINES` must open at least one workflow t
 6. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
 7. Run `bun run engines:generate` and commit the regenerated engine declaration, whose `agent.overlay` states the server overlay (`docs/providers/CONTRACT.md`, M-67).
 
-**Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts`.
+**Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in the module facets of `languages/mcp.ts`, which `agentLanguageMcpFacets()` reads.
 That registry is total over the module languages, `AgentModuleLanguageId`, so a new module language does not compile until it declares its facet, or `null` while it has no MCP tool.
 A language an engine declares as data is held there after the module languages: its facet is composed from its data's MCP part by `languages/declared-mcp.ts`, or `null` where that part is `null`.
 `src/lib/mcp/tools/statement-arms.ts` builds every statement tool from the registry and names no language, and the tool names MCP keeps, the audit actions, `list_connections`' `read_tool` and the route's schema map, are derived from it, so the language edits no file under `src/lib/mcp/`.

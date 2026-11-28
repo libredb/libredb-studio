@@ -44,7 +44,7 @@ import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import { inspectUsageTool, profileWorkloadsTool } from "@/lib/agent/languages/kubectl/tools";
 import { planMongoProfile, runMongoProfile } from "@/lib/agent/languages/mongo/tools";
-import { languageServer, WORKFLOW_TOOL_RULES } from "@/lib/agent/languages/server";
+import { languageServer, workflowToolRules } from "@/lib/agent/languages/server";
 import { type AgentToolContext, presentAnswerTool, recommendChangeTool, selectAgentTools } from "@/lib/agent/tools";
 import type {
   AgentArtifactReference,
@@ -1000,7 +1000,7 @@ export async function goldenLanguageAgentSurface(): Promise<string> {
         mongoCatalogRefusals: await mongoCatalogRefusals(),
         toolRefusals: await toolRefusals(),
         statementAdvice: statementAdvice(),
-        workflowToolRules: WORKFLOW_TOOL_RULES,
+        workflowToolRules: workflowToolRules(),
       },
     };
     return `${JSON.stringify(result, null, 2)}\n`;

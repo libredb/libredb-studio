@@ -6,12 +6,16 @@
  * in `server.ts`, which returns the very object a pack here holds.
  *
  * The record holds every module language (`AgentModuleLanguageId`), so a later module language does not compile until
- * it registers its pack here, and then every language the bundled declarations state agent data for
- * (`DECLARED_AGENT_LANGUAGES` in `client.ts`), whole: the very client and server facets `client.ts` and `server.ts`
- * hold, and an execution facet with no tool arm and no evidence tool, since a declared language's variants offer the
- * read and the report only. A language id the record does not hold can still arrive from a ledger, and reaching one
- * is a named error rather than a quiet fall back to SQL.
+ * it registers its pack here, and then every language the installed server catalog grants a served engine as data
+ * (`servedLanguageData` in src/lib/db/operations/served-language-data.ts), whole: the client facet the server reads
+ * for it (`serverLanguageClientPack`) and the server facet `server.ts` holds, and an execution facet with no tool arm
+ * and no evidence tool, since a declared language's variants offer the read and the report only. The record is
+ * composed after boot, on its first read, once per installed catalog, and every read refuses a read made while boot
+ * has begun and not yet installed the catalog, or after a boot that ended by an error, with the accessor's named
+ * errors. A language id the record does not hold can still arrive from a ledger, and reaching one is a named error
+ * rather than a quiet fall back to SQL.
  */
+import { servedLanguageData } from "@/lib/db/operations/served-language-data";
 import type { AgentModuleLanguageId, AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import { INFLUXQL_PACK } from "./influxql/index";
@@ -36,9 +40,10 @@ import { OPCUAREAD_PACK } from "./opcuaread/index";
 import { MTCONNECTREAD_PACK } from "./mtconnectread/index";
 import { MQTTREAD_PACK } from "./mqttread/index";
 import { SPARKPLUGREAD_PACK } from "./sparkplugread/index";
-import { DECLARED_AGENT_LANGUAGES, languageClientPack } from "./client";
+import { composeDeclaredLanguages } from "./client";
+import type { DeclaredAgentLanguage } from "./declared-client";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
-import { languageServerPack } from "./server";
+import { languageServerPack, serverLanguageClientPack } from "./server";
 import { SQL_PACK } from "./sql/index";
 
 const MODULE_PACKS = Object.freeze({
@@ -67,33 +72,79 @@ const MODULE_PACKS = Object.freeze({
   sparkplugread: SPARKPLUGREAD_PACK,
 } satisfies Record<AgentModuleLanguageId, AgentLanguagePack>);
 
-/** Each declared language's pack: its registered facets, and no tool arm or evidence tool. */
-const DECLARED_PACKS: Readonly<Record<string, AgentLanguagePack>> = Object.fromEntries(
-  DECLARED_AGENT_LANGUAGES.map(({ id }) => [
-    id,
-    Object.freeze({
-      id,
-      client: languageClientPack(id),
-      server: languageServerPack(id),
-      execution: Object.freeze({ arms: Object.freeze({}), evidenceTools: Object.freeze({}) }),
-    }),
-  ]),
-);
+/** The packs of one installed catalog, and their tool arms by language. */
+interface ServedPacks {
+  readonly packs: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>>;
+  readonly arms: Readonly<Record<AgentStatementLanguageId, LanguageToolArms>>;
+}
 
-const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Object.freeze({
-  ...MODULE_PACKS,
-  ...DECLARED_PACKS,
-});
+/** Each composition, by the branded list of declared languages it was composed from. */
+const SERVED_PACKS = new WeakMap<readonly DeclaredAgentLanguage[], ServedPacks>();
 
-/** The pack for `language`, or a named error when the id is not a language this server knows. */
+/**
+ * The packs of the installed catalog: the module languages', then each served declared language's, its registered
+ * facets and no tool arm or evidence tool; composed once per installed catalog.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ * @throws {Error} Naming the language, where a granted name is a module language's or two served engines state it.
+ */
+function servedPacks(): ServedPacks {
+  const declared = composeDeclaredLanguages(servedLanguageData());
+  let served = SERVED_PACKS.get(declared);
+  if (served === undefined) {
+    const packs: Readonly<Record<string, AgentLanguagePack>> = Object.fromEntries(
+      declared.map(({ id }) => [
+        id,
+        Object.freeze({
+          id,
+          client: serverLanguageClientPack(id),
+          server: languageServerPack(id),
+          execution: Object.freeze({ arms: Object.freeze({}), evidenceTools: Object.freeze({}) }),
+        }),
+      ]),
+    );
+    served = Object.freeze({
+      packs: Object.freeze({ ...MODULE_PACKS, ...packs }),
+      arms: Object.freeze({
+        ...MODULE_TOOL_ARMS,
+        ...Object.fromEntries(Object.entries(packs).map(([id, pack]) => [id, pack.execution.arms])),
+      }),
+    });
+    SERVED_PACKS.set(declared, served);
+  }
+  return served;
+}
+
+/**
+ * The pack for `language`, or a named error when the id is not a language this server knows.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
 export function agentLanguagePack(language: AgentStatementLanguageId): AgentLanguagePack {
-  const pack = Object.hasOwn(PACKS, language) ? PACKS[language] : undefined;
+  const { packs } = servedPacks();
+  const pack = Object.hasOwn(packs, language) ? packs[language] : undefined;
   if (pack === undefined) throw new Error(`no language pack for ${language}`);
   return pack;
 }
 
-/** Every pack's tool arms by language, the same objects the packs hold. Read by the offer census. */
-export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, LanguageToolArms>> = Object.freeze({
+/**
+ * Every pack's tool arms by language, the same objects the packs hold, a served declared language's after the module
+ * languages', composed once per installed catalog. Read by the offer census.
+ *
+ * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
+ * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
+ *   server's engine catalog.
+ */
+export function languageToolArms(): Readonly<Record<AgentStatementLanguageId, LanguageToolArms>> {
+  return servedPacks().arms;
+}
+
+/** The module languages' tool arms by language, the same objects their packs hold. */
+const MODULE_TOOL_ARMS = Object.freeze({
   sql: SQL_PACK.execution.arms,
   kubectl: KUBECTL_PACK.execution.arms,
   mongo: MONGO_PACK.execution.arms,
@@ -117,7 +168,6 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   mtconnectread: MTCONNECTREAD_PACK.execution.arms,
   mqttread: MQTTREAD_PACK.execution.arms,
   sparkplugread: SPARKPLUGREAD_PACK.execution.arms,
-  ...Object.fromEntries(Object.entries(DECLARED_PACKS).map(([id, pack]) => [id, pack.execution.arms])),
 } satisfies Record<AgentModuleLanguageId, LanguageToolArms>);
 
 /**

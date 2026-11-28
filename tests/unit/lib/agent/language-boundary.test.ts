@@ -26,9 +26,11 @@
  *   `index.ts`, `verifiers.ts`, `refusals.ts`, `mcp.ts` and `engines/{client,server,index}.ts`, matched by full path.
  * - R5a: a string literal, no-substitution template or literal type whose whole text is `sql`, unless R5b reads it.
  * - R5b: `sql` read off a language-keyed table: a `.sql` or `["sql"]` access, or a binding-pattern key, whose receiver
- *   is such a table, a namespace member of that name, or a same-file alias of one (a `const`, or an import renamed). The
- *   tables are derived, not listed: every value export of `languages/{client,server,index,mcp}.ts` and
- *   `agent-manifest.ts` whose own keys are exactly the pack ids. A statement text's `.sql` field is never one.
+ *   is such a table, a namespace member of that name, a call with no argument of an accessor that answers one, or a
+ *   same-file alias of either (a `const`, or an import renamed). The tables and their accessors are derived, not listed:
+ *   every value export of `languages/{client,server,index,mcp}.ts` and `agent-manifest.ts` whose own keys are exactly
+ *   the pack ids, and every function export of those modules that takes no argument and, called once with nothing
+ *   installed, answers such a record. A statement text's `.sql` field is never one.
  * - R5c: a reference to `DEFAULT_STATEMENT_LANGUAGE` or `CURATED_CALL_LANGUAGE`, so neither constant becomes a hidden
  *   `sql` branch.
  * - R5e: a string literal or literal type that starts with `sql` and a `.`, `:` or `-`: an operation, requirement or
@@ -46,7 +48,8 @@
  *   family resolver, so an engine's override is never bypassed: the receiver chain starts at a call to
  *   `agentLanguagePack`, `languageServerPack` or `languageServer`, under any import name or off a namespace, or at a
  *   name bound to such a chain, by a declarator or a binding pattern.
- *   An import of `WORKFLOW_TOOL_RULES`, a family projection of one, or a namespace member of that name, is R9 too.
+ *   An import of `workflowToolRules` from `languages/server.ts`, a family projection of one, or a member of that name
+ *   of a namespace import of that module, is R9 too.
  * - R3: the tiers, each finding the first forbidden module a chain meets, not every module past it. The server modules never reach the execution tier; the client packs never reach a server module, an
  *   execution module or a `node:`/`bun:` builtin; the language verifiers and `goal-claims.ts` never reach
  *   `goal-verifier.ts`; `goal-verifier.ts`, `goal-claims.ts` and every verifier module never reach `tools.ts` or a
@@ -104,7 +107,7 @@ const ENGINE_ALIASES: ReadonlySet<string> = new Set(["pg"]);
 const COMPOUND_ID = [new RegExp(`^(${IDS})[.:-]`), new RegExp(`-(${IDS})\\.\\d+$`)];
 /** The tools the languages' MCP facets declare: each is a language's, so a core file reads it off the registry. */
 const FACET_TOOLS: ReadonlySet<string> = new Set(
-  Object.values(languageMcpFacets.AGENT_LANGUAGE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
+  Object.values(languageMcpFacets.agentLanguageMcpFacets()).flatMap((facet) => (facet === null ? [] : [facet.tool])),
 );
 
 /** The names a pack owns beside its id (R1g): its evidence tools, refusal codes, shortfalls and requirements. */
@@ -121,19 +124,47 @@ const SQL_COMPOUND = /^sql[.:-]/;
 /** The two named readings of the default family (R5c). */
 const DEFAULT_LANGUAGE_CONSTANTS = new Set(["DEFAULT_STATEMENT_LANGUAGE", "CURATED_CALL_LANGUAGE"]);
 
+/** The shared language entries and the manifest, whose exports the language-keyed tables are derived from. */
+const LANGUAGE_ENTRIES = [languageClients, languageServers, languages, languageMcpFacets, manifest];
+
+/** Whether `value` is a record whose own keys are exactly the pack ids. */
+const isLanguageKeyed = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  Object.keys(value).sort().join() === Object.keys(AGENT_LANGUAGE_COPY).sort().join();
+
 /** Every value export of the shared language entries and the manifest whose own keys are exactly the pack ids. */
 const LANGUAGE_TABLES: ReadonlySet<string> = new Set(
-  [languageClients, languageServers, languages, languageMcpFacets, manifest].flatMap((module) =>
+  LANGUAGE_ENTRIES.flatMap((module) =>
+    Object.entries(module)
+      .filter(([, value]) => isLanguageKeyed(value))
+      .map(([name]) => name),
+  ),
+);
+
+/**
+ * Every function export of the shared language entries and the manifest that takes no argument and, called once here
+ * with nothing installed, answers a record whose own keys are exactly the pack ids: an accessor of a language-keyed
+ * table the server composes once per installed catalog. A class is no accessor and is never called.
+ */
+const LANGUAGE_TABLE_ACCESSORS: ReadonlySet<string> = new Set(
+  LANGUAGE_ENTRIES.flatMap((module) =>
     Object.entries(module)
       .filter(
         ([, value]) =>
-          typeof value === "object" &&
-          value !== null &&
-          Object.keys(value).sort().join() === Object.keys(AGENT_LANGUAGE_COPY).sort().join(),
+          typeof value === "function" &&
+          value.length === 0 &&
+          !/^class\b/.test(Function.prototype.toString.call(value)) &&
+          isLanguageKeyed((value as () => unknown)()),
       )
       .map(([name]) => name),
   ),
 );
+
+/** The accessor whose import, or whose read off a namespace of its module, is R9: every language's tool rules. */
+const TOOL_RULES_ACCESSOR = "workflowToolRules";
+/** The module that exports it. */
+const SERVER_ENTRY = `${LANGUAGES}/server.ts`;
 
 /** The server members an engine overlay may override; every other member is read by family. */
 const OVERRIDABLE_SERVER_MEMBERS = new Set<string>(ENGINE_OVERRIDABLE_SERVER_MEMBERS);
@@ -446,16 +477,35 @@ function coreFileFindings(file: string, text: string): string[] {
   const add = (node: ts.Node, rule: string, detail: string): void => {
     findings.push(`${file}#${declarationOf(node)}: ${rule} ${detail}`);
   };
-  // The file's names for a language-keyed table (R5b) and for a family resolver's answer (R9), in source order.
+  // The file's names for a language-keyed table and its accessor (R5b) and for a family resolver's answer (R9), in
+  // source order.
   const tables = new Set(LANGUAGE_TABLES);
+  const accessors = new Set(LANGUAGE_TABLE_ACCESSORS);
+  // The file's namespace imports of the module that exports the tool rules' accessor (R9).
+  const serverNamespaces = new Set<string>();
   const resolved = new Set<string>();
   // The file's names for a family resolver: its own, and any import that renames one.
   const resolvers = new Set(FAMILY_RESOLVERS);
   const isTable = (expression: ts.Expression): boolean => {
     const at = unwrap(expression);
+    if (ts.isCallExpression(at) && at.arguments.length === 0) {
+      const callee = unwrap(at.expression);
+      return (
+        (ts.isIdentifier(callee) && accessors.has(callee.text)) ||
+        (ts.isPropertyAccessExpression(callee) && LANGUAGE_TABLE_ACCESSORS.has(callee.name.text))
+      );
+    }
     return (
       (ts.isIdentifier(at) && tables.has(at.text)) ||
       (ts.isPropertyAccessExpression(at) && LANGUAGE_TABLES.has(at.name.text))
+    );
+  };
+  /** Whether `specifier`'s import declaration imports from the module that exports the tool rules' accessor. */
+  const importsServerEntry = (node: ts.ImportSpecifier | ts.NamespaceImport): boolean => {
+    const declaration = ts.isImportSpecifier(node) ? node.parent.parent.parent : node.parent.parent;
+    return (
+      ts.isStringLiteral(declaration.moduleSpecifier) &&
+      resolve(declaration.moduleSpecifier.text, file) === SERVER_ENTRY
     );
   };
   const isResolved = (expression: ts.Expression): boolean => {
@@ -473,6 +523,9 @@ function coreFileFindings(file: string, text: string): string[] {
   const bind = (node: ts.Node): void => {
     if (ts.isImportSpecifier(node) && LANGUAGE_TABLES.has((node.propertyName ?? node.name).text))
       tables.add(node.name.text);
+    if (ts.isImportSpecifier(node) && LANGUAGE_TABLE_ACCESSORS.has((node.propertyName ?? node.name).text))
+      accessors.add(node.name.text);
+    if (ts.isNamespaceImport(node) && importsServerEntry(node)) serverNamespaces.add(node.name.text);
     if (ts.isImportSpecifier(node) && FAMILY_RESOLVERS.has((node.propertyName ?? node.name).text))
       resolvers.add(node.name.text);
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
@@ -546,9 +599,14 @@ function coreFileFindings(file: string, text: string): string[] {
         add(node, "R9", node.text);
       }
       if (
-        node.text === "WORKFLOW_TOOL_RULES" &&
-        ((ts.isImportSpecifier(parent) && (parent.propertyName ?? parent.name) === node) ||
-          (ts.isPropertyAccessExpression(parent) && parent.name === node))
+        node.text === TOOL_RULES_ACCESSOR &&
+        ((ts.isImportSpecifier(parent) &&
+          (parent.propertyName ?? parent.name) === node &&
+          importsServerEntry(parent)) ||
+          (ts.isPropertyAccessExpression(parent) &&
+            parent.name === node &&
+            ts.isIdentifier(parent.expression) &&
+            serverNamespaces.has(parent.expression.text)))
       ) {
         add(node, "R9", node.text);
       }
@@ -1163,7 +1221,7 @@ describe("planted violations yield exactly their findings", () => {
   test("the default family's row read off the facet registry in the MCP module fails R5b", () => {
     const arms = `${MCP}/tools/statement-arms.ts`;
     expect(
-      boundaryFindings(plantInFunction(arms, "servingStatementArms", "void AGENT_LANGUAGE_MCP_FACETS.sql;")),
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", "void agentLanguageMcpFacets().sql;")),
     ).toEqual([`${arms}#servingStatementArms: R5b sql`]);
   });
 
@@ -1197,11 +1255,16 @@ describe("planted violations yield exactly their findings", () => {
     expect(scan("const v = AGENT_LANGUAGE_COPY; void v.sql;")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
     expect(scan("const { sql } = AGENT_WORKFLOW_VARIANTS;")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
     expect(scan("void manifest.AGENT_PLAN_ESTIMATE_OPERATION.sql;")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
+    // A table an accessor answers: called, aliased, called off a namespace, or imported under another name.
+    expect(scan("void workflowToolRules().sql;")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
+    expect(scan("const t = languageToolArms(); void t.sql;")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
+    expect(scan("const { sql } = agentLanguageMcpFacets();")).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
+    expect(scan('void L.languageToolArms()["sql"];')).toEqual([`${TOOLS}#agentToolDefinition: R5b sql`]);
     const renamed = prepend(
       INVESTIGATION,
-      'import { LANGUAGE_TOOL_ARMS as ARMS } from "./languages";\nconst arms = ARMS.sql;',
+      'import { languageToolArms as arms } from "./languages";\nconst table = arms().sql;',
     );
-    expect(boundaryFindings(renamed)).toEqual([`${INVESTIGATION}#arms: R5b sql`]);
+    expect(boundaryFindings(renamed)).toEqual([`${INVESTIGATION}#table: R5b sql`]);
     // A statement text's `.sql` field is no language-keyed table.
     expect(scan("const input = { sql: 1 }; void input.sql;")).toEqual([]);
   });
@@ -1209,11 +1272,13 @@ describe("planted violations yield exactly their findings", () => {
   test("the derived language-keyed tables are the ones the core reads by family", () => {
     expect([...LANGUAGE_TABLES].sort()).toEqual([
       "AGENT_LANGUAGE_COPY",
-      "AGENT_LANGUAGE_MCP_FACETS",
       "AGENT_PLAN_ESTIMATE_OPERATION",
       "AGENT_WORKFLOW_VARIANTS",
-      "LANGUAGE_TOOL_ARMS",
-      "WORKFLOW_TOOL_RULES",
+    ]);
+    expect([...LANGUAGE_TABLE_ACCESSORS].sort()).toEqual([
+      "agentLanguageMcpFacets",
+      "languageToolArms",
+      "workflowToolRules",
     ]);
   });
 
@@ -1313,13 +1378,15 @@ describe("planted violations yield exactly their findings", () => {
     expect(scan("const { server: family } = agentLanguagePack(x); void family.grounding;")).toEqual([
       `${INVESTIGATION}#workflowToolRules: R9 grounding`,
     ]);
-    const projected = prepend(INVESTIGATION, 'import { WORKFLOW_TOOL_RULES } from "./languages/server";');
-    expect(boundaryFindings(projected)).toEqual([`${INVESTIGATION}#<module>: R9 WORKFLOW_TOOL_RULES`]);
+    const projected = prepend(INVESTIGATION, 'import { workflowToolRules as rules } from "./languages/server";');
+    expect(boundaryFindings(projected)).toEqual([`${INVESTIGATION}#<module>: R9 workflowToolRules`]);
     const namespaced = prepend(
       INVESTIGATION,
-      'import * as rules from "./languages/server"; void rules.WORKFLOW_TOOL_RULES;',
+      'import * as rules from "./languages/server"; void rules.workflowToolRules();',
     );
-    expect(boundaryFindings(namespaced)).toEqual([`${INVESTIGATION}#<module>: R9 WORKFLOW_TOOL_RULES`]);
+    expect(boundaryFindings(namespaced)).toEqual([`${INVESTIGATION}#<module>: R9 workflowToolRules`]);
+    // A pack's own member of that name, read off an engine's resolved facet, is no import of the accessor.
+    expect(scan("void runServerPack(x, y).workflowToolRules;")).toEqual([]);
     // A resolver imported under another name, or called off a namespace, is the same resolver.
     const renamed = prepend(
       INVESTIGATION,

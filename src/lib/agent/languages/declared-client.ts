@@ -39,7 +39,7 @@ type AgentTextFillValues<Group extends keyof AgentTextFills, Name extends keyof 
   readonly [Fill in AgentTextFills[Group][Name] extends readonly (infer Each extends string)[] ? Each : never]: string;
 };
 
-/** A statement language the bundled declarations state agent data for: its branded name and its agent part. */
+/** A statement language an engine's declaration states agent data for: its branded name and its agent part. */
 export interface DeclaredAgentLanguage {
   readonly id: AgentDeclaredLanguageId;
   readonly agent: NonNullable<StatementLanguageAgent>;
@@ -47,8 +47,9 @@ export interface DeclaredAgentLanguage {
 
 /**
  * The statement languages `declared` states an agent part for, in its order, each with its name branded as a declared
- * language: data with no agent part is no agent language and is left out. Read once, at load, by `client.ts` on the
- * bundled declarations' data.
+ * language: data with no agent part is no agent language and is left out. Read through `composeDeclaredLanguages` in
+ * `client.ts`: by the browser once, at load, on the bundled declarations' data, and by the server's registries once
+ * per installed catalog, on the data that catalog grants its served engines.
  *
  * @throws {Error} Naming the language, where a declared name is one of `modules`, the module languages this build
  * holds (a language whose module was not deleted when its data was written), or where two data state one name. Each is
