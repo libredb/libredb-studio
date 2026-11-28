@@ -93,8 +93,8 @@ import { hostCore } from "@/lib/provider-host/instance";
  * does and remembers what it logged: a legacy record's provider error and Studio's own error pass as the same object,
  * and a provider package's failure is logged once and answered by the record's grant, a failed panel of a dashboard
  * holding that answer's sentence. A failure raised outside the answered span, such as a read before the host core's
- * install, is not the record's, so the route logs it as Studio's own. A read's failure after its wait ended is logged by route, facet, panel,
- * kind and code, never its text, and a later answer is dropped, since nothing waits on it.
+ * install, is not the record's, so the route logs it as Studio's own. A read's failure after its wait ended is logged
+ * by route, facet, panel, kind and code, never its text, and a later answer is dropped, since nothing waits on it.
  */
 
 /**
