@@ -25,8 +25,9 @@ import { logger } from "@/lib/logger";
  * boot preflight refuses a value that keeps them on; answering off here as well holds the refusal
  * on a server whose preflight was bypassed.
  *
- * The rule is enforced in `resolveConnection` (`src/lib/seed/resolve-connection.ts`), the one
- * place an inline connection becomes a provider's input; `GET /api/connections/policy` reports it
+ * The rule is enforced in the one body of `resolveConnection` and `resolveServedConnection`
+ * (`src/lib/seed/resolve-connection.ts`), the one place an inline connection becomes a provider's
+ * input; `GET /api/connections/policy` reports it
  * to the editor so the editor stops offering what the server would refuse.
  */
 
@@ -36,7 +37,7 @@ export const CUSTOM_CONNECTIONS_DISABLED_MESSAGE = "Custom connections are disab
 const DISABLED_VALUES = new Set(["false", "0", "off", "no"]);
 const ENABLED_VALUES = new Set(["true", "1", "on", "yes"]);
 
-// resolveConnection runs on every request that carries an inline connection, so an unrecognised
+// The resolve runs on every request that carries an inline connection, so an unrecognised
 // value must log at most once per process rather than once per request.
 let unrecognizedValueLogged = false;
 

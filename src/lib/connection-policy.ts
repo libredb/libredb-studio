@@ -7,8 +7,8 @@ import type { DatabaseConnection } from "@/lib/types";
  * answers it from `ALLOW_CUSTOM_CONNECTIONS` (docs/SEED_CONNECTIONS.md, "Custom Connections").
  *
  * THE BROWSER'S COPY DECIDES WHAT THE EDITOR OFFERS AND NOTHING ELSE. The server refuses a
- * connection the caller supplied in `resolveConnection` (`src/lib/seed/resolve-connection.ts`)
- * whatever the editor drew, so an editor that read this wrong can show a control that fails with
+ * connection the caller supplied in `resolveConnection` or `resolveServedConnection`
+ * (`src/lib/seed/resolve-connection.ts`) whatever the editor drew, so an editor that read this wrong can show a control that fails with
  * 403, and can never open a connection the server would refuse.
  */
 export interface ConnectionPolicy {
