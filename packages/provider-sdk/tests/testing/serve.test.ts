@@ -21,6 +21,8 @@ import {
   type CallRefusal,
   CallRefusalError,
   CLEANUP_DEADLINE_MS,
+  checkCancelAnswer,
+  checkEndScopeAnswer,
   checkHealthAnswer,
   checkMaintenancePreviewAnswer,
   checkMaintenanceRunAnswer,
@@ -61,7 +63,13 @@ import {
   type TreeAnswer,
   type TreeRequest,
 } from "@libredb/provider-sdk/calls";
-import { FrameRefusalError, type ServedFrame, type ServedHandle, serve } from "@libredb/provider-sdk/testing";
+import {
+  type FrameRefusal,
+  FrameRefusalError,
+  type ServedFrame,
+  type ServedHandle,
+  serve,
+} from "@libredb/provider-sdk/testing";
 import { ValueCodecError } from "@libredb/provider-sdk/values";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft each case bends into a shape the transport refuses.
@@ -1107,6 +1115,40 @@ describe("serve", () => {
         (call) => [`to-provider ${call}`, `to-host ${call}`],
       ),
     );
+  });
+
+  test("a served cancel or end of scope answer outside its form is refused at its frame, and the core's check refuses the same answer", async () => {
+    // The frame shapes of the two answers are the SDK's closed forms, so the frame refuses each before the host reads
+    // it, and the core's check refuses the same answer as `cancel-answer-unreadable` or `end-scope-answer-unreadable`.
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+    const cancelAnswer = { cancelled: "yes" };
+    const endScopeAnswer = { openTransaction: "maybe" };
+    fx.answers.cancel = () => cancelAnswer;
+    fx.answers.endScope = () => endScopeAnswer;
+    const cases: [() => Promise<unknown>, FrameRefusal, AnswerCheck<unknown>, CallRefusal][] = [
+      [
+        async () => impl.console.cancel?.(opened.handle, { runId: marker() }, callContext()),
+        { rule: "frame-value-unreadable", call: "console.cancel", part: "answer", pointer: "/cancelled" },
+        checkCancelAnswer(cancelAnswer),
+        { rule: "cancel-answer-unreadable", pointer: "/cancelled" },
+      ],
+      [
+        async () => impl.console.endScope?.(opened.handle, { scope: marker() }, callContext()),
+        { rule: "frame-value-unreadable", call: "console.endScope", part: "answer", pointer: "/openTransaction" },
+        checkEndScopeAnswer(endScopeAnswer),
+        { rule: "end-scope-answer-unreadable", pointer: "/openTransaction" },
+      ],
+    ];
+
+    for (const [call, refusal, check, coreRefusal] of cases) {
+      expect(check).toEqual({ kind: "refused", refusals: [coreRefusal] });
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each refusal is its own call's.
+      const refused = await failure(call);
+      expect(refused).toBeInstanceOf(FrameRefusalError);
+      expect((refused as FrameRefusalError).refusals).toEqual([refusal]);
+    }
   });
 
   test("a served tree call naming a level or a kind its engine's object model does not state is refused before any frame", async () => {

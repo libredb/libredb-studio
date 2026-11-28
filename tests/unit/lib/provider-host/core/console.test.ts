@@ -17,6 +17,7 @@ import {
   BATCH_MAX_BYTES,
   type BatchLimit,
   type CallContext,
+  type CallRefusal,
   CallRefusalError,
   type CancelAnswer,
   type CancelRequest,
@@ -39,6 +40,8 @@ import {
   type HostCallPorts,
 } from "@/lib/provider-host/core/console";
 import { createPageBudget } from "@/lib/provider-host/core/page-budget";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { createMockProvider } from "../../../../helpers/mock-provider";
 
 let executeCall: ExecuteCall;
 
@@ -1071,5 +1074,71 @@ describe("cancelCall", () => {
       "The session offers console.cancel and has no cancel function, a defect of the host's session.",
     );
     expect(defect).not.toBeInstanceOf(CallRefusalError);
+  });
+});
+
+describe("cancelCall's answer check", () => {
+  test("a malformed cancel answer is refused at the core as the package's defect, and the cancel a stopped run sends is not read", async () => {
+    const { ports } = portsOf();
+    const planted = marker();
+    const malformed: [unknown, readonly CallRefusal[]][] = [
+      [{ cancelled: "yes" }, [{ rule: "cancel-answer-unreadable", pointer: "/cancelled" }]],
+      [{}, [{ rule: "cancel-answer-unreadable", pointer: "/cancelled" }]],
+      [null, [{ rule: "cancel-answer-unreadable", pointer: "" }]],
+      [
+        { cancelled: true, [planted]: 1 },
+        [{ rule: "cancel-answer-unreadable", pointer: `/${planted}`, name: planted }],
+      ],
+    ];
+    for (const [answer, refusals] of malformed) {
+      const fx = sessionOf(async () => answerOf([]), { cancel: async () => answer as CancelAnswer });
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each record is its own answer's.
+      const record = await cancelCall(fx.session, { runId: marker() }, contextOf(), ports);
+      expect(record).toEqual({ kind: "refused", called: true, refusals });
+      expect(fx.cancels).toHaveLength(1);
+    }
+
+    // A well-formed answer is answered from the checked data member, never the session's record itself.
+    const answered = { cancelled: true };
+    const fx = sessionOf(async () => answerOf([]), { cancel: async () => answered });
+    const record = await cancelCall(fx.session, { runId: marker() }, contextOf(), ports);
+    expect(record).toEqual({ kind: "answered", cancelled: true });
+    expect(record).not.toBe(answered);
+
+    // A legacy provider's answer through the bridge is held to the same form.
+    const provider = createMockProvider();
+    Object.assign(provider, { cancelQuery: mock(async () => "yes") });
+    const bridged = await cancelCall(bridgedConsole(provider, {}).session, { runId: marker() }, contextOf(), ports);
+    expect(bridged).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "cancel-answer-unreadable", pointer: "/cancelled" }],
+    });
+
+    // The cancel a stop sends answers nothing anyone reads, so a malformed answer to it is not read: nothing is late.
+    const stoppedCancel = Promise.withResolvers<void>();
+    const stopped = sessionOf(() => new Promise<ExecuteAnswer>(() => {}), {
+      cancel: async () => {
+        stoppedCancel.resolve();
+        return { cancelled: "yes" } as unknown as CancelAnswer;
+      },
+    });
+    const fixture = portsOf();
+    const controller = new AbortController();
+    const running = executeCall(
+      stopped.session,
+      requestOf({ runId: marker() }),
+      contextOf(controller),
+      () => LIMITS,
+      fixture.ports,
+    );
+    await stopped.executeCalled;
+    controller.abort();
+    expect((await running).kind).toBe("stopped");
+    await stoppedCancel.promise;
+    await turn();
+    expect(stopped.cancels).toHaveLength(1);
+    expect(fixture.late).toEqual([]);
+    expect(fixture.cancelFailed).toEqual([]);
   });
 });

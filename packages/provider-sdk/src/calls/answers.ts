@@ -1,6 +1,7 @@
 /**
- * The host's reading of what a console execute, an object tree call, an object source call, a monitoring call, a
- * health call and a maintenance call answered (docs/providers/CONTRACT.md, clauses C-48, C-62, C-112 and C-115).
+ * The host's reading of what a console execute, cancel and end of scope, an object tree call, an object source call, a
+ * monitoring call, a health call and a maintenance call answered (docs/providers/CONTRACT.md, clauses C-48, C-62, C-112
+ * and C-115).
  *
  * The host passes an execute answer's result list, its first result's columns and row count, its execution time and
  * its warnings on to the caller, so it reads each of them once, here, before it pumps a row: a member that is missing
@@ -30,6 +31,11 @@
  * codec's domain, and `checkMaintenancePreviewAnswer`, each refusing as its own rule. Every count is a non-negative safe
  * integer, every time, ratio and rate a finite non-negative number, and every date a valid `Date`.
  *
+ * The host passes a cancel's `cancelled` and an end of scope's `openTransaction` on to the caller, so
+ * `checkCancelAnswer` and `checkEndScopeAnswer` read each answer once, here, as a closed record of that one member, a
+ * boolean and one of `none` and `rolled-back`, each refusing as its own rule, so a malformed outcome is never read as
+ * a cancel that did not happen or as no open transaction.
+ *
  * Every check reads every member once, with one set of readers. Each list's length is read once, from its own data
  * descriptor, and a length that is no count, or a list longer than its bound, `ANSWER_LIST_MAX` for its member or a
  * `describeMany` or slow queries or active sessions panel request's `limit`, is refused at the list before any item is
@@ -55,9 +61,11 @@ import { encodeValue } from "../values/codec";
 import type {
   ActiveSession,
   ActiveSessionDetails,
+  CancelAnswer,
   ColumnSchema,
   Container,
   DatabaseOverview,
+  EndScopeAnswer,
   ExecuteAnswer,
   DatabaseObject,
   ExclusionConstraintSchema,
@@ -157,7 +165,9 @@ interface Refusals {
     | "pool-stats-answer-unreadable"
     | "health-answer-unreadable"
     | "maintenance-run-answer-unreadable"
-    | "maintenance-preview-answer-unreadable";
+    | "maintenance-preview-answer-unreadable"
+    | "cancel-answer-unreadable"
+    | "end-scope-answer-unreadable";
   readonly list: CallRefusal[];
 }
 
@@ -1210,5 +1220,37 @@ const previewForm = recordForm<MaintenancePreview>({
 export function checkMaintenancePreviewAnswer(answer: unknown): AnswerCheck<MaintenancePreview> {
   const out: Refusals = { rule: "maintenance-preview-answer-unreadable", list: [] };
   previewForm(answer, "", out);
+  return checked(answer, out.list);
+}
+
+/** The two outcomes an end of scope answers. */
+const OPEN_TRANSACTIONS = Object.freeze<Record<EndScopeAnswer["openTransaction"], true>>({
+  none: true,
+  "rolled-back": true,
+});
+
+const cancelForm = recordForm<CancelAnswer>({ cancelled: required(flagForm) });
+
+/**
+ * `answer`, what a `console.cancel` call answered, read as the SDK's `CancelAnswer` closed, its `cancelled` a boolean:
+ * the answer itself, typed, where nothing is refused, and its refusals as `cancel-answer-unreadable` otherwise. Never
+ * throws.
+ */
+export function checkCancelAnswer(answer: unknown): AnswerCheck<CancelAnswer> {
+  const out: Refusals = { rule: "cancel-answer-unreadable", list: [] };
+  cancelForm(answer, "", out);
+  return checked(answer, out.list);
+}
+
+const endScopeForm = recordForm<EndScopeAnswer>({ openTransaction: required(wordForm(OPEN_TRANSACTIONS)) });
+
+/**
+ * `answer`, what a `console.endScope` call answered, read as the SDK's `EndScopeAnswer` closed, its `openTransaction`
+ * `none` or `rolled-back`: the answer itself, typed, where nothing is refused, and its refusals as
+ * `end-scope-answer-unreadable` otherwise. Never throws.
+ */
+export function checkEndScopeAnswer(answer: unknown): AnswerCheck<EndScopeAnswer> {
+  const out: Refusals = { rule: "end-scope-answer-unreadable", list: [] };
+  endScopeForm(answer, "", out);
   return checked(answer, out.list);
 }

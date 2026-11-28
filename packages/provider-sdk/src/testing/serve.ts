@@ -42,7 +42,9 @@
  * (`checkSourceAnswer`, clause C-115), throwing one that is not the SDK's closed source document, and a decoded
  * monitoring panel, pool statistics, health, maintenance run and maintenance preview answer (`checkPanelAnswer` with
  * the request it sent, `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer`,
- * `checkMaintenancePreviewAnswer`, clause C-112). It never cuts a source answer: a text past the character bound
+ * `checkMaintenancePreviewAnswer`, clause C-112). A cancel and an end of scope answer need no reading of their own
+ * there: their frame shapes are the closed forms `checkCancelAnswer` and `checkEndScopeAnswer` read, so an answer either
+ * check refuses is refused at its frame first. It never cuts a source answer: a text past the character bound
  * crosses whole, and the cut is the host core's (`boundSourceAnswer`).
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so

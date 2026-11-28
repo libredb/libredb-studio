@@ -19,6 +19,8 @@ import {
   CallRefusalError,
   type CallRefusalRule,
   callRefusalSentence,
+  checkCancelAnswer,
+  checkEndScopeAnswer,
   checkExecuteAnswer,
   checkHealthAnswer,
   checkMaintenancePreviewAnswer,
@@ -1811,3 +1813,95 @@ describe("checkPanelAnswer, checkPoolStatsAnswer, checkHealthAnswer, checkMainte
 function noThrow(): object {
   return new Proxy({}, { ownKeys: thrower });
 }
+
+/** A refusal of a cancel answer at `pointer`, naming `name` where given. */
+function cancelUnreadable(pointer: string, name?: string): CallRefusal {
+  return name === undefined
+    ? { rule: "cancel-answer-unreadable", pointer }
+    : { rule: "cancel-answer-unreadable", pointer, name };
+}
+
+/** A refusal of an end of scope answer at `pointer`, naming `name` where given. */
+function endScopeUnreadable(pointer: string, name?: string): CallRefusal {
+  return name === undefined
+    ? { rule: "end-scope-answer-unreadable", pointer }
+    : { rule: "end-scope-answer-unreadable", pointer, name };
+}
+
+describe("checkCancelAnswer and checkEndScopeAnswer", () => {
+  test("a cancel answer that is not a plain record of one boolean cancelled is refused as cancel-answer-unreadable at its pointer, a getter never called", () => {
+    const cancel = (answer: unknown) => refusalsOf(checkCancelAnswer(answer));
+
+    for (const answer of [null, undefined, [], new Map(), new (class Answer {})(), marker(), 3, true]) {
+      expect(cancel(answer)).toEqual([cancelUnreadable("")]);
+    }
+    expect(cancel({})).toEqual([cancelUnreadable("/cancelled")]);
+    for (const value of ["yes", 1, 0, null, undefined, marker(), {}, []]) {
+      expect(cancel({ cancelled: value })).toEqual([cancelUnreadable("/cancelled")]);
+    }
+    const reads = { count: 0 };
+    expect(cancel(withAccessor({}, "cancelled", reads, true))).toEqual([cancelUnreadable("/cancelled")]);
+    expect(reads.count).toBe(0);
+    const planted = marker();
+    expect(cancel({ cancelled: true, [planted]: marker() })).toEqual([cancelUnreadable(`/${planted}`, planted)]);
+    // An inherited key name is a key like any other, named.
+    expect(cancel(Object.assign(JSON.parse('{"__proto__": 1}'), { constructor: 1, cancelled: false }))).toEqual([
+      cancelUnreadable("/__proto__", "__proto__"),
+      cancelUnreadable("/constructor", "constructor"),
+    ]);
+    // No refusal carries a value of the answer, and the sentences name the pointer and the key alone.
+    expect(callRefusalSentence(cancelUnreadable("/cancelled"))).toBe(
+      'The cancel answer value at "/cancelled" is missing, an accessor, or not what the provider contract allows there, so Studio did not read it.',
+    );
+    expect(callRefusalSentence(cancelUnreadable(`/${planted}`, planted))).toBe(
+      `The cancel answer has the key ${JSON.stringify(planted)} at ${JSON.stringify(`/${planted}`)}, which the provider contract does not define there, so Studio did not read it.`,
+    );
+  });
+
+  test("an end of scope answer whose openTransaction is outside none and rolled-back, or that holds another key, is refused as end-scope-answer-unreadable, no value named", () => {
+    const endScope = (answer: unknown) => refusalsOf(checkEndScopeAnswer(answer));
+
+    for (const answer of [null, [], marker(), 3]) {
+      expect(endScope(answer)).toEqual([endScopeUnreadable("")]);
+    }
+    expect(endScope({})).toEqual([endScopeUnreadable("/openTransaction")]);
+    const outside = marker();
+    for (const value of ["maybe", "None", "committed", outside, true, 1, null, undefined]) {
+      expect(endScope({ openTransaction: value })).toEqual([endScopeUnreadable("/openTransaction")]);
+    }
+    const reads = { count: 0 };
+    expect(endScope(withAccessor({}, "openTransaction", reads, "none"))).toEqual([
+      endScopeUnreadable("/openTransaction"),
+    ]);
+    expect(reads.count).toBe(0);
+    expect(endScope({ openTransaction: "none", cancelled: true })).toEqual([
+      endScopeUnreadable("/cancelled", "cancelled"),
+    ]);
+    const refusals = endScope({ openTransaction: outside });
+    expect(JSON.stringify(refusals)).not.toContain(outside);
+    expect(refusals.map(callRefusalSentence)).toEqual([
+      'The end of scope answer value at "/openTransaction" is missing, an accessor, or not what the provider contract allows there, so Studio did not read it.',
+    ]);
+    expect(callRefusalSentence(endScopeUnreadable("/cancelled", "cancelled"))).toBe(
+      'The end of scope answer has the key "cancelled" at "/cancelled", which the provider contract does not define there, so Studio did not read it.',
+    );
+  });
+
+  test("a well-formed cancel and end of scope answer pass, and a reading that throws is refused, never thrown", () => {
+    for (const cancelled of [true, false]) {
+      const answer = { cancelled };
+      const check: AnswerCheck<{ readonly cancelled: boolean }> = checkCancelAnswer(answer);
+      expect(check.kind === "read" && check.answer).toBe(answer);
+    }
+    for (const openTransaction of ["none", "rolled-back"] as const) {
+      const answer = { openTransaction };
+      const check = checkEndScopeAnswer(answer);
+      expect(check.kind === "read" && check.answer).toBe(answer);
+    }
+    expect(refusalsOf(checkCancelAnswer(Object.assign(Object.create(null), { cancelled: true })))).toEqual([]);
+    expect(refusalsOf(checkCancelAnswer(revoked()))).toEqual([cancelUnreadable("")]);
+    expect(refusalsOf(checkEndScopeAnswer(revoked()))).toEqual([endScopeUnreadable("")]);
+    expect(Object.keys(checkCancelAnswer(noThrow()))).toEqual(["kind", "refusals"]);
+    expect(Object.keys(checkEndScopeAnswer(noThrow()))).toEqual(["kind", "refusals"]);
+  });
+});

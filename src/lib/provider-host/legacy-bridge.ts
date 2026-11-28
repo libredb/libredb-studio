@@ -11,9 +11,12 @@
  * query path left open (`endsOpenQueryTransactions`), and its `endScope` runs the provider's `endOpenQueryTransaction`
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
- * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
- * session, since every legacy provider holds the five tree members, and `objects.source` exactly where the provider
- * defines `readObjectSource`. `maintenance.run` is offered on every session,
+ * minted a run's scope ends it through the host core's endScope call (clause C-60). The host core reads the cancel's
+ * and the end of scope's answers with `checkCancelAnswer` and `checkEndScopeAnswer` (clause C-112), as it reads a
+ * package's, so a provider's `cancelQuery` or `endOpenQueryTransaction` answering outside the SDK's types is refused as
+ * a defect of Studio's bridge. `objects.tree` is offered on every session, since every legacy provider holds the five
+ * tree members, and `objects.source` exactly where the provider defines `readObjectSource`. `maintenance.run` is
+ * offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
  * `previewMaintenance`. `monitoring.panel` is offered on every session, and `monitoring.poolStats` exactly where the
  * provider holds a pool statistics read (`getPoolStats`, a function on the provider or its prototype). The session's

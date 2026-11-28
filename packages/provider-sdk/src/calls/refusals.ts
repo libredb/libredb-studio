@@ -141,6 +141,18 @@ export const CALL_REFUSAL_RULES = Object.freeze([
    * reading throws; the pointer is into the answer.
    */
   "maintenance-preview-answer-unreadable",
+  /**
+   * A cancel answer the host reads that is not a plain record of one own data member, `cancelled`, a boolean: missing,
+   * behind an accessor, not a boolean, or beside a key the answer cannot have (`name` the key), or a reading that
+   * throws; the pointer is into the answer.
+   */
+  "cancel-answer-unreadable",
+  /**
+   * An end of scope answer the host reads that is not a plain record of one own data member, `openTransaction`, `none`
+   * or `rolled-back`: missing, behind an accessor, outside that vocabulary, or beside a key the answer cannot have
+   * (`name` the key), or a reading that throws; the pointer is into the answer.
+   */
+  "end-scope-answer-unreadable",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -153,8 +165,8 @@ export interface CallRefusal {
   /**
    * The request field, for a field not honoured, sent empty or out of range, the facet's call name, for a facet not
    * offered, or the key, for a key a refinement, a transaction answer, an execute answer's warning, a tree answer, a
-   * source answer, a monitoring panel, pool statistics, health, maintenance run or maintenance preview answer, or a
-   * maintenance run's row cannot have.
+   * source answer, a monitoring panel, pool statistics, health, maintenance run, maintenance preview, cancel or end of
+   * scope answer, or a maintenance run's row cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -287,11 +299,15 @@ export function callRefusalSentence(refusal: CallRefusal): string {
         at,
         refusal.name === undefined ? undefined : name,
       );
+    case "cancel-answer-unreadable":
+      return answerSentence("cancel answer", "", at, refusal.name === undefined ? undefined : name);
+    case "end-scope-answer-unreadable":
+      return answerSentence("end of scope answer", "", at, refusal.name === undefined ? undefined : name);
   }
 }
 
 /**
- * The sentence of a refusal of `answer`, a monitoring, health or maintenance answer, at `at`: the key `name`, quoted,
+ * The sentence of a refusal of `answer`, a monitoring, health, maintenance, cancel or end of scope answer, at `at`: the key `name`, quoted,
  * which the provider contract does not define there, where one is given, and otherwise a value that is missing, an
  * accessor, or not what the contract allows there, `forRequest` naming the request where the call has one.
  */

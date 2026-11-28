@@ -3294,6 +3294,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a pool statistics or health answer outside the SDK's types is refused by its rule at its pointer, a count held to a safe integer",
         "a maintenance run answer whose rows have no fields, a key outside them or a value outside the value codec, and a preview outside its form, are refused by their rules",
         "a getter in any of the five answers is refused and never called, an optional member present with no value reads as absent, and an inherited key name does not throw",
+        "a cancel answer that is not a plain record of one boolean cancelled is refused as cancel-answer-unreadable at its pointer, a getter never called",
+        "an end of scope answer whose openTransaction is outside none and rolled-back, or that holds another key, is refused as end-scope-answer-unreadable, no value named",
+        "a well-formed cancel and end of scope answer pass, and a reading that throws is refused, never thrown",
       ],
       "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
         "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
@@ -3301,11 +3304,16 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
         "a served panel, pool statistics, health, maintenance run or preview answer outside the SDK's types is refused on the host side with the core's refusals",
+        "a served cancel or end of scope answer outside its form is refused at its frame, and the core's check refuses the same answer",
       ],
       "tests/unit/lib/provider-host/core/console.test.ts": [
         "a malformed execution time, row count or warning list is refused at the core as the package's defect",
         "a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list",
         "closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed",
+        "a malformed cancel answer is refused at the core as the package's defect, and the cancel a stopped run sends is not read",
+      ],
+      "tests/unit/lib/provider-host/core/console-scope.test.ts": [
+        "a malformed end of scope answer is refused at the core as the package's defect, and a well-formed one answers its outcome",
       ],
       "tests/unit/lib/provider-host/core/objects.test.ts": [
         "a malformed tree answer is refused at the core as the package's defect",
@@ -3335,6 +3343,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a warning outside the contract's shape is refused at the core as the package's defect on both grants, its members never answered",
         "warnings that are not a list are refused at the core as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
         "an execution time or a row count outside the contract's types is refused at the core as the package's defect, on both paths",
+        "a malformed end of scope answer is the package's defect, never read as no open transaction",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
         "a granted package's open failure answers a not-sent connection error with its scrubbed words, as a code-only one answers Studio's sentence",
@@ -3344,6 +3353,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a refused health answer reads as a degraded test naming the package's defect, logged once",
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
+        "a package's cancel failure is answered by its grant, and a refused cancel or end of scope answer as the package's defect on both grants",
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",

@@ -27,8 +27,12 @@
  * thrown past the refusal (`refusedAnswer`). The page record carries the members the check read, its warnings a
  * fresh frozen list, so no caller re-checks them and none reads the session's answer again.
  *
- * An endScope call answers the outcome its session answered, `openTransaction`, read by reference as a cancel's
- * `cancelled` is. Core's execute never ends a scope: the caller that minted a scope sends it with its executes and ends
+ * A cancel call answers whether its session stopped the run, read by `checkCancelAnswer`, and an endScope call the
+ * outcome its session answered, read by `checkEndScopeAnswer` (clause C-112), for every session, a provider package's
+ * and the bridge's alike: an answer that is not a plain record of its one member, a boolean `cancelled` or an
+ * `openTransaction` of `none` or `rolled-back`, is refused as a record, `called` true, never read as a run not
+ * cancelled or as no open transaction. The cancel a stopped execute sends answers nothing a caller reads, so its answer
+ * is not read. Core's execute never ends a scope: the caller that minted a scope sends it with its executes and ends
  * it through `endScopeCall` after them, under a cleanup context of its own (clause C-47).
  *
  * A transaction call answers the session state its session answered, read by `checkTransactionAnswer`, and a statement
@@ -69,7 +73,9 @@ import {
   type CancelAnswer,
   type CancelRequest,
   checkCallStart,
+  checkCancelAnswer,
   checkConsoleFacet,
+  checkEndScopeAnswer,
   checkExecuteAnswer,
   checkExecuteRequest,
   checkReadOnlyRequest,
@@ -523,8 +529,9 @@ async function executeCall(
 }
 
 /**
- * One console cancel on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, answered as a
- * record, the provider's answer by reference. A failure after the wait ended reaches `ports.late` once.
+ * One console cancel on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, its answer read
+ * by `checkCancelAnswer` and answered as a record built fresh from that answer's `cancelled`. An answer the host cannot
+ * read is refused, `called` true. A failure after the wait ended reaches `ports.late` once.
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
  */
@@ -540,19 +547,23 @@ export async function cancelCall(
   if (facet.length > 0) return refusedBefore(facet, ctx);
   freezeContext(ctx);
   freezeData(request);
+  let answer: unknown;
   const call = startCall(() => sessionCancel(session, request, ctx));
   try {
-    const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
-    return { kind: "answered", cancelled: answer.cancelled };
+    answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(call) };
   }
+  const check = checkCancelAnswer(answer);
+  if (check.kind === "refused") return { kind: "refused", called: true, refusals: check.refusals };
+  return { kind: "answered", cancelled: check.answer.cancelled };
 }
 
 /**
- * One console endScope on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, answered as a
- * record, the provider's answer by reference. A failure after the wait ended reaches `ports.late` once, and a later
+ * One console endScope on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, its answer
+ * read by `checkEndScopeAnswer` and answered as a record built fresh from that answer's `openTransaction`. An answer the
+ * host cannot read is refused, `called` true. A failure after the wait ended reaches `ports.late` once, and a later
  * answer is dropped. The caller that minted the scope makes this call, under a cleanup context of its own (clause C-47).
  *
  * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
@@ -569,14 +580,17 @@ export async function endScopeCall(
   if (facet.length > 0) return refusedBefore(facet, ctx);
   freezeContext(ctx);
   freezeData(request);
+  let answer: unknown;
   const call = startCall(() => sessionEndScope(session, request, ctx));
   try {
-    const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
-    return { kind: "answered", openTransaction: answer.openTransaction };
+    answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error, settled: settledOf(call) };
   }
+  const check = checkEndScopeAnswer(answer);
+  if (check.kind === "refused") return { kind: "refused", called: true, refusals: check.refusals };
+  return { kind: "answered", openTransaction: check.answer.openTransaction };
 }
 
 /**

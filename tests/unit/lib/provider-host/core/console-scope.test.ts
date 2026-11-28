@@ -11,9 +11,17 @@
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { type CallContext, type EndScopeAnswer, type EndScopeRequest, envReader } from "@libredb/provider-sdk/calls";
+import {
+  type CallContext,
+  type CallRefusal,
+  type EndScopeAnswer,
+  type EndScopeRequest,
+  envReader,
+} from "@libredb/provider-sdk/calls";
 import type { Calls } from "@libredb/provider-sdk/manifest";
 import { type ConsoleSession, endScopeCall, type HostCallPorts } from "@/lib/provider-host/core/console";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { createMockProvider } from "../../../../helpers/mock-provider";
 
 const HOUR = 3_600_000;
 const marker = (): string => randomUUID();
@@ -234,5 +242,46 @@ describe("endScopeCall", () => {
     expect((defect as Error).message).toBe(
       "The session offers console.endScope and has no endScope function, a defect of the host's session.",
     );
+  });
+});
+
+describe("endScopeCall's answer check", () => {
+  test("a malformed end of scope answer is refused at the core as the package's defect, and a well-formed one answers its outcome", async () => {
+    const { ports } = portsOf();
+    const malformed: [unknown, readonly CallRefusal[]][] = [
+      [{ openTransaction: "maybe" }, [{ rule: "end-scope-answer-unreadable", pointer: "/openTransaction" }]],
+      [{}, [{ rule: "end-scope-answer-unreadable", pointer: "/openTransaction" }]],
+      [[], [{ rule: "end-scope-answer-unreadable", pointer: "" }]],
+      [
+        { openTransaction: "none", cancelled: false },
+        [{ rule: "end-scope-answer-unreadable", pointer: "/cancelled", name: "cancelled" }],
+      ],
+    ];
+    for (const [answer, refusals] of malformed) {
+      const fx = sessionOf(async () => answer as EndScopeAnswer);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each record is its own answer's.
+      const record = await endScopeCall(fx.session, { scope: marker() }, contextOf(), ports);
+      expect(record).toEqual({ kind: "refused", called: true, refusals });
+      expect(fx.ends).toHaveLength(1);
+    }
+
+    for (const openTransaction of ["none", "rolled-back"] as const) {
+      const answered = { openTransaction };
+      const fx = sessionOf(async () => answered);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each record is its own answer's.
+      const record = await endScopeCall(fx.session, { scope: marker() }, contextOf(), ports);
+      expect(record).toEqual({ kind: "answered", openTransaction });
+      expect(record).not.toBe(answered);
+    }
+
+    // A legacy provider's answer through the bridge is held to the same form.
+    const provider = createMockProvider();
+    Object.assign(provider, { endOpenQueryTransaction: async () => "maybe" });
+    const bridged = await endScopeCall(bridgedConsole(provider, {}).session, { scope: marker() }, contextOf(), ports);
+    expect(bridged).toEqual({
+      kind: "refused",
+      called: true,
+      refusals: [{ rule: "end-scope-answer-unreadable", pointer: "/openTransaction" }],
+    });
   });
 });
