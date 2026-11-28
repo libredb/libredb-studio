@@ -75,7 +75,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { measureRowBytes } from "@/lib/db/read-only-budget";
 import {

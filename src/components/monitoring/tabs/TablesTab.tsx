@@ -27,7 +27,7 @@ import {
   type ProviderCapabilities,
   type ProviderLabels,
 } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import {
   MaintenanceEntityDialog,
   READ_ONLY_MAINTENANCE,

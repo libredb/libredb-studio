@@ -1,27 +1,19 @@
 /**
- * 64-bit integers in JSON text (issue #265, design spec section 3)
+ * 64-bit integers in JSON text.
  *
  * `JSON.parse` has no exact form for an integer wider than 2^53: it rounds one
  * silently, with no error at all. A server that sends a 64-bit column as an
  * UNQUOTED JSON number therefore cannot be parsed by the runtime alone, and the
  * only place left to fix it is the raw text, before it is parsed.
  *
- * This lives under `db/utils` rather than in the provider that discovered it
- * because TWO parsers need it and one of them may not import from a provider
- * directory:
+ * A caller runs `quoteUnsafeIntegers` over an answer body before parsing it, and
+ * again over any JSON text a string value of that body carries (a query plan
+ * column, for example): the outer pass rightly leaves digits inside a string
+ * alone, so the inner parse is a second, independent chance to round the same
+ * value.
  *
- * - `providers/sql/druid/http-transport.ts` runs it over the response body.
- * - `lib/explain/druid-native.ts` runs it over the EXPLAIN plan columns, which
- *   arrive as JSON *text* inside that body. The outer pass correctly leaves their
- *   digits alone - they sit inside a string literal - so the INNER parse is a
- *   second, independent chance to round the same value. An explain strategy
- *   importing from a provider directory would tie the registry to that provider
- *   (the rule `clickhouse-json.ts` records), which is what makes a neutral home
- *   the requirement rather than the tidier option.
- *
- * Nothing here is Druid-specific: it is a property of JSON text and of
- * `JSON.parse`. ClickHouse avoids needing it only because it has a server-side
- * setting (`output_format_json_quote_64bit_integers`, #264) and Druid has none.
+ * Nothing here belongs to an engine: it is a property of JSON text and of
+ * `JSON.parse`.
  */
 
 /** `Number.MAX_SAFE_INTEGER` as digits: the widest integer JSON.parse keeps exact. */
@@ -60,8 +52,8 @@ function endOfString(text: string, start: number): number {
     index += 1;
     if (char === '"') break;
   }
-  // An unterminated string means a truncated body (a cancelled Druid query really
-  // does cut its own body mid-value): the rest is treated as string content, so
+  // An unterminated string means a truncated body (a cancelled query really does
+  // cut its server's body mid-value): the rest is treated as string content, so
   // nothing is rewritten and JSON.parse is left to report the real problem.
   return index;
 }
@@ -103,11 +95,11 @@ function numberAt(text: string, start: number): NumberSpan | null {
  * Quote every integer literal `JSON.parse` would round, leaving everything else
  * byte-for-byte alone.
  *
- * Live-verified on real ingested data: a Druid BIGINT column holding
- * 9007199254740993 (2^53 + 1) comes back as the UNQUOTED JSON number
- * 9007199254740993, and `JSON.parse` turns it into 9007199254740992 with no error
- * whatsoever. The quoted value then reaches the UI as an exact string, which is
- * what the `pg` driver already does for `int8`.
+ * Live-verified on real ingested data: a BIGINT column holding 9007199254740993
+ * (2^53 + 1) comes back from a SQL server's HTTP answer as the UNQUOTED JSON
+ * number 9007199254740993, and `JSON.parse` turns it into 9007199254740992 with
+ * no error whatsoever. The quoted value then reaches the caller as an exact
+ * string.
  *
  * A single pass, and STRING-AWARE, which is the whole difficulty: a digit run
  * inside `"id: 9007199254740993"` is a value the user is reading and must not be
@@ -153,7 +145,7 @@ export function quoteUnsafeIntegers(jsonText: string): string {
  * `quoteUnsafeIntegers` answers this for integers only, which is enough where the
  * value goes on to a grid cell. A caller that shows the JSON TEXT itself needs the
  * wider question, because a fraction or an exponent is rounded just as silently:
- * measured on LibreDB 0.2.2, a stored `12345678901234567890.12` came back as
+ * measured on a stored JSON document, a stored `12345678901234567890.12` came back as
  * 12345678901234567000, `0.1234567890123456789` as 0.12345678901234568 and `1e400`
  * as null. Each literal is compared with its own round trip, so a spelling the trip
  * would merely change (`1.0`) counts too: the stored text is the only one that is

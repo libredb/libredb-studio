@@ -3,7 +3,7 @@ import { QueryError } from "@/lib/db/errors";
 import { countLabel } from "@/lib/db/vector/count";
 import { nonFiniteScoreWarning, scoreCell, scoreColumnType } from "@/lib/db/vector/score";
 import type { VectorColumn, VectorFieldInfo } from "@/lib/db/vector/types";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 import { payloadColumnName, QDRANT_STUDIO_COLUMNS, renameWarning, vectorColumnName } from "./columns";
 import { qdrantScoreSemantics, qdrantVectorColumn } from "./qdrant-vocabulary";

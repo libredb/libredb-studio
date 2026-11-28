@@ -36,7 +36,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import type { DuckDBClient, DuckDBStatementResult } from "./client";
 import { parseDuckDBSize, readCount } from "./values";
 

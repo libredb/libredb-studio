@@ -94,7 +94,7 @@ import {
   requireSourceKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
-import { formatBytes } from "../../utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";

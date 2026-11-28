@@ -26,7 +26,7 @@ import { type CallOptions, type MilvusClient, MilvusError } from "@/lib/db/provi
 import { buildMilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { createGrpcMilvusClient } from "@/lib/db/providers/vector/milvus/grpc-client";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import expectedCells from "../fixtures/vector/milvus/expected-cells.json";
 import { assertUnchanged, compareSnapshots } from "./support/compare";

@@ -70,8 +70,7 @@ import {
   RowBudgetRefusal,
   TimeBudgetRefusal,
 } from "../../errors";
-import { formatBytes } from "../../utils/pool-manager";
-import { carriesLossyNumber } from "../../utils/json-integers";
+import { carriesLossyNumber, formatBytes } from "@libredb/provider-sdk/values";
 import { assertRegularFilesOrMissing } from "../../utils/regular-file";
 import {
   assertReadOnlyBudget,

@@ -110,7 +110,8 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     ...CONNECTION_OUTSIDE,
     // The influxql family module: the lexer, the policy and the agent's statement reader the provider runs.
     `${FAMILY_DIR}/`,
-    "src/lib/db/utils/json-integers.ts",
+    // The SDK's value readers, which `quoteUnsafeIntegers` is one of.
+    "packages/provider-sdk/src/values/index.ts",
     "src/lib/db/utils/bounded-limiter.ts",
     "src/lib/db/base-provider.ts",
     "src/lib/db/object-kinds.ts",
@@ -124,7 +125,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/sql/leading-keyword.ts",
     "src/lib/sql/statement-splitter.ts",
     "src/lib/sql/spans.ts",
-    "src/lib/db/utils/json-integers.ts",
+    "packages/provider-sdk/src/values/index.ts",
     "src/lib/db/utils/bounded-limiter.ts",
     // The shared column naming every SQL provider uses, a pure module that imports nothing.
     "src/lib/db/utils/result-fields.ts",
@@ -553,8 +554,8 @@ describe("planted violations fail by name", () => {
     [
       "errors.ts",
       "errors.ts",
-      'import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";\n',
-      `layer: ${DIR}/errors.ts imports a value from @/lib/db/utils/json-integers, which its layer may not`,
+      'import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";\n',
+      `layer: ${DIR}/errors.ts imports a value from @libredb/provider-sdk/values, which its layer may not`,
     ],
     [
       "labels.ts",
@@ -642,7 +643,7 @@ describe("planted violations fail by name", () => {
   test.each([
     ["sql-provider.ts", "sql-policy.ts", 'import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";\n'],
     ["sql-objects.ts", "sql-policy.ts", 'import { INFLUX_LIST_CAP } from "./connection-options";\n'],
-    ["sql-results.ts", "sql-policy.ts", 'import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";\n'],
+    ["sql-results.ts", "sql-policy.ts", 'import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";\n'],
     ["influxql-results.ts", "run-database.ts", 'import { evaluateInfluxql } from "./influxql-policy";\n'],
     ["influxql-provider.ts", "run-database.ts", 'import { BaseDatabaseProvider } from "@/lib/db/base-provider";\n'],
     ["index.ts", "labels.ts", 'export { InfluxDBProvider } from "./influxql-provider";\n'],

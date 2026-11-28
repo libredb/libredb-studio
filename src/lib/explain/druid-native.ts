@@ -1,6 +1,6 @@
 // db/utils, not the Druid provider directory: an explain strategy that imported from
 // a provider would tie the registry to it (the rule clickhouse-json.ts records).
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
 

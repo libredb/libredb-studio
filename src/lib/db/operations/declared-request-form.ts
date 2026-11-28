@@ -40,7 +40,7 @@ import type {
   AgentRequestRefusal,
   AgentRequestRule,
 } from "@libredb/provider-sdk/manifest";
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 
 /** A refusal of a request: the declared code, and the declared sentence as the message. */
 export interface DeclaredRequestRefusal {

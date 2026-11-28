@@ -1,41 +1,38 @@
 /**
- * 64-bit integers in JSON text (issue #265, design spec section 3)
+ * 64-bit integers in JSON text.
  *
- * The scanner these tests cover started inside the Druid HTTP transport and moved
- * here because a SECOND parser needs it: Druid's EXPLAIN answers with columns that
- * are themselves JSON *text*, so the explain strategy parses one layer deeper than
- * the transport can reach, and an explain strategy must not import from a provider
- * directory (the rule `clickhouse-json.ts` records - it would tie the registry to
- * one provider). Both callers now import it from `@/lib/db/utils`.
+ * Two kinds of caller need the scanner: one that parses a server's answer body, and one that parses JSON text a
+ * string value of that body carries (a query plan column, for example), which the outer pass rightly leaves alone,
+ * so the inner parse runs the scanner a second time.
  *
- * Every body replayed below was captured verbatim from Apache Druid 37.0.0, and the
- * hazard is pinned first: `JSON.parse` rounds a 64-bit literal silently, with no
- * error whatsoever.
+ * Every body replayed below was captured from a SQL server's HTTP answer, verbatim except for the table and column
+ * names, which are neutral ones, and the hazard is pinned first:
+ * `JSON.parse` rounds a 64-bit literal silently, with no error whatsoever.
  */
 import { describe, expect, test } from "bun:test";
-import { carriesLossyNumber, quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { carriesLossyNumber, quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 
 /**
- * `SELECT id, name, snowflake_id FROM libredb_demo WHERE region = ? LIMIT 1` as the
+ * `SELECT id, name, wide_id FROM demo_table WHERE region = ? LIMIT 1` as the
  * server returned it: three header rows and then the data, with the BIGINT unquoted
  * - the exact 2^53+1 value that `JSON.parse` rounds to ...992.
  */
-const DRUID_SELECT_BODY =
-  '[["id","name","snowflake_id"],["LONG","STRING","LONG"],["BIGINT","VARCHAR","BIGINT"],[1030,"alpha",9007199254740993]]';
+const CAPTURED_SELECT_BODY =
+  '[["id","name","wide_id"],["LONG","STRING","LONG"],["BIGINT","VARCHAR","BIGINT"],[1030,"alpha",9007199254740993]]';
 
 /**
- * One EXPLAIN plan column, verbatim, for
- * `SELECT id FROM "libredb_demo" WHERE snowflake_id = 9007199254740993`. It is the
+ * One EXPLAIN plan column, verbatim except for those names, for
+ * `SELECT id FROM "demo_table" WHERE wide_id = 9007199254740993`. It is the
  * value of a JSON string, which is why the outer pass leaves its digits alone and
  * the inner parse has to run the scanner itself.
  */
-const DRUID_PLAN_COLUMN =
-  '[{"query":{"queryType":"scan","dataSource":{"type":"table","name":"libredb_demo"},' +
-  '"filter":{"type":"equals","column":"snowflake_id","matchValueType":"LONG","matchValue":9007199254740993},' +
+const CAPTURED_PLAN_COLUMN =
+  '[{"query":{"queryType":"scan","dataSource":{"type":"table","name":"demo_table"},' +
+  '"filter":{"type":"equals","column":"wide_id","matchValueType":"LONG","matchValue":9007199254740993},' +
   '"columns":["id"]}}]';
 
 describe("quoteUnsafeIntegers", () => {
-  /** The exact value the live cluster returned for libredb_demo.snowflake_id. */
+  /** The exact value the captured server returned for demo_table.wide_id. */
   const LIVE_UNSAFE = "9007199254740993";
 
   test("proves the hazard it exists for", () => {
@@ -45,7 +42,7 @@ describe("quoteUnsafeIntegers", () => {
   });
 
   test("makes the live value survive JSON.parse exactly", () => {
-    const parsed = JSON.parse(quoteUnsafeIntegers(DRUID_SELECT_BODY)) as unknown[][];
+    const parsed = JSON.parse(quoteUnsafeIntegers(CAPTURED_SELECT_BODY)) as unknown[][];
 
     expect(parsed[3][2]).toBe(LIVE_UNSAFE);
   });
@@ -53,7 +50,7 @@ describe("quoteUnsafeIntegers", () => {
   // The second caller's shape: a plan literal nested inside what was a JSON string
   // one layer up, which is the case the transport's own pass cannot reach.
   test("makes a plan literal survive the inner parse exactly", () => {
-    const [entry] = JSON.parse(quoteUnsafeIntegers(DRUID_PLAN_COLUMN)) as [
+    const [entry] = JSON.parse(quoteUnsafeIntegers(CAPTURED_PLAN_COLUMN)) as [
       { query: { filter: { matchValue: unknown } } },
     ];
 
@@ -130,7 +127,7 @@ describe("quoteUnsafeIntegers", () => {
     expect(quoteUnsafeIntegers(body)).toBe(body);
   });
 
-  // A cancelled Druid query really does truncate its own body mid-value. The pass
+  // A cancelled query really does truncate its server's body mid-value. The pass
   // runs before JSON.parse, so it has to walk one without throwing and leave the
   // parser to report the real problem.
   test.each<[string, string]>([
@@ -149,7 +146,7 @@ describe("quoteUnsafeIntegers", () => {
 
 describe("carriesLossyNumber", () => {
   // A stored JSON value is shown re-serialised, so every number in it makes the round
-  // trip `JSON.stringify(JSON.parse(literal))`. Measured on LibreDB 0.2.2: these come back
+  // trip `JSON.stringify(JSON.parse(literal))`. Measured on a stored JSON document: these come back
   // as 9007199254740992, 12345678901234567000, 0.12345678901234568 and null.
   test.each<[string, string]>([
     ["an integer past 2^53", '{"n":9007199254740993}'],

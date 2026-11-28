@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { INWARD_IMPORTS } from "./provider-imports/inward-allowlist";
+import { directoryImports, homeRecordFindings, RECORD_FILE, tableRows } from "./provider-imports/legacy-homes";
 import {
   type AllowlistEntry,
   compareToAllowlist,
@@ -41,7 +42,6 @@ const statementLanguage = legacyStatementLanguageTable();
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ALLOWLIST_FILE = "tests/unit/lib/db/provider-imports/inward-allowlist.ts";
-const RECORD_FILE = "docs/PROVIDER_IMPORTS.md";
 const REAL_TREE_TIMEOUT = 30_000;
 
 /** A planted tree: the files with their text, and the set of every listed path the resolver may answer with. */
@@ -267,24 +267,6 @@ describe("the real tree", () => {
   );
 });
 
-/** The rows of the Markdown table in `text` whose header row is `header`, each cell trimmed and unquoted. */
-function tableRows(text: string, header: string): string[][] {
-  const lines = text.split("\n");
-  const start = lines.indexOf(header);
-  if (start < 0) throw new Error(`${RECORD_FILE} has no table with the header ${header}`);
-  const rows: string[][] = [];
-  for (const line of lines.slice(start + 2)) {
-    if (!line.startsWith("|")) break;
-    rows.push(
-      line
-        .slice(1, -1)
-        .split("|")
-        .map((cell) => cell.trim().replace(/^`(.*)`$/, "$1")),
-    );
-  }
-  return rows;
-}
-
 const INWARD_HEADER = "| Core file | Imports | Removed by | Destination |";
 const OUTWARD_HEADER = "| Module | Destination | Reason |";
 
@@ -330,7 +312,7 @@ function inwardRecordFindings(rows: readonly string[][], allowlist: readonly All
   return findings;
 }
 
-const DESTINATION = /^(SDK \/[a-z][a-z-]*|host service: \S.*|core only)$/;
+const DESTINATION = /^(SDK \/[a-z][a-z-]*|host service: \S.*|core only|provider package: \S+)$/;
 
 /** What the outward table gets wrong against the core modules provider files import, one sentence each. */
 function outwardRecordFindings(rows: readonly string[][], outward: ReadonlyMap<string, readonly string[]>): string[] {
@@ -344,6 +326,10 @@ function outwardRecordFindings(rows: readonly string[][], outward: ReadonlyMap<s
   for (const [module, row] of recorded) {
     if (!outward.has(module)) findings.push(`${module} has a row in the outward table but no provider imports it`);
     if (!DESTINATION.test(row[1])) findings.push(`${module}: "${row[1]}" is not a destination`);
+    const providerPackage = /^provider package: (\S+)$/.exec(row[1]);
+    if (providerPackage && !SHIPPED_TYPE_IDS.has(providerPackage[1])) {
+      findings.push(`${module}: "${row[1]}" names no shipped engine`);
+    }
     if (row[2] === "") findings.push(`${module}: the Reason cell is empty`);
   }
   const order = rows.map((row) => row[0]);
@@ -382,22 +368,26 @@ describe("the decision record", () => {
   test("a planted outward table fails on a missing row, a stale row, a malformed destination and an empty reason", () => {
     const outward = new Map([
       ["src/lib/db/errors.ts", [POSTGRES]],
+      ["src/lib/languages/cobol/lexer.ts", [POSTGRES]],
       ["src/lib/logger.ts", [POSTGRES]],
     ]);
     const rows = [
       ["src/lib/db/errors.ts", "SDK errors", ""],
       ["src/lib/db/types.ts", "core only", "a reason"],
+      ["src/lib/languages/cobol/lexer.ts", "provider package: cobol", "one engine's lexer"],
     ];
     expect(outwardRecordFindings(rows, outward)).toEqual([
       `src/lib/logger.ts is imported by ${POSTGRES} but has no row in the outward table`,
       'src/lib/db/errors.ts: "SDK errors" is not a destination',
       "src/lib/db/errors.ts: the Reason cell is empty",
       "src/lib/db/types.ts has a row in the outward table but no provider imports it",
+      'src/lib/languages/cobol/lexer.ts: "provider package: cobol" names no shipped engine',
     ]);
     expect(
       outwardRecordFindings(
         [
           ["src/lib/db/errors.ts", "SDK /errors", "the error classes"],
+          ["src/lib/languages/cobol/lexer.ts", "provider package: postgres", "one engine's lexer"],
           ["src/lib/logger.ts", "host service: logging", "the process logger"],
         ],
         outward,
@@ -428,6 +418,125 @@ describe("the decision record", () => {
     expect(() => tableRows("# Provider import census\n", INWARD_HEADER)).toThrow(
       `${RECORD_FILE} has no table with the header ${INWARD_HEADER}`,
     );
+  });
+});
+
+const ACME = "src/lib/db/providers/stream/acme/";
+const LEAVES = "leaves with the legacy class";
+
+/** A planted provider directory importing in every declaration form the record reads. */
+function plantAcme(): { files: SourceText[]; listed: ReadonlySet<string> } {
+  return plant({
+    [`${ACME}index.ts`]: [
+      'import { BaseThing } from "@/lib/db/base";',
+      'import type { Row, Shape as Form } from "@/lib/db/types";',
+      'import * as everything from "../../../utils/all";',
+      'import fallback from "@/lib/db/default-thing";',
+      'import { applyBound } from "@libredb/provider-sdk/calls";',
+      'import { encodeValue } from "@libredb/provider-sdk";',
+      'import { local } from "./local";',
+      'import { other } from "../other/index";',
+      'import pg from "pg";',
+      'import "@/lib/db/side";',
+      'export { reexported } from "@/lib/db/reexport";',
+      'export * from "@/lib/db/star";',
+      'export * as named from "@/lib/db/named-star";',
+      "export const n = { BaseThing, everything, fallback, applyBound, encodeValue, local, other, pg };",
+      "export type T = Row | Form;",
+      "export { n as again };",
+    ].join("\n"),
+    [`${ACME}local.ts`]: 'import { BaseThing } from "@/lib/db/base";\nexport const local = BaseThing;',
+    "src/lib/db/providers/stream/other/index.ts": 'import { x } from "@/lib/db/elsewhere";\nexport const other = x;',
+    "src/lib/db/base.ts": "export class BaseThing {}",
+    "src/lib/db/types.ts": "export type Row = 1; export type Shape = 2;",
+    "src/lib/db/utils/all.ts": "export const all = 1;",
+    "src/lib/db/default-thing.ts": "export default 1;",
+    "src/lib/db/side.ts": "export {};",
+    "src/lib/db/reexport.ts": "export const reexported = 1;",
+    "src/lib/db/star.ts": "export const star = 1;",
+    "src/lib/db/named-star.ts": "export const named = 1;",
+    "src/lib/db/elsewhere.ts": "export const x = 1;",
+  });
+}
+
+describe("a provider directory's record of its core imports", () => {
+  test("directoryImports reads every import and export-from binding of a provider directory, split into core and SDK pairs", () => {
+    const tree = plantAcme();
+    expect(directoryImports(tree.files, ACME, tree.listed)).toEqual({
+      directory: ACME,
+      core: [
+        { module: "src/lib/db/base.ts", symbol: "BaseThing" },
+        { module: "src/lib/db/default-thing.ts", symbol: "default" },
+        { module: "src/lib/db/named-star.ts", symbol: "*" },
+        { module: "src/lib/db/reexport.ts", symbol: "reexported" },
+        { module: "src/lib/db/side.ts", symbol: "*" },
+        { module: "src/lib/db/star.ts", symbol: "*" },
+        { module: "src/lib/db/types.ts", symbol: "Row" },
+        { module: "src/lib/db/types.ts", symbol: "Shape" },
+        { module: "src/lib/db/utils/all.ts", symbol: "*" },
+      ],
+      sdk: [
+        { module: "@libredb/provider-sdk", symbol: "encodeValue" },
+        { module: "@libredb/provider-sdk/calls", symbol: "applyBound" },
+      ],
+    });
+  });
+
+  test("directoryImports throws on a specifier that resolves to no listed file, naming it", () => {
+    const tree = plant({ [`${ACME}index.ts`]: 'import { gone } from "@/lib/db/gone";' });
+    expect(() => directoryImports(tree.files, ACME, tree.listed)).toThrow(
+      `${ACME}index.ts: "@/lib/db/gone" resolves to no listed file`,
+    );
+  });
+
+  test("a provider directory's record of its core imports fails on an unrecorded core import, an unrecorded SDK import, a stale row, an SDK row the directory does not import from that subpath, a duplicate row and an unknown source", () => {
+    const imports = {
+      directory: ACME,
+      core: [
+        { module: "src/lib/db/base.ts", symbol: "BaseThing" },
+        { module: "src/lib/db/types.ts", symbol: "Row" },
+        { module: "src/lib/db/types.ts", symbol: "Shape" },
+      ],
+      sdk: [
+        { module: "@libredb/provider-sdk", symbol: "encodeValue" },
+        { module: "@libredb/provider-sdk/calls", symbol: "applyBound" },
+        { module: "@libredb/provider-sdk/values", symbol: "measure" },
+      ],
+    };
+    const rows = [
+      ["src/lib/db/base.ts", "BaseThing", "the record defineProvider makes", LEAVES],
+      ["src/lib/db/base.ts", "BaseThing", "the record defineProvider makes", LEAVES],
+      ["src/lib/db/gone.ts", "gone", "none", LEAVES],
+      ["src/lib/db/kinds.ts", "applyBound", "SDK /calls", "@libredb/provider-sdk/calls"],
+      ["src/lib/db/kinds.ts", "measure", "SDK /calls", "@libredb/provider-sdk/calls"],
+      ["src/lib/db/types.ts", "Shape", "SDK /calls", "@libredb/provider-sdk/calls"],
+      ["src/lib/db/aaa.ts", "first", "none", "somewhere else"],
+    ];
+    expect(homeRecordFindings(rows, imports)).toEqual([
+      `@libredb/provider-sdk encodeValue: ${ACME} imports it from the SDK, and the record has no row for it`,
+      `@libredb/provider-sdk/values measure: ${ACME} imports it from the SDK, and the record has no row for it`,
+      'src/lib/db/aaa.ts first: "somewhere else" is neither "leaves with the legacy class" nor an @libredb/provider-sdk subpath',
+      "src/lib/db/base.ts BaseThing: the record has two rows for it",
+      `src/lib/db/gone.ts gone: the record says it leaves with the legacy class, and ${ACME} no longer imports it from core`,
+      `src/lib/db/kinds.ts measure: the record says @libredb/provider-sdk/calls, and ${ACME} does not import it from there`,
+      `src/lib/db/types.ts Row: ${ACME} imports it from core, and the record has no row for it`,
+      `src/lib/db/types.ts Shape: the record says @libredb/provider-sdk/calls, and ${ACME} does not import it from there`,
+      `src/lib/db/types.ts Shape: the record says @libredb/provider-sdk/calls, and ${ACME} imports it from core`,
+      "the record is not in module and symbol order",
+    ]);
+    expect(
+      homeRecordFindings(
+        [
+          ["src/lib/db/base.ts", "BaseThing", "the record defineProvider makes", LEAVES],
+          ["src/lib/db/kinds.ts", "applyBound", "SDK /calls", "@libredb/provider-sdk/calls"],
+          ["src/lib/db/types.ts", "Row", "a call type", LEAVES],
+          ["src/lib/db/types.ts", "Shape", "a call type", LEAVES],
+          ["src/lib/db/values.ts", "encodeValue", "the SDK's root", "@libredb/provider-sdk"],
+          ["src/lib/db/values.ts", "measure", "SDK /values", "@libredb/provider-sdk/values"],
+        ],
+        imports,
+      ),
+    ).toEqual([]);
   });
 });
 

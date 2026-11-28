@@ -18,7 +18,7 @@ import type {
   WireFunctionSchema,
   WireStatus,
 } from "@/lib/db/providers/vector/milvus/client";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures", "vector", "milvus");
 

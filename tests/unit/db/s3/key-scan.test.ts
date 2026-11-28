@@ -14,7 +14,7 @@ import {
   scanS3KeysPage,
 } from "@/lib/db/providers/objectstore/s3/key-scan";
 import type { KeyScanOptions, KeyScanPage } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import {
   bucketsXml,
   errorXml,

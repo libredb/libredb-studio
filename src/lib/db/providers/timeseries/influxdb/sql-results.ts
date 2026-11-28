@@ -22,7 +22,7 @@
  * it is one forward walk, and the body is walked line by line, never split whole, so at most `rowCut + 1` line
  * strings exist however short its lines are (R46).
  */
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { InfluxAnswerShapeError } from "./errors";

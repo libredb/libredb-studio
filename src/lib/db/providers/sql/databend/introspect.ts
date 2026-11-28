@@ -44,7 +44,8 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
+import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { quoteLiteral } from "@/lib/sql/values";
 import { DATABEND_LIMITER_OPTIONS } from "./connection-options";
 import {

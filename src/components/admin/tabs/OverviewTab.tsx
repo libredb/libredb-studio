@@ -11,7 +11,7 @@ import { useAllConnections } from "@/hooks/use-all-connections";
 import { getDBIcon, getDBColor, getDBConfig, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
 import { isDatabaseType } from "@/lib/db/type-id";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import {
   type DatabaseType,
   type DatabaseConnection,

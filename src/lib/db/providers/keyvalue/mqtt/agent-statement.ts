@@ -23,7 +23,7 @@
  * PUBLISH, CONNECT takes no Will, and the valve re-checks every outbound byte (`encoder.ts`, `valve.ts`). This is what
  * lets the model read why it was refused, before anything is sent.
  */
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 import { MQTT_MAX_STRING_BYTES, MQTT_READ_BUDGET_MS } from "./constants";
 
 export type MqttAgentRefusalCode = "request" | "metadata-only";

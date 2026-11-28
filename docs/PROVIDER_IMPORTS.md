@@ -29,11 +29,12 @@ The readers that the agent admissions and the confirmation gate import from prov
 
 ## Destinations
 
-Each core module provider code imports gets one destination of three kinds.
+Each core module provider code imports gets one destination of four kinds.
 
 - `SDK /<subpath>`: pure code or types a provider needs to compute its own answers, the same for every provider, with no I/O, no process-wide state, no environment or working directory and no host policy. The subpath is the one it is proposed under, and PR 9 fixes it.
 - `host service: <name>`: code that carries host policy, process-wide state or I/O the host owns, such as egress and transports, trust material, files, logging, ambient credentials, the run registry and in-flight bounds, and the secret scrub. A provider reaches it through the context the host passes.
 - `core only`: code that holds a core decision or reads a core registry. A provider's import of it is a reverse dependency the named slice removes, and the provider receives the value through the contract instead.
+- `provider package: <type-id>`: code of one engine, its statement language's included, which moves into that engine's provider package with it; the SDK names no engine.
 
 The destination is that of what provider code imports from the module.
 Where that part mixes pure code with host state, the destination is the stricter one, and the reason names the split PR 9 makes.
@@ -48,7 +49,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/auth/aws/sigv4.ts` | SDK /auth | The SigV4 core is pure computation over `node:crypto`, with the signing policy passed in by the caller. |
 | `src/lib/db/auth/google/credentials.ts` | host service: ambient credentials | It reads the server's own identity in Application Default Credentials order, credentials the host owns. |
 | `src/lib/db/auth/google/token-source.ts` | host service: ambient credentials | It signs, fetches and refreshes access tokens over the host's guarded egress. |
-| `src/lib/db/base-provider.ts` | core only | The base class of the legacy provider bridge reads core registries (the engine facets and the driver error rows); a native provider is declared through the SDK's contract instead. |
+| `src/lib/db/base-provider.ts` | core only | The base class of the legacy provider bridge, which reads core registries (the engine facets and the driver error rows); a package's provider is the record `defineProvider` makes instead. |
 | `src/lib/db/connection-fingerprint.ts` | host service: connection fingerprint | Which fields name the server a plan was made against is a host decision the apply step checks, so the host computes the fingerprint and passes it. |
 | `src/lib/db/connection-string/shared.ts` | SDK /manifest | Pure parsing helpers a connection string row composes. |
 | `src/lib/db/connection-string/types.ts` | SDK /manifest | The types of the connection string functions a declaration names, and what a paste parses to. |
@@ -65,8 +66,8 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/credential-warnings.ts` | core only | The seed credential refusal is a core check over a core table keyed by type-id; core runs it before it builds the provider, as FND-2 did for the other connection checks. |
 | `src/lib/db/destructive-vocabulary.ts` | core only | The shape of the confirmation gate's rows, which move into core statement-language family modules in PR 8b and the language slices, so no provider declares one. |
 | `src/lib/db/editor-language/types.ts` | SDK /manifest | The editor language row contract; its Monaco types go with the browser catalog of phase 3. |
-| `src/lib/db/engine-facets/types.ts` | SDK /manifest | The engine facets row contract. |
-| `src/lib/db/errors.ts` | SDK /errors | The error classes a provider raises and core classifies by kind, the same for every provider. |
+| `src/lib/db/engine-facets/types.ts` | core only | The type of the legacy engine facets rows; a package states its `facets` in its declaration, typed by SDK /manifest's generated types. |
+| `src/lib/db/errors.ts` | core only | Studio's error classes, which legacy providers raise and core classifies by kind; a package raises none of them, and the error record's vocabulary is SDK /errors. |
 | `src/lib/db/graph-policy-profiles.ts` | core only | Core's table of graph policy profiles by type-id, which itself imports the neo4j profile; neo4j's editor language reads its own profile instead. |
 | `src/lib/db/graph/bolt/bolt-client.ts` | host service: Bolt transport | The one audited neo4j-driver-lite client opens sockets and reads trust files, I/O the host owns. |
 | `src/lib/db/graph/bolt/client.ts` | SDK /graph | The pure `GraphClient` interface and its error type, the graph layer's I/O seam. |
@@ -81,7 +82,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/grpc/tls.ts` | host service: gRPC transport | It turns the TLS panel into trust material and a client identity for the host's channel. |
 | `src/lib/db/http/bounded-body.ts` | SDK /net | Pure bounded UTF-8 reading of a response body. |
 | `src/lib/db/http/egress-policy.ts` | host service: egress | The egress decision and the guarded DNS and HTTP agents carry host policy. |
-| `src/lib/db/http/endpoint.ts` | host service: egress | It mixes pure host and port validators with the link-local and redirect refusals of the egress policy it imports; the SDK takes the pure validators when PR 9 splits it. |
+| `src/lib/db/http/endpoint.ts` | host service: egress | The host and port validators raise Studio's configuration error class, beside the link-local and redirect refusals of the egress policy; a package reads its connection fields from the open context. |
 | `src/lib/db/http/fetch-failure.ts` | SDK /net | Pure wording of a network failure; the TLS failure code test it reads from `node-transport.ts` moves with it when PR 9 splits that module. |
 | `src/lib/db/http/node-transport.ts` | host service: egress | The shared REST transport over Node's sockets, bound to the egress policy. |
 | `src/lib/db/inventory-bounds.ts` | host service: run bounds | How much one inventory read may take is a host decision the object browser and the inventory route share; a provider receives the bound. |
@@ -89,29 +90,27 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/migration-ddl/shared.ts` | SDK /manifest | The statement building blocks Studio's migration DDL function table binds and an engine's own migration DDL function reads. |
 | `src/lib/db/migration-ddl/types.ts` | SDK /manifest | The types of the migration DDL row and of the migration DDL functions a declaration names. |
 | `src/lib/db/object-edit.ts` | SDK /objects | The pure edit text bound and position mapping. |
-| `src/lib/db/object-kinds.ts` | SDK /objects | Pure derivations over an engine's object model. |
+| `src/lib/db/object-kinds.ts` | core only | Core's derivations over an engine's object model, run before a package's call; a package states its model as data. |
 | `src/lib/db/object-path.ts` | SDK /objects | The pure order and spelling of object paths. |
-| `src/lib/db/query-generators/shared.ts` | SDK /manifest | Pure pieces a query generator row shares. |
-| `src/lib/db/query-generators/types.ts` | SDK /manifest | The query generator row contract. |
+| `src/lib/db/query-generators/shared.ts` | core only | Pieces of the browser-read generator tables, which move onto the run-time catalog. |
+| `src/lib/db/query-generators/types.ts` | core only | The browser-read generator table contract, which moves onto the run-time catalog. |
 | `src/lib/db/read-allowance.ts` | host service: run bounds | The billed-read allowance is a ledger of one agent run or MCP call, which the host owns. |
-| `src/lib/db/read-only-budget.ts` | SDK /calls | The read-only call's budget check, the row, byte and time refusal openings and sentences, and the result byte measures, pure; every family's `queryReadOnly` reads it, so it sits in core beside the types and errors it reads rather than in the SQL family module, and the SDK's calls subpath already holds a result's byte budgets and row measure. |
-| `src/lib/db/redaction/metadata-only.ts` | SDK /redaction | Pure projection helpers for the metadata-only answer mode. |
+| `src/lib/db/read-only-budget.ts` | core only | Core's hold of every read-only answer, in Studio's own sentences and refusal classes; a package needs none of it, and measures its own answer with `encodedRowBytes` of SDK /calls if it must. |
+| `src/lib/db/redaction/metadata-only.ts` | core only | The legacy capability's metadata-only projection; a package's read-only answer is held to its declaration's `safeguards.metadataOnly`. |
 | `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | The redaction placeholder a command redaction reader writes. |
 | `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The types of the SQL grammar functions a declaration names. |
 | `src/lib/db/sql-writing/export-shared.ts` | SDK /manifest | Pure helpers the export forms share, which Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
 | `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder building blocks Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
 | `src/lib/db/sql-writing/types.ts` | SDK /manifest | The types of the SQL writing row and of the SQL writing functions a declaration names. |
-| `src/lib/db/types.ts` | SDK /types | The provider interface types, capabilities, results and schema shapes; the core-only types it also declares stay behind when PR 9 splits it. |
+| `src/lib/db/types.ts` | core only | The legacy provider interface and its types. Some of the types provider code imports have a type of the same name in SDK /calls, the result, schema, source and monitoring shapes such as `ColumnSchema`, `ObjectDetail` and `HealthInfo`; the rest have none, among them `DatabaseConnection` and `ProviderOptions`, which a contract-form provider reads from its open context (`OpenContext`), `ProviderExecutionContext`, whose read-only and file access posture it reads from the open context's policy (`OpenContext.policy`, an `OpenPolicy`), `QueryResult` and `ReadOnlyStatementMode`, which are `ExecuteAnswer` and `ReadOnlyMode` of SDK /calls, `ReadOnlyStatementBudget`, whose rows and bytes are `ReadBudget` of SDK /calls and whose time is the call context's `deadline` (`CallContext`), and `ProviderCapabilities`, `ProviderLabels` and `ObjectKindSpec`, which are members of its declaration. |
 | `src/lib/db/utils/admitted-file.ts` | host service: file admission | The file the host's legacy open admitted, read from what the host passed. |
 | `src/lib/db/utils/bounded-limiter.ts` | host service: run registry | Process-wide in-flight bounds and the run registry a provider cancels by. |
 | `src/lib/db/utils/catalog-sessions.ts` | SDK /util | An instance-scoped holder of per-catalog sessions with an injected clock, holding no process-wide state. |
 | `src/lib/db/utils/create-directory.ts` | host service: files | It creates folders on the host's file system. |
-| `src/lib/db/utils/json-integers.ts` | SDK /values | Pure handling of 64-bit integers in JSON text. |
-| `src/lib/db/utils/json-repeated-key.ts` | SDK /values | Pure detection of a repeated key in JSON text. |
 | `src/lib/db/utils/measured-aggregate.ts` | SDK /rows | Pure reading of a nullable aggregate. |
-| `src/lib/db/utils/pool-manager.ts` | SDK /rows | Provider code imports only `formatBytes` and `formatDuration`, pure display formatting; the pool helpers stay core. |
+| `src/lib/db/utils/pool-manager.ts` | SDK /values | Provider code imports only `formatDuration`, pure display formatting that joins `formatBytes` there when a package needs it; the pool helpers stay core. |
 | `src/lib/db/utils/positional-rows.ts` | SDK /rows | Pure keying of positionally read rows by column name. |
-| `src/lib/db/utils/query-limiter.ts` | host service: row limit | The default and maximum row limits are host policy, and the limiter resolves a grammar through core's registry; the host applies the bound, and the grammar readers it uses go to SDK /sql. |
+| `src/lib/db/utils/query-limiter.ts` | host service: row limit | The default and maximum row limits are host policy, and the limiter resolves a grammar through core's registry, which the other providers' imports of it still reach; a package's row bound is its execute request's page. |
 | `src/lib/db/utils/regular-file.ts` | host service: files | It opens and inspects files on the host's file system. |
 | `src/lib/db/utils/require-trust-material.ts` | host service: trust material | It reads the operator's CA material the host built the provider with. |
 | `src/lib/db/utils/require-tunnel-route.ts` | host service: tunnel route | It reads the tunnel route the host's factory decided and opened. |
@@ -124,36 +123,36 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/vector/score.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
 | `src/lib/db/vector/sparse.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
 | `src/lib/db/vector/types.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
-| `src/lib/db/write-reach.ts` | SDK /manifest | The pure fold of a provider's per-path write declaration. |
+| `src/lib/db/write-reach.ts` | core only | The legacy fold of a provider's per-path write declaration; a package declares `safeguards.writePaths`. |
 | `src/lib/editor/sql-completions.ts` | core only | The editor's Monaco completion provider, which reads core's grammar registry; mongodb imports only its `SchemaCompletionCache` type, which the editor language row contract carries. |
 | `src/lib/explain/bigquery-dryrun.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/explain/firestore-explain.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/is-record.ts` | SDK /util | A pure type guard. |
-| `src/lib/languages/influxql/agent-statement.ts` | SDK /influxql | The agent's reader of one InfluxQL statement, pure; the influxdb provider's agent profile runs it and the admission reads it. |
-| `src/lib/languages/influxql/lexer.ts` | SDK /influxql | InfluxQL read as tokens as the server's scanner reads it, pure; the provider, the editor language and the policy read it. |
-| `src/lib/languages/influxql/policy.ts` | SDK /influxql | The InfluxQL read policy, pure; the provider and the confirmation gate ask the same function. |
-| `src/lib/languages/kubectl/commands.ts` | SDK /kubectl | The kubectl subset as data, its commands, flags, refused commands and flags and every refusal sentence, pure; the parser, the console's context and the provider's labels read it. |
-| `src/lib/languages/kubectl/constants.ts` | SDK /kubectl | The five caps a kubectl statement is read against, the page size, the rows one statement reads, the objects of a document statement and the `--tail` and `--limit-bytes` maxima; the parser and the paging clause read them, and the provider's list walks and readers apply them. |
-| `src/lib/languages/kubectl/lexer.ts` | SDK /kubectl | The kubectl command line read as shell words and token roles, pure; the editor syntax and the parser read it. |
-| `src/lib/languages/kubectl/paging.ts` | SDK /kubectl | The console's reading of one kubectl run and the grid's paging clause, pure; the provider prepares and runs a statement through it, and the admission and the confirmation row read it. |
-| `src/lib/languages/kubectl/parse.ts` | SDK /kubectl | One kubectl statement read to a typed statement or a refusal sentence, pure; each reader of the provider's console takes the typed statement. |
-| `src/lib/languages/kubectl/quantity.ts` | SDK /kubectl | A Kubernetes quantity read as an exact fraction, its rounded values and sums, pure; `kubectl top`, the agent's cluster readings and the agent's tool input schema read it. |
-| `src/lib/languages/oxiacli/agent-statement.ts` | SDK /oxiacli | The agent's reader of one oxia client command. |
-| `src/lib/languages/oxiacli/commands.ts` | SDK /oxiacli | The oxia client command table and parser the provider and the gate read. |
-| `src/lib/languages/oxiacli/constants.ts` | SDK /oxiacli | The numbers and fixed names the oxia command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width. |
-| `src/lib/languages/oxiacli/lexer.ts` | SDK /oxiacli | The oxia command line's tokens and shell words, read by the editor syntax and the parser. |
-| `src/lib/languages/rediscli/command-text.ts` | SDK /rediscli | The Redis command line reader of the rediscli statement language family, pure code the redis provider runs and the confirmation gate reads; the SDK republishes a family's readers under the language's subpath. |
-| `src/lib/languages/weaviateapi/collection-facts.ts` | SDK /weaviateapi | What a Weaviate console request reads from the collection it names (its tenancy, vectors, properties and GraphQL selections), pure types; the provider's schema reader builds them and phase 1 of the request reader reads them. |
-| `src/lib/languages/weaviateapi/metadata-request.ts` | SDK /weaviateapi | The agent's reader of one Weaviate metadata request, pure; the provider runs it before it sends anything and the admission reads it. |
-| `src/lib/languages/weaviateapi/ops.ts` | SDK /weaviateapi | The operation names of the Weaviate REST API Studio sends, the console's seventeen and the three the provider writes itself, pure; the client seam and the route table read them. |
-| `src/lib/languages/weaviateapi/request.ts` | SDK /weaviateapi | The Weaviate console request reader, pure: phase 0 over the text alone and phase 1 over the collection's facts; the provider, the confirmation row and the agent reader run it. |
-| `src/lib/languages/weaviateapi/routes.ts` | SDK /weaviateapi | The Weaviate console as data, its dialect, seventeen read routes, closed keys, enumerations, bounds and refusal sentences, and every operation's method and path the client is built with; pure. |
+| `src/lib/languages/influxql/agent-statement.ts` | provider package: influxdb | The agent's reader of one InfluxQL statement, pure; the influxdb provider's agent profile runs it and the admission reads it. |
+| `src/lib/languages/influxql/lexer.ts` | provider package: influxdb | InfluxQL read as tokens as the server's scanner reads it, pure; the provider, the editor language and the policy read it. |
+| `src/lib/languages/influxql/policy.ts` | provider package: influxdb | The InfluxQL read policy, pure; the provider and the confirmation gate ask the same function. |
+| `src/lib/languages/kubectl/commands.ts` | provider package: kubernetes | The kubectl subset as data, its commands, flags, refused commands and flags and every refusal sentence, pure; the parser, the console's context and the provider's labels read it. |
+| `src/lib/languages/kubectl/constants.ts` | provider package: kubernetes | The five caps a kubectl statement is read against, the page size, the rows one statement reads, the objects of a document statement and the `--tail` and `--limit-bytes` maxima; the parser and the paging clause read them, and the provider's list walks and readers apply them. |
+| `src/lib/languages/kubectl/lexer.ts` | provider package: kubernetes | The kubectl command line read as shell words and token roles, pure; the editor syntax and the parser read it. |
+| `src/lib/languages/kubectl/paging.ts` | provider package: kubernetes | The console's reading of one kubectl run and the grid's paging clause, pure; the provider prepares and runs a statement through it, and the admission and the confirmation row read it. |
+| `src/lib/languages/kubectl/parse.ts` | provider package: kubernetes | One kubectl statement read to a typed statement or a refusal sentence, pure; each reader of the provider's console takes the typed statement. |
+| `src/lib/languages/kubectl/quantity.ts` | provider package: kubernetes | A Kubernetes quantity read as an exact fraction, its rounded values and sums, pure; `kubectl top`, the agent's cluster readings and the agent's tool input schema read it. |
+| `src/lib/languages/oxiacli/agent-statement.ts` | provider package: oxia | The agent's reader of one oxia client command. |
+| `src/lib/languages/oxiacli/commands.ts` | provider package: oxia | The oxia client command table and parser the provider and the gate read. |
+| `src/lib/languages/oxiacli/constants.ts` | provider package: oxia | The numbers and fixed names the oxia command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width. |
+| `src/lib/languages/oxiacli/lexer.ts` | provider package: oxia | The oxia command line's tokens and shell words, read by the editor syntax and the parser. |
+| `src/lib/languages/rediscli/command-text.ts` | provider package: redis | The Redis command line reader of the rediscli statement language family, pure code the redis provider runs and the confirmation gate reads. |
+| `src/lib/languages/weaviateapi/collection-facts.ts` | provider package: weaviate | What a Weaviate console request reads from the collection it names (its tenancy, vectors, properties and GraphQL selections), pure types; the provider's schema reader builds them and phase 1 of the request reader reads them. |
+| `src/lib/languages/weaviateapi/metadata-request.ts` | provider package: weaviate | The agent's reader of one Weaviate metadata request, pure; the provider runs it before it sends anything and the admission reads it. |
+| `src/lib/languages/weaviateapi/ops.ts` | provider package: weaviate | The operation names of the Weaviate REST API Studio sends, the console's seventeen and the three the provider writes itself, pure; the client seam and the route table read them. |
+| `src/lib/languages/weaviateapi/request.ts` | provider package: weaviate | The Weaviate console request reader, pure: phase 0 over the text alone and phase 1 over the collection's facts; the provider, the confirmation row and the agent reader run it. |
+| `src/lib/languages/weaviateapi/routes.ts` | provider package: weaviate | The Weaviate console as data, its dialect, seventeen read routes, closed keys, enumerations, bounds and refusal sentences, and every operation's method and path the client is built with; pure. |
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
 | `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` and `readsSqlText` read core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar are SDK /sql's since the split. |
 | `src/lib/sql/identifier.ts` | core only | `quoteIdentifier` reads core's SQL writing registry by type-id; a provider quotes through its engine's SQL writing row. |
 | `src/lib/sql/leading-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
-| `src/lib/sql/mssql-read-only-refusals.ts` | SDK /errors | The openings of the cut-value, serialised-result and time refusals the mssql provider raises as the classes of those error kinds, pure text; the provider imports only the openings, and core reads the module's two too-large answers through `read-only-refusals.ts`. |
+| `src/lib/sql/mssql-read-only-refusals.ts` | provider package: mssql | The openings of the cut-value, serialised-result and time refusals the mssql provider raises as the classes of those error kinds, pure text; the provider imports only the openings, and core reads the module's two too-large answers through `read-only-refusals.ts`. |
 | `src/lib/sql/operative-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/result-order.ts` | core only | `hasResultOrder` resolves the grammar by type-id through core's registry; the SDK reader takes the grammar as an argument once PR 9 splits it. |
 | `src/lib/sql/spans.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
@@ -161,7 +160,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/sql/statement-splitter.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/values.ts` | core only | `quoteLiteral` and `unquoteLiteral` read core's SQL writing registry by type-id; a provider spells literals through its engine's SQL writing row. |
 | `src/lib/sql/words.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
-| `src/lib/types.ts` | SDK /types | The connection record and result types a provider reads and returns; the core-only types it also declares stay behind when PR 9 splits it. |
+| `src/lib/types.ts` | core only | The legacy connection and result types; a package reads the open context and answers SDK /calls's types. |
 
 ## Imports between provider directories
 
@@ -183,7 +182,7 @@ These are a snapshot as well.
 - Helper packages travel the same way: `yaml`, `jose` and `@grpc/proto-loader`.
 - `node:` builtins are part of the runtime every provider runs in: `node:crypto` in 17 units, `node:net` in 9 and `node:tls` in 5 are the most used.
 - `monaco-editor` is imported by the 11 editor language rows, and goes with the browser catalog of phase 3.
-- `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts`, and `/errors` the error record's vocabulary and the driver error row contract that was `src/lib/db/driver-errors/types.ts`.
+- `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts` and the JSON text and byte count readers that were core's, and `/errors` the error record's vocabulary and the driver error row contract that was `src/lib/db/driver-errors/types.ts`.
 - `@libredb/provider-sdk/sql` is imported by 47 provider files, the 41 grammar rows among them, for the grammar facts' type and compatibility default.
 
 ## Imports from core into provider directories
@@ -264,6 +263,84 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | kubernetes native PR | moves with the kubernetes provider package as its connection importer |
 | `src/lib/provider-host/legacy-adapter/open.ts` | 42 provider entry modules, imported dynamically | PR 12 | providers loaded at runtime by the loader |
+
+## Kafka's core imports
+
+The table names every symbol Kafka's provider directory `src/lib/db/providers/stream/kafka/` imported from core when #2623 measured it, its home in the contract-form Kafka the provider's move builds, and where the legacy class imports it from now.
+"leaves with the legacy class" means the import belongs to a member of the legacy provider interface, or to a legacy row core reads through an inward pair, and leaves with Kafka's move; any other source is the `@libredb/provider-sdk` subpath the directory imports the symbol from.
+Every symbol the directory imports from `@libredb/provider-sdk` or one of its subpaths has a row as well.
+The Module cell is the core module's path at that measurement, so a moved piece keeps the path of a file that no longer exists.
+`tests/unit/db/kafka/core-imports.test.ts` holds the table to the source in "Kafka's provider imports from core only what leaves with the legacy class".
+
+| Module | Symbol | Kafka's contract-form home | Kafka imports it from |
+|---|---|---|---|
+| `src/lib/db/base-provider.ts` | `BaseDatabaseProvider` | none: a package's provider is the record `defineProvider` makes (C-40) | leaves with the legacy class |
+| `src/lib/db/engine-facets/types.ts` | `EngineFacets` | the declaration's `facets`; the legacy facets row is what core reads through its inward pair | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `AuthenticationError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `ByteBudgetRefusal` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `ConnectionError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `DatabaseConfigError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `QueryError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `RefusedBeforeSendError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `TimeBudgetRefusal` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/errors.ts` | `TimeoutError` | a failure the package raises, answered under C-112; a package can raise no error kind yet | leaves with the legacy class |
+| `src/lib/db/http/endpoint.ts` | `validateHost` | the open context's connection fields (C-109), under core's egress decision | leaves with the legacy class |
+| `src/lib/db/http/endpoint.ts` | `validatePort` | the open context's connection fields (C-109), under core's egress decision | leaves with the legacy class |
+| `src/lib/db/object-kinds.ts` | `applySourceBound` | `@libredb/provider-sdk/calls` (C-115) | `@libredb/provider-sdk/calls` |
+| `src/lib/db/object-kinds.ts` | `assertObjectPathShape` | core, before the call (M-89, C-115) | leaves with the legacy class |
+| `src/lib/db/object-kinds.ts` | `callerBoundTruncationReason` | none: a `describeMany` answer's truncation reason is the package's own sentence | leaves with the legacy class |
+| `src/lib/db/object-kinds.ts` | `findKind` | the declaration's object model; core refuses an unstated kind before the call (M-89) | leaves with the legacy class |
+| `src/lib/db/query-generators/shared.ts` | `objectSegment` | the run-time catalog's browser-read tables | leaves with the legacy class |
+| `src/lib/db/query-generators/types.ts` | `DialectGenerators` | the run-time catalog's browser-read tables | leaves with the legacy class |
+| `src/lib/db/read-only-budget.ts` | `TIME_BUDGET_PREFIX` | none: core holds every read-only answer in Studio's own sentences | leaves with the legacy class |
+| `src/lib/db/read-only-budget.ts` | `assertReadOnlyBudget` | core, before the call | leaves with the legacy class |
+| `src/lib/db/read-only-budget.ts` | `byteBudgetSentence` | none: core holds every read-only answer in Studio's own sentences | leaves with the legacy class |
+| `src/lib/db/read-only-budget.ts` | `measureResultBytes` | `encodedRowBytes` of `@libredb/provider-sdk/calls`, the host's hold deciding | leaves with the legacy class |
+| `src/lib/db/read-only-budget.ts` | `rowBudgetSentence` | none: core holds every read-only answer in Studio's own sentences | leaves with the legacy class |
+| `src/lib/db/redaction/metadata-only.ts` | `MetadataOnlyDeclaration` | the declaration's `safeguards.metadataOnly` (M-62) | leaves with the legacy class |
+| `src/lib/db/redaction/metadata-only.ts` | `MetadataProjection` | the declaration's `safeguards.metadataOnly`, which a package's read-only answer is held to; where it is held is not decided yet | leaves with the legacy class |
+| `src/lib/db/redaction/metadata-only.ts` | `MetadataProjectionError` | the declaration's `safeguards.metadataOnly`, which a package's read-only answer is held to; where it is held is not decided yet | leaves with the legacy class |
+| `src/lib/db/redaction/metadata-only.ts` | `declareMetadataOnly` | the declaration's `safeguards.metadataOnly` (M-62) | leaves with the legacy class |
+| `src/lib/db/redaction/metadata-only.ts` | `projectMetadata` | the declaration's `safeguards.metadataOnly`, which a package's read-only answer is held to; where it is held is not decided yet | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ActiveSessionDetails` | `ActiveSessionDetails` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ColumnSchema` | `ColumnSchema` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `Container` | `Container` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ContainerLevels` | the declaration's `objects` model and members (M-89) | leaves with the legacy class |
+| `src/lib/db/types.ts` | `DatabaseConnection` | the open context core builds (C-109) | leaves with the legacy class |
+| `src/lib/db/types.ts` | `DatabaseObject` | `DatabaseObject` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `DatabaseOverview` | `DatabaseOverview` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `HealthInfo` | `HealthInfo` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `IndexStats` | `IndexStats` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `KindCount` | `KindCount` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `MaintenanceResult` | the declaration's `facets.maintenance`, where Kafka offers none | leaves with the legacy class |
+| `src/lib/db/types.ts` | `MaintenanceType` | the declaration's `facets.maintenance`, where Kafka offers none | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ObjectDetail` | `ObjectDetail` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ObjectDetailBatch` | `ObjectDetailBatch` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ObjectKindSpec` | the declaration's `objects` model and members (M-89) | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ObjectSourceDocument` | `ObjectSourceDocument` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ObjectSourcePart` | `ObjectSourcePart` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `PerformanceMetrics` | `PerformanceMetrics` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ProviderCapabilities` | the declaration's `objects` model and members (M-89) | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ProviderExecutionContext` | the open context's policy (`OpenContext.policy`, an `OpenPolicy`), whose `readOnly` and `sendsStatements` Kafka reads | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ProviderLabels` | the declaration's editor and agent members | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ProviderOptions` | the open context core builds (C-109) | leaves with the legacy class |
+| `src/lib/db/types.ts` | `QueryResult` | `ExecuteAnswer` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ReadOnlyStatementBudget` | `ReadBudget` of `@libredb/provider-sdk/calls` for its rows and bytes, and the call context's `deadline` (`CallContext`) for its time | leaves with the legacy class |
+| `src/lib/db/types.ts` | `ReadOnlyStatementMode` | `ReadOnlyMode` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `SlowQueryStats` | `SlowQueryStats` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `StorageStats` | `StorageStats` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/types.ts` | `TableStats` | `TableStats` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/db/utils/json-integers.ts` | `quoteUnsafeIntegers` | `@libredb/provider-sdk/values` | `@libredb/provider-sdk/values` |
+| `src/lib/db/utils/json-repeated-key.ts` | `repeatsAKey` | `@libredb/provider-sdk/values` | `@libredb/provider-sdk/values` |
+| `src/lib/db/utils/pool-manager.ts` | `formatBytes` | `@libredb/provider-sdk/values` | `@libredb/provider-sdk/values` |
+| `src/lib/db/utils/query-limiter.ts` | `DEFAULT_QUERY_LIMIT` | the execute request's page (C-85) and the declaration's agent overlay | leaves with the legacy class |
+| `src/lib/db/write-reach.ts` | `noWritePath` | the declaration's `safeguards.writePaths` | leaves with the legacy class |
+| `src/lib/types.ts` | `ColumnSchema` | `ColumnSchema` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/types.ts` | `DatabaseConnection` | the open context's `connection` (C-109) | leaves with the legacy class |
+| `src/lib/types.ts` | `QueryResult` | `ExecuteAnswer` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/types.ts` | `QueryWarning` | `Warning` of `@libredb/provider-sdk/calls` | leaves with the legacy class |
+| `src/lib/types.ts` | `SSLConfig` | the open context's `tls` (C-109) | leaves with the legacy class |
+| `src/lib/types.ts` | `SSLMode` | the open context's `tls` (C-109) | leaves with the legacy class |
 
 ## Slices of PR 8
 

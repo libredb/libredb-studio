@@ -11,7 +11,7 @@
  */
 import { QueryError } from "@/lib/db/errors";
 import type { DatabaseOverview, DatabaseType, HealthInfo, IndexStats, TableStats } from "@/lib/db/types";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 import { serverText } from "@/lib/db/utils/server-text";
 import type { CheckHealthResponse, WireIndexDescription, WireKeyValuePair } from "./client";
 import { indexParam } from "./schema";

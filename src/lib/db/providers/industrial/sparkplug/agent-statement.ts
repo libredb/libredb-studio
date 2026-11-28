@@ -27,7 +27,7 @@
  * PUBLISH, and CONNECT takes no Will (`encoder.ts`). This is what lets the model read why it was refused, before
  * anything is sent.
  */
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 import { DEFAULT_WINDOW_SECONDS, SPARKPLUG_AGENT_MAX_ID_BYTES } from "./constants";
 
 export type SparkplugAgentRefusalCode = "request" | "metadata-only";

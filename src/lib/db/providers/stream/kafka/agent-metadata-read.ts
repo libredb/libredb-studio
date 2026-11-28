@@ -46,7 +46,7 @@ import {
   projectMetadata,
 } from "@/lib/db/redaction/metadata-only";
 import type { ColumnSchema, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 import {
   type KafkaAgentReadClient,
   KafkaError,

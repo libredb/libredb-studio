@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentRequestForm, AgentRequestRefusal } from "@libredb/provider-sdk/manifest";
 import { admitDeclaredRequest } from "@/lib/db/operations/declared-request-form";
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 import { DECLARED_AGENT_LANGUAGES } from "@/lib/agent/languages/client";
 import { composeDeclaredServerPack } from "@/lib/agent/languages/declared-server";
 import { languageServerPack } from "@/lib/agent/languages/server";

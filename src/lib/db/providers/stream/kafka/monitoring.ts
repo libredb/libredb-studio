@@ -5,7 +5,7 @@
  * sqlite uptime precedent), never a version guessed from API ranges.
  */
 import type { DatabaseOverview, HealthInfo, StorageStats } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { BIGINT_ZERO, KafkaError, type KafkaConfigEntry, type KafkaLogDir } from "./client";
 
 const KAFKA_NOT_REPORTED = "N/A";

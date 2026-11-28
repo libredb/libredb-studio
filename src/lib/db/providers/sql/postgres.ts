@@ -105,7 +105,7 @@ import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { keyRowsByPosition } from "../../utils/positional-rows";
-import { formatBytes } from "../../utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CatalogSessions } from "../../utils/catalog-sessions";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";

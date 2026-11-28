@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
+import { repeatsAKey } from "@libredb/provider-sdk/values";
 
 describe("repeatsAKey", () => {
   test.each([

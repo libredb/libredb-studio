@@ -19,7 +19,7 @@
 import { declaredKinds, findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
-import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { formatBytes } from "@libredb/provider-sdk/values";
 import type { ColumnSchema, ExclusionConstraintSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 export interface DetailedObject {
