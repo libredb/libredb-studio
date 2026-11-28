@@ -29,6 +29,9 @@ import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
+import { languageDataSha256 } from "@/lib/db/language-digest";
+import { mcpPackageLanguageRow, withMcpPackageLanguage } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import type { EditableEngine } from "../../helpers/package-catalog";
 import { admitSessionPackages, setHooks } from "../../helpers/package-session-fixture";
@@ -69,10 +72,15 @@ const TREE_MODEL: ObjectModel = {
   maskedNameKinds: [],
 };
 
-/** A package offering the tree, granted no words; one granted its words; one offering no tree. */
+/**
+ * A package offering the tree, granted no words; one granted its words; one offering no tree; and one granted its own
+ * declared language, whose MCP statement tool reads engines that hold no table.
+ */
 const TREE = "acmemcptree";
 const WORDS = "acmemcpwords";
 const BARE = "acmemcpbare";
+const LANG = "acmemcplang";
+const LANG_DATA = acmereadData("acmemcplangql", "run_acmemcplang_read");
 const exposed = (engine: EditableEngine) => {
   engine.mcp = { ...engine.mcp, exposable: true };
 };
@@ -100,8 +108,14 @@ beforeAll(async () => {
       { name: "acme-mcp-tree", engine: TREE, ...withTree },
       { name: "acme-mcp-words", engine: WORDS, ...withTree },
       { name: "acme-mcp-bare", engine: BARE, edit: exposed },
+      { name: "acme-mcp-lang", engine: LANG, honours: ["readOnly"], edit: withMcpPackageLanguage(LANG_DATA) },
     ],
-    { [TREE]: ROW, [WORDS]: { ...ROW, ownWords: "scrubbed" }, [BARE]: ROW },
+    {
+      [TREE]: ROW,
+      [WORDS]: { ...ROW, ownWords: "scrubbed" },
+      [BARE]: ROW,
+      [LANG]: { ...ROW, ...mcpPackageLanguageRow(LANG_DATA.name, languageDataSha256(LANG_DATA)) },
+    },
   );
 });
 
@@ -404,6 +418,26 @@ describe("inspect_schema on a provider package's engine", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  test("a package engine whose language holds no table is refused by name, pointing to its tool", async () => {
+    const seen = hooksFor(LANG);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      expect(await inspect(listedOf(LANG))).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `${servedEngineRecord(LANG).displayName} holds no table for inspect_schema to list. Read this connection with ${LANG_DATA.agent?.mcp?.tool}.`,
+          },
+        ],
+        isError: true,
+      });
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+    expect(names(seen)).toEqual([]);
   });
 
   test("a stopped wait releases inspect_schema at its deadline while the package's open runs on", async () => {

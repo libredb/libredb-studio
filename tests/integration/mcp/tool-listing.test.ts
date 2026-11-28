@@ -15,8 +15,18 @@ import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT, McpConnectionContext } from "@/lib/mcp/context";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { listedStatementArms, mcpStatementSurface, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import {
+  beginServerCatalogBoot,
+  forgetServerCatalog,
+  installServerCatalog,
+  servedEngineRecord,
+} from "@/lib/db/server-catalog";
+import {
+  listedStatementArms,
+  McpCompositionOrderError,
+  mcpStatementSurface,
+  servingStatementArms,
+} from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { resetKubernetesDiscoveryCache } from "@/lib/seed/kubernetes-discovery-loader";
@@ -42,6 +52,8 @@ import {
 } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -510,6 +522,68 @@ test("tools/list after the catalog's install lists the statement tools the insta
 
   // Forgotten, as a new process would: the bundled set again.
   expect((await listedTools()).map((tool) => tool.name)).toContain(lone.tool);
+});
+
+// The route module and every MCP module loaded at the top of this file; the catalog naming the package is installed
+// after them, and a boot begun before its install is the named defect, never a list composed from the bundled set.
+test("a catalog installed after the MCP modules load lists a package's statement tool naming its engine, and a read before the install is the named defect", async () => {
+  const data = acmereadData("acmelistingql", "run_acmelisting_read");
+  const tool = data.agent?.mcp?.tool as string;
+  const id = "acmelisting";
+  // The package engine's fieldless listed entry, beside a legacy seed.
+  writeSeedFile(dir, [{ id: "acme", type: id }, sqliteShop()]);
+  const listedTools = async () =>
+    (await listed(alice, "legacy")) as ReadonlyArray<ListedTool & { readonly description?: string }>;
+  expect((await listedTools()).map((listedTool) => listedTool.name)).not.toContain(tool);
+
+  beginServerCatalogBoot();
+  try {
+    expect(() => mcpStatementSurface()).toThrow(McpCompositionOrderError);
+    // A token's session answers no list while the boot is pending: the server it builds reads the statement tools, so
+    // the request is answered -32603, never with tools composed from the bundled set.
+    let pending: unknown;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      await listedTools();
+    } catch (thrown) {
+      pending = thrown;
+    } finally {
+      error.mockRestore();
+    }
+    expect(pending).toBeInstanceOf(Error);
+    expect((pending as Error).message).toContain('"code":-32603');
+
+    installServerCatalog(mcpPackageLanguageCatalog({ id, data }));
+    const displayName = servedEngineRecord(id).displayName;
+    // A token's tools/list: the package's tool, its description naming the engine, beside the legacy seed's.
+    const after = await listedTools();
+    expect(after.map((listedTool) => listedTool.name)).toEqual(listedMcpToolNames(reach("sqlite", id as DatabaseType)));
+    expect(after.map((listedTool) => listedTool.name)).toContain(tool);
+    expect(after.find((listedTool) => listedTool.name === tool)?.description).toContain(`Runs on ${displayName}.`);
+    // The full handler registers it too: a call with a key its strict schema refuses is answered by that schema, never
+    // by the SDK's unknown-tool error.
+    const session = await connectClient(handlerServe(auth(alice)), { negotiation: "legacy" });
+    let answered: unknown;
+    try {
+      answered = await session.client.callTool({ name: tool, arguments: { connection_id: "seed:acme", unknown: 1 } });
+    } catch (error) {
+      answered = error;
+    } finally {
+      await session.close();
+    }
+    expect(answered).toMatchObject({ isError: true });
+    expect((answered as { content: { text: string }[] }).content[0]?.text).toStartWith(
+      `Input validation error: Invalid arguments for tool ${tool}: `,
+    );
+    expect((answered as { content: { text: string }[] }).content[0]?.text).toContain('Unrecognized key: "unknown"');
+    // list_connections names it as the package engine's read tool.
+    expect((await rows(alice, "legacy")).find((row) => row.id === "seed:acme")?.read_tool).toBe(tool);
+  } finally {
+    forgetServerCatalog();
+  }
+  // Forgotten, as a new process would: neither lists it.
+  expect((await listedTools()).map((listedTool) => listedTool.name)).not.toContain(tool);
+  expect(registeredMcpToolNames()).not.toContain(tool);
 });
 
 test("the 2026-07-28 answer to tools/list carries ttlMs 0 and cacheScope private", async () => {

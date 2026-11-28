@@ -8,7 +8,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_COPY, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import {
   agentLanguageMcpFacets,
   type AgentDeclaredMcpTool,
@@ -34,7 +34,7 @@ import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { mcpToolInputSchemas, type McpToolName } from "@/lib/mcp/tools";
 import { listedConnectionSchema, registerListConnections } from "@/lib/mcp/tools/list-connections";
-import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
+import { classifyReadQueryFailure, MCP_STATEMENT_LIMITS } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
@@ -51,7 +51,9 @@ import {
 } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { admittedFor, admittedManifest, withCatalog } from "../../helpers/package-catalog";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { legacyRegisterTable, legacyStatementLanguageTable } from "../../helpers/legacy-register";
 import { shippedDeclaredLanguage, shippedDeclaredMcpTool } from "../../helpers/shipped-declared-language";
 
@@ -1933,5 +1935,60 @@ describe("the arms whose engines hold no table", () => {
       const served = arm !== null && arm.types.some((id) => id === type);
       expect(mcpTablelessReadTool(type)).toBe(served && arm.holdsNoTables ? arm.tool : null);
     }
+  });
+
+  test("inspect_schema's refusal names a tableless engine by its record's display name, the connection form label it named before", () => {
+    const tableless = SHIPPED_DATABASE_TYPES.filter((type) => mcpTablelessReadTool(type) !== null);
+    expect(tableless.length).toBeGreaterThan(0);
+    for (const type of tableless) {
+      expect([type, servedEngineRecord(type).displayName]).toEqual([type, getDBConfig(type).label]);
+    }
+  });
+});
+
+describe("a provider package's own language", () => {
+  test("a package language granted by its row composes its arm with no composer change", async () => {
+    const data = acmereadData("acmemcparmql", "run_acmemcparm_read");
+    const mcp = data.agent?.mcp;
+    if (mcp === null || mcp === undefined) throw new Error("the crafted language states an MCP tool");
+    const language = data.name as AgentStatementLanguageId;
+    const id = "acmemcparm";
+    // The MCP modules loaded at the top of this file; the catalog is installed after them.
+    await withCatalog(mcpPackageLanguageCatalog({ id, data }), () => {
+      const arm = mcpStatementSurface().arms[language];
+      if (arm === null || arm === undefined) throw new Error("the installed catalog composes the language's arm");
+      const displayName = servedEngineRecord(id).displayName;
+      expect<string>(arm.tool).toBe(mcp.tool);
+      expect<string>(arm.title).toBe(mcp.text.title as string);
+      expect<readonly string[]>(arm.types).toEqual([id]);
+      expect(arm.engines).toBe(displayName);
+      const argument = serverLanguageClientPack(language).copy.argument;
+      expect<string>(arm.argument).toBe(argument);
+      expect(Object.keys(arm.inputSchema.shape)).toEqual(["connection_id", argument, "max_rows", "timeout_ms"]);
+      // Strict: an unknown key is refused, and neither a database nor an offset is taken.
+      const call = { connection_id: "c", [argument]: '{"read":"topics"}' };
+      expect(arm.inputSchema.safeParse(call).success).toBe(true);
+      for (const extra of [{ database: "d" }, { offset: 1 }, { unknown: true }]) {
+        expect([extra, arm.inputSchema.safeParse({ ...call, ...extra }).success]).toEqual([extra, false]);
+      }
+      expect(arm.paging).toBe("none");
+      expect(arm.description).toBe(
+        `${mcp.text.description[0] as string} Runs on ${displayName}. ${MCP_STATEMENT_LIMITS}. ${MCP_UNTRUSTED_NOTICE}`,
+      );
+      expect(arm.description.length).toBeLessThanOrEqual(2048);
+      // The fence is the language's own admission: a request its form refuses answers the declared sentence.
+      const topicRefusal = data.agent?.request.reads[0]?.refuses[0]?.refusal;
+      expect(arm.fence('{"read":"topics","topic":"orders"}', id as DatabaseType)).toContain(
+        topicRefusal?.sentence as string,
+      );
+      expect(arm.fence('{"read":"topics"}', id as DatabaseType)).toBeNull();
+      expect(arm.holdsNoTables).toBe(true);
+      expect<string | null>(mcpStatementToolFor(id as DatabaseType)).toBe(mcp.tool);
+      expect<string | null>(mcpTablelessReadTool(id as DatabaseType)).toBe(mcp.tool);
+      expect(mcpWithholdsDatabase(id as DatabaseType)).toBe(false);
+      expect<string[]>(servingStatementArms().map((serving) => serving.tool)).toContain(mcp.tool);
+    });
+    // Forgotten: the bundled set, which declares no such language.
+    expect(mcpStatementSurface().arms[language]).toBeUndefined();
   });
 });

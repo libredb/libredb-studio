@@ -23,6 +23,7 @@ import {
   getOrCreateMetadataSession,
   getOrCreateReadOnlyStatementSession,
   getProviderCacheStats,
+  readOnlyStatementRecordRefusal,
   removeProvider,
 } from "@/lib/db/factory";
 import { IDLE_TIMEOUT_MS } from "@/lib/db/idle-sweep";
@@ -372,6 +373,36 @@ describe("a provider package's read-only statement session", () => {
     // The order: unoffered before unreviewed, unreviewed before the read roots.
     expect(profileRefusal(await refusalOf(NEITHER))[0]).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect(profileRefusal(await refusalOf(UNREVIEWED_ROOTS))[0]).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+  });
+
+  test("readOnlyStatementRecordRefusal answers the opener's record refusals by its sentences, and null where the opener opens a session", async () => {
+    // The opener's record gates that hold for every connection of a record, read alone: the read roots, then one
+    // session, each in the opener's own sentence and code, and nothing for a record the opener opens a session on.
+    expect(readOnlyStatementRecordRefusal(engineOf(MAIN))).toBeNull();
+    expect(readOnlyStatementRecordRefusal(engineOf(ROOTS))).toEqual({
+      sentence: `${engineOf(ROOTS).displayName} reads only beneath the read roots a seed declares, and a provider package's open receives no read roots, so Studio opens no read-only statement session on it.`,
+      code: "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    });
+    expect(readOnlyStatementRecordRefusal(engineOf(ONE))).toEqual({
+      sentence: `${engineOf(ONE).displayName} serves one session per connection, which the editor holds, so Studio opens no second, read-only statement session on it.`,
+      code: "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    });
+    // The opener throws each one, in the same words, before its package opens.
+    for (const id of [ROOTS, ONE]) {
+      const hooks = record(id);
+      const error = await rejection(getOrCreateReadOnlyStatementSession(connectionOf(id), engineOf(id), ADMIN));
+      expect(error).toBeInstanceOf(StudioProfileRefusal);
+      const refused = readOnlyStatementRecordRefusal(engineOf(id));
+      if (refused === null) throw new Error(`the record of ${id} is refused by the predicate`);
+      expect([(error as StudioProfileRefusal).reasonCode, (error as Error).message]).toEqual([
+        refused.code,
+        refused.sentence,
+      ]);
+      expect(names(hooks)).toEqual([]);
+    }
+    // The read roots are read first: a record that requires them and serves one session is refused for the roots.
+    const both = { ...engineOf(ONE), grants: { ...engineOf(ONE).grants, readRootsRequired: true } } as EngineRecord;
+    expect(readOnlyStatementRecordRefusal(both)?.sentence).toContain("read roots");
   });
 
   test("a package's read-only statement session whose open withdrew readOnly from its honours is closed and refused by name, and never cached", async () => {

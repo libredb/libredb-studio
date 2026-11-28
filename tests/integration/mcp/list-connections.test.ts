@@ -32,6 +32,8 @@ import {
   type SeedEntry,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../helpers/package-catalog";
 import {
   legacyRegisterEngines,
@@ -530,8 +532,9 @@ describe("the registration", () => {
 });
 
 // An admitted package's engine is listed by its record (docs/providers/CONTRACT.md, clause C-107): with no register row
-// offering it to MCP it carries the exposure refusal, and with one it is listed with no read tool, since no statement
-// tool serves a package engine yet, and its database whole, since a package's record opens no host file.
+// offering it to MCP it carries the exposure refusal; with one granting no statement language it is listed with no read
+// tool, since no statement tool serves it; with one granting its own declared language it is listed with that language's
+// tool; and its database is listed whole, since a package's record opens no host file.
 describe("a connection of an engine an admitted provider package serves", () => {
   afterEach(() => {
     forgetServerCatalog();
@@ -600,6 +603,20 @@ describe("a connection of an engine an admitted provider package serves", () => 
         engine: "acmelistrowed",
         database: "/srv/acme/store.db",
         read_tool: null,
+      },
+    ]);
+  });
+
+  test("a package engine granted its own language is listed with that language's tool as its read tool", async () => {
+    const data = acmereadData("acmelistlangql", "run_acmelistlang_read");
+    installServerCatalog(mcpPackageLanguageCatalog({ id: "acmelistlang", data }));
+    expect(await listed([record("acmelistlang")])).toEqual([
+      {
+        id: "seed:acmelistlang",
+        name: "Acme Store",
+        engine: "acmelistlang",
+        database: "/srv/acme/store.db",
+        read_tool: data.agent?.mcp?.tool,
       },
     ]);
   });

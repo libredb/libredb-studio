@@ -548,7 +548,8 @@ export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFie
 
 /**
  * What an agent credential on a seed of one engine is: `agentUser` and `agentPassword`, the principal every agent
- * execution profile and every MCP call on that seed signs in as. It is a coarser view of the engine's granted
+ * execution profile and every MCP call on a seed of an engine Studio bundles signs in as; a provider package's engine
+ * opens with the connection's own credential and refuses one, `AGENT_CREDENTIAL_NOT_TAKEN`. It is a coarser view of the engine's granted
  * `policy.agentCredentialForm` (src/lib/db/claim-grants.ts), which the factory checks again at open: "pair" is a user
  * and a password together, the form a null granted agent credential form takes; "dedicated-pair" is the same with a
  * user other than the connection's own; and "secret" is `agentPassword` alone, a bearer token or a service-account

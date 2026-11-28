@@ -10,6 +10,8 @@ import { logger } from "@/lib/logger";
 import { preprocessMcpPost, recordInvalidArguments } from "@/lib/mcp/preprocess";
 import { mcpStatementSurface } from "@/lib/mcp/tools/statement-arms";
 import { MCP_TEST_URL, testAuthInfo } from "../../helpers/mcp-harness";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 
 const alice = testAuthInfo({ username: "alice", role: "admin" });
@@ -362,6 +364,30 @@ describe("step 8 after the catalog's install", () => {
     } finally {
       readBundled.mockRestore();
     }
+  });
+});
+
+describe("step 8 on a provider package's own language", () => {
+  beforeEach(() => {
+    process.env.RATE_LIMIT_QUERY_MAX = "0";
+  });
+
+  test("a package language's tool refuses an unknown key, as its strict schema states", async () => {
+    const data = acmereadData("acmemcpstrictql", "run_acmemcpstrict_read");
+    const tool = data.agent?.mcp?.tool as string;
+    await withCatalog(mcpPackageLanguageCatalog({ id: "acmemcpstrict", data }), async () => {
+      const surface = mcpStatementSurface();
+      expect(Object.keys(surface.inputSchemas)).toContain(tool);
+      const argument = surface.declared.find((arm) => arm.tool === tool)?.argument as string;
+      const call = (extra: Record<string, unknown>) =>
+        legacy({
+          id: 1,
+          method: "tools/call",
+          params: { name: tool, arguments: { connection_id: "seed:acme", [argument]: '{"read":"topics"}', ...extra } },
+        });
+      expect((await dispatched(call({}))).invalidArgumentsTool).toBeNull();
+      expect((await dispatched(call({ unknown: true }))).invalidArgumentsTool).toBe(tool);
+    });
   });
 });
 

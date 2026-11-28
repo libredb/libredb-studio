@@ -93,7 +93,9 @@
  * (src/lib/mcp/availability.ts), which `list_connections` and every MCP tool answer before any open, reads
  * `servedEngineRefusal`'s message and then the record's grants, and the open checks of MCP's connection context
  * (src/lib/mcp/context.ts) read the record through `servedEngineRecord`; MCP's `inspect_schema` reads a provider
- * package's engine on the record's metadata session (`metadataTreeTarget`). The object edit and key scan requests, the
+ * package's engine on the record's metadata session (`metadataTreeTarget`), and the statement tool of the language its
+ * row grants sends its statements on the record's read-only statement session where it offers `readOnlyStatements`
+ * (`readOnlyStatementSession`). The object edit and key scan requests, the
  * column profile and the statement analysis resolve through `resolveServedConnection` too and refuse a package's engine
  * by the record's offer (`objectEdit`, `keyScan`, `columnProfile`, `connectionDeclarations`) or its statement grammar.
  * Agent mode's classify, runs and hand-over routes and an agent run's drive resolve through `resolveServedConnection`
@@ -225,8 +227,8 @@ export interface EngineOffers {
    * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection, the
    * query route, its cancel and a transaction, a multi-statement script, a disconnect, the object tree's and the
    * object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP's schema
-   * reads, agent mode and the requests that refuse a package's engine by another offer before any open reads one,
-   * through `legacyProviderEngine`.
+   * reads and its statement tools fenced by their language's own admission, agent mode and the requests that refuse a
+   * package's engine by another offer before any open reads one, through `legacyProviderEngine`.
    */
   readonly legacyProvider: boolean;
   /** A plan of a statement (`explain`), built by the connected provider's strategy. */
@@ -256,9 +258,10 @@ export interface EngineOffers {
    * A provider the execution-profile acquisition opens (`acquireExecutionProfileProvider` in ./factory): the agent's and
    * MCP's profiles, with the seed's agent credential, its read roots and a read-only statement session. A package's
    * session is opened through its package, with neither the agent credential nor the read roots (C-109), and a
-   * read-only statement session through its package only where it offers `readOnlyStatements`. MCP's statement tools
-   * serve only an engine whose record offers it (src/lib/mcp/tools/served-engines.ts) until they read
-   * `readOnlyStatements`; agent mode reads `readOnlyStatements`.
+   * read-only statement session through its package only where it offers `readOnlyStatements`. `run_read_query`
+   * serves only an engine whose record offers it, and MCP's other statement tools serve a package's engine through its
+   * read-only statement session where it offers `readOnlyStatements` (src/lib/mcp/tools/served-engines.ts); agent mode
+   * reads `readOnlyStatements`.
    */
   readonly executionProfiles: boolean;
   /**

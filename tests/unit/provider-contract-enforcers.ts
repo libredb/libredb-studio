@@ -1167,6 +1167,27 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
     },
   },
+  "M-88": {
+    tests: {
+      "tests/unit/mcp/served-engines.test.ts": ["a package engine granted exposure by its row is served"],
+      "tests/unit/mcp/statement-arms.test.ts": [
+        "a package language granted by its row composes its arm with no composer change",
+      ],
+      "tests/integration/mcp/run-statement-package-engine.test.ts": [
+        "a package engine's statement is served by its language's tool through its read-only statement session",
+      ],
+      "tests/unit/mcp/execution-fence.test.ts": [
+        "a package engine whose row reviews no grammar is fenced under the default grammar and its query events keep none of its statement text",
+      ],
+      "tests/unit/lib/agent/declared-language-drive.test.ts": [
+        "a package's own language, granted by its row, is composed from the installed catalog and drives a run with no composer change",
+        "a package engine whose row reviews no grammar is fenced under the default grammar and its query events keep none of its statement text",
+      ],
+      "tests/isolated/agent-package-engine-drive.test.ts": [
+        "an agent-mode run in a package's own declared language is driven from its ledger, grounds and sends its statements through the package's read-only statement session",
+      ],
+    },
+  },
   "M-89": {
     tests: {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
@@ -3208,6 +3229,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-107": {
     tests: {
+      "tests/integration/mcp/run-statement-package-engine.test.ts": [
+        "a package engine's statement is served by its language's tool through its read-only statement session",
+      ],
       "tests/api/db/rest-package-engine.test.ts": [
         "cancel runs on a package engine's session through the console's cancel",
         "a transaction runs on a package engine's session through the console's transaction calls",
@@ -3394,6 +3418,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "tests/integration/mcp/run-statement-package-engine.test.ts": [
+        "a package's open or execute failure is answered by its grant and logged once",
+      ],
       "tests/api/db/rest-package-engine.test.ts": [
         "the cancel route answers a package's open failure as not-sent, its cancel failure by its grant, and a malformed cancel answer as the package's defect",
         "the transaction route answers a package's open failure as not-sent, its transaction and statement failures by its grant, logged once, and a malformed transaction answer as the package's defect",

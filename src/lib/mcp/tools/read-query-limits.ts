@@ -1,7 +1,7 @@
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { type ObjectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
-import { providerTreeTarget, type TreeTarget } from "@/lib/api/session-target";
+import { providerTreeTarget, type ReadOnlyStatementTarget, type TreeTarget } from "@/lib/api/session-target";
 import { hostCore } from "@/lib/provider-host/instance";
 import { errorKind } from "@/lib/db/error-record";
 import { QueryCancelledError, type ReadAllowanceExceededError, type RefusedBeforeSendError } from "@/lib/db/errors";
@@ -30,9 +30,10 @@ import type { McpToolCall } from "../context";
  * settles first never changes what the client reads.
  * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
  * yet (backlog D128).
- * An acquisition, and the open of a provider package's metadata session, waits within the call too
- * (`acquireWithinCall`, `metadataTargetWithinCall`): the factory's open is handed the call's wait, so the host's open
- * releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
+ * An acquisition, and the open of a provider package's metadata session or read-only statement session, waits within
+ * the call too (`acquireWithinCall`, `metadataTargetWithinCall`, `statementTargetWithinCall`): the factory's open is
+ * handed the call's wait, so the host's open releases the call at the same moment the race stops waiting
+ * (docs/providers/CONTRACT.md, clause C-81).
  * The schema reads, inspect_schema's and the database choice's, are host core tree calls within the call too
  * (`mcpTargetTree`, clause C-82), each under the call's one deadline and the request's signal, and `treeReadWithinCall`
  * answers each read's end as a raced step's.
@@ -305,6 +306,18 @@ export function metadataTargetWithinCall(
   deadline: number,
 ): Promise<Raced<TreeTarget>> {
   return openWithinCall(tool, (wait) => tool.context.metadataTarget(listed, wait), deadline);
+}
+
+/**
+ * The read-only execute's target of the connection's read-only statement session, a provider package's record's,
+ * waited for within the call (`openWithinCall`, `McpConnectionContext.statementTarget`).
+ */
+export function statementTargetWithinCall(
+  tool: McpToolCall,
+  listed: ManagedConnection,
+  deadline: number,
+): Promise<Raced<ReadOnlyStatementTarget>> {
+  return openWithinCall(tool, (wait) => tool.context.statementTarget(listed, wait), deadline);
 }
 
 /**

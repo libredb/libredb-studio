@@ -264,7 +264,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateReadOnlyStatementSession: {
     "src/lib/api/editor-provider.ts":
-      "readOnlyStatementSession opens for the connection its caller hands it, and every caller reached it through a reviewed path first: agent mode's drive, listed under readOnlyStatementSession here, and MCP's package arm once it lists itself there",
+      "readOnlyStatementSession opens for the connection its caller hands it, and every caller reached it through a reviewed path first: agent mode's drive and MCP's statementTarget, both listed under readOnlyStatementSession here",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -327,6 +327,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   readOnlyStatementSession: {
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+    "src/lib/mcp/context.ts":
+      "statementTarget opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
   },
   editorSourceTarget: {
     "src/lib/api/object-route.ts":
@@ -1323,6 +1325,7 @@ describe("the census reads every import form", () => {
       'REVIEWED_CALLERS.getManagedConnections lists "src/lib/mcp/context.ts", which imports getManagedConnections no more: remove that entry',
       'REVIEWED_CALLERS.acquireExecutionProfileProvider lists "src/lib/mcp/context.ts", which imports acquireExecutionProfileProvider no more: remove that entry',
       'REVIEWED_CALLERS.metadataTreeTarget lists "src/lib/mcp/context.ts", which imports metadataTreeTarget no more: remove that entry',
+      'REVIEWED_CALLERS.readOnlyStatementSession lists "src/lib/mcp/context.ts", which imports readOnlyStatementSession no more: remove that entry',
     ]);
     const LOADER = "src/lib/seed/kubernetes-discovery-loader.ts";
     const unparsed = (SOURCES.get(LOADER) ?? "").replace(

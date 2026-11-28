@@ -556,26 +556,30 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     expect(literalArguments(declaredFunction(MCP_STATEMENT, "executeOpened"), "acquireWithinCall")).toEqual([
       ["agent-read-only"],
     ]);
-    // Each of the three hands the facade the provider it acquired under that profile, as its provider target.
+    // Each of the three hands the facade the provider it acquired under that profile, as its provider target; MCP's
+    // hands it to its helper from the function that acquired it.
     expect(
       callsOutsideProviders("providerReadOnlyTarget")
         .map((call) => `${call.file} in ${call.declaration}`)
         .sort(),
     ).toEqual(
-      [
-        `${AGENT_TOOLS} in runStatement`,
-        `${HANDOVER_ROUTE} in POST`,
-        `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`,
-      ].sort(),
+      [`${AGENT_TOOLS} in runStatement`, `${HANDOVER_ROUTE} in POST`, `${MCP_STATEMENT} in executeOpened`].sort(),
     );
     // A provider package's read-only statement session is opened by the factory under the read-only statement policy,
-    // through one builder, which alone reads its entry as a facade target, and which agent mode's drive alone calls, in
-    // the sessions it hands a run.
+    // through one builder, which alone reads its entry as a facade target, and which agent mode's drive, in the sessions
+    // it hands a run, and MCP's statement target alone call.
     expect(callsOutsideProviders(PACKAGE_SESSION_OPENER).map((call) => `${call.file} in ${call.declaration}`)).toEqual([
       `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,
     ]);
-    expect(callsOutsideProviders(PACKAGE_SESSION_BUILDER).map((call) => `${call.file} in ${call.declaration}`)).toEqual(
-      [`${join("src", "lib", "agent", "runtime.ts")} in readOnlyStatements`],
+    expect(
+      callsOutsideProviders(PACKAGE_SESSION_BUILDER)
+        .map((call) => `${call.file} in ${call.declaration}`)
+        .sort(),
+    ).toEqual(
+      [
+        `${join("src", "lib", "agent", "runtime.ts")} in readOnlyStatements`,
+        `${join("src", "lib", "mcp", "context.ts")} in statementTarget`,
+      ].sort(),
     );
     expect(callsOutsideProviders("entryReadOnlyTarget").map((call) => `${call.file} in ${call.declaration}`)).toEqual([
       `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,

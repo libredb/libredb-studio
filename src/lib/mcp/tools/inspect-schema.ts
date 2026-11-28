@@ -16,9 +16,7 @@ import {
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, ObjectDetail } from "@/lib/db/types";
-import { getDBConfig } from "@/lib/db-ui-config";
 import { hostCore } from "@/lib/provider-host/instance";
-import type { DatabaseType } from "@/lib/types";
 import {
   newMcpCorrelationId,
   recordMcpDecision,
@@ -66,9 +64,11 @@ import {
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
   ownWordsFailure,
+  packageWordsAnswer,
   providerTextError,
   recordOrRefuse,
   resultBytes,
+  studioFailure,
   untrustedResult,
   utf8Length,
   type ToolResult,
@@ -257,9 +257,12 @@ function choiceOf(choice: McpDatabaseChoice): Exclude<McpDatabaseChoice, { reado
   return choice;
 }
 
-/** The refusal of an engine that holds no table, naming the statement tool that reads it. */
-function tablelessText(type: DatabaseType, tool: McpStatementTool): string {
-  return `${getDBConfig(type).label} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
+/**
+ * The refusal of an engine that holds no table, naming it by its record's display name, a legacy engine's connection
+ * form label, and the statement tool that reads it.
+ */
+function tablelessText(engine: EngineRecord, tool: McpStatementTool): string {
+  return `${engine.displayName} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
 }
 
 /** Where a level was listed, `listed` is what its last listing answered: the deepest one, or the empty one above it. */
@@ -551,22 +554,7 @@ function packageAnswer(
 ): ToolResult | null {
   if (failing === undefined || !isPackageFailure(engine, error)) return null;
   if (failing.call === "tree read" && !raisedByTreeRead(failing.raised, error)) return null;
-  const answered = packageFailureAnswer(engine, failing.call, error, scrub, MCP_ROUTE);
-  if (engine.grants.ownWords === "scrubbed") return engineError(MCP_ENGINE_ERROR_PREFIX, answered, scrub, author);
-  // Where no row grants the package its words, the record's answer is Studio's sentence, always an `Error`.
-  return ownWordsFailure((answered as Error).message, answered, scrub);
-}
-
-/**
- * The answer to `error`, a failure on a provider package's engine that the package's own call did not raise: Studio's
- * own words through the open's scrub, with the failure's error record, and no notice, since no package wrote them.
- */
-function studioFailure(error: unknown, scrub: ProviderTextScrub): ToolResult {
-  return ownWordsFailure(
-    scrubProviderText(scrub, error instanceof Error ? error.message : String(error)),
-    error,
-    scrub,
-  );
+  return packageWordsAnswer(engine, packageFailureAnswer(engine, failing.call, error, scrub, MCP_ROUTE), scrub, author);
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
@@ -601,7 +589,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   if (tableless !== null)
     return (
       recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ??
-      ownWordsError(tablelessText(connection.type, tableless))
+      ownWordsError(tablelessText(servedEngineRecord(connection.type), tableless))
     );
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;

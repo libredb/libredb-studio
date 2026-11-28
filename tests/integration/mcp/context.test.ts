@@ -991,6 +991,16 @@ describe("a connection of an engine an admitted provider package serves", () => 
       "MCP reads a legacy engine's schema under the agent-operations profile (`acquire`), never on its metadata session: a host defect.",
     );
   });
+
+  test("the statement target of a legacy engine's connection is a host defect: MCP sends its statements under the read-only profile", async () => {
+    const refusal = await new McpConnectionContext(alice)
+      .statementTarget(listed("postgres"), noWait())
+      .catch((error: unknown) => error);
+    expect(refusal).not.toBeInstanceOf(StudioProfileRefusal);
+    expect((refusal as Error).message).toBe(
+      "MCP sends a legacy engine's statements on the provider it acquires under agent-read-only (`acquire`), never on a package's read-only statement session: a host defect.",
+    );
+  });
 });
 
 describe("a connection whose type names no provider (FND-1)", () => {
