@@ -41,10 +41,7 @@ interface BootBundle {
 
 /** What the route bundle exports: the facade, the slot's reader and its own copy of the errors and the record readers. */
 interface RouteBundle {
-  runEditorQuery(
-    target: { form: "provider"; provider: DatabaseProvider },
-    run: object,
-  ): Promise<{ body: { rows: unknown[] } }>;
+  runEditorQuery(target: object, run: object): Promise<{ body: { rows: unknown[] } }>;
   cancelEditorRun(target: object, queryId: string, caller: AbortSignal, route: string): Promise<object>;
   providerConsoleTarget(provider: DatabaseProvider): object;
   hostCore(): CoreShape;
@@ -167,7 +164,7 @@ describe("one host core across two bundles", () => {
       }),
       "test",
     );
-    const answered = await route.runEditorQuery({ form: "provider", provider: provider(oneRow) }, runOf());
+    const answered = await route.runEditorQuery(route.providerConsoleTarget(provider(oneRow)), runOf());
     const target = route.providerConsoleTarget(provider(oneRow));
     await route.cancelEditorRun(target, randomUUID(), new AbortController().signal, "test");
 
@@ -182,10 +179,10 @@ describe("one host core across two bundles", () => {
 
     const [pastDeadline, callerGone] = await Promise.all([
       route
-        .runEditorQuery({ form: "provider", provider: provider(oneRow, -70_000) }, runOf())
+        .runEditorQuery(route.providerConsoleTarget(provider(oneRow, -70_000)), runOf())
         .catch((error: unknown) => error),
       route
-        .runEditorQuery({ form: "provider", provider: provider(oneRow) }, runOf(gone.signal))
+        .runEditorQuery(route.providerConsoleTarget(provider(oneRow)), runOf(gone.signal))
         .catch((error: unknown) => error),
     ]);
 
@@ -204,7 +201,7 @@ describe("one host core across two bundles", () => {
     const failure = new route.QueryError(`relation ${randomUUID()} does not exist`);
 
     const caught = await route
-      .runEditorQuery({ form: "provider", provider: provider(failure) }, runOf())
+      .runEditorQuery(route.providerConsoleTarget(provider(failure)), runOf())
       .catch((error: unknown) => error);
 
     expect(caught).toBe(failure);

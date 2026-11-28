@@ -20,7 +20,6 @@ import {
   legacyProviderType,
 } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
-import { openedProvider } from "@/lib/provider-host/open-engine";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -352,8 +351,9 @@ export async function POST(req: NextRequest) {
     let statement = sql;
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {
-      // Only an engine whose record offers a plan reaches here (`unofferedField`), and its open answered a provider.
-      const capabilities = openedProvider(target).getCapabilities();
+      // Only an engine whose record offers a plan reaches here (`unofferedField`): the connected provider's capabilities,
+      // which its console target reads when asked.
+      const capabilities = target.explainSupport();
       // `getExplainStrategy` indexes a Record, so a format outside this build's union
       // (an external implementer of the published interface can declare anything)
       // comes back undefined rather than null; a strict null check let that reach

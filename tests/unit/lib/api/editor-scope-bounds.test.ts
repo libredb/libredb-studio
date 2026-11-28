@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { runEditorQuery } from "@/lib/api/editor-query";
+import type { providerConsoleTarget } from "@/lib/api/session-target";
 import type { providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -20,6 +21,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 
 interface ChildDeps {
   readonly runEditorQuery: typeof runEditorQuery;
+  readonly providerConsoleTarget: typeof providerConsoleTarget;
   readonly providerTextScrub: typeof providerTextScrub;
   readonly errorKind: typeof errorKind;
   readonly errorOutcome: typeof errorOutcome;
@@ -33,6 +35,7 @@ const child = boundedChild({
   label: "editor-scope-bounds",
   imports: [
     { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["runEditorQuery"] },
+    { from: path.join(SOURCE, "lib", "api", "session-target.ts"), names: ["providerConsoleTarget"] },
     { from: path.join(SOURCE, "lib", "db", "operations", "provider-text.ts"), names: ["providerTextScrub"] },
     { from: path.join(SOURCE, "lib", "db", "error-record.ts"), names: ["errorKind", "errorOutcome"] },
     { from: path.join(SOURCE, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
@@ -56,16 +59,13 @@ const child = boundedChild({
       endOpenQueryTransaction: () => new Promise<never>(() => {}),
     } as never;
     try {
-      await deps.runEditorQuery(
-        { form: "provider", provider },
-        {
-          statement: "SELECT n FROM t",
-          options: { limit: 1 },
-          signal: new AbortController().signal,
-          route: "bounds",
-          scrub: deps.providerTextScrub(config as never, "any"),
-        },
-      );
+      await deps.runEditorQuery(deps.providerConsoleTarget(provider), {
+        statement: "SELECT n FROM t",
+        options: { limit: 1 },
+        signal: new AbortController().signal,
+        route: "bounds",
+        scrub: deps.providerTextScrub(config as never, "any"),
+      });
       return "answered";
     } catch (error) {
       const waited = Math.round((Date.now() - answeredAt) / 1_000);

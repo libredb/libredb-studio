@@ -101,7 +101,7 @@ describe("E21-K10: cancellation and abandonment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const caught = await runEditorQuery({ form: "provider", provider }, runOf(controller.signal, "q-1")).catch(
+    const caught = await runEditorQuery(providerConsoleTarget(provider), runOf(controller.signal, "q-1")).catch(
       (error: unknown) => error,
     );
 
@@ -147,7 +147,7 @@ describe("E21-K10: cancellation and abandonment", () => {
     const late = heldProvider({ cancelQuery });
     const controller = new AbortController();
 
-    const running = runEditorQuery({ form: "provider", provider: late.provider }, runOf(controller.signal, "q-2"));
+    const running = runEditorQuery(providerConsoleTarget(late.provider), runOf(controller.signal, "q-2"));
     await late.started;
     controller.abort();
     const caught = await running.catch((error: unknown) => error);
@@ -223,7 +223,7 @@ describe("E21-K16: abandoned promises", () => {
         }),
       });
       const controller = new AbortController();
-      const running = runEditorQuery({ form: "provider", provider: held.provider }, runOf(controller.signal, "q-3"));
+      const running = runEditorQuery(providerConsoleTarget(held.provider), runOf(controller.signal, "q-3"));
       await held.started;
       controller.abort();
       expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
@@ -296,7 +296,7 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       }),
     });
 
-    const caught = await runEditorQuery({ form: "provider", provider }, runOf(new AbortController().signal)).catch(
+    const caught = await runEditorQuery(providerConsoleTarget(provider), runOf(new AbortController().signal)).catch(
       (error: unknown) => error,
     );
 
@@ -334,7 +334,7 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       ),
     });
 
-    const caught = await runEditorQuery({ form: "provider", provider }, runOf(new AbortController().signal)).catch(
+    const caught = await runEditorQuery(providerConsoleTarget(provider), runOf(new AbortController().signal)).catch(
       (error: unknown) => error,
     );
 
@@ -378,7 +378,7 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       ),
     });
 
-    const outcome = await beginInTransaction(provider, false, {
+    const outcome = await beginInTransaction(providerConsoleTarget(provider), false, {
       signal: new AbortController().signal,
       route: "host-rules",
     });
@@ -405,7 +405,7 @@ describe("E23-K1: what a lost or failed connection answers", () => {
     session.open = true;
 
     const outcome = await runInTransaction(
-      provider,
+      providerConsoleTarget(provider),
       { statement: "UPDATE t SET n = 1", options: {}, scrub },
       { signal: new AbortController().signal, route: "host-rules" },
     );

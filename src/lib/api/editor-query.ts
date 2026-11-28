@@ -1,5 +1,4 @@
 import {
-  BATCH_MAX_BYTES,
   CLEANUP_DEADLINE_MS,
   type CallContext,
   type Column,
@@ -9,11 +8,8 @@ import {
   type EndScopeAnswer,
   type EnvReader,
   envReader,
-  type ExecuteAnswer,
   type ExecuteRequest,
-  PAGE_MAX_BYTES,
   type PageBound,
-  type PumpLimits,
 } from "@libredb/provider-sdk/calls";
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { firstResultSet } from "@/lib/api/first-result-set";
@@ -23,7 +19,6 @@ import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import { consoleTextOverLimit, rowTextByteLimit } from "@/lib/db/statement-language-row";
 import { errorCode, errorKind } from "@/lib/db/error-record";
-import type { CachedSession } from "@/lib/db/factory";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { QueryCancelledError, waitedSeconds } from "@/lib/db/errors";
 import { type ProviderTextScrub, scrubProviderWarnings, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
@@ -50,7 +45,6 @@ import type { HostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
 import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
-import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
 import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
 
 /*
@@ -60,7 +54,8 @@ import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
  * (`src/app/api/db/query/route.ts`) and the VS Code extension's backend child, whose `query/run`
  * re-does what the route does for one statement. `checkEditorQuery` holds the checks that run before
  * any provider resolves; `runEditorQuery` takes what the caller already opened under its posture and
- * catalog (`EditorRunTarget`): a legacy provider, or a provider package's session, and runs it.
+ * catalog, a console target (`ConsoleTarget` in ./session-target): a legacy provider's, or a provider
+ * package's session's, and runs it.
  *
  * What stays with each caller is what only that caller has: the session guard and rate limit, seed
  * resolution, the `sql` and `queryId` field checks, bound params, EXPLAIN, the `database` key-space
@@ -141,7 +136,7 @@ export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusa
   return null;
 }
 
-/** One run of a statement that `checkEditorQuery` passed, on what the caller opened (`EditorRunTarget`). */
+/** One run of a statement that `checkEditorQuery` passed, on the console target the caller opened (`ConsoleTarget`). */
 export interface EditorQueryRun {
   /** The text that runs: the route's EXPLAIN-built one, or the caller's own. */
   statement: string;
@@ -201,8 +196,9 @@ export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now:
 
 /**
  * When the execute call of a run that starts at `now` under the statement timeout `timeout` must have answered: the
- * body of `executeDeadline`, which `runEditorQuery` reads for a provider package's session with its connection's own
- * timeout, and the object tree's reads for their target's timeout (src/lib/api/object-tree.ts).
+ * body of `executeDeadline`, which `runEditorQuery`, the transaction calls and the script inside a transaction read
+ * for their console target's timeout, and the object tree's reads for their target's timeout
+ * (src/lib/api/object-tree.ts).
  */
 export function executeDeadlineFor(timeout: number, now: number): number {
   return now + Math.min(timeout + EXECUTE_SLACK_MS, TIMER_MAX_MS);
@@ -298,9 +294,10 @@ export function callContext(deadline: number, caller: AbortSignal, env: EnvReade
 /*
  * THE EDITOR QUERY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48 to C-51 and C-60).
  *
- * `runEditorQuery` is the caller facade: it answers today's body for what the caller opened, while the run goes through
- * the host core's execute call, on the legacy bridge for a legacy provider and on the session itself for a provider
- * package's, the entry that holds that session counting the run while its call runs. The core is the one the process's
+ * `runEditorQuery` is the caller facade: it answers today's body for the console target the caller opened, while the
+ * run goes through the host core's execute call, on the legacy bridge for a legacy provider and on the session itself
+ * for a provider package's, as the target's statement form states it, the entry that holds that session counting the
+ * run while its call runs. The core is the one the process's
  * composition root installed (`hostCore`, src/lib/provider-host/instance.ts, clause C-52), read before anything else,
  * so a call made before the install fails by name and this bundle holds no copy of the core's calls; the ports and the
  * accessor that read this bundle's classes stay this bundle's, built per call. It builds a fresh request and
@@ -337,8 +334,11 @@ export function executeViews(provider: Pick<DatabaseProvider, "config">, caller:
   return executeViewsFor(statementTimeout(provider), caller);
 }
 
-/** The views of an execute under the statement timeout `timeout` for `caller`: the body of `executeViews`. */
-function executeViewsFor(timeout: number, caller: AbortSignal): ExecuteViews {
+/**
+ * The views of an execute under the statement timeout `timeout` for `caller`: the body of `executeViews`, which the
+ * facades read with their console target's timeout.
+ */
+export function executeViewsFor(timeout: number, caller: AbortSignal): ExecuteViews {
   const view: CallerView = {
     caller,
     deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(timeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
@@ -549,58 +549,8 @@ async function endAfterRun(
   }
 }
 
-/**
- * What one editor run runs on, in the form the editor's open answered: a legacy provider, in the request's catalog, or a
- * provider package's session with its declared environment, the editor cache's entry it lives in, which counts the run
- * while its call runs, and the connection's own statement timeout.
- */
-export type EditorRunTarget =
-  | { readonly form: "provider"; readonly provider: DatabaseProvider }
-  | ({ readonly form: "session" } & OpenedPackageSession & {
-        readonly entry: CachedSession;
-        /** The connection's `queryTimeout`, which the caller checked; Studio's default when absent. */
-        readonly queryTimeout: number | undefined;
-      });
-
-/**
- * What a run reads of its target's form: the session it calls and the environment the session's calls are given, the
- * statement timeout, the page the execute asks for, the pump's limits, whether the run's cancel was sent, the answer
- * body of the page a record holds, and the marks of the run's start and end on what holds the session.
- */
-interface RunForm {
-  readonly session: ConsoleSession;
-  readonly env: EnvReader;
-  readonly timeout: number;
-  readonly page: PageBound;
-  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
-  readonly cancelSent: () => boolean;
-  readonly body: (record: PageRecord) => EditorQueryAnswer;
-  readonly started: () => void;
-  readonly ended: (record: ExecuteRecord | undefined) => void;
-}
-
-/**
- * The run of `provider` through the legacy bridge: the page as the request bounds it, the bridge adding the probe row
- * in its prepare, its pump limits and cancel, and the body built from the legacy result. A legacy provider's entry
- * counts no run, so its idle sweep is the sweep it has always had.
- */
-function bridgedRun(provider: DatabaseProvider, run: EditorQueryRun): RunForm {
-  const bridged = bridgedConsole(provider, run.options);
-  return {
-    session: bridged.session,
-    env: NO_ENVIRONMENT,
-    timeout: statementTimeout(provider),
-    page: pageBound(run.options),
-    pumpLimits: bridged.pumpLimits,
-    cancelSent: () => bridged.run.cancelSent,
-    body: (record) => editorPageBody(record, bridged.answered, run.scrub),
-    started: () => undefined,
-    ended: () => undefined,
-  };
-}
-
 /** The page a run on a provider package's session asks for, and whether its session can be asked for the page after it. */
-interface PackagePage {
+export interface PackagePage {
   readonly limit: number;
   readonly offset: number;
   /** Whether the session honours `offset`, so a next page can be asked for. */
@@ -613,9 +563,10 @@ interface PackagePage {
  * are `"scrubbed"`, and as `packageWarnings` answers them under `route` where they are `"code-only"`. The columns'
  * names, the execution time, the row count and the warnings are the members the host core checked before it pumped
  * the page (`checkExecuteAnswer`, clause C-112), so none is checked again here. The record is released once, in a
- * `finally`, whether or not the body was built.
+ * `finally`, whether or not the body was built. A provider package's statement form builds its body with it
+ * (`entryConsoleTarget` in ./session-target).
  */
-function packagePageBody(
+export function packagePageBody(
   record: PageRecord,
   columns: readonly Column[],
   page: PackagePage,
@@ -666,71 +617,26 @@ function packagePageBody(
 }
 
 /**
- * The run on a provider package's session, with its declared environment in every call's context. The execute is
- * asked for one row past the page (#1440), whether or not the package applies the page, so a next page is known to
- * exist; the host pumps the first result within that row count and the page's 32 MiB, and the first result's columns
- * are kept from the answer the pump reads, since a page record carries none. The answer is the page's rows as records
- * keyed by their column names, each cell in the value codec's wire form, its fields, the declared types of the columns
- * that state one, and its pagination; a next page is offered only where the session honours `offset`. The package's
- * warnings reach the client through core's scrub where the session's engine record grants its own words, and otherwise
- * only as Studio's sentence naming their count (`packageWarnings` in ./package-errors). The
- * entry counts the run while its call runs, so the idle sweep keeps it: until the record answers, or until the call a
- * stop answered has settled.
- */
-function sessionRun(target: Extract<EditorRunTarget, { form: "session" }>, run: EditorQueryRun): RunForm {
-  const { entry, session } = target;
-  const limit = run.options.limit ?? DEFAULT_QUERY_LIMIT;
-  const offset = run.options.offset ?? 0;
-  let columns: readonly Column[] = [];
-  return {
-    session,
-    env: target.env,
-    timeout: target.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
-    page: { limit: limit + 1, offset },
-    pumpLimits: (answer) => {
-      columns = answer.results[0]?.columns ?? [];
-      return { maxRows: limit + 1, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
-    },
-    cancelSent: () => false,
-    body: (record) => {
-      const honoursOffset = session.calls.console.execute.honours.includes("offset");
-      const { ownWords } = entry.engine.grants;
-      return packagePageBody(record, columns, { limit, offset, honoursOffset }, ownWords, run.scrub, run.route);
-    },
-    started: () => {
-      entry.running += 1;
-    },
-    ended: (record) => {
-      entry.lastUsed = Date.now();
-      if (record?.kind === "stopped") {
-        void record.settled.then(() => {
-          entry.running -= 1;
-        });
-      } else {
-        entry.running -= 1;
-      }
-    },
-  };
-}
-
-/**
- * Runs one statement on `target`, what the caller opened, and answers its first result set's page. The run's steps are
- * one for every form; what differs by form is what `bridgedRun` and `sessionRun` read. A provider package's own errors
- * reach the caller by reference (clause C-31); the query route answers them by its record (`packageFailureAnswer` in
- * ./package-errors).
+ * Runs one statement on `target`, the console target the caller opened, and answers its first result set's page. The
+ * run's steps are one for every form; what differs by form is the statement form the target states
+ * (`ConsoleTarget.statement` in ./session-target): the page, the pump's limits, the cancel flag and the body. The run is
+ * counted on the target's cache entry from its start until its body was built, or until the call a stop answered has
+ * settled. A provider package's own errors reach the caller by reference (clause C-31); the query route answers them
+ * by its record (`packageFailureAnswer` in ./package-errors).
  *
  * @throws {QueryCancelledError} When the caller left.
  * @throws {StudioTimeoutRefusal} When the deadline ended the run.
  * @throws {FacetNotOfferedError} Not-sent, for bound params a package's session does not honour.
  * @throws {StudioOffsetRefusal} Not-sent, for a non-zero offset a package's session does not honour.
  */
-export async function runEditorQuery(target: EditorRunTarget, run: EditorQueryRun): Promise<EditorQueryAnswer> {
+export async function runEditorQuery(target: ConsoleTarget, run: EditorQueryRun): Promise<EditorQueryAnswer> {
   const core = hostCore();
-  const form = target.form === "provider" ? bridgedRun(target.provider, run) : sessionRun(target, run);
-  const deadline = executeDeadlineFor(form.timeout, Date.now());
-  const views = executeViewsFor(form.timeout, run.signal);
+  const form = target.statement(run);
+  const timeout = target.timeout();
+  const deadline = executeDeadlineFor(timeout, Date.now());
+  const views = executeViewsFor(timeout, run.signal);
   const scope = checkConsoleFacet(form.session.calls, "endScope").length === 0 ? newQueryCallScope() : undefined;
-  const end = () => endRunScope(core, form.session, scope, run, form.env);
+  const end = () => endRunScope(core, form.session, scope, run, target.env);
   const request: ExecuteRequest = {
     statement: run.statement,
     page: form.page,
@@ -738,14 +644,14 @@ export async function runEditorQuery(target: EditorRunTarget, run: EditorQueryRu
     ...(run.queryId === undefined ? {} : { runId: run.queryId }),
     ...(scope === undefined ? {} : { scope }),
   };
-  form.started();
+  target.started();
   let record: ExecuteRecord | undefined;
   try {
     try {
       record = await core.executeCall(
         form.session,
         request,
-        callContext(deadline, run.signal, form.env),
+        callContext(deadline, run.signal, target.env),
         form.pumpLimits,
         hostPorts(run.route, form.cancelSent),
       );
@@ -765,7 +671,7 @@ export async function runEditorQuery(target: EditorRunTarget, run: EditorQueryRu
     if (openTransaction !== "rolled-back") return answer;
     return { ...answer, body: { ...answer.body, openTransaction } };
   } finally {
-    form.ended(record);
+    target.ended(record);
   }
 }
 

@@ -21,6 +21,7 @@ import {
   type ExecuteRequest,
   PAGE_MAX_BYTES,
   type ResultSource,
+  rowsSource,
 } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeViews } from "@/lib/api/editor-query";
 import {
@@ -31,10 +32,14 @@ import {
   type TransactionScriptRun,
   type TransactionUnitOutcome,
 } from "@/lib/api/editor-script";
+import { entryConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
+import type { CachedSession } from "@/lib/db/factory";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import { errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioByteBudgetRefusal, StudioTimeoutRefusal } from "@/lib/db/errors";
 import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type TransactionProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { HostDefectError } from "@/lib/provider-host/access";
 import type { ConsoleSession, ExecuteRecord } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -709,7 +714,7 @@ async function runAllInTransaction(
   provider: DatabaseProvider & TransactionProvider,
   run: TransactionScriptRun,
 ): Promise<TransactionUnitOutcome<QueryResult>[]> {
-  const opened = openTransactionScript(provider, run);
+  const opened = openTransactionScript(providerConsoleTarget(provider), run);
   const outcomes: TransactionUnitOutcome<QueryResult>[] = [];
   for (let index = 0; index < run.units.length; index++) {
     // oxlint-disable-next-line no-await-in-loop -- the units run in order, as the route runs them.
@@ -776,7 +781,7 @@ describe("openTransactionScript", () => {
     expect(provider.queryInTransaction.mock.calls).toEqual([["SELECT 1"], ["SELECT 2"], ["SELECT 3 LIMIT 50"]]);
     expect(provider.query).not.toHaveBeenCalled();
 
-    const opened = openTransactionScript(provider, transactionScriptOf("SELECT 1"));
+    const opened = openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT 1"));
     expect(() => opened.runUnit(1, asIs)).toThrow(
       "The editor's script inside a transaction was asked for its unit at index 1, and it holds 1, a defect of the caller.",
     );
@@ -810,7 +815,10 @@ describe("openTransactionScript", () => {
     const thrown = new Error(marker());
 
     const [answered, failed] = await withCore(releaseCountingCore(releases), async () => {
-      const opened = openTransactionScript(provider, transactionScriptOf("SELECT n FROM t; SELECT n FROM t"));
+      const opened = openTransactionScript(
+        providerConsoleTarget(provider),
+        transactionScriptOf("SELECT n FROM t; SELECT n FROM t"),
+      );
       const first = await opened.runUnit(0, (built) => {
         releasedAtBuild = releases.count;
         return built;
@@ -833,10 +841,10 @@ describe("openTransactionScript", () => {
     const result = resultOf(Array.from({ length: 40 }, () => ({ n: mebibyte })));
     const provider = transactionProviderOf(async () => result);
 
-    const outcome = await openTransactionScript(provider, transactionScriptOf("SELECT n FROM t; SELECT 1")).runUnit(
-      0,
-      asIs,
-    );
+    const outcome = await openTransactionScript(
+      providerConsoleTarget(provider),
+      transactionScriptOf("SELECT n FROM t; SELECT 1"),
+    ).runUnit(0, asIs);
 
     expect(outcome.kind === "answered" && outcome.value).toBe(result);
     expect(result.rows).toHaveLength(40);
@@ -847,7 +855,10 @@ describe("openTransactionScript", () => {
     const provider = transactionProviderOf(async () => resultOf([{ wide }]));
 
     const { error, settled } = unansweredWith(
-      await openTransactionScript(provider, transactionScriptOf("SELECT wide FROM t")).runUnit(0, asIs),
+      await openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT wide FROM t")).runUnit(
+        0,
+        asIs,
+      ),
     );
 
     expect(error).toBeInstanceOf(StudioByteBudgetRefusal);
@@ -864,7 +875,10 @@ describe("openTransactionScript", () => {
     const provider = transactionProviderOf(async () => resultOf([{ n: deep }]));
 
     const refused = failedInTransaction(
-      await openTransactionScript(provider, transactionScriptOf("SELECT n FROM t")).runUnit(0, asIs),
+      await openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT n FROM t")).runUnit(
+        0,
+        asIs,
+      ),
     );
 
     expect((refused as Error).name).toBe("ValueCodecError");
@@ -873,13 +887,95 @@ describe("openTransactionScript", () => {
     );
   });
 
+  test("each unit of a script inside a package's transaction is one host core execute on the session itself, sent with transaction, every row for a unit but the last, its answer built from its page and counted on the entry", async () => {
+    const seen: { request: ExecuteRequest; running: number }[] = [];
+    const env = envReader([], () => undefined);
+    const session: ConsoleSession = {
+      calls: {
+        console: {
+          execute: { honours: ["offset"] },
+          cancel: "not-offered",
+          endScope: "not-offered",
+          transaction: "offered",
+        },
+        objects: { tree: "not-offered", source: "not-offered" },
+        maintenance: { run: "not-offered", preview: "not-offered" },
+        monitoring: { panel: "not-offered", poolStats: "not-offered" },
+      },
+      readOnlyStatements: false,
+      execute: async (request) => {
+        seen.push({ request, running: entry.running });
+        return {
+          results: [rowsSource([{ name: "n" }], [[1], [2]], 2)],
+          warnings: [],
+          executionTimeMs: 6,
+          pageApplied: false,
+          sessionState: "in-transaction",
+        };
+      },
+    };
+    const entry = {
+      opened: { form: "session", session, env },
+      engine: { grants: { ownWords: "scrubbed" } },
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    const connection = { id: "p", name: "p", type: "acmescript" } as unknown as EngineConnection;
+    const target = entryConsoleTarget(entry, connection);
+    const runningAtBuild: number[] = [];
+
+    const opened = openTransactionScript(target, transactionScriptOf("SELECT 1; SELECT 2", { options: { limit: 1 } }));
+    const outcomes: TransactionUnitOutcome<QueryResult>[] = [];
+    for (const index of [0, 1]) {
+      // oxlint-disable-next-line no-await-in-loop -- the units run in order, as the route runs them.
+      const outcome = await opened.runUnit(index, (result) => {
+        runningAtBuild.push(entry.running);
+        return result;
+      });
+      outcomes.push(outcome);
+      expect(entry.running).toBe(0);
+    }
+
+    expect(seen.map((call) => call.request)).toEqual([
+      { statement: "SELECT 1", page: { unlimited: true }, transaction: true },
+      { statement: "SELECT 2", page: { limit: 1, offset: 0 }, transaction: true },
+    ]);
+    expect(seen.map((call) => call.running)).toEqual([1, 1]);
+    // The entry counts each unit until its page was read and released.
+    expect(runningAtBuild).toEqual([1, 1]);
+    expect(outcomes).toEqual([
+      {
+        kind: "answered",
+        value: { rows: [{ n: 1 }, { n: 2 }], fields: ["n"], rowCount: 2, executionTime: 6 },
+      },
+      { kind: "answered", value: { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, executionTime: 6 } },
+    ]);
+    expect(entry.lastUsed > 0).toBe(true);
+  });
+
+  test("a unit of a script inside a transaction on a console target whose session offers no transaction is refused before the call by the host core's rule, and reaches no provider", async () => {
+    const provider = providerOf(async () => resultOf([{ n: 1 }]));
+
+    // A failure, never unanswered: the core refused the request before the call, so the session's state is unchanged.
+    const refused = failedInTransaction(
+      await openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT 1")).runUnit(0, asIs),
+    );
+
+    expect(refused).toBeInstanceOf(HostDefectError);
+    expect((refused as HostDefectError).refusals).toEqual([
+      { rule: "request-transaction-not-offered", pointer: "/transaction" },
+    ]);
+    expect(provider.query).not.toHaveBeenCalled();
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+  });
+
   test("a script inside a transaction opened before the host core is installed throws by name and calls no provider", () => {
     const provider = transactionProviderOf(async () => resultOf([]));
     const real = hostCore();
     forgetHostCore();
     let thrown: unknown;
     try {
-      openTransactionScript(provider, transactionScriptOf("SELECT 1"));
+      openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT 1"));
     } catch (error) {
       thrown = error;
     } finally {
@@ -904,8 +1000,16 @@ describe("a transaction script unit's wait", () => {
     const now = Date.now();
 
     await withCore(countingCore(seen), async () => {
-      await openTransactionScript(configured, transactionScriptOf("SELECT 1")).runUnit(0, asIs, now);
-      await openTransactionScript(defaulted, transactionScriptOf("SELECT 1")).runUnit(0, asIs, now);
+      await openTransactionScript(providerConsoleTarget(configured), transactionScriptOf("SELECT 1")).runUnit(
+        0,
+        asIs,
+        now,
+      );
+      await openTransactionScript(providerConsoleTarget(defaulted), transactionScriptOf("SELECT 1")).runUnit(
+        0,
+        asIs,
+        now,
+      );
     });
 
     expect(seen.map((call) => call.ctx.deadline)).toEqual([
@@ -926,7 +1030,11 @@ describe("a transaction script unit's wait", () => {
     let settledAfter = false;
 
     const warned = await warningsOf(async () => {
-      const outcome = await openTransactionScript(provider, run).runUnit(0, asIs, startFor(provider, 30));
+      const outcome = await openTransactionScript(providerConsoleTarget(provider), run).runUnit(
+        0,
+        asIs,
+        startFor(provider, 30),
+      );
       const { error, settled } = unansweredWith(outcome);
 
       expect(error).toBeInstanceOf(StudioTimeoutRefusal);
@@ -967,7 +1075,7 @@ describe("a transaction script unit's wait", () => {
     const controller = new AbortController();
 
     const running = openTransactionScript(
-      provider,
+      providerConsoleTarget(provider),
       transactionScriptOf("SELECT 1", { signal: controller.signal }),
     ).runUnit(0, asIs);
     await reached.promise;
@@ -989,7 +1097,11 @@ describe("a transaction script unit's wait", () => {
     const run = transactionScriptOf("SELECT n FROM t; SELECT 1");
 
     // A deadline about 300 ms out, which the page spends waiting for the slot.
-    const outcome = await openTransactionScript(provider, run).runUnit(0, asIs, startFor(provider, 300));
+    const outcome = await openTransactionScript(providerConsoleTarget(provider), run).runUnit(
+      0,
+      asIs,
+      startFor(provider, 300),
+    );
     await slot.release();
     const { error } = unansweredWith(outcome);
 
@@ -1012,7 +1124,7 @@ describe("a transaction script unit's wait", () => {
 
     const refused = failedInTransaction(
       await openTransactionScript(
-        provider,
+        providerConsoleTarget(provider),
         transactionScriptOf("SELECT 1; SELECT 2", { signal: controller.signal }),
       ).runUnit(0, asIs),
     );
@@ -1030,7 +1142,9 @@ describe("a transaction script unit's wait", () => {
     });
 
     expect(
-      failedInTransaction(await openTransactionScript(provider, transactionScriptOf("SELECT 1")).runUnit(0, asIs)),
+      failedInTransaction(
+        await openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT 1")).runUnit(0, asIs),
+      ),
     ).toBe(thrown);
   });
 });

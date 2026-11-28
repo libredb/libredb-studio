@@ -24,6 +24,7 @@
  */
 import { deadlineSignal, encodedRowBytes, envReader, PAGE_MAX_BYTES } from "@libredb/provider-sdk/calls";
 import { runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, probePastPage } from "@/lib/api/page-probe";
 import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
@@ -268,16 +269,13 @@ export async function todayText(shape: Shape, rows: Record<string, unknown>[]): 
 
 /** The host's answer body: `runEditorQuery`'s. */
 async function hostBody(shape: Shape, rows: Record<string, unknown>[]): Promise<AnswerBody> {
-  const { body } = await runEditorQuery(
-    { form: "provider", provider: legacyProvider(shape, rows) },
-    {
-      statement: STATEMENT,
-      options: { ...OPTIONS },
-      signal: new AbortController().signal,
-      route: "bench",
-      scrub: SCRUB,
-    },
-  );
+  const { body } = await runEditorQuery(providerConsoleTarget(legacyProvider(shape, rows)), {
+    statement: STATEMENT,
+    options: { ...OPTIONS },
+    signal: new AbortController().signal,
+    route: "bench",
+    scrub: SCRUB,
+  });
   return body as unknown as AnswerBody;
 }
 

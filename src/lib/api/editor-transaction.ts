@@ -5,36 +5,37 @@ import {
   callContext,
   type EditorQueryBody,
   EXECUTE_SLACK_MS,
-  editorPageBody,
-  executeDeadline,
-  executeViews,
+  executeDeadlineFor,
+  type ExecuteViews,
+  executeViewsFor,
   hostPorts,
-  pageBound,
-  statementTimeout,
 } from "@/lib/api/editor-query";
+import { type ConsoleTarget, markedCall } from "@/lib/api/session-target";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { waitedSeconds } from "@/lib/db/errors";
 import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
-import type { DatabaseProvider, QueryPrepareOptions } from "@/lib/db/types";
+import type { QueryPrepareOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
-import type { RefusedRecord, TransactionRecord } from "@/lib/provider-host/core/console";
+import type { ExecuteRecord, PageRecord, RefusedRecord, TransactionRecord } from "@/lib/provider-host/core/console";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
 /*
  * THE TRANSACTION ROUTE'S CALLS ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48, C-58 and C-59).
  *
  * The caller facade of `POST /api/db/transaction`, beside `runEditorQuery`: a begin, a COMMIT, a ROLLBACK, the state
- * read and one statement inside the transaction each run through the legacy bridge and the host core's transaction or
- * execute call, on the core the process's composition root installed, read before anything else in every call. Each
+ * read and one statement inside the transaction each run on the console target's session (`ConsoleTarget` in
+ * ./session-target), a legacy provider's bridged session or a provider package's session, through the host core's
+ * transaction or execute call, each call counted on the cache entry its session lives in from its start until it
+ * answered, or until the call a stop answered has settled, on the core the process's composition root installed, read
+ * before anything else in every call. Each
  * call builds a fresh request and context, so the core freezes nothing a caller holds, and the facade keeps no state:
  * every outcome carries the session state its own call answered, never one kept from an earlier call (clause C-58).
  * A script of several statements inside the transaction runs its units through `openTransactionScript` in
  * src/lib/api/editor-script.ts (clause C-84), whose stopped unit is this module's `UnansweredCall`.
  *
- * Deadlines (clause C-59). A begin, a COMMIT, a ROLLBACK and a statement wait until `executeDeadline`, the statement
- * timeout plus `EXECUTE_SLACK_MS`, and the state read until `CLEANUP_DEADLINE_MS`, each also ended by the caller's
+ * Deadlines (clause C-59). A begin, a COMMIT, a ROLLBACK and a statement wait until `executeDeadlineFor` the target's
+ * statement timeout, that timeout plus `EXECUTE_SLACK_MS`, and the state read until `CLEANUP_DEADLINE_MS`, each also ended by the caller's
  * signal. The rollback after a credential change reads the state and rolls back within one allowance of its own,
  * `CREDENTIAL_CHANGE_ROLLBACK_MS`, under a signal of its own and not the caller's: it is Studio's own cleanup, which
  * the caller did not ask for (clause C-47's reason).
@@ -138,15 +139,15 @@ const LEFT_OPEN: Readonly<Record<Exclude<TransactionAction, "state">, string>> =
   rollback: "the transaction may still be open",
 };
 
-/** The view of a begin, COMMIT or ROLLBACK on `provider`, naming the statement and what it may have left. */
+/** The view of a begin, COMMIT or ROLLBACK on `target`, naming the statement and what it may have left. */
 function actionView(
-  provider: Pick<DatabaseProvider, "config">,
+  target: ConsoleTarget,
   action: Exclude<TransactionAction, "state">,
   caller: AbortSignal,
 ): CallerView {
   return {
     caller,
-    deadlineSentence: `The ${STATEMENT_WORDS[action]} did not answer within the statement timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it, and ${LEFT_OPEN[action]}.`,
+    deadlineSentence: `The ${STATEMENT_WORDS[action]} did not answer within the statement timeout of ${waitedSeconds(target.timeout())} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it, and ${LEFT_OPEN[action]}.`,
   };
 }
 
@@ -167,19 +168,20 @@ function refusedOutcome(record: RefusedRecord, view: CallerView): UnansweredCall
   return record.called ? { kind: "unanswered", error, settled: Promise.resolve() } : { kind: "not-sent", error };
 }
 
-/** One transaction call on `provider` through the installed core, with a fresh request and context. */
+/**
+ * One transaction call on `target`'s session through the installed core, read before anything else of the call, with a
+ * fresh request and a context of the target's environment, counted on the target's entry (`markedCall`).
+ */
 function transactionOn(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   request: TransactionRequest,
   deadline: number,
   signal: AbortSignal,
   route: string,
 ): Promise<TransactionRecord> {
-  return hostCore().transactionCall(
-    bridgedConsole(provider, {}).session,
-    request,
-    callContext(deadline, signal),
-    hostPorts(route),
+  const core = hostCore();
+  return markedCall(target, () =>
+    core.transactionCall(target.session, request, callContext(deadline, signal, target.env), hostPorts(route)),
   );
 }
 
@@ -189,18 +191,18 @@ type StateRead =
   | { readonly kind: "unread"; readonly error: Error };
 
 /**
- * Reads the session state of `provider` until `deadline` under `signal`.
+ * Reads the session state of `target` until `deadline` under `signal`.
  *
  * @throws The provider's error by reference, or a host defect for an answer the host could not read.
  */
 async function readState(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   deadline: number,
   signal: AbortSignal,
   view: CallerView,
   route: string,
 ): Promise<StateRead> {
-  const record = await transactionOn(provider, { action: "state" }, deadline, signal, route);
+  const record = await transactionOn(target, { action: "state" }, deadline, signal, route);
   if (record.kind === "answered") return { kind: "read", sessionState: record.sessionState };
   if (record.kind === "stopped") return { kind: "unread", error: stopError(record.reason, view) };
   const error = refusalError(record, view);
@@ -209,19 +211,19 @@ async function readState(
 }
 
 /**
- * The session state of `provider` now, read through the host core under the cleanup deadline from `now` and the
+ * The session state of `target` now, read through the host core under the cleanup deadline from `now` and the
  * caller's signal. A read the host stopped waiting for, or refused before the call, answers `unknown`, logged in
  * Studio's own sentence by kind and code.
  *
  * @throws The provider's error by reference, or a host defect for an answer the host could not read.
  */
 export async function readTransactionState(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   caller: TransactionCaller,
   now: number = Date.now(),
 ): Promise<SessionState> {
   const read = await readState(
-    provider,
+    target,
     now + CLEANUP_DEADLINE_MS,
     caller.signal,
     stateView(caller.signal),
@@ -233,16 +235,16 @@ export async function readTransactionState(
 }
 
 /**
- * The session state of `provider` read as `readTransactionState` reads it, answering `unknown` for a read that fails,
+ * The session state of `target` read as `readTransactionState` reads it, answering `unknown` for a read that fails,
  * logged by kind and code and never its text: the state read after a provider's failure, whose own error is the one
  * answered, and the read of the route's timeout watch. It never rejects.
  */
 export async function readTransactionStateOrUnknown(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   caller: TransactionCaller,
 ): Promise<SessionState> {
   try {
-    return await readTransactionState(provider, caller);
+    return await readTransactionState(target, caller);
   } catch (failure) {
     logger.warn("A transaction state read failed, so the state is unknown", {
       route: caller.route,
@@ -253,20 +255,20 @@ export async function readTransactionStateOrUnknown(
   }
 }
 
-/** Opens a transaction on `provider`, asking the server to report its state when `requireReportedState`. */
+/** Opens a transaction on `target`'s session, asking the server to report its state when `requireReportedState`. */
 export async function beginInTransaction(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   requireReportedState: boolean,
   caller: TransactionCaller,
   now: number = Date.now(),
 ): Promise<BeginOutcome> {
-  const view = actionView(provider, "begin", caller.signal);
+  const view = actionView(target, "begin", caller.signal);
   let record: TransactionRecord;
   try {
     record = await transactionOn(
-      provider,
+      target,
       { action: "begin", ...(requireReportedState ? { requireReportedState: true as const } : {}) },
-      executeDeadline(provider, now),
+      executeDeadlineFor(target.timeout(), now),
       caller.signal,
       caller.route,
     );
@@ -280,19 +282,25 @@ export async function beginInTransaction(
   return record;
 }
 
-/** Ends the transaction on `provider` with a COMMIT or a ROLLBACK. */
+/** Ends the transaction on `target`'s session with a COMMIT or a ROLLBACK. */
 export async function endTransaction(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   action: "commit" | "rollback",
   caller: TransactionCaller,
   now: number = Date.now(),
 ): Promise<EndOutcome> {
-  const view = actionView(provider, action, caller.signal);
+  const view = actionView(target, action, caller.signal);
   let record: TransactionRecord;
   try {
-    record = await transactionOn(provider, { action }, executeDeadline(provider, now), caller.signal, caller.route);
+    record = await transactionOn(
+      target,
+      { action },
+      executeDeadlineFor(target.timeout(), now),
+      caller.signal,
+      caller.route,
+    );
   } catch (error) {
-    return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
+    return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(target, caller) };
   }
   if (record.kind === "refused") return refusedOutcome(record, view);
   if (record.kind === "stopped") {
@@ -302,56 +310,70 @@ export async function endTransaction(
 }
 
 /**
- * Runs one statement inside the transaction on `provider` and answers its first result set's page, as
- * `runEditorQuery` answers it: within the host's page budget and its large-page slot, the body built by
- * `editorPageBody`, with the session state the statement answered.
+ * Runs one statement inside the transaction on `target`'s session and answers its first result set's page, as
+ * `runEditorQuery` answers it: on the statement form the target states, within the host's page budget and its
+ * large-page slot, the body the form builds, with the session state the statement answered, the call counted on the
+ * target's entry from its start until its body was built, or until the call a stop answered has settled.
  */
 export async function runInTransaction(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   run: TransactionStatement,
   caller: TransactionCaller,
   now: number = Date.now(),
 ): Promise<StatementOutcome> {
   const core = hostCore();
-  const views = executeViews(provider, caller.signal);
-  const bridged = bridgedConsole(provider, run.options);
+  const views = executeViewsFor(target.timeout(), caller.signal);
+  const form = target.statement({ options: run.options, scrub: run.scrub, route: caller.route });
   const request: ExecuteRequest = {
     statement: run.statement,
-    page: pageBound(run.options),
+    page: form.page,
     ...(run.params === undefined ? {} : { params: [...run.params] }),
     transaction: true,
   };
-  let record: Awaited<ReturnType<typeof core.executeCall>>;
+  target.started();
+  let record: ExecuteRecord | undefined;
   try {
-    record = await core.executeCall(
-      bridged.session,
-      request,
-      callContext(executeDeadline(provider, now), caller.signal),
-      bridged.pumpLimits,
-      hostPorts(caller.route),
-    );
-  } catch (error) {
-    return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
+    try {
+      record = await core.executeCall(
+        form.session,
+        request,
+        callContext(executeDeadlineFor(target.timeout(), now), caller.signal, target.env),
+        form.pumpLimits,
+        hostPorts(caller.route),
+      );
+    } catch (error) {
+      return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(target, caller) };
+    }
+    return answeredStatement(record, form.body, views);
+  } finally {
+    target.ended(record);
   }
+}
+
+/** The outcome of a statement inside the transaction whose execute answered `record`, its page's body by `body`. */
+function answeredStatement(
+  record: ExecuteRecord,
+  body: (record: PageRecord) => { readonly body: EditorQueryBody },
+  views: ExecuteViews,
+): StatementOutcome {
   if (record.kind === "refused") return refusedOutcome(record, views.view);
   if (record.kind === "stopped") {
     return { kind: "unanswered", error: stopError(record.reason, views.stopView(record)), settled: record.settled };
   }
   // Present on every page of a statement sent with `transaction` (clause C-48).
   const sessionState = record.sessionState as SessionState;
-  const { body } = editorPageBody(record, bridged.answered, run.scrub);
-  return { kind: "answered", body, sessionState };
+  return { kind: "answered", body: body(record).body, sessionState };
 }
 
 /**
- * Rolls back the transaction `provider` holds after its owner's credential changed: the state read, then the rollback
+ * Rolls back the transaction `target`'s session holds after its owner's credential changed: the state read, then the rollback
  * when the state is `in-transaction` or `unknown`, both within `CREDENTIAL_CHANGE_ROLLBACK_MS` from `now` under a
  * signal of the allowance's own. A rollback that answered is `rolled-back`, a session that held none `none-open`, and
  * every other end `unconfirmed` with its error: the provider's by reference, or this bundle's class for a stop or a
  * refusal, named by the allowance.
  */
 export async function rollBackAfterCredentialChange(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   route: string,
   now: number = Date.now(),
 ): Promise<CredentialRollback> {
@@ -360,9 +382,9 @@ export async function rollBackAfterCredentialChange(
   const own = new AbortController().signal;
   const view: CallerView = { caller: own, deadlineSentence: CREDENTIAL_VIEW_SENTENCE };
   try {
-    const read = await readState(provider, deadline, own, view, route);
+    const read = await readState(target, deadline, own, view, route);
     if (read.kind === "read" && read.sessionState === "not-in-transaction") return { kind: "none-open" };
-    const record = await transactionOn(provider, { action: "rollback" }, deadline, own, route);
+    const record = await transactionOn(target, { action: "rollback" }, deadline, own, route);
     if (record.kind === "answered") return { kind: "rolled-back" };
     if (record.kind === "stopped") return { kind: "unconfirmed", error: stopError(record.reason, view) };
     return { kind: "unconfirmed", error: refusalError(record, view) };

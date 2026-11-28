@@ -1,15 +1,23 @@
 /**
  * The transaction facade (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clauses C-58 and C-59): each
- * transaction call of `POST /api/db/transaction` runs through the legacy bridge and the host core under a deadline the
- * host owns and the caller's signal, answers an outcome the route acts on, and reads the session state at once after a
- * provider's failure, never a state the facade kept.
+ * transaction call of `POST /api/db/transaction` runs on a console target's session, the legacy bridge's or a provider
+ * package's own, through the host core under a deadline the host owns and the caller's signal, answers an outcome the
+ * route acts on, and reads the session state at once after a provider's failure, never a state the facade kept.
  *
  * The real host core is installed for the file; a case that needs a deadline reached in process installs a core of its
  * own around the real one and restores it. Every double signals when the call reaches it, and no assertion follows a
  * timer. `editor-transaction-bounds.test.ts` holds the real short deadlines in a bounded Node child.
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
-import { CLEANUP_DEADLINE_MS, type CallContext } from "@libredb/provider-sdk/calls";
+import {
+  CLEANUP_DEADLINE_MS,
+  type CallContext,
+  envReader,
+  rowsSource,
+  type TransactionAnswer,
+} from "@libredb/provider-sdk/calls";
+import type { SessionState } from "@libredb/provider-sdk/errors";
+import type { Calls } from "@libredb/provider-sdk/manifest";
 import { EXECUTE_SLACK_MS, executeDeadline, runEditorQuery } from "@/lib/api/editor-query";
 import {
   beginInTransaction,
@@ -21,6 +29,9 @@ import {
   runInTransaction,
   type UnansweredCall,
 } from "@/lib/api/editor-transaction";
+import { entryConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
+import type { CachedSession } from "@/lib/db/factory";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import { errorOutcome } from "@/lib/db/error-record";
 import {
   QueryCancelledError,
@@ -33,6 +44,7 @@ import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -158,11 +170,16 @@ describe("the transaction facade's calls", () => {
         },
       }),
       async () => {
-        await beginInTransaction(fx.provider, false, callerOf(), now);
-        await runInTransaction(fx.provider, { statement: "SELECT n FROM t", options: {}, scrub }, callerOf(), now);
-        await endTransaction(fx.provider, "commit", callerOf(), now);
-        await endTransaction(fx.provider, "rollback", callerOf(), now);
-        await readTransactionState(fx.provider, callerOf(), now);
+        await beginInTransaction(providerConsoleTarget(fx.provider), false, callerOf(), now);
+        await runInTransaction(
+          providerConsoleTarget(fx.provider),
+          { statement: "SELECT n FROM t", options: {}, scrub },
+          callerOf(),
+          now,
+        );
+        await endTransaction(providerConsoleTarget(fx.provider), "commit", callerOf(), now);
+        await endTransaction(providerConsoleTarget(fx.provider), "rollback", callerOf(), now);
+        await readTransactionState(providerConsoleTarget(fx.provider), callerOf(), now);
       },
     );
 
@@ -185,8 +202,8 @@ describe("the transaction facade's calls", () => {
     });
     const silent = transactional();
 
-    const reported = await beginInTransaction(fx.provider, true, callerOf());
-    const plain = await beginInTransaction(silent.provider, false, callerOf());
+    const reported = await beginInTransaction(providerConsoleTarget(fx.provider), true, callerOf());
+    const plain = await beginInTransaction(providerConsoleTarget(silent.provider), false, callerOf());
 
     expect(reported).toEqual({ kind: "answered", sessionState: "in-transaction", stateReported: false });
     expect(plain).toEqual({ kind: "answered", sessionState: "in-transaction" });
@@ -197,7 +214,7 @@ describe("the transaction facade's calls", () => {
   test("a begin past its deadline is refused before the provider is called, not-sent", async () => {
     const fx = transactional(-EXECUTE_SLACK_MS - 60_000);
 
-    const outcome = await beginInTransaction(fx.provider, false, callerOf());
+    const outcome = await beginInTransaction(providerConsoleTarget(fx.provider), false, callerOf());
 
     expect(outcome.kind).toBe("not-sent");
     const error = (outcome as { error: unknown }).error;
@@ -214,7 +231,7 @@ describe("the transaction facade's calls", () => {
     fx.provider.commitTransaction.mockImplementation(commit.call);
     const controller = new AbortController();
 
-    const running = endTransaction(fx.provider, "commit", callerOf(controller.signal));
+    const running = endTransaction(providerConsoleTarget(fx.provider), "commit", callerOf(controller.signal));
     await commit.reached;
     controller.abort();
     const outcome = await running;
@@ -247,9 +264,9 @@ describe("the transaction facade's calls", () => {
         transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }),
       }),
       async () => [
-        await beginInTransaction(fx.provider, false, callerOf()),
-        await endTransaction(fx.provider, "commit", callerOf()),
-        await endTransaction(fx.provider, "rollback", callerOf()),
+        await beginInTransaction(providerConsoleTarget(fx.provider), false, callerOf()),
+        await endTransaction(providerConsoleTarget(fx.provider), "commit", callerOf()),
+        await endTransaction(providerConsoleTarget(fx.provider), "rollback", callerOf()),
       ],
     );
 
@@ -288,9 +305,9 @@ describe("the transaction facade's calls", () => {
       throw beginFailure;
     });
 
-    const commit = await endTransaction(committing.provider, "commit", callerOf());
-    const rollback = await endTransaction(rollingBack.provider, "rollback", callerOf());
-    const begin = await beginInTransaction(beginning.provider, false, callerOf());
+    const commit = await endTransaction(providerConsoleTarget(committing.provider), "commit", callerOf());
+    const rollback = await endTransaction(providerConsoleTarget(rollingBack.provider), "rollback", callerOf());
+    const begin = await beginInTransaction(providerConsoleTarget(beginning.provider), false, callerOf());
 
     expect(commit).toEqual({ kind: "failed", error: commitFailure, sessionState: "not-in-transaction" });
     expect((commit as { error: unknown }).error).toBe(commitFailure);
@@ -327,9 +344,9 @@ describe("the transaction facade's calls", () => {
               ? { kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }
               : real.transactionCall(session, request, ctx, ports),
         }),
-        () => endTransaction(stoppedRead.provider, "commit", callerOf()),
+        () => endTransaction(providerConsoleTarget(stoppedRead.provider), "commit", callerOf()),
       );
-      const failed = await endTransaction(failingRead.provider, "commit", callerOf());
+      const failed = await endTransaction(providerConsoleTarget(failingRead.provider), "commit", callerOf());
 
       expect(stopped.kind).toBe("failed");
       expect((stopped as { sessionState: unknown }).sessionState).toBe("unknown");
@@ -364,20 +381,17 @@ describe("the transaction facade's calls", () => {
     const value = marker();
 
     const outcome = await runInTransaction(
-      fx.provider,
+      providerConsoleTarget(fx.provider),
       { statement: "SELECT n FROM t", params: [value], options: { limit: 100 }, scrub },
       callerOf(),
     );
-    const editor = await runEditorQuery(
-      { form: "provider", provider: plain },
-      {
-        statement: "SELECT n FROM t",
-        options: { limit: 100 },
-        signal: new AbortController().signal,
-        route: ROUTE,
-        scrub,
-      },
-    );
+    const editor = await runEditorQuery(providerConsoleTarget(plain), {
+      statement: "SELECT n FROM t",
+      options: { limit: 100 },
+      signal: new AbortController().signal,
+      route: ROUTE,
+      scrub,
+    });
 
     expect(outcome.kind).toBe("answered");
     const answered = outcome as { body: unknown; sessionState: unknown };
@@ -401,7 +415,7 @@ describe("the transaction facade's calls", () => {
     try {
       const controller = new AbortController();
       const running = runInTransaction(
-        fx.provider,
+        providerConsoleTarget(fx.provider),
         { statement: "UPDATE t SET n = 1", options: {}, scrub },
         callerOf(controller.signal),
       );
@@ -439,13 +453,17 @@ describe("the transaction facade's calls", () => {
     huge.provider.queryInTransaction.mockImplementation(async () => resultOf([{ n: "x".repeat(33 * MIB) }]));
 
     const failed = await runInTransaction(
-      fx.provider,
+      providerConsoleTarget(fx.provider),
       { statement: "UPDATE t SET n = 1", options: {}, scrub },
       callerOf(),
     );
-    const notSent = await runInTransaction(late.provider, { statement: "SELECT 1", options: {}, scrub }, callerOf());
+    const notSent = await runInTransaction(
+      providerConsoleTarget(late.provider),
+      { statement: "SELECT 1", options: {}, scrub },
+      callerOf(),
+    );
     const refused = await runInTransaction(
-      huge.provider,
+      providerConsoleTarget(huge.provider),
       { statement: "SELECT n FROM t LIMIT 5", options: {}, scrub },
       callerOf(),
     );
@@ -473,16 +491,16 @@ describe("the transaction facade's calls", () => {
     let refused: unknown;
     let stopped: unknown;
     try {
-      open = await readTransactionState(fx.provider, callerOf());
+      open = await readTransactionState(providerConsoleTarget(fx.provider), callerOf());
       fx.open = false;
-      closed = await readTransactionState(fx.provider, callerOf());
-      refused = await readTransactionState(fx.provider, callerOf(left.signal));
+      closed = await readTransactionState(providerConsoleTarget(fx.provider), callerOf());
+      refused = await readTransactionState(providerConsoleTarget(fx.provider), callerOf(left.signal));
       stopped = await withCore(
         (real) => ({
           ...real,
           transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }),
         }),
-        () => readTransactionState(fx.provider, callerOf()),
+        () => readTransactionState(providerConsoleTarget(fx.provider), callerOf()),
       );
     } finally {
       warn.mockRestore();
@@ -499,7 +517,9 @@ describe("the transaction facade's calls", () => {
       throw thrown;
     });
 
-    const caught = await readTransactionState(fx.provider, callerOf()).catch((error: unknown) => error);
+    const caught = await readTransactionState(providerConsoleTarget(fx.provider), callerOf()).catch(
+      (error: unknown) => error,
+    );
     const defect = await withCore(
       (real) => ({
         ...real,
@@ -509,7 +529,10 @@ describe("the transaction facade's calls", () => {
           refusals: [{ rule: "transaction-answer-unreadable", pointer: "/sessionState" }],
         }),
       }),
-      () => readTransactionState(transactional().provider, callerOf()).catch((error: unknown) => error),
+      () =>
+        readTransactionState(providerConsoleTarget(transactional().provider), callerOf()).catch(
+          (error: unknown) => error,
+        ),
     );
 
     expect(caught).toBe(thrown);
@@ -529,8 +552,8 @@ describe("the rollback after a credential change", () => {
     open.open = true;
     const closed = transactional();
 
-    const rolledBack = await rollBackAfterCredentialChange(open.provider, ROUTE);
-    const noneOpen = await rollBackAfterCredentialChange(closed.provider, ROUTE);
+    const rolledBack = await rollBackAfterCredentialChange(providerConsoleTarget(open.provider), ROUTE);
+    const noneOpen = await rollBackAfterCredentialChange(providerConsoleTarget(closed.provider), ROUTE);
     const unknownState = transactional();
     unknownState.open = true;
     const afterUnknown = await withCore(
@@ -541,7 +564,7 @@ describe("the rollback after a credential change", () => {
             ? { kind: "answered", sessionState: "unknown" }
             : real.transactionCall(session, request, ctx, ports),
       }),
-      () => rollBackAfterCredentialChange(unknownState.provider, ROUTE),
+      () => rollBackAfterCredentialChange(providerConsoleTarget(unknownState.provider), ROUTE),
     );
 
     expect(rolledBack).toEqual({ kind: "rolled-back" });
@@ -568,8 +591,8 @@ describe("the rollback after a credential change", () => {
     const stopped = transactional();
     stopped.open = true;
 
-    const failed = await rollBackAfterCredentialChange(failing.provider, ROUTE);
-    const notRead = await rollBackAfterCredentialChange(unreadable.provider, ROUTE);
+    const failed = await rollBackAfterCredentialChange(providerConsoleTarget(failing.provider), ROUTE);
+    const notRead = await rollBackAfterCredentialChange(providerConsoleTarget(unreadable.provider), ROUTE);
     const cut = await withCore(
       (real) => ({
         ...real,
@@ -578,10 +601,10 @@ describe("the rollback after a credential change", () => {
             ? real.transactionCall(session, request, ctx, ports)
             : { kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() },
       }),
-      () => rollBackAfterCredentialChange(stopped.provider, ROUTE),
+      () => rollBackAfterCredentialChange(providerConsoleTarget(stopped.provider), ROUTE),
     );
     const late = await rollBackAfterCredentialChange(
-      stopped.provider,
+      providerConsoleTarget(stopped.provider),
       ROUTE,
       Date.now() - CREDENTIAL_CHANGE_ROLLBACK_MS,
     );
@@ -613,7 +636,7 @@ describe("the rollback after a credential change", () => {
           return real.transactionCall(session, request, ctx, ports);
         },
       }),
-      () => rollBackAfterCredentialChange(fx.provider, ROUTE, now),
+      () => rollBackAfterCredentialChange(providerConsoleTarget(fx.provider), ROUTE, now),
     );
 
     expect(CREDENTIAL_CHANGE_ROLLBACK_MS).toBe(5_000);
@@ -622,5 +645,151 @@ describe("the rollback after a credential change", () => {
       { action: "state", deadline: now + 5_000, aborted: false },
       { action: "rollback", deadline: now + 5_000, aborted: false },
     ]);
+  });
+});
+
+describe("the transaction facade on a provider package's session", () => {
+  /** A session's calls: execute honouring `offset`, and the transaction facet. */
+  const CALLS: Calls = {
+    console: {
+      execute: { honours: ["offset"] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "offered",
+    },
+    objects: { tree: "not-offered", source: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  };
+  const connection = { id: "p", name: "p", type: "acmetx", queryTimeout: 2_000 } as unknown as EngineConnection;
+
+  /**
+   * A provider package's cache entry over a session holding one transaction, whose state its calls set, and the
+   * console target of it. Each transaction call and execute is recorded with the entry's running count as the call saw
+   * it; `transaction` answers what `hold` gives where set, so a case decides when a call settles.
+   */
+  function packageTransactional() {
+    const fx = {
+      state: "not-in-transaction" as SessionState,
+      seen: [] as { request: unknown; ctx: CallContext; running: number }[],
+      hold: undefined as (() => Promise<TransactionAnswer>) | undefined,
+    };
+    const env = envReader([], () => undefined);
+    const session: ConsoleSession = {
+      calls: CALLS,
+      readOnlyStatements: false,
+      execute: async (request, ctx) => {
+        fx.seen.push({ request, ctx, running: entry.running });
+        return {
+          results: [rowsSource([{ name: "n", type: "int4" }], [[1], [2], [3]], 3)],
+          warnings: [],
+          executionTimeMs: 5,
+          pageApplied: false,
+          ...(request.transaction === true ? { sessionState: fx.state } : {}),
+        };
+      },
+      transaction: async (request, ctx) => {
+        fx.seen.push({ request, ctx, running: entry.running });
+        if (fx.hold !== undefined) return fx.hold();
+        if (request.action === "begin") fx.state = "in-transaction";
+        if (request.action === "commit" || request.action === "rollback") fx.state = "not-in-transaction";
+        return {
+          sessionState: fx.state,
+          ...(request.action === "begin" && request.requireReportedState === true ? { stateReported: true } : {}),
+        };
+      },
+    };
+    const entry = {
+      opened: { form: "session", session, env },
+      engine: { grants: { ownWords: "scrubbed" } },
+      running: 0,
+      lastUsed: 0,
+    } as unknown as CachedSession;
+    return { fx, env, entry, target: entryConsoleTarget(entry, connection) };
+  }
+
+  test("a begin, COMMIT, ROLLBACK and state read on a package entry's console target call the package's transaction with its declared environment, each counted on the entry until it answered", async () => {
+    const { fx, env, entry, target } = packageTransactional();
+
+    const begun = await beginInTransaction(target, true, callerOf());
+    const state = await readTransactionState(target, callerOf());
+    const committed = await endTransaction(target, "commit", callerOf());
+    const again = await beginInTransaction(target, false, callerOf());
+    const rolledBack = await endTransaction(target, "rollback", callerOf());
+    fx.state = "in-transaction";
+    const afterCredential = await rollBackAfterCredentialChange(target, ROUTE);
+
+    expect(begun).toEqual({ kind: "answered", sessionState: "in-transaction", stateReported: true });
+    expect(state).toBe("in-transaction");
+    expect(committed).toEqual({ kind: "answered", sessionState: "not-in-transaction" });
+    expect(again).toEqual({ kind: "answered", sessionState: "in-transaction" });
+    expect(rolledBack).toEqual({ kind: "answered", sessionState: "not-in-transaction" });
+    expect(afterCredential).toEqual({ kind: "rolled-back" });
+    expect(fx.seen.map((call) => call.request)).toEqual([
+      { action: "begin", requireReportedState: true },
+      { action: "state" },
+      { action: "commit" },
+      { action: "begin" },
+      { action: "rollback" },
+      { action: "state" },
+      { action: "rollback" },
+    ]);
+    for (const call of fx.seen) {
+      expect(call.ctx.env).toBe(env);
+      expect(call.running).toBe(1);
+    }
+    // The deadlines read the connection's own statement timeout.
+    expect(fx.seen[0]?.ctx.deadline).toBeLessThanOrEqual(Date.now() + 2_000 + EXECUTE_SLACK_MS);
+    expect([entry.running, entry.lastUsed > 0]).toEqual([0, true]);
+  });
+
+  test("a statement inside a package's transaction is sent with transaction and answers its page as the query route's package run does, with the session state the execute answered", async () => {
+    const { fx, entry, target } = packageTransactional();
+    fx.state = "in-transaction";
+
+    const outcome = await runInTransaction(
+      target,
+      { statement: "SELECT n FROM t", options: { limit: 2 }, scrub },
+      callerOf(),
+    );
+    const editor = await runEditorQuery(target, {
+      statement: "SELECT n FROM t",
+      options: { limit: 2 },
+      signal: new AbortController().signal,
+      route: ROUTE,
+      scrub,
+    });
+
+    expect(outcome.kind).toBe("answered");
+    const answered = outcome as { body: unknown; sessionState: unknown };
+    expect(answered.sessionState).toBe("in-transaction");
+    expect(answered.body).toEqual(editor.body);
+    expect(editor.body.pagination.hasMore).toBe(true);
+    expect(fx.seen.map((call) => call.request)).toEqual([
+      { statement: "SELECT n FROM t", page: { limit: 3, offset: 0 }, transaction: true },
+      { statement: "SELECT n FROM t", page: { limit: 3, offset: 0 } },
+    ]);
+    expect(fx.seen[0]?.running).toBe(1);
+    expect(entry.running).toBe(0);
+  });
+
+  test("a package transaction call Studio stopped waiting for stays counted on the entry until the call it stopped waiting for settled", async () => {
+    const { fx, entry, target } = packageTransactional();
+    const commit = held<TransactionAnswer>();
+    fx.hold = commit.call;
+    const controller = new AbortController();
+
+    const running = endTransaction(target, "commit", callerOf(controller.signal));
+    await commit.reached;
+    controller.abort();
+    const outcome = await running;
+
+    expect(outcome.kind).toBe("unanswered");
+    expect((outcome as { error: unknown }).error).toBeInstanceOf(QueryCancelledError);
+    expect(entry.running).toBe(1);
+    commit.answer.resolve({ sessionState: "not-in-transaction" });
+    await (outcome as UnansweredCall).settled;
+    await Promise.resolve();
+    expect(entry.running).toBe(0);
   });
 });

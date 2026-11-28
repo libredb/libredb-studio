@@ -14,6 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { openEditorScript, openTransactionScript } from "@/lib/api/editor-script";
+import type { providerConsoleTarget } from "@/lib/api/session-target";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
 import type { splitExecutionUnits } from "@/lib/sql/statement-splitter";
@@ -22,6 +23,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 interface ChildDeps {
   readonly openEditorScript: typeof openEditorScript;
   readonly openTransactionScript: typeof openTransactionScript;
+  readonly providerConsoleTarget: typeof providerConsoleTarget;
   readonly createHostCore: typeof createHostCore;
   readonly installHostCore: typeof installHostCore;
   readonly splitExecutionUnits: typeof splitExecutionUnits;
@@ -33,6 +35,7 @@ const child = boundedChild({
   label: "editor-script-bounds",
   imports: [
     { from: path.join(SRC, "lib", "api", "editor-script.ts"), names: ["openEditorScript", "openTransactionScript"] },
+    { from: path.join(SRC, "lib", "api", "session-target.ts"), names: ["providerConsoleTarget"] },
     { from: path.join(SRC, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SRC, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
     { from: path.join(SRC, "lib", "sql", "statement-splitter.ts"), names: ["splitExecutionUnits"] },
@@ -52,14 +55,19 @@ const child = boundedChild({
       rollbackTransaction: async () => {},
       isInTransaction: () => true,
       queryInTransaction: () => new Promise<never>(() => {}),
-    } as unknown as Parameters<typeof deps.openTransactionScript>[0];
+    } as unknown as Parameters<typeof deps.providerConsoleTarget>[0];
     const units = deps.splitExecutionUnits("SELECT 1; SELECT 2");
     const signal = new AbortController().signal;
     const start = Date.now() - 10_001 + 50;
     const outcome =
       name === "transaction-never-answers"
         ? await deps
-            .openTransactionScript(provider, { units, options: {}, signal, route: "bounds" })
+            .openTransactionScript(deps.providerConsoleTarget(provider), {
+              units,
+              options: {},
+              signal,
+              route: "bounds",
+            })
             .runUnit(0, (result) => result, start)
         : await deps
             .openEditorScript(provider, { units, dialect: "postgres", options: {}, signal, route: "bounds" })

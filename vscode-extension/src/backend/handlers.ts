@@ -539,17 +539,14 @@ export function createHandlers(
             await openWithinCall(controller.signal, record.connection.type, (wait) => providerWithin(record, wait)),
             catalog,
           );
-          const { body, resultSetCount } = await runEditorQuery(
-            { form: "provider", provider },
-            {
-              statement,
-              options,
-              queryId,
-              signal: controller.signal,
-              route: RUN_ROUTE,
-              scrub: providerTextScrub(record.connection, "any"),
-            },
-          );
+          const { body, resultSetCount } = await runEditorQuery(providerConsoleTarget(provider), {
+            statement,
+            options,
+            queryId,
+            signal: controller.signal,
+            route: RUN_ROUTE,
+            scrub: providerTextScrub(record.connection, "any"),
+          });
           return {
             ...body,
             ...(resultSetCount > 1 && { resultSetCount }),
