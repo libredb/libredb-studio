@@ -1124,16 +1124,16 @@ export function agentToolsNamedIn(text: string): AgentToolVocabularyName[] {
  */
 function agentToolTextRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
   const offered: readonly string[] = AGENT_WORKFLOW_TOOLS.investigation;
-  return [
+  const texts: readonly (readonly [AgentText, string])[] = [
     [text.investigation.toolDescription, `${at}/investigation/toolDescription`],
     [text.investigation.toolRule, `${at}/investigation/toolRule`],
     [text.grounding.omissionAdvice, `${at}/grounding/omissionAdvice`],
-  ].flatMap(([read, pointer]) => {
-    const parts = read as AgentText;
+  ];
+  return texts.flatMap(([parts, pointer]) => {
     const written =
       typeof parts === "string" ? parts : parts.map((part) => (typeof part === "string" ? part : "")).join("");
     return agentToolsNamedIn(written).some((tool) => !offered.includes(tool))
-      ? [schemaRefusal("agent-tool-not-offered", pointer as string)]
+      ? [schemaRefusal("agent-tool-not-offered", pointer)]
       : [];
   });
 }
