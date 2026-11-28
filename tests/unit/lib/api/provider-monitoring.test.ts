@@ -1052,6 +1052,7 @@ function packageMonitoringTarget(panel: "offered" | "not-offered" = "offered", t
     },
     env,
     timeout: () => timeout,
+    accepted: () => ({ supportsMaintenance: false, maintenanceOperations: [] }),
     started: () => {
       marks.push("started");
     },
