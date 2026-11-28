@@ -3427,6 +3427,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/mqtt/provider.test.ts": [
         "an empty or blank payload is answered as the engine's statement, never an empty part, and its document passes the host core's source call",
       ],
+      "tests/unit/db/netconf/provider.test.ts": [
+        "a key read the device answers with no data is the engine's statement, never an empty part, through the host core's source call",
+      ],
     },
     schema: ["/$defs/objectsCalls/properties/source"],
   },

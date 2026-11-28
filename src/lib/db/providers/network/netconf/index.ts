@@ -532,7 +532,8 @@ export class NetconfProvider extends BaseDatabaseProvider {
    *
    * The two kinds answer two different texts. A node answers the module's YANG, which the editor
    * does not highlight, so the declaration says `plaintext` rather than inventing a language id.
-   * A key answers the entry's own XML as the device sent it.
+   * A key answers the entry's own XML as the device sent it, or, where the device answered no data for it, the
+   * engine's statement naming the datastore and the path below it.
    *
    * The paths differ because the two kinds are addressed differently, and that is the shared key
    * contract's doing rather than a choice here: a node is `[datastore, module, node]`, the shape
@@ -562,7 +563,14 @@ export class NetconfProvider extends BaseDatabaseProvider {
     if (datastore === undefined || datastore === "" || rest.length === 0) {
       throw new QueryError(SENTENCES.sourceKeyPath);
     }
-    const text = await reader.sourceXml(datastore, parseKeyPath(rest.join("/")));
+    const below = rest.join("/");
+    const text = await reader.sourceXml(datastore, parseKeyPath(below));
+    // A device answers `<data/>` for a key that holds no data, which `sourceXml` slices to the empty text; that and a
+    // blank slice are no text to show, and a source part is never empty (clause C-115), so the part is the statement.
+    if (text.trim() === "") {
+      const unavailable = `The ${datastore} datastore holds no data at ${below}.`;
+      return { path: [...path], kind, parts: [{ id: keyPath, label: keyPath, unavailable, statement: true }] };
+    }
     return { path: [...path], kind, parts: [part(keyPath, keyPath, cut(text, bound), "xml")] };
   }
 

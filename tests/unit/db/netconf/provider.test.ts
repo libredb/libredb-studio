@@ -19,6 +19,9 @@ import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests"
 import { encodeSegment } from "@/lib/db/providers/network/netconf/keypath";
 import { buildRpc } from "@/lib/db/providers/network/netconf/requests";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
+import { envReader } from "@libredb/provider-sdk/calls";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
 const facts = {
   datastores: ["running", "candidate", "startup", "operational"],
@@ -422,6 +425,46 @@ test("a key's source is the entry's own XML, sliced from the reply rather than r
   expectBe(part.language, "xml");
   expectBe(part.origin, "stored");
   expectMatch(part.text, /<description>port 1<\/description>/);
+});
+
+/**
+ * A device answers `<data/>` for a key that holds no data, which the reader's `sourceXml` slices to the empty text
+ * (pinned in reader.test.ts, "a self-closing data element is an empty answer"), and a `<data>` of only whitespace to a
+ * blank one. Neither is a text to show: the source facet never answers an empty part (docs/providers/CONTRACT.md,
+ * clause C-115), so the key's part is the engine's statement naming the datastore and the path below it.
+ */
+test("a key read the device answers with no data is the engine's statement, never an empty part, through the host core's source call", async () => {
+  const core = createHostCore();
+  const keyPath = "running/ietf-interfaces:interfaces/interface=ge-0%2F0%2F1";
+  for (const answered of ["", " \n  "]) {
+    // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each record is its own answer's.
+    const provider = await open(reader({ sourceXml: async () => answered }));
+    const ctx = {
+      deadline: Date.now() + 60_000,
+      signal: new AbortController().signal,
+      env: envReader([], () => undefined),
+    };
+    // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each record is its own answer's.
+    const record = await core.sourceCall(bridgedConsole(provider, {}).session, { path: [keyPath], kind: "key" }, ctx, {
+      late: () => {},
+    });
+
+    expectEqual(record, {
+      kind: "answered",
+      answer: {
+        path: [keyPath],
+        kind: "key",
+        parts: [
+          {
+            id: keyPath,
+            label: keyPath,
+            unavailable: "The running datastore holds no data at ietf-interfaces:interfaces/interface=ge-0%2F0%2F1.",
+            statement: true,
+          },
+        ],
+      },
+    });
+  }
 });
 
 test("a bound is applied and declared, so a cut text never reads as the whole text", async () => {
