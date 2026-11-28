@@ -1401,7 +1401,11 @@ jobs:
   # alone, is admitted by the built standalone server with no change to
   # Studio's files: it answers a statement through the API, a statement over
   # the text bound of the statement language it states is refused before it
-  # is sent, and one changed byte of it is refused at the next boot
+  # is sent, a plan-mode run on its seed connection completes through a
+  # stand-in model endpoint the script runs on 127.0.0.1 in its own process
+  # (so the job needs no model credential and no network), an agent-mode run
+  # is refused as not reviewed, MCP lists the connection and refuses it by
+  # grant, and one changed byte of it is refused at the next boot
   # (scripts/out-of-tree-acceptance.ts, issues #2520 and #2622). It is built
   # by its own build through the pack step and locked by the lock module
   # under Node.js, and its build output step runs the build output check over

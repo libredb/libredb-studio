@@ -6,7 +6,9 @@
   "calls": {
     "console": {
       "execute": {
-        "honours": []
+        "honours": [
+          "readOnly"
+        ]
       },
       "cancel": "not-offered",
       "endScope": "not-offered",
@@ -309,8 +311,8 @@
         "maskingExemptColumns": null
       },
       "mcp": {
-        "exposable": false,
-        "statementRead": false,
+        "exposable": true,
+        "statementRead": true,
         "metadataReadChangesState": true,
         "agentCredentialRequired": false
       },

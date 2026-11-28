@@ -3,17 +3,22 @@
  * The out-of-tree provider acceptance (issues #2520 and #2622, owner decision G): a provider written outside the
  * repository, built against the packed SDK alone, is admitted by a built Studio with no change to Studio's files; its
  * engine answers a statement through Studio's API with the provider's rows; the text bound of the statement language
- * the provider states as data refuses a longer statement before it is sent; and one changed byte of the installed
- * package is refused at the next boot while Studio keeps running.
+ * the provider states as data refuses a longer statement before it is sent; a plan-mode agent run on the engine's
+ * seed connection completes through a stand-in model endpoint, while an agent-mode run that would send statements is
+ * refused as not reviewed; MCP lists the connection with no read tool and refuses it on Studio's tools by grant, and
+ * does not know the tool the provider's statement language names; and one changed byte of the installed package is
+ * refused at the next boot while Studio keeps running. No register row names the fixture, so every answer is Studio's
+ * restrictive one for an engine it has not reviewed.
  *
  * The provider is the fixture under tests/fixtures/out-of-tree-provider/, a template that is copied and never imported
  * or built in place. This script holds no knowledge of it: the engine id, the package identity, the connection, the
- * statements and the rows each statement must answer, the statement language's name and text bound, and the
- * statements at and over that bound are read from the fixture's package.json, its manifest and its acceptance.json, so
- * step 8 can assert that neither an engine id of the fixture nor its language's name is named under Studio's source,
- * this script included.
+ * statements and the rows each statement must answer, the statement language's name, text bound and MCP tool, the
+ * statements at and over that bound, the agent leg's objective, prose and refusal, and the MCP leg's sentence are read
+ * from the fixture's package.json, its manifest and its acceptance.json, so the clean-tree step can assert that neither
+ * an engine id of the fixture nor its language's name is named under Studio's source, this script and
+ * scripts/out-of-tree-model-endpoint.ts included.
  *
- * The nine steps, each asserting its own output, so a missing provider can never pass as "no rows":
+ * The eleven steps, each asserting its own output, so a missing provider can never pass as "no rows":
  * 1. Build Studio's standalone output (`DOCKER_BUILD=true bun run build`, credentials for build-time page data drawn
  *    at run time), or take an existing one with `--standalone <dir>`; assert its server.js and .next and print its
  *    BUILD_ID.
@@ -52,16 +57,37 @@
  *    its output is complete, assert that it logged the confirmation gate's line for a statement run unconfirmed
  *    (`STUDIO.unconfirmedRunLine`) exactly once for the engine, the statement at the bound's: the statement over it
  *    never reached the gate, so it never reached the package.
- * 7. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
+ * 7. Start the stand-in model endpoint with acceptance.json's `agent.prose`, then the server on a data directory of
+ *    its own with a seed connection of the fixture engine (a UUID id, the admin role alone) and the endpoint as its
+ *    `custom` model provider, and sign in. Start a plan-mode investigation run on the seed connection with
+ *    acceptance.json's `agent.objective`, read the run's report until it ended, and assert that it succeeded because
+ *    the model stopped, on the fixture's engine and seed connection, resolving the stand-in model through the custom
+ *    provider and closing with exactly the endpoint's prose, and that the endpoint was asked exactly one streamed
+ *    request offering no tools. Then start the same run in agent mode and assert that it is refused, 400
+ *    `engine-unsupported`, with acceptance.json's `agent.notReviewed` (Studio's sentence for an engine whose read-only
+ *    statement path it has not reviewed), opening no run and asking the endpoint nothing. Once the server stopped,
+ *    assert that its output holds exactly one line for the run with `status=succeeded` and no drive failure line.
+ * 8. Start the server on a data directory of its own with a seed connection of the fixture engine offered to MCP
+ *    (`mcp: true`) and MCP enabled, sign in, mint an MCP token from the deployment's own origin, and call MCP with it
+ *    (one JSON-RPC request per POST, no `initialize`: the handler is stateless). Assert that tools/list names
+ *    `list_connections` and `inspect_schema` and not the tool the fixture's language names; that `list_connections`
+ *    lists exactly the seed connection, its engine, `read_tool` null and acceptance.json's `mcp.notOffered` (Studio's
+ *    sentence for an engine no MCP client is offered); that `run_read_query` and `inspect_schema` on it answer
+ *    `isError` with that sentence alone and no rows; and that the fixture's own tool answers the JSON-RPC error -32602
+ *    naming it, since no build of Studio registers it. Once the server stopped, assert that its output holds one
+ *    failure audit line on the connection for each of the two tools, none for the fixture's tool, and no success on
+ *    the connection.
+ * 9. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement. It runs after every step that needs the admitted package.
- * 8. Assert `git status --porcelain` is empty and that neither an engine id of the fixture nor its statement
- *    language's name appears, in any letter case, in a file under src, bin, scripts or vscode-extension/src (the
- *    isolation ratchet's core roots) or packages.
- * 9. Run the build output check (scripts/check-build-output.ts) over the standalone and <tmp>/provider, the package
- *    the pack step packed: no file under the standalone's .next or node_modules equals a file of the package's source
- *    or of a driver it declares, or holds its name. Then assert that no file under .next, the server's build output,
- *    equals a fixture file or holds the package name, an engine id as a quoted literal or an engine's display name.
+ * 10. Assert `git status --porcelain` is empty and that neither an engine id of the fixture nor its statement
+ *     language's name appears, in any letter case, in a file under src, bin, scripts or vscode-extension/src (the
+ *     isolation ratchet's core roots) or packages.
+ * 11. Run the build output check (scripts/check-build-output.ts) over the standalone and <tmp>/provider, the
+ *     package the pack step packed: no file under the standalone's .next or node_modules equals a file of the
+ *     package's source or of a driver it declares, or holds its name. Then assert that no file under .next, the
+ *     server's build output, equals a fixture file or holds the package name, an engine id as a quoted literal or an
+ *     engine's display name.
  *
  * The SDK installs offline. `npm install <sdk tarball>` alone would fetch the SDK's dependency, ajv, from a registry;
  * the run instead packs the closure of the SDK's declared `dependencies` from the repository's own install, found as
@@ -71,13 +97,18 @@
  * unpinned code, and reproduces without a network. Whether the SDK's declared range resolves from a public registry
  * is a publishing concern this run does not prove.
  *
- * The working tree must be clean before step 1, so step 8 measures this run alone: a dirty tree is refused by name
- * before the build. The temporary root, created under the system temporary directory, must lie outside the
+ * The stand-in model endpoint (scripts/out-of-tree-model-endpoint.ts) runs in this process, with Bun.serve on
+ * 127.0.0.1, so step 7 needs no model credential and no network: it answers the server's chat completions request with
+ * the prose step 7 scripted and records every request, and step 7 stops it once its server stopped.
+ *
+ * The working tree must be clean before step 1, so the clean-tree step measures this run alone: a dirty tree is refused
+ * by name before the build. The temporary root, created under the system temporary directory, must lie outside the
  * repository with no node_modules above it, so nothing resolves from Studio's install. Its layout: sdk/ (the SDK
- * tarball), deps/ (the closure's tarballs), npm/ (npm's cache, configs and HOME), provider/ (the copied fixture and
- * its install), evidence/ (the evidence build's output, beside bundle-meta.json, its metafile), pack/ (the pack
- * step's temporary directories), providers/ (the packed package and its lock), lock/ (the built lock module and the
- * wrapper), server/ (each server's HOME and data directory).
+ * tarball), deps/ (the closure's tarballs), npm/ (npm's cache, configs and HOME), provider/ (the copied fixture and its
+ * install), evidence/ (the evidence build's output, beside bundle-meta.json, its metafile), pack/ (the pack step's
+ * temporary directories), providers/ (the packed package and its lock), lock/ (the built lock module and the wrapper),
+ * server/ (each server's HOME and data directory; a data directory holds the server's storage, its agent run ledger
+ * under workflow/, and the boot's seed.json when its step gives one).
  *
  * Every child gets an explicit environment, never the caller's: PATH, HOME and what its step names, never
  * NODE_OPTIONS, NODE_PATH or an npm_config variable. The fixture's build takes esbuild from PATH, so the evidence
@@ -92,13 +123,13 @@
  *
  * Output: one line per step, `ok   step N <title>: <evidence>` or `FAIL step N <title>: <reason>` followed by the
  * captured output, and no later step. A pass removes the temporary root and ends with
- * `out-of-tree acceptance passed: 9 of 9 steps`, exit 0; a failure keeps the root, prints its path, and exits 1.
+ * `out-of-tree acceptance passed: 11 of 11 steps`, exit 0; a failure keeps the root, prints its path, and exits 1.
  *
  * CI runs it in the "Out-of-tree Provider Acceptance" job of .github/workflows/ci.yml against the engine smoke
  * payload, extracted under the runner's temporary directory. Its logic is held by
  * tests/unit/scripts/out-of-tree-acceptance.test.ts.
  *
- * Local run, from a clean tree (one Next.js build and three server starts):
+ * Local run, from a clean tree (one Next.js build and five server starts):
  *   heavy bun scripts/out-of-tree-acceptance.ts [--standalone <dir>]
  */
 import { type ChildProcess, spawn } from "node:child_process";
@@ -126,6 +157,7 @@ import { SESSION_COOKIE } from "../src/lib/auth-cookies";
 import { buildLockModule } from "./build-lock-module.mjs";
 import { regularFiles, scanProblems, standaloneTrees } from "./check-build-output";
 import { ancestorNodeModules } from "./check-lib-load.mjs";
+import { endpointRequestProblems, STAND_IN_MODEL, startModelEndpoint } from "./out-of-tree-model-endpoint";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const FIXTURE_DIRECTORY = path.join(REPO_ROOT, "tests", "fixtures", "out-of-tree-provider");
@@ -136,10 +168,15 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
 /**
  * Studio's side of the run, every interface the run relies on in one place: the pack step, the lock command's wrapper
  * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's
- * variable, the refusal and answer codes, the session cookie, the admin's sign-in, the routes, and the line the
- * confirmation gate logs for each statement it lets run unconfirmed. The predicates beside it (`refusalLines`,
+ * variable, the refusal and answer codes, the session cookie, the admin's sign-in, the routes, the line the
+ * confirmation gate logs for each statement it lets run unconfirmed, what the agent leg starts and reads (the run
+ * modes, the workflow, the refusal of an engine not reviewed, the drive's failure line and the model provider the
+ * stand-in endpoint is served as), and what the MCP leg sends and reads (the protocol version and accepted types, the
+ * tools it calls, the SDK's unknown-tool code and the audit lines). The predicates beside it (`refusalLines`,
  * `unavailableProblems`, `notOfferedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`,
- * `textBoundProblems`, `gateLineProblems`) read the answers and the server's output.
+ * `textBoundProblems`, `gateLineProblems`, `planRunProblems`, `notReviewedProblems`, `agentRunLineProblems`,
+ * `toolListProblems`, `listedConnectionProblems`, `toolRefusalProblems`, `unknownToolProblems`, `mcpAuditProblems`)
+ * read the answers and the server's output.
  */
 export const STUDIO = Object.freeze({
   packScript: "scripts/providers-pack.ts",
@@ -161,6 +198,27 @@ export const STUDIO = Object.freeze({
     signIn: "/api/auth/login",
     save: "/api/db/test-connection",
     query: "/api/db/query",
+    agentRuns: "/api/agent/runs",
+    mcpToken: "/api/mcp/token",
+    mcp: "/api/mcp",
+  }),
+  agent: Object.freeze({
+    planning: "planning",
+    agent: "agent",
+    workflow: "investigation",
+    refused: "engine-unsupported",
+    driveFailureLine: "Agent run drive ended in failure",
+    provider: "custom",
+  }),
+  mcp: Object.freeze({
+    protocolVersion: "2025-06-18",
+    accept: "application/json, text/event-stream",
+    listTool: "list_connections",
+    schemaTool: "inspect_schema",
+    readTool: "run_read_query",
+    unknownToolCode: -32602,
+    auditSchema: "libredb.audit.v1",
+    auditEvent: "mcp_operation",
   }),
 });
 
@@ -180,6 +238,7 @@ export const CHILD_TIMEOUTS_MS = Object.freeze({
   request: 60_000,
   serverStop: 30_000,
   refusalLine: 15_000,
+  agentRun: 60_000,
 });
 
 /** How long a child's process group has between SIGTERM and SIGKILL once its timeout passed. */
@@ -228,7 +287,7 @@ export function platformProblem(platform: string): string | null {
 // ---------------------------------------------------------------------------------------------------------------------
 // The steps and their run.
 
-/** The acceptance's nine steps, in order. */
+/** The acceptance's eleven steps, in order. */
 export const STEP_TITLES = Object.freeze([
   "build Studio's standalone output",
   "pack the SDK",
@@ -236,6 +295,8 @@ export const STEP_TITLES = Object.freeze([
   "lock the provider package with the Node.js lock module",
   "query the fixture engine through Studio's API",
   "refuse a statement over the text bound of the fixture's own statement language",
+  "plan a run on the fixture engine through a stand-in model endpoint, and refuse its statement-sending run as not reviewed",
+  "list the fixture's connection on MCP, and refuse it by grant",
   "refuse the tampered package at the next boot",
   "the repository is unchanged and names no fixture engine",
   "Studio's build holds none of the fixture's source",
@@ -360,15 +421,28 @@ export interface OverBound {
 }
 
 /**
- * The fixture as the run reads it: its package identity, its engines, its statement language's name and text bound,
- * its bundle's path and its expectations.
+ * Step 7's plan-mode run: the objective it is started with, the prose the stand-in endpoint answers, which the run's
+ * closing statement must carry, and Studio's sentence refusing the agent-mode start on the fixture's engine.
+ */
+export interface AgentLeg {
+  readonly objective: string;
+  readonly prose: string;
+  readonly notReviewed: string;
+}
+
+/**
+ * The fixture as the run reads it: its package identity, its engines, its statement language's name, text bound and
+ * MCP tool, its bundle's path and its expectations.
  */
 export interface Fixture {
   readonly name: string;
   readonly version: string;
   readonly engines: readonly { readonly id: string; readonly displayName: string }[];
-  /** The engine's own statement language: its `statementLanguageData` name and `confirmation.maxTextBytes`. */
-  readonly language: { readonly name: string; readonly maxTextBytes: number };
+  /**
+   * The engine's own statement language: its `statementLanguageData` name, `confirmation.maxTextBytes` and
+   * `agent.mcp.tool`, the MCP statement tool it names, which step 8 asserts Studio does not know.
+   */
+  readonly language: { readonly name: string; readonly maxTextBytes: number; readonly mcpTool: string };
   /** The manifest's `runtime.entry`, where the bundle is written. */
   readonly entry: string;
   readonly acceptance: {
@@ -380,6 +454,9 @@ export interface Fixture {
     readonly refused: Refusal;
     /** Step 6's statements: one at the language's text bound, which answers, and one a byte over it, refused. */
     readonly textBound: { readonly atBound: Expectation; readonly overBound: OverBound };
+    readonly agent: AgentLeg;
+    /** Step 8's sentence: Studio's, for a connection of an engine no MCP client is offered. */
+    readonly mcp: { readonly notOffered: string };
   };
 }
 
@@ -460,8 +537,9 @@ function textBound(value: unknown, bound: number, file: string): Fixture["accept
 }
 
 /**
- * The engine's own statement language: its `statementLanguageData` name and the text bound its confirmation part
- * states, refused when there is none, since step 6 proves nothing without them.
+ * The engine's own statement language: its `statementLanguageData` name, the text bound its confirmation part states
+ * and the MCP tool its agent part names, refused when there is none, since step 6 and step 8 prove nothing without
+ * them.
  */
 function languageOf(engine: Record<string, unknown>, manifestFile: string): Fixture["language"] {
   const data = engine.statementLanguageData;
@@ -473,7 +551,47 @@ function languageOf(engine: Record<string, unknown>, manifestFile: string): Fixt
   if (typeof maxTextBytes !== "number" || !Number.isInteger(maxTextBytes) || maxTextBytes <= 0) {
     throw new Error(`${manifestFile}'s statement language ${data.name} states no text bound, so step 6 proves nothing`);
   }
-  return { name: data.name, maxTextBytes };
+  const agent = data.agent;
+  const mcp = isRecord(agent) ? agent.mcp : undefined;
+  const mcpTool = isRecord(mcp) ? mcp.tool : undefined;
+  if (!isText(mcpTool)) {
+    throw new Error(
+      `${manifestFile}'s statement language ${data.name} states no MCP tool, so the MCP leg proves nothing`,
+    );
+  }
+  return { name: data.name, maxTextBytes, mcpTool };
+}
+
+/** The text `member` of `value`, the object `where` names, refused by name when it is no non-empty text. */
+function textMember(value: Record<string, unknown>, member: string, where: string): string {
+  const found = value[member];
+  if (!isText(found)) throw new Error(`${where} has no ${member} text`);
+  return found;
+}
+
+/**
+ * Step 7's members of acceptance.json, refused when the step could prove nothing with them: no object, an objective,
+ * prose or sentence that is no non-empty text, or a not-reviewed sentence that does not name the engine's display
+ * name, which Studio's refusal names.
+ */
+function agentLeg(value: unknown, displayName: string, file: string): AgentLeg {
+  if (!isRecord(value)) throw new Error(`${file} holds no agent object`);
+  const where = `${file} agent`;
+  const leg: AgentLeg = {
+    objective: textMember(value, "objective", where),
+    prose: textMember(value, "prose", where),
+    notReviewed: textMember(value, "notReviewed", where),
+  };
+  if (!leg.notReviewed.includes(displayName)) {
+    throw new Error(`${file} agent.notReviewed does not name the engine's display name ${displayName}`);
+  }
+  return leg;
+}
+
+/** Step 8's member of acceptance.json, refused when it is no object or its sentence is no non-empty text. */
+function mcpLeg(value: unknown, file: string): Fixture["acceptance"]["mcp"] {
+  if (!isRecord(value)) throw new Error(`${file} holds no mcp object`);
+  return { notOffered: textMember(value, "notOffered", `${file} mcp`) };
 }
 
 /**
@@ -553,6 +671,8 @@ export function readFixture(directory: string, read: (file: string) => string): 
       statements,
       refused: refusal(acceptance.refused, statements, acceptanceFile),
       textBound: textBound(acceptance.textBound, language.maxTextBytes, acceptanceFile),
+      agent: agentLeg(acceptance.agent, engine.displayName, acceptanceFile),
+      mcp: mcpLeg(acceptance.mcp, acceptanceFile),
     },
   };
 }
@@ -953,17 +1073,20 @@ export function porcelainProblems(stdout: string): string[] {
 }
 
 /**
- * The files step 9's own scan reads: every regular file under the standalone's .next. A link there is judged by the
- * build output check's rule over the trees that check reads, the standalone's .next and node_modules: Turbopack's
- * hashed alias of an external package, `.next/node_modules/<package>-<hash>`, points into node_modules, which the build
- * output check run first in the same step reads, so it is accepted and not followed; a link leaving both, or dangling,
- * raises an error naming the link and its target.
+ * The files the build output step's own scan reads: every regular file under the standalone's .next. A link there is
+ * judged by the build output check's rule over the trees that check reads, the standalone's .next and node_modules:
+ * Turbopack's hashed alias of an external package, `.next/node_modules/<package>-<hash>`, points into node_modules,
+ * which the build output check run first in the same step reads, so it is accepted and not followed; a link leaving
+ * both, or dangling, raises an error naming the link and its target.
  */
 export function buildScanFiles(standalone: string): string[] {
   return regularFiles(path.join(standalone, ".next"), { within: standaloneTrees(standalone) });
 }
 
-/** The roots step 8 scans for the fixture's engine ids and its statement language's name, relative to the repository root. */
+/**
+ * The roots the clean-tree step scans for the fixture's engine ids and its statement language's name, relative to the
+ * repository root.
+ */
 export const NAMING_SCAN_ROOTS: readonly string[] = Object.freeze([...STUDIO.coreRoots, "packages"]);
 
 /** Every regular file under each of `NAMING_SCAN_ROOTS` in `repositoryRoot`, as `regularFiles` lists them. */
@@ -995,6 +1118,292 @@ export function buildNeedles(fixture: Pick<Fixture, "name" | "engines">): string
       engine.displayName,
     ]),
   ];
+}
+
+/** What step 7's plan-mode run must have been: its id, engine, seed connection, the endpoint's prose and model. */
+export interface PlanRun {
+  readonly runId: string;
+  readonly engineId: string;
+  readonly connectionId: string;
+  readonly prose: string;
+  readonly model: string;
+}
+
+/** The events of a run record that are objects, in order. */
+const eventsOf = (record: Record<string, unknown>): Record<string, unknown>[] =>
+  Array.isArray(record.events) ? record.events.filter(isRecord) : [];
+
+/**
+ * The problems with step 7's plan-mode run, read from its report (`GET /api/agent/runs/<runId>`) once it ended: it must
+ * have succeeded, finished because the model stopped, be the run started on the fixture's engine and seed connection in
+ * plan mode, and its events must show it started, resolved the stand-in model through the `custom` provider and closed
+ * with exactly the prose the endpoint was scripted with, the evidence that the run read the endpoint's frames.
+ */
+export function planRunProblems(report: unknown, expected: PlanRun): string[] {
+  const printed = `report: ${JSON.stringify(report).slice(0, 1000)}`;
+  const record = isRecord(report) && isRecord(report.record) ? report.record : null;
+  if (record === null) return ["the run's report holds no record", printed];
+  const problems: string[] = [];
+  if (record.status !== "succeeded")
+    problems.push(`the plan run ended ${JSON.stringify(record.status)}, not "succeeded"`);
+  const events = eventsOf(record);
+  const eventOf = (kind: string): Record<string, unknown> | undefined => events.find((event) => event.kind === kind);
+  const finished = eventOf("run-finished");
+  if (finished === undefined) {
+    problems.push("the plan run's events hold no run-finished");
+  } else if (finished.stopReason !== "model-stopped") {
+    problems.push(
+      `the plan run finished with stopReason ${JSON.stringify(finished.stopReason)} and reason ${JSON.stringify(finished.reason)}, not stopReason "model-stopped"`,
+    );
+  }
+  for (const [member, value] of [
+    ["runId", expected.runId],
+    ["engine", expected.engineId],
+    ["mode", STUDIO.agent.planning],
+    ["connectionId", expected.connectionId],
+  ] as const) {
+    if (record[member] !== value) {
+      problems.push(`the plan run's ${member} is ${JSON.stringify(record[member])}, not ${JSON.stringify(value)}`);
+    }
+  }
+  if (eventOf("run-started") === undefined) problems.push("the plan run's events hold no run-started");
+  const driver = eventOf("driver-resolved");
+  if (driver === undefined) {
+    problems.push("the plan run's events hold no driver-resolved");
+  } else if (driver.provider !== STUDIO.agent.provider || driver.modelId !== expected.model) {
+    problems.push(
+      `the plan run's driver-resolved names provider ${JSON.stringify(driver.provider)} and model ${JSON.stringify(driver.modelId)}, not provider ${JSON.stringify(STUDIO.agent.provider)} and model ${JSON.stringify(expected.model)}`,
+    );
+  }
+  const closing = eventOf("closing-statement");
+  if (closing === undefined) {
+    problems.push("the plan run's events hold no closing-statement, so the endpoint's prose never reached the run");
+  } else if (closing.text !== expected.prose) {
+    problems.push(
+      `the plan run's closing-statement is ${JSON.stringify(closing.text)}, not the prose the endpoint was scripted with`,
+    );
+  }
+  return problems.length === 0 ? [] : [...problems, printed];
+}
+
+/**
+ * The problems with the answer to step 7's agent-mode start on the fixture's engine, which no register row reviews:
+ * 400, refused `engine-unsupported`, exactly `sentence` (acceptance.json's `agent.notReviewed`, Studio's sentence), and
+ * no run opened.
+ */
+export function notReviewedProblems(answer: Answer, sentence: string): string[] {
+  const quoted = "the agent-mode start";
+  const problems: string[] = [];
+  if (answer.status !== 400) problems.push(`${quoted} answered ${answer.status}, not 400`);
+  if (answer.body.refused !== STUDIO.agent.refused) {
+    problems.push(
+      `${quoted} answered refused ${JSON.stringify(answer.body.refused)}, not ${JSON.stringify(STUDIO.agent.refused)}`,
+    );
+  }
+  if (answer.body.error !== sentence) {
+    problems.push(`${quoted} answered a sentence other than Studio's refusal of an engine it has not reviewed`);
+  }
+  if (answer.body.runId !== undefined) problems.push(`${quoted} opened run ${String(answer.body.runId)}`);
+  return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
+}
+
+/**
+ * The problems with step 7's server output, read complete once the server stopped: exactly one line for run `runId`
+ * with the context `status=succeeded`, the line the drive logs when a run ends, and no line of a drive that ended in
+ * failure (`STUDIO.agent.driveFailureLine`).
+ */
+export function agentRunLineProblems(output: string, runId: string): string[] {
+  const lines = output.split("\n").map((line) => line.trimEnd());
+  const succeeded = new RegExp(`[{,\\s]runId=${escapeRegExp(runId)}, status=succeeded[,}]`);
+  const count = lines.filter((line) => succeeded.test(line)).length;
+  const problems: string[] = [];
+  if (count === 0) problems.push(`the server logged no line for run ${runId} with status=succeeded`);
+  if (count > 1) problems.push(`the server logged ${count} lines for run ${runId} with status=succeeded, not one`);
+  for (const line of lines.filter((candidate) => candidate.includes(STUDIO.agent.driveFailureLine))) {
+    problems.push(`the server logged "${STUDIO.agent.driveFailureLine}": ${line.trim()}`);
+  }
+  return problems;
+}
+
+/**
+ * The JSON-RPC messages of an MCP answer, an event stream: each `data:` line's value, a JSON object. An answer with no
+ * data line, or with one whose value is not a JSON object, is refused naming `route` and the answer's first 200
+ * characters. Lines are read with their line ends trimmed, so a CRLF stream reads alike.
+ */
+export function mcpMessages(route: string, body: string): Record<string, unknown>[] {
+  const data = body
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("data:"));
+  if (data.length === 0) throw new Error(`${route} answered no data line: ${body.slice(0, 200)}`);
+  return data.map((line) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(line.slice("data:".length).trim());
+    } catch {
+      value = undefined;
+    }
+    if (!isRecord(value)) {
+      throw new Error(`${route} answered a data line that is not a JSON object: ${body.slice(0, 200)}`);
+    }
+    return value;
+  });
+}
+
+/**
+ * The token of the MCP token mint's answer, which must be 200 with a token; any other answer is refused naming its
+ * status and its body with any token left out, since the run prints the refusal.
+ */
+export function mcpTokenOf(answer: Answer): string {
+  const { token } = answer.body;
+  if (answer.status === 200 && isText(token)) return token;
+  const printed = Object.fromEntries(Object.entries(answer.body).filter(([member]) => member !== "token"));
+  throw new Error(
+    `the MCP token mint answered ${answer.status} with no token: ${JSON.stringify(printed).slice(0, 500)}`,
+  );
+}
+
+/** An MCP message as a refusal prints it. */
+const printedAnswer = (message: unknown): string => `answer: ${JSON.stringify(message).slice(0, 500)}`;
+
+/** The result of a JSON-RPC message, or null when it has none. */
+const resultOf = (message: unknown): Record<string, unknown> | null =>
+  isRecord(message) && isRecord(message.result) ? message.result : null;
+
+/**
+ * The problems with step 8's tools/list answer: it must list Studio's two tools that serve every engine,
+ * `list_connections` and `inspect_schema`, so an empty or failed list cannot pass, and not the fixture's own tool,
+ * which no build of Studio registers.
+ */
+export function toolListProblems(message: unknown, fixtureTool: string): string[] {
+  const tools = resultOf(message)?.tools;
+  if (!Array.isArray(tools)) return [`tools/list answered no tool list: ${JSON.stringify(message).slice(0, 500)}`];
+  const names = tools.map((tool) => (isRecord(tool) ? tool.name : undefined));
+  const problems = [STUDIO.mcp.listTool, STUDIO.mcp.schemaTool]
+    .filter((name) => !names.includes(name))
+    .map((name) => `tools/list names no ${name}`);
+  if (names.includes(fixtureTool)) problems.push(`tools/list names the fixture's own tool ${fixtureTool}`);
+  return problems;
+}
+
+/** What step 8's `list_connections` must list: the fixture's seed connection, and Studio's not-offered sentence. */
+export interface ListedConnection {
+  readonly id: string;
+  readonly name: string;
+  readonly engine: string;
+  readonly notOffered: string;
+}
+
+/**
+ * The problems with step 8's `list_connections` answer: its structured content must list exactly one connection, the
+ * fixture's seed connection, with exactly the members `{id, name, engine, read_tool: null, unavailable}`, the
+ * unavailable sentence being Studio's for an engine no MCP client is offered.
+ */
+export function listedConnectionProblems(message: unknown, expected: ListedConnection): string[] {
+  const listed = resultOf(message)?.structuredContent;
+  const connections = isRecord(listed) && Array.isArray(listed.connections) ? listed.connections : null;
+  if (connections === null) return ["list_connections answered no connection list", printedAnswer(message)];
+  if (connections.length !== 1) {
+    return [`list_connections listed ${connections.length} connections, not the fixture's one`, printedAnswer(message)];
+  }
+  const connection = isRecord(connections[0]) ? connections[0] : {};
+  const wanted: Record<string, unknown> = {
+    id: expected.id,
+    name: expected.name,
+    engine: expected.engine,
+    read_tool: null,
+    unavailable: expected.notOffered,
+  };
+  const members = [...new Set([...Object.keys(wanted), ...Object.keys(connection)])];
+  return members
+    .filter((member) => !isDeepStrictEqual(connection[member], wanted[member]))
+    .map(
+      (member) =>
+        `list_connections' connection ${member} is ${JSON.stringify(connection[member])}, not ${JSON.stringify(wanted[member])}`,
+    );
+}
+
+/**
+ * The problems with a Studio tool's answer on the fixture's connection, which MCP refuses by grant before any read: a
+ * result with `isError: true`, exactly one text block holding `sentence` (Studio's not-offered sentence), and no
+ * structured content, so no rows.
+ */
+export function toolRefusalProblems(message: unknown, tool: string, sentence: string): string[] {
+  const result = resultOf(message);
+  if (result === null) return [`${tool} answered no result`, printedAnswer(message)];
+  const problems: string[] = [];
+  if (result.isError !== true) problems.push(`${tool} answered no isError`);
+  if (!isDeepStrictEqual(result.content, [{ type: "text", text: sentence }])) {
+    problems.push(`${tool} answered content other than Studio's sentence alone`);
+  }
+  const structured = result.structuredContent;
+  if (structured !== undefined) {
+    problems.push(
+      `${tool} answered structured content${isRecord(structured) && structured.rows !== undefined ? " with rows" : ""}`,
+    );
+  }
+  return problems.length === 0 ? [] : [...problems, printedAnswer(message)];
+}
+
+/**
+ * The problems with the answer to a call of the fixture's own MCP tool, which no build of Studio registers: the
+ * JSON-RPC error `STUDIO.mcp.unknownToolCode` (the SDK's answer to an unknown tool) with a message naming the tool.
+ */
+export function unknownToolProblems(message: unknown, tool: string): string[] {
+  const code = STUDIO.mcp.unknownToolCode;
+  const error = isRecord(message) ? message.error : undefined;
+  if (!isRecord(error)) {
+    const answered = resultOf(message) === null ? "no error" : "a result";
+    return [
+      `the fixture's own tool ${tool} answered ${answered}, not the JSON-RPC error ${code} naming it`,
+      printedAnswer(message),
+    ];
+  }
+  return error.code === code && typeof error.message === "string" && error.message.includes(tool)
+    ? []
+    : [`the fixture's own tool ${tool} answered the error ${JSON.stringify(error)}, not ${code} naming it`];
+}
+
+/** Which tools step 8 called on the fixture's connection: Studio's, each refused by grant, and the fixture's own. */
+export interface AuditedTools {
+  readonly refused: readonly string[];
+  readonly fixtureTool: string;
+}
+
+/**
+ * The problems with step 8's server output, read complete once the server stopped: among its MCP audit lines (JSON
+ * lines of `STUDIO.mcp.auditSchema` and event `STUDIO.mcp.auditEvent`), exactly one failure for each of
+ * `tools.refused` on the seed connection `seedId`, no success on that connection, and no line for the fixture's own
+ * tool, which the SDK refuses before Studio's handler is reached.
+ */
+export function mcpAuditProblems(output: string, seedId: string, tools: AuditedTools): string[] {
+  const audits = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{"))
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(isRecord)
+    .filter((line) => line.schema === STUDIO.mcp.auditSchema && line.event === STUDIO.mcp.auditEvent);
+  const problems: string[] = [];
+  for (const tool of tools.refused) {
+    const count = audits.filter(
+      (line) => line.action === tool && line.outcome === "failure" && line.connection === seedId,
+    ).length;
+    if (count !== 1) problems.push(`the server audited ${count} failure lines for ${tool} on the connection, not one`);
+  }
+  for (const line of audits.filter((audit) => audit.connection === seedId && audit.outcome === "success")) {
+    problems.push(`the server audited a success of ${String(line.action)} on the connection`);
+  }
+  if (audits.some((line) => line.action === tools.fixtureTool)) {
+    problems.push(`the server audited a call of the fixture's own tool ${tools.fixtureTool}`);
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1126,7 +1535,7 @@ export function lockSpec(input: {
   );
 }
 
-/** Step 9's build output check over `standalone` and `provider`, the package the pack step packed. */
+/** The build output step's check over `standalone` and `provider`, the package the pack step packed. */
 export function buildCheckSpec(input: {
   readonly standalone: string;
   readonly provider: string;
@@ -1150,16 +1559,29 @@ export interface ServerInput {
   readonly port: number;
   readonly providersDirectory: string;
   readonly credentials: { readonly jwtSecret: string; readonly adminPassword: string; readonly userPassword: string };
+  /** The seed file of the boot, by its absolute path; none when its step gives none. */
+  readonly seedConfig?: string;
+  /** The stand-in model endpoint's base URL and model name, served as the `custom` provider. */
+  readonly model?: { readonly url: string; readonly name: string };
+  /** The MCP server's public URL and the label its tokens are minted under. */
+  readonly mcp?: { readonly url: string; readonly tokenLabel: string };
 }
 
 /**
  * The server's environment: bound to 127.0.0.1 on `port`, the providers directory by its absolute path (the standalone
  * server changes into its own directory before boot reads it), the run's credentials, its own HOME and data directory,
- * both samples off, no seed configuration and no storage provider.
+ * the agent's run ledger under that data directory (WORKFLOW_LOCAL_DATA_DIR, which would otherwise default to a
+ * directory beside the standalone), both samples off and no storage provider. The seed file, the stand-in model (the
+ * `custom` provider with the endpoint's URL and model, and no key) and MCP (enabled, its URL and token label) are named
+ * only when the boot's step gives them: with none, the seed configuration is empty and no LLM_ or LIBREDB_MCP_ variable
+ * is set.
  */
 export function serverEnvironment(input: ServerInput): Record<string, string> {
   if (!path.isAbsolute(input.providersDirectory)) {
     throw new Error(`the providers directory ${input.providersDirectory} is not an absolute path`);
+  }
+  if (input.seedConfig !== undefined && !path.isAbsolute(input.seedConfig)) {
+    throw new Error(`the seed file ${input.seedConfig} is not an absolute path`);
   }
   return {
     PATH: input.path,
@@ -1171,13 +1593,24 @@ export function serverEnvironment(input: ServerInput): Record<string, string> {
     PORT: String(input.port),
     [STUDIO.providersDirVariable]: input.providersDirectory,
     STORAGE_SQLITE_PATH: path.join(input.dataDirectory, "libredb-storage.db"),
-    SEED_CONFIG_PATH: "",
+    WORKFLOW_LOCAL_DATA_DIR: path.join(input.dataDirectory, "workflow"),
+    SEED_CONFIG_PATH: input.seedConfig ?? "",
     SQLITE_EMBEDDED_SAMPLE: "false",
     LIBREDB_EMBEDDED_SAMPLE: "false",
     JWT_SECRET: input.credentials.jwtSecret,
     ADMIN_EMAIL: STUDIO.adminEmail,
     ADMIN_PASSWORD: input.credentials.adminPassword,
     USER_PASSWORD: input.credentials.userPassword,
+    ...(input.model === undefined
+      ? {}
+      : { LLM_PROVIDER: STUDIO.agent.provider, LLM_API_URL: input.model.url, LLM_MODEL: input.model.name }),
+    ...(input.mcp === undefined
+      ? {}
+      : {
+          LIBREDB_MCP_ENABLED: "true",
+          LIBREDB_MCP_URL: input.mcp.url,
+          LIBREDB_MCP_TOKEN_LABEL: input.mcp.tokenLabel,
+        }),
   };
 }
 
@@ -1398,17 +1831,26 @@ async function stopServer(server: Server): Promise<void> {
   }
 }
 
-/** Posts `body` as JSON to `route`, with the session cookie when given, and answers the status, body and cookies set. */
-async function postJson(
+/**
+ * Sends `method` to `route`, with `body` as JSON when given, the session cookie when given and `headers`, and answers
+ * the status, the JSON object body and the cookies set.
+ */
+async function requestJson(
   server: Server,
+  method: "GET" | "POST",
   route: string,
   body: unknown,
   cookie: string | null,
+  headers: Readonly<Record<string, string>> = {},
 ): Promise<Answer & { readonly setCookies: string[] }> {
   const response = await fetch(`http://127.0.0.1:${server.port}${route}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(cookie === null ? {} : { cookie }) },
-    body: JSON.stringify(body),
+    method,
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...(cookie === null ? {} : { cookie }),
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(CHILD_TIMEOUTS_MS.request),
   });
   const text = await response.text();
@@ -1416,10 +1858,55 @@ async function postJson(
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`POST ${route} answered ${response.status} with a body that is not JSON: ${text.slice(0, 200)}`);
+    throw new Error(
+      `${method} ${route} answered ${response.status} with a body that is not JSON: ${text.slice(0, 200)}`,
+    );
   }
-  if (!isRecord(parsed)) throw new Error(`POST ${route} answered ${response.status} with a body that is not an object`);
+  if (!isRecord(parsed)) {
+    throw new Error(`${method} ${route} answered ${response.status} with a body that is not an object`);
+  }
   return { status: response.status, body: parsed, setCookies: response.headers.getSetCookie() };
+}
+
+/** Posts `body` as JSON to `route` (no body when undefined), with the session cookie when given and `headers`. */
+function postJson(
+  server: Server,
+  route: string,
+  body: unknown,
+  cookie: string | null,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<Answer & { readonly setCookies: string[] }> {
+  return requestJson(server, "POST", route, body, cookie, headers);
+}
+
+/** Gets `route` with the session cookie. */
+function getJson(server: Server, route: string, cookie: string): Promise<Answer> {
+  return requestJson(server, "GET", route, undefined, cookie);
+}
+
+/**
+ * Posts one JSON-RPC `message` to Studio's MCP route with the bearer `token`, as a stateless client does (no
+ * `initialize` first: each request is answered on its own), and answers the one message of its event stream. An answer
+ * other than 200, or with other than one message, is refused by name; the token is never printed.
+ */
+async function postMcp(server: Server, token: string, message: Record<string, unknown>): Promise<unknown> {
+  const route = `POST ${STUDIO.routes.mcp} ${String(message.method)}`;
+  const response = await fetch(`http://127.0.0.1:${server.port}${STUDIO.routes.mcp}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: STUDIO.mcp.accept,
+      "content-type": "application/json",
+      "mcp-protocol-version": STUDIO.mcp.protocolVersion,
+    },
+    body: JSON.stringify(message),
+    signal: AbortSignal.timeout(CHILD_TIMEOUTS_MS.request),
+  });
+  const text = await response.text();
+  if (response.status !== 200) throw new Error(`${route} answered ${response.status}: ${text.slice(0, 200)}`);
+  const messages = mcpMessages(route, text);
+  if (messages.length !== 1) throw new Error(`${route} answered ${messages.length} messages, not one`);
+  return messages[0];
 }
 
 /** Signs in as the admin and answers the session cookie. */
@@ -1465,7 +1952,7 @@ function assertNone(problems: readonly string[], output = ""): void {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The nine steps.
+// The eleven steps.
 
 /** What the steps share: where the run works, what the caller gave and what each step leaves for the next. */
 interface Context {
@@ -1667,12 +2154,27 @@ async function lockProvider(ctx: Context): Promise<string> {
   return `Node.js ${version.stdout.trim()} ran ${path.basename(placed.wrapper)} beside ${path.relative(ctx.temp, placed.module)} (${placed.bytes} bytes from ${placed.inputs} inputs): ${outputLines(lock.stdout).at(-1)}`;
 }
 
-/** The server's environment for one boot of this run, with its own data directory. */
-function bootEnvironment(ctx: Context, boot: string, port: number): Record<string, string> {
+/** What a boot of the agent or MCP leg adds: the seed connection written to its seed file, the model, MCP. */
+interface BootOptions {
+  readonly seed?: Readonly<Record<string, unknown>>;
+  readonly model?: ServerInput["model"];
+  readonly mcp?: ServerInput["mcp"];
+}
+
+/**
+ * The server's environment for one boot of this run, with its own data directory; a boot given a seed connection
+ * writes it as `seed.json` there, the only seed file the boot reads.
+ */
+function bootEnvironment(ctx: Context, boot: string, port: number, options: BootOptions = {}): Record<string, string> {
   const home = path.join(ctx.temp, "server", "home");
   const dataDirectory = path.join(ctx.temp, "server", boot);
   mkdirSync(home, { recursive: true });
   mkdirSync(dataDirectory, { recursive: true });
+  let seedConfig: string | undefined;
+  if (options.seed !== undefined) {
+    seedConfig = path.join(dataDirectory, "seed.json");
+    writeFileSync(seedConfig, `${JSON.stringify({ version: "1", connections: [options.seed] }, null, 2)}\n`);
+  }
   return serverEnvironment({
     path: ctx.callerPath,
     home,
@@ -1680,7 +2182,22 @@ function bootEnvironment(ctx: Context, boot: string, port: number): Record<strin
     port,
     providersDirectory: earlier(ctx.providers, "the providers directory"),
     credentials: ctx.credentials,
+    ...(seedConfig === undefined ? {} : { seedConfig }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
   });
+}
+
+/**
+ * The seed connection of the agent and MCP legs: id `seedId` (a UUID, which the seed id rule admits and which names no
+ * engine), the name acceptance.json gives the connection, the engine's type, the admin role alone (the engine opens a
+ * local file, so an operator limits its seed to admin), and `mcp: true` only when the MCP leg asks for it.
+ */
+function seedEntry(ctx: Context, seedId: string, mcp: boolean): Record<string, unknown> {
+  const { name } = ctx.fixture.acceptance.connection;
+  if (!isText(name)) throw new Error("acceptance.json's connection has no name text, which the seed connection takes");
+  const engine = ctx.fixture.engines[0] as Fixture["engines"][number];
+  return { id: seedId, name, type: engine.id, roles: ["admin"], ...(mcp ? { mcp: true } : {}) };
 }
 
 /** The connection the run saves: the fixture's own fields, an id and the engine's type. */
@@ -1764,6 +2281,151 @@ async function refuseOverBound(ctx: Context): Promise<string> {
   );
 }
 
+/** The statuses of a run that has not ended yet. */
+const PENDING_RUN_STATUSES: readonly unknown[] = Object.freeze(["queued", "running"]);
+
+/**
+ * The report of run `runId` once its status is no longer pending, polled every 100 ms; past
+ * `CHILD_TIMEOUTS_MS.agentRun` the step fails naming the last status.
+ */
+async function endedRunReport(server: Server, runId: string, cookie: string): Promise<Record<string, unknown>> {
+  const started = Date.now();
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- the run is polled until it ends, each read after the one before it.
+    const answer = await getJson(server, `${STUDIO.routes.agentRuns}/${runId}`, cookie);
+    if (answer.status !== 200) {
+      throw new Error(
+        `GET ${STUDIO.routes.agentRuns}/${runId} answered ${answer.status}: ${JSON.stringify(answer.body)}`,
+      );
+    }
+    const status = isRecord(answer.body.record) ? answer.body.record.status : undefined;
+    if (!PENDING_RUN_STATUSES.includes(status)) return answer.body;
+    if (Date.now() - started >= CHILD_TIMEOUTS_MS.agentRun) {
+      throw new Error(`run ${runId} was still ${String(status)} after ${CHILD_TIMEOUTS_MS.agentRun / 1000} s`);
+    }
+    // oxlint-disable-next-line no-await-in-loop -- the pause between two reads of the run.
+    await delay(100);
+  }
+}
+
+async function planAgentRun(ctx: Context): Promise<string> {
+  const { fixture } = ctx;
+  const { agent } = fixture.acceptance;
+  const engine = (fixture.engines[0] as Fixture["engines"][number]).id;
+  const standalone = earlier(ctx.standalone, "a standalone build");
+  const seedId = randomUUID();
+  const connectionId = `seed:${seedId}`;
+  const endpoint = startModelEndpoint([agent.prose]);
+  try {
+    const port = await freePort();
+    const env = bootEnvironment(ctx, "agent-boot", port, {
+      seed: seedEntry(ctx, seedId, false),
+      model: { url: endpoint.url, name: STAND_IN_MODEL },
+    });
+    return await withServer(
+      standalone,
+      env,
+      port,
+      async (server) => {
+        const cookie = await signIn(server, ctx.credentials.adminPassword);
+        const start = (mode: string) => ({
+          mode,
+          workflowType: STUDIO.agent.workflow,
+          objective: agent.objective,
+          connectionId,
+        });
+        const started = await postJson(server, STUDIO.routes.agentRuns, start(STUDIO.agent.planning), cookie);
+        const { runId } = started.body;
+        if (started.status !== 202 || !isText(runId)) {
+          throw new Error(
+            `the plan-mode start answered ${started.status}, not 202 with a runId: ${JSON.stringify(started.body).slice(0, 500)}`,
+          );
+        }
+        const startedAt = Date.now();
+        const report = await endedRunReport(server, runId, cookie);
+        const elapsed = Date.now() - startedAt;
+        assertNone(
+          planRunProblems(report, { runId, engineId: engine, connectionId, prose: agent.prose, model: STAND_IN_MODEL }),
+        );
+        assertNone(endpointRequestProblems(endpoint.requests, 1));
+        // Agent mode would send statements, which Studio has not reviewed for the engine: refused before any run opens.
+        const refused = await postJson(server, STUDIO.routes.agentRuns, start(STUDIO.agent.agent), cookie);
+        assertNone(notReviewedProblems(refused, agent.notReviewed));
+        assertNone(
+          endpointRequestProblems(endpoint.requests, 1).map((problem) => `after the agent-mode start, ${problem}`),
+        );
+        return {
+          runId,
+          evidence: `plan-mode run ${runId} on ${connectionId} (engine ${engine}) succeeded within ${elapsed} ms, stopReason model-stopped, its driver the ${STUDIO.agent.provider} provider's ${STAND_IN_MODEL} model, its closing statement ${JSON.stringify(agent.prose)}; the endpoint was asked once, a streamed ${endpoint.requests[0]?.method} ${endpoint.requests[0]?.path} offering no tools; the agent-mode start answered ${refused.status} ${JSON.stringify(refused.body)}, and the endpoint was asked nothing more`,
+        };
+      },
+      (answer, output) => {
+        assertNone(agentRunLineProblems(output, answer.runId));
+        return {
+          ...answer,
+          evidence: `${answer.evidence}; once the server stopped, its output held 1 line for run ${answer.runId} with status=succeeded and no "${STUDIO.agent.driveFailureLine}"`,
+        };
+      },
+    ).then((answer) => answer.evidence);
+  } finally {
+    await endpoint.stop();
+  }
+}
+
+async function listOnMcp(ctx: Context): Promise<string> {
+  const { fixture } = ctx;
+  const { notOffered } = fixture.acceptance.mcp;
+  const tool = fixture.language.mcpTool;
+  const { listTool, schemaTool, readTool } = STUDIO.mcp;
+  const engine = (fixture.engines[0] as Fixture["engines"][number]).id;
+  const standalone = earlier(ctx.standalone, "a standalone build");
+  const seedId = randomUUID();
+  const connectionId = `seed:${seedId}`;
+  const seed = seedEntry(ctx, seedId, true);
+  const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
+  const env = bootEnvironment(ctx, "mcp-boot", port, {
+    seed,
+    mcp: { url: `${origin}${STUDIO.routes.mcp}`, tokenLabel: randomUUID() },
+  });
+  return withServer(
+    standalone,
+    env,
+    port,
+    async (server) => {
+      const cookie = await signIn(server, ctx.credentials.adminPassword);
+      // The mint is a browser's request: Studio holds it to the deployment's own origin.
+      const minted = await postJson(server, STUDIO.routes.mcpToken, undefined, cookie, { origin });
+      const token = mcpTokenOf(minted);
+      const call = (id: number, method: string, params: Record<string, unknown>) =>
+        postMcp(server, token, { jsonrpc: "2.0", id, method, params });
+      const first = (fixture.acceptance.statements[0] as Expectation).statement;
+
+      assertNone(toolListProblems(await call(1, "tools/list", {}), tool));
+      const listed = await call(2, "tools/call", { name: listTool, arguments: {} });
+      assertNone(listedConnectionProblems(listed, { id: connectionId, name: String(seed.name), engine, notOffered }));
+      const read = await call(3, "tools/call", {
+        name: readTool,
+        arguments: { connection_id: connectionId, sql: first },
+      });
+      assertNone(toolRefusalProblems(read, readTool, notOffered));
+      const schema = await call(4, "tools/call", { name: schemaTool, arguments: { connection_id: connectionId } });
+      assertNone(toolRefusalProblems(schema, schemaTool, notOffered));
+      const own = await call(5, "tools/call", {
+        name: tool,
+        arguments: { connection_id: connectionId, statement: first },
+      });
+      assertNone(unknownToolProblems(own, tool));
+      const ownError = (own as { error: unknown }).error;
+      return `the token mint answered ${minted.status} (expires ${String(minted.body.expiresAt)}, url ${String(minted.body.url)}); tools/list names ${listTool} and ${schemaTool} and not ${tool}; ${listTool} lists ${connectionId} on engine ${engine} with read_tool null and ${JSON.stringify(notOffered)}; ${readTool} and ${schemaTool} on it each answer isError with that sentence alone; ${tool} answers ${JSON.stringify(ownError)}`;
+    },
+    (evidence, output) => {
+      assertNone(mcpAuditProblems(output, seedId, { refused: [readTool, schemaTool], fixtureTool: tool }));
+      return `${evidence}; once the server stopped, its output held one ${STUDIO.mcp.auditEvent} failure line on connection ${seedId} for each of ${readTool} and ${schemaTool}, none for ${tool} and no success on the connection`;
+    },
+  );
+}
+
 async function refuseTampered(ctx: Context): Promise<string> {
   const { fixture } = ctx;
   const standalone = earlier(ctx.standalone, "a standalone build");
@@ -1839,7 +2501,7 @@ async function buildHoldsNoFixture(ctx: Context): Promise<string> {
   return `${outputLines(checked.stdout).join("; ")}; and none of ${files.length} files under ${build} equals a fixture file or holds ${needles.join(", ")}`;
 }
 
-/** The acceptance's nine steps over `ctx`. */
+/** The acceptance's eleven steps over `ctx`. */
 function buildSteps(ctx: Context): Step[] {
   const runs = [
     buildStandalone,
@@ -1848,6 +2510,8 @@ function buildSteps(ctx: Context): Step[] {
     lockProvider,
     queryEngine,
     refuseOverBound,
+    planAgentRun,
+    listOnMcp,
     refuseTampered,
     repositoryUnchanged,
     buildHoldsNoFixture,
@@ -1892,7 +2556,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   );
   const dirty = status.exitCode === 0 ? porcelainProblems(status.stdout) : [`git status exited ${status.exitCode}`];
   if (dirty.length > 0) {
-    console.error(`refused before the build: ${dirty.join("; ")}; step 8 asserts the run changes nothing`);
+    console.error(`refused before the build: ${dirty.join("; ")}; the clean-tree step asserts the run changes nothing`);
     return 1;
   }
 
