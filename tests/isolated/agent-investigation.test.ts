@@ -6712,8 +6712,8 @@ describe("a presentation the model serialized reaches the tool through the SDK",
   spends a statement of its budget on a `db.schema.read`, records a `context-captured`
   event and takes a model turn, and only then is refused. That sequence is exactly what
   a future "fix" would be tempted to simplify away, and until now nothing pinned it —
-  the only `engine-unsupported` test injects the error from `resolveConnection`, before
-  grounding happens at all.
+  the `engine-unsupported` tests of the runs route (tests/api/agent/runs.test.ts) refuse
+  the run before grounding happens at all.
 */
 describe("agent mode is no wider than it was, on an engine grounding now reaches", () => {
   const column = (name: string): ColumnSchema => ({ name, type: "string", nullable: true, isPrimary: false });

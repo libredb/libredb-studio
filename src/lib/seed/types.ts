@@ -548,7 +548,7 @@ export const SeedConnectionSchema = z
  * The load's refusal of a read-only seed that is not managed (#1089). An editable seed is copied into
  * the browser of every user its roles admit, with its password and TLS client key
  * (`GET /api/connections/managed`), and the sidebar's Duplicate turns that copy into a connection of
- * the user's own, which `resolveConnection` returns verbatim and whose readOnly the user can clear, so
+ * the user's own, which `resolveServedConnection` returns verbatim and whose readOnly the user can clear, so
  * the mode would bind nobody. It names `defaults.managed` when the value came from there, because that
  * is the line to change.
  */

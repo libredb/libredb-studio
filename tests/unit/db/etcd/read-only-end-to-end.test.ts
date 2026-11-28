@@ -1,6 +1,6 @@
 /**
  * E6's end-to-end test (#1089, section 3.6 E6, gate 1): the fail-open class closed from the seed file to the
- * provider. A seed with `readOnly: true`, loaded, resolved through `resolveConnection` and built through
+ * provider. A seed with `readOnly: true`, loaded, resolved through `resolveServedConnection` and built through
  * `getOrCreateProvider`, refuses a write and sends nothing, and the same write on the seed without `readOnly` is
  * sent, so a field dropped anywhere in the schema, the mapper or the resolver fails here. A provider an
  * execution profile opens on that writable seed refuses the write too (E12's operations profile).
@@ -69,7 +69,8 @@ process.env.SEED_CONFIG_PATH = path.resolve(
 // After the substitution, so the factory and the provider it imports read the substituted adapter.
 const { acquireExecutionProfileProvider, clearProviderCache, getOrCreateProvider } = await import("@/lib/db/factory");
 const { resetCache } = await import("@/lib/seed");
-const { resolveConnection } = await import("@/lib/seed/resolve-connection");
+const { resolveServedConnection } = await import("@/lib/seed/resolve-connection");
+const { legacyConnection } = await import("@/lib/db/server-catalog");
 
 const WRITE = "put /app/cfg value";
 
@@ -87,10 +88,13 @@ afterEach(async () => {
 
 describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)", () => {
   test("the seed's readOnly survives the load, the mapper and the resolver, and its provider sends no write", async () => {
-    const connection = await resolveConnection({ connectionId: "seed:cluster-read" }, { role: "user", username: "u" });
+    const { connection, engine } = await resolveServedConnection(
+      { connectionId: "seed:cluster-read" },
+      { role: "user", username: "u" },
+    );
     expect(connection).toMatchObject({ id: "seed:cluster-read", seedId: "cluster-read", type: "etcd", readOnly: true });
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(legacyConnection(engine, connection));
     expect(clients).toHaveLength(1);
     const [client] = clients;
     const mark = client.calls.length;
@@ -100,14 +104,14 @@ describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)",
   });
 
   test("the same write on the seed without readOnly is sent, so the refusal above is the mode's", async () => {
-    const connection = await resolveConnection(
+    const { connection, engine } = await resolveServedConnection(
       { connectionId: "seed:cluster-write" },
       { role: "admin", username: "a" },
     );
     // The mapper carries the field through as the seed has it: absent there, so undefined here.
     expect(connection.readOnly).toBeUndefined();
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(legacyConnection(engine, connection));
     const [client] = clients;
     const mark = client.calls.length;
 
@@ -118,18 +122,18 @@ describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)",
 
   test("a user is never handed the writable seed, whose roles admit only an admin", async () => {
     await expect(
-      resolveConnection({ connectionId: "seed:cluster-write" }, { role: "user", username: "u" }),
+      resolveServedConnection({ connectionId: "seed:cluster-write" }, { role: "user", username: "u" }),
     ).rejects.toThrow();
     expect(clients).toHaveLength(0);
   });
 
   test("a provider the operations profile opens on the writable seed refuses the command, and sends nothing (E12)", async () => {
-    const connection = await resolveConnection(
+    const { connection, engine } = await resolveServedConnection(
       { connectionId: "seed:cluster-write" },
       { role: "admin", username: "a" },
     );
 
-    const provider = await acquireExecutionProfileProvider(connection, "agent-operations");
+    const provider = await acquireExecutionProfileProvider(legacyConnection(engine, connection), "agent-operations");
     expect(clients).toHaveLength(1);
     const [client] = clients;
     const mark = client.calls.length;
@@ -158,25 +162,28 @@ const VALUE_EDIT = { path: ["/app/cfg"], kind: "key", partId: "value", text: "ne
 const SOURCES: ReadonlyArray<readonly [ReadOnlySource, () => Promise<DatabaseProvider>]> = [
   [
     "seed",
-    async () =>
-      getOrCreateProvider(
-        await resolveConnection({ connectionId: "seed:cluster-read" }, { role: "user", username: "u" }),
-      ),
+    async () => {
+      const { connection, engine } = await resolveServedConnection(
+        { connectionId: "seed:cluster-read" },
+        { role: "user", username: "u" },
+      );
+      return getOrCreateProvider(legacyConnection(engine, connection));
+    },
   ],
   ["connection", async () => getOrCreateProvider(OWN_READ_ONLY)],
   [
     "execution-profile",
-    async () =>
-      acquireExecutionProfileProvider(
-        await resolveConnection({ connectionId: "seed:cluster-write" }, ADMIN),
-        "agent-operations",
-      ),
+    async () => {
+      const { connection, engine } = await resolveServedConnection({ connectionId: "seed:cluster-write" }, ADMIN);
+      return acquireExecutionProfileProvider(legacyConnection(engine, connection), "agent-operations");
+    },
   ],
 ];
 
 /** A value-edit plan the writable seed builds, so the apply below has a real plan to refuse. */
 async function writablePlan(): Promise<ObjectEditPlan> {
-  const writable = await getOrCreateProvider(await resolveConnection({ connectionId: "seed:cluster-write" }, ADMIN));
+  const { connection, engine } = await resolveServedConnection({ connectionId: "seed:cluster-write" }, ADMIN);
+  const writable = await getOrCreateProvider(legacyConnection(engine, connection));
   const built = await writable.buildObjectEdit?.(VALUE_EDIT);
   if (built === undefined || !built.built) throw new Error("the writable seed did not build the value edit");
   return built.plan;

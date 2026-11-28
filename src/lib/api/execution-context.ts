@@ -4,7 +4,7 @@ import { runtimeSetting } from "@/lib/governance/settings";
 import type { EngineConnection } from "@/lib/db/server-catalog";
 
 /**
- * The namespace `resolveConnection` fills from the operator's seed configuration. A body that claims
+ * The namespace `resolveServedConnection` fills from the operator's seed configuration. A body that claims
  * an id in it is replaced by the operator's own record before any route sees it, so an id here is the
  * operator's, and so is the record: its `roles` are the operator's narrowed to those its caller holds,
  * and its `sharedWithNonAdminRoles` was read from the operator's roles before that narrowing.

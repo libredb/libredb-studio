@@ -3226,8 +3226,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, multi-query, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
-        "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
+        "an admitted engine's connection, inline or seed, resolves with its record through the served resolve every request that names a connection reads, and a bundled engine's with its legacy record",
+        "resolveServedConnection answers a package engine's connection with the record the server catalog answers, by reference",
+        "the served resolve is the one resolve the module exports",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
         "Test Connection opens an admitted engine's session through its package, reads its health and closes it",

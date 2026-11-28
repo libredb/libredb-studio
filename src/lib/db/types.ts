@@ -4139,7 +4139,7 @@ export interface ObjectEditPlan {
   /**
    * A digest of the SERVER this plan was built against, not of the connection's id.
    *
-   * MEASURED, `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed
+   * MEASURED, `resolveServedConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed
    * inline connection object verbatim, `id` included, and the browser drove it: a made-up id with
    * different credentials connected as them. So `connection.id` is a string the caller typed on the
    * majority path, and binding to it would be vacuous for exactly the case the binding exists for.

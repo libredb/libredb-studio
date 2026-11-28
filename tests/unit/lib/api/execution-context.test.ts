@@ -60,7 +60,7 @@ describe("editorExecutionContext on a connection only its requester uses", () =>
   test("an inline connection keeps the requester posture whatever roles its body carries", () => {
     // A body is the caller's own text: roles on it decide nothing, and an inline connection is
     // one requester's, so the audience rule never reads them. Only the seed namespace, which
-    // resolveConnection fills from the operator's configuration, carries an audience.
+    // resolveServedConnection fills from the operator's configuration, carries an audience.
     const claimed = { ...INLINE, roles: ["*"], managed: true } as DatabaseConnection;
 
     expect(editorExecutionContext(ADMIN, claimed)).toEqual({ allowExternalFileAccess: true });
@@ -85,7 +85,7 @@ describe("editorExecutionContext on a seed a non-admin role can use", () => {
 
   test("an unmanaged seed resolves to the same shared record, so it is decided the same way", () => {
     // A `managed: false` seed is copied into each browser with its `seed:` id kept, and
-    // resolveConnection still answers that id with the operator's one record.
+    // resolveServedConnection still answers that id with the operator's one record.
     const unmanaged = { ...seed(["*"]), managed: false } as DatabaseConnection;
 
     expect(editorExecutionContext(ADMIN, unmanaged)).toEqual({ allowExternalFileAccess: false });

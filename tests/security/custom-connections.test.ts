@@ -99,7 +99,7 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts":
     "drives an agent run on the seed its recorded connectionId resolves to through resolveServedConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches or the maintenance route helper, handleMaintenanceRequest, which every maintenance route reaches, each having resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches or the maintenance route helper, handleMaintenanceRequest, which every maintenance route reaches, each having resolved it through resolveServedConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts":
@@ -283,7 +283,7 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
         }
       } else if (!(key in PROVIDER_ROUTES_OUTSIDE_DB)) {
         problems.push(
-          `"${key}" builds a database provider outside src/app/api/db: resolve its connection through resolveConnection, add a case above that sends it a caller's connection, and record the reason in PROVIDER_ROUTES_OUTSIDE_DB`,
+          `"${key}" builds a database provider outside src/app/api/db: resolve its connection through resolveServedConnection, add a case above that sends it a caller's connection, and record the reason in PROVIDER_ROUTES_OUTSIDE_DB`,
         );
       }
     }
@@ -334,7 +334,7 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
       .sort();
 
     // A new caller hands testConnection a connection the census has not seen resolved: route it
-    // through resolveConnection, add a case that sends it a caller's connection, and say so above.
+    // through resolveServedConnection, add a case that sends it a caller's connection, and say so above.
     expect(callers).toEqual(["app/api/db/test-connection/route.ts"]);
   });
 });

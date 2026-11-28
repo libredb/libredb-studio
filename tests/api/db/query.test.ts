@@ -96,7 +96,7 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
-/** What `resolveConnection` answers instead of the default below, for the governance tests at the end of this file. */
+/** What the served resolve answers instead of the default below, for the governance tests at the end of this file. */
 let resolveConnectionOverride: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
 
 mock.module("@/lib/seed/resolve-connection", () => {
@@ -110,13 +110,13 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+  const connectionOfBody = mock(async (body: Record<string, unknown>) => {
     if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
     if (!body.connection && !body.connectionId) {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
     }
     // A managed id resolves from the OPERATOR's config and everything the caller attached to the
-    // request is discarded, which the real `resolveConnection` does for the same reason (a `seed:`
+    // request is discarded, which the real `resolveServedConnection` does for the same reason (a `seed:`
     // id is the operator's namespace, GHSA-3wh2-8x78). This is exactly the path the top-level
     // `database` field has to survive: nothing the caller sent on a connection reaches this object.
     if (typeof body.connectionId === "string" && body.connectionId.startsWith("seed:")) {
@@ -132,9 +132,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
     return body.connection;
   });
   return {
-    resolveConnection,
     resolveServedConnection: async (body: Record<string, unknown>) => {
-      const connection = (await resolveConnection(body)) as { type?: unknown };
+      const connection = (await connectionOfBody(body)) as { type?: unknown };
       return { connection, engine: servedEngineRecord(connection.type) };
     },
     SeedConnectionError,
@@ -581,7 +580,7 @@ describe("POST /api/db/query", () => {
     mockReadProviderDeclarations.mockClear();
     mockGetOrCreateEditorSession.mockImplementationOnce(async (...args: unknown[]) => {
       const connection = args[0] as DatabaseConnection;
-      assertReadOnlyHonoured(legacyProviderEngine(connection.type, "open"), connection);
+      assertReadOnlyHonoured(legacyProviderEngine(connection.type), connection);
       return editorEntryOf(mockProvider);
     });
 
@@ -2345,7 +2344,7 @@ const { logger } = await import("@/lib/logger");
 describe("POST /api/db/query: query events under governance", () => {
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
   const governedSession = { role: "user", username: "alice@example.com", idpSubject: SUBJECT };
-  /** A governed record as `resolveConnection` hands it out under a write grant. */
+  /** A governed record as `resolveServedConnection` hands it out under a write grant. */
   const governedConnection = {
     id: "seed:orders",
     name: "Orders",

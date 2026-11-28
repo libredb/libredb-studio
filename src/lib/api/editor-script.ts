@@ -59,9 +59,9 @@ import type { QueryResult } from "@/lib/types";
  * The scope is the facade's: minted when the script opens, only where the target's session offers
  * `console.endScope`, sent with every unit, and ended once after the last unit the script ran, through
  * `endEditorScope` on the target under a cleanup context of its own (clause C-60): at once when that unit answered or
- * failed, and, when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged by kind and
- * code (`lateScopeEnd`), the script answered with no `openTransaction`. A script none of whose units reached its
- * provider ends none.
+ * failed, and, when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged
+ * by kind and code (`lateScopeEnd`), the script answered with no `openTransaction`. A script none of whose units
+ * reached its provider ends none.
  *
  * THE EDITOR'S SCRIPT INSIDE A TRANSACTION (clause C-84). `openTransactionScript` is the caller facade of a script of
  * `POST /api/db/transaction`: every unit runs through one host core console execute sent with `transaction`, one unit at

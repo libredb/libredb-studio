@@ -81,13 +81,12 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = mock(async (body: Record<string, unknown>) => body.connection);
+  const connectionOfBody = mock(async (body: Record<string, unknown>) => body.connection);
   return {
-    resolveConnection,
     // The served resolve the cancel and maintenance routes read: the same resolution, with the record of the resolved
     // type's engine, a legacy engine's, as the server catalog holds it, and its refusal of a type it does not serve.
     resolveServedConnection: async (body: Record<string, unknown>) => {
-      const connection = (await resolveConnection(body)) as { type?: unknown };
+      const connection = (await connectionOfBody(body)) as { type?: unknown };
       return { connection, engine: servedEngineRecord(connection.type) };
     },
     SeedConnectionError,

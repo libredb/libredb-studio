@@ -48,7 +48,7 @@ interface BootBundle {
  */
 interface RouteBundle {
   serverEngine(value: unknown): EngineAnswer;
-  legacyProviderEngine(value: unknown, need: "route" | "open"): unknown;
+  legacyProviderEngine(value: unknown): unknown;
   serverCatalogInstalled(): boolean;
   connectionFieldRefusal(rules: object, connection: DatabaseConnection): string | undefined;
   CONNECTION_FORM: Readonly<Record<string, object>>;
@@ -138,10 +138,10 @@ describe("one server engine catalog across two bundles", () => {
     expect(route.connectionFieldRefusal(rules, connection({ host: "db.local", user: "writer" }))).toBeUndefined();
 
     // The refusals are the route bundle's own classes.
-    const unsupported = thrown(() => route.legacyProviderEngine("acmecrossserved", "route"));
+    const unsupported = thrown(() => route.legacyProviderEngine("acmecrossserved"));
     expect(unsupported).toBeInstanceOf(route.PackageEngineUnsupportedError);
     expect(route.serverEngine("acmecrossgone").kind).toBe("unavailable");
-    const unavailable = thrown(() => route.legacyProviderEngine("acmecrossgone", "route"));
+    const unavailable = thrown(() => route.legacyProviderEngine("acmecrossgone"));
     expect(unavailable).toBeInstanceOf(route.ProviderUnavailableError);
     expect(unavailable).not.toBeInstanceOf(boot.ProviderUnavailableError);
     expect((unavailable as Error).message).toContain("PROVIDER_LOAD_FAILED");
@@ -171,6 +171,6 @@ describe("one server engine catalog across two bundles", () => {
     }
     // The grammar the boot bundle's record holds reads as the route bundle's own row of it.
     expect(answer.engine.statementGrammar).toEqual(route.sqlGrammarFor("snowflake").grammar);
-    expect(() => route.legacyProviderEngine("snowflake", "open")).not.toThrow();
+    expect(() => route.legacyProviderEngine("snowflake")).not.toThrow();
   });
 });

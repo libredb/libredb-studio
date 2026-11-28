@@ -4,7 +4,7 @@
  * a DatabaseConfigError raised before any client is built, and none repeats the value it refuses.
  *
  * Every field read here is checked before it is used, because a connection sent to the API arrives as
- * the caller wrote it (`resolveConnection` hands an inline connection on untouched): a field that is
+ * the caller wrote it (`resolveServedConnection` hands an inline connection on untouched): a field that is
  * not the type `DatabaseConnection` declares for it is refused, naming the field. A null reads as
  * absent, as a JSON body writes an absent field, and so does an empty string in a text field, which the
  * dialog writes for a blank User or Password (spec E2). `readOnly` is the one exception: a null there is

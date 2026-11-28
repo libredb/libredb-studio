@@ -97,7 +97,7 @@ describe("POST /api/db/objects/edit-apply", () => {
   });
 
   test("a plan for a connection that differs ONLY in database is refused", async () => {
-    // This is the case a `connection.id` check cannot see: MEASURED, `resolveConnection` returns an
+    // This is the case a `connection.id` check cannot see: MEASURED, `resolveServedConnection` returns an
     // inline connection object verbatim, id included, and the browser drove it with a made-up id and
     // different credentials.
     const { plan, planToken } = await mintValidPlan({ database: "db1" });
@@ -390,7 +390,7 @@ describe("POST /api/db/objects/edit-apply", () => {
     // verbatim from the `connectionName` fallback in `auditFields` of `POST` in
     // `src/app/api/db/maintenance/route.ts`, and BOTH its fallback arms had no
     // population: the harness fixture always carries a name, so `?? "unknown"` on that line killed
-    // nothing. `resolveConnection` returns an INLINE caller-supplied connection object verbatim, so
+    // nothing. `resolveServedConnection` returns an INLINE caller-supplied connection object verbatim, so
     // a connection whose `name` is empty is the caller's to send and is the live population here.
     //
     // `user`'s own `|| "unknown"` arm is NOT driven here and the reason is MEASURED rather than
@@ -655,7 +655,7 @@ describe("E6 through the edit-apply route (#1089, spec 3.6)", () => {
 
 describe("POST /api/db/objects/edit-apply under governance", () => {
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
-  /** A governed connection as `resolveConnection` hands it out: the `seed:` id and the level of its credential. */
+  /** A governed connection as `resolveServedConnection` hands it out: the `seed:` id and the level of its credential. */
   const GOVERNED = { ...CONNECTION, id: "seed:orders", grantLevel: "write" } as DatabaseConnection;
 
   beforeEach(() => {

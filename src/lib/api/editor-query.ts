@@ -579,9 +579,9 @@ export function packageWarningsByGrant(
 /**
  * The answer body of the page `record` holds, under `columns`, the first result's columns the package answered, and
  * `page`; its warnings by how the engine's record grants its own words, `ownWords` (`packageWarningsByGrant`). The
- * columns' names, the execution time, the row count and the warnings are the members the host core checked before it pumped
- * the page (`checkExecuteAnswer`, clause C-112), so none is checked again here. The record is released once, in a
- * `finally`, whether or not the body was built. A provider package's statement form builds its body with it
+ * columns' names, the execution time, the row count and the warnings are the members the host core checked before it
+ * pumped the page (`checkExecuteAnswer`, clause C-112), so none is checked again here. The record is released once, in
+ * a `finally`, whether or not the body was built. A provider package's statement form builds its body with it
  * (`entryConsoleTarget` in ./session-target).
  */
 export function packagePageBody(

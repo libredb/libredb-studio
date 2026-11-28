@@ -6,7 +6,7 @@
  * that user name, to a server the platform user runs. With the mode on, the operator loader resolves
  * no file seed, and each carries the literal marker from the role filter on, so nothing is
  * resolved when connections are listed (getManagedConnections), when a refused id is checked
- * (getSeedConnectionByIdUnfiltered, behind the 403) or when one is opened (resolveConnection, which
+ * (getSeedConnectionByIdUnfiltered, behind the 403) or when one is opened (resolveServedConnection, which
  * honours the marker and never calls resolveVaultCredentials). No plaintext-password warning is
  * logged, and one info line says so once per process. `true`, `1`, `on` and `yes`, trimmed and in
  * any case, turn it on; `false`, `0`, `off`, `no` and the empty string keep today's resolution
@@ -21,7 +21,7 @@ import path from "node:path";
 import { logger } from "@/lib/logger";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetSampleSeedStates } from "@/lib/seed/samples";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { LITERAL_SEED_FILE } from "@/lib/types";
@@ -185,10 +185,10 @@ describe("SEED_LITERAL_VALUES", () => {
     it("opens the ${vault:...} value as written, and Vault is never asked", async () => {
       process.env.SEED_LITERAL_VALUES = "true";
 
-      const opened = await resolveConnection({ connectionId: "seed:cache" }, USER);
+      const { connection: opened } = await resolveServedConnection({ connectionId: "seed:cache" }, USER);
 
       expect(opened.password).toBe(VAULT_REFERENCE);
-      // The marker is on what resolveConnection received from the list, after the role filter.
+      // The marker is on what resolveServedConnection received from the list, after the role filter.
       expect((opened as ManagedConnection).literal).toBe(true);
       // So is the literal-mode marker, which keeps the server's own identity off the row.
       expect((opened as ManagedConnection)[LITERAL_SEED_FILE]).toBe(true);
@@ -199,10 +199,10 @@ describe("SEED_LITERAL_VALUES", () => {
       process.env.SEED_LITERAL_VALUES = "true";
 
       const { result: opened, reads } = await envReadsDuring(["LITERAL_MODE_PROBE"], () =>
-        resolveConnection({ connectionId: "seed:orders" }, USER),
+        resolveServedConnection({ connectionId: "seed:orders" }, USER),
       );
 
-      expect(opened.user).toBe(ENV_REFERENCE);
+      expect(opened.connection.user).toBe(ENV_REFERENCE);
       expect(reads).toEqual([]);
     });
 
@@ -214,7 +214,9 @@ describe("SEED_LITERAL_VALUES", () => {
       const { result, reads } = await envReadsDuring(["JWT_SECRET"], async () => ({
         bySeedId: await listed(),
         // A user may not open it, and the 403 is decided by looking the id up without the role filter.
-        refusal: await resolveConnection({ connectionId: "seed:admin-only" }, USER).catch((thrown: unknown) => thrown),
+        refusal: await resolveServedConnection({ connectionId: "seed:admin-only" }, USER).catch(
+          (thrown: unknown) => thrown,
+        ),
       }));
 
       expect(result.bySeedId.get("admin-only")?.user).toBe(SECRET_REFERENCE);
@@ -249,7 +251,7 @@ describe("SEED_LITERAL_VALUES", () => {
       expect(notices()).toEqual([[NOTICE, { route: "seed/credential-resolver" }]]);
 
       await getManagedConnections(["user"]);
-      await resolveConnection({ connectionId: "seed:cache" }, USER);
+      await resolveServedConnection({ connectionId: "seed:cache" }, USER);
       resetCache();
       await listed();
 
@@ -271,7 +273,7 @@ describe("SEED_LITERAL_VALUES", () => {
     expect([...bySeedId.values()].map((conn) => conn[LITERAL_SEED_FILE])).toEqual([undefined, undefined, undefined]);
     expect(vaultCalls).toEqual([]);
 
-    const opened = await resolveConnection({ connectionId: "seed:cache" }, USER);
+    const { connection: opened } = await resolveServedConnection({ connectionId: "seed:cache" }, USER);
 
     expect(opened.password).toBe("vault-secret");
     expect(vaultCalls).toEqual([VAULT_URL]);

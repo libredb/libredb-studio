@@ -1,6 +1,6 @@
 /**
  * Which connections a caller may see and open (docs/GOVERNANCE.md#grants-and-the-connection-list): the one dispatcher
- * `GET /api/connections/managed` and the one body of `resolveConnection` and `resolveServedConnection` ask, so the list
+ * `GET /api/connections/managed` and `resolveServedConnection` ask, so the list
  * a browser shows and the connection a route opens can never disagree.
  *
  * Without governance it answers from `getSeedListing`: the seed connections the caller's role may see, in their order,

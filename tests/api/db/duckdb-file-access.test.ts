@@ -53,7 +53,7 @@ writeFileSync(secretFile, JSON.stringify({ services: [{ env: { POSTGRES_PASSWORD
 
 /**
  * The operator's seed file: one DuckDB seed every role can use, one offered to admin and user, and
- * one only admins can. Read through the real loader and resolveConnection, so the record each role
+ * one only admins can. Read through the real loader and resolveServedConnection, so the record each role
  * resolves is the one the product builds.
  */
 const sharedSeedFile = join(workDir, "shared-seed.duckdb");

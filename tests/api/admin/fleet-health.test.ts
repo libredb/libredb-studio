@@ -416,7 +416,7 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.code).toBe("INTERNAL_ERROR");
   });
 
-  // ALLOW_CUSTOM_CONNECTIONS off: a connection the caller supplied is refused by resolveConnection
+  // ALLOW_CUSTOM_CONNECTIONS off: a connection the caller supplied is refused by resolveServedConnection
   // before the factory is reached, and the refusal is reported as that item's error.
   test("reports a connection of the caller's own as refused, and builds nothing, while custom connections are off", async () => {
     process.env.ALLOW_CUSTOM_CONNECTIONS = "false";

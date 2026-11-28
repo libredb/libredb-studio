@@ -57,15 +57,14 @@
  *   per difference, each true for a legacy engine and false for a package's (`EngineOffers`).
  *
  * Every server path that needs a legacy `DatabaseProvider` for a connection reads its record through
- * `legacyProviderEngine`, which reads the record's `legacyProvider` offer: `resolveConnection`
- * (src/lib/seed/resolve-connection.ts), which no route calls, and the provider factory's entry points
+ * `legacyProviderEngine`, which reads the record's `legacyProvider` offer: the provider factory's entry points
  * (./factory), which read the record's grants and connection tables where they once read Studio's tables keyed by type.
  * A refused package's engine is refused there as `ProviderUnavailableError`, an engine whose record offers no legacy
- * provider as `PackageEngineUnsupportedError` until the request serves package engines, and every other value exactly
- * as `assertDatabaseType` refuses it. Only Test Connection, the query route, its cancel and a transaction, a
- * multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring, health and
- * maintenance requests, the provider metadata read, MCP and agent mode serve an engine whose record offers no legacy
- * provider in this Studio: each reads the type through `servedEngineRecord`, the routes when they resolve the
+ * provider as `PackageEngineUnsupportedError` (an engine whose session opens through its package), and every other
+ * value exactly as `assertDatabaseType` refuses it. Only Test Connection, the query route, its cancel and a
+ * transaction, a multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring,
+ * health and maintenance requests, the provider metadata read, MCP and agent mode serve an engine whose record offers
+ * no legacy provider in this Studio: each reads the type through `servedEngineRecord`, the routes when they resolve the
  * connection with its record through `resolveServedConnection` (src/lib/seed/resolve-connection.ts); Test Connection
  * then runs one test for every record, which reads what differs from the record's offers and grants (`testConnection`
  * in src/lib/api/test-connection.ts), the query route opens every record's cached editor session and runs a statement
@@ -343,9 +342,6 @@ export type ServerEngine =
   | { readonly kind: "unavailable"; readonly id: string; readonly codes: readonly string[] }
   | { readonly kind: "refused"; readonly refusal: TypeIdRefusal };
 
-/** Which server path checks the type: a route, or the open of a session. */
-export type EngineNeed = "route" | "open";
-
 const CATALOG_KEY = Symbol.for("libredb-studio.server-engine-catalog");
 
 /**
@@ -356,12 +352,9 @@ const BOOT_KEY = Symbol.for("libredb-studio.server-engine-catalog-boot");
 
 type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: "begun" | "unfinished" };
 
-/** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
-const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
-  route:
-    "This request is served for an engine of a provider package only by Test Connection, the query route, its cancel and a transaction, a multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
-  open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
-});
+/** The refusal of an engine whose record offers no legacy provider, by the provider factory's legacy entry points. */
+const PACKAGE_ENGINE_OPEN_SENTENCE =
+  "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.";
 
 /** The installed catalog, or undefined. */
 function installed(): ServerCatalog | undefined {
@@ -416,13 +409,13 @@ function notServedRefusal(
   return new UnknownProviderError(engine.refusal);
 }
 
-/** `legacyProviderEngine`'s reading of `value` for `need`. */
-function legacyProviderReading(value: unknown, need: EngineNeed): LegacyProviderReading {
+/** `legacyProviderEngine`'s reading of `value`. */
+function legacyProviderReading(value: unknown): LegacyProviderReading {
   const engine = serverEngine(value);
   if (engine.kind !== "served") return { engine: null, refusal: notServedRefusal(engine) };
   return engine.engine.offers.legacyProvider
     ? { engine: engine.engine, refusal: null }
-    : { engine: null, refusal: new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], engine.engine.id) };
+    : { engine: null, refusal: new PackageEngineUnsupportedError(PACKAGE_ENGINE_OPEN_SENTENCE, engine.engine.id) };
 }
 
 /**
@@ -481,14 +474,15 @@ export function servedEngineRefusal(value: unknown): ProviderUnavailableError | 
  * The record of the engine a connection's type names, when that record offers a legacy provider: what the provider
  * factory (./factory) reads of a legacy engine, its grants and its connection tables, in place of Studio's tables keyed
  * by type. A type the catalog serves no record of is refused as `servedEngineRecord` refuses it, and an engine whose
- * record offers no legacy provider as `PackageEngineUnsupportedError` for `need`.
+ * record offers no legacy provider as `PackageEngineUnsupportedError`, whose sentence says its session opens through
+ * its package.
  *
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {PackageEngineUnsupportedError} When the engine's record offers no legacy provider.
  * @throws {UnknownProviderError} When the type is absent, not text, or names no engine the server knows.
  */
-export function legacyProviderEngine(value: unknown, need: EngineNeed): EngineRecord {
-  const reading = legacyProviderReading(value, need);
+export function legacyProviderEngine(value: unknown): EngineRecord {
+  const reading = legacyProviderReading(value);
   if (reading.refusal !== null) throw reading.refusal;
   return reading.engine;
 }

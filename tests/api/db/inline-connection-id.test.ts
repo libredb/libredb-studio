@@ -21,7 +21,7 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
  *
  * Unlike the other api/db tests, this file does NOT mock `@/lib/db`: the refusal is raised by the
  * real factory ahead of its cache key, and only `getSession` is mocked, to answer as an admin. The
- * session, `resolveConnection` and the factory are the real ones, per the acceptance criteria; the
+ * session, `resolveServedConnection` and the factory are the real ones, per the acceptance criteria; the
  * connection is an inline PostgreSQL record whose refusal happens before any socket is opened.
  */
 

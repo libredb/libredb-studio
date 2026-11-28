@@ -8,7 +8,7 @@
  * CUSTOM_CONNECTIONS_DISABLED, and builds no provider for either, for an admin as for a user, because the admin role
  * toggles admin pages and maintenance only. The route inventory is `CONNECTION_ROUTES` in
  * ./helpers/provider-routes.ts, which every provider route joins unless it is named there with the reason it passes no
- * request body to `resolveConnection`.
+ * request body to `resolveServedConnection`.
  *
  * The snapshot is the real one: Studio's own loader reads it from a fake `pg` that answers a governance source's rows
  * (tests/helpers/governance/pg-fake.ts), with envelopes sealed by the test sealer to a keyring file of a fresh key, so
@@ -271,8 +271,8 @@ describe("the connection route inventory", () => {
     }
   });
 
-  test("every connection route resolves its connection through resolveConnection, resolveServedConnection, handleObjectRequest or handleMaintenanceRequest", () => {
-    const resolves = /\b(resolveConnection|resolveServedConnection|handleObjectRequest|handleMaintenanceRequest)\s*\(/;
+  test("every connection route resolves its connection through resolveServedConnection, handleObjectRequest or handleMaintenanceRequest", () => {
+    const resolves = /\b(resolveServedConnection|handleObjectRequest|handleMaintenanceRequest)\s*\(/;
     const unresolved = Object.keys(CONNECTION_ROUTES).filter(
       (route) => !resolves.test(withoutComments(readFileSync(join(API_ROOT_DIR, route, "route.ts"), "utf8"))),
     );

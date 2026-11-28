@@ -40,7 +40,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
 /**
  * A digest of the SERVER a plan was built against, and NEVER of the connection's id (#789 Phase 3).
  *
- * MEASURED, `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed inline
+ * MEASURED, `resolveServedConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed inline
  * connection object verbatim, `id` included, and the browser drove it: a made-up id with different
  * credentials connected as them. So `connection.id` is a string the caller typed on the majority
  * path, and binding a plan to it would be vacuous for exactly the case the binding exists for.
@@ -78,7 +78,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle/index.ts`,
  *   `admittedFileConnection()` in `src/lib/db/provider-files.ts` (SQLite's file),
  *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb/index.ts`,
- *   `resolveConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
+ *   `resolveServedConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
  *   `src/lib/db/providers/sql/clickhouse/index.ts`, and
  *   `CouchbaseProvider.hostFromConnectionString()` in
  *   `src/lib/db/providers/document/couchbase/index.ts`. PostgreSQL is the LIVE population: it

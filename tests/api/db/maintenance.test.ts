@@ -96,18 +96,17 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+  const connectionOfBody = mock(async (body: Record<string, unknown>) => {
     if (!body.connection && !body.connectionId) {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
     }
     return body.connection;
   });
   return {
-    resolveConnection,
     // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
     // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
     resolveServedConnection: async (body: Record<string, unknown>) => {
-      const connection = (await resolveConnection(body)) as { type?: unknown };
+      const connection = (await connectionOfBody(body)) as { type?: unknown };
       return { connection, engine: servedEngineRecord(connection.type) };
     },
     SeedConnectionError,
@@ -1322,7 +1321,7 @@ describe("POST /api/db/maintenance", () => {
   });
   describe("governance query events", () => {
     const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
-    /** A governed connection as `resolveConnection` hands it out: the `seed:` id and the level of its credential. */
+    /** A governed connection as `resolveServedConnection` hands it out: the `seed:` id and the level of its credential. */
     const governedConnection = { ...validConnection, id: "seed:orders", grantLevel: "write" };
 
     beforeEach(() => {

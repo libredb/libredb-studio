@@ -885,7 +885,7 @@ The switch limits the connections Studio itself opens, not what a seeded engine 
 
 Switched off, every route that builds a database provider refuses a connection the request supplies, before any provider is built, with `403` and `{ "error": "Custom connections are disabled on this server", "code": "CUSTOM_CONNECTIONS_DISABLED", "statusCode": 403 }`.
 The code tells this refusal apart from the role check's, which is also a `403` and carries `AUTH_ERROR`.
-The refusal is made in the resolve every database route reads its connection through, `resolveConnection()` or `resolveServedConnection()` (`src/lib/seed/resolve-connection.ts`), which share one body, and `POST /api/admin/fleet-health` resolves each item through `resolveServedConnection()` too and reports a refused one as that item's error.
+The refusal is made in the resolve every database route reads its connection through, `resolveServedConnection()` (`src/lib/seed/resolve-connection.ts`), and `POST /api/admin/fleet-health` resolves each item through `resolveServedConnection()` too and reports a refused one as that item's error.
 The agent runtime and the MCP endpoint only ever open a seed by its id, so nothing changes there.
 
 | Connection | With custom connections off |
@@ -1728,13 +1728,13 @@ Discovered connections are validated one by one, and a bad one never fails the l
 ### Role Enforcement
 
 - User role is extracted from the JWT session **server-side** — never from client headers or request params.
-- Every database operation (query, schema, health check, etc.) goes through `resolveConnection()` or `resolveServedConnection()`, which share one body that verifies role access before returning credentials.
+- Every database operation (query, schema, health check, etc.) goes through `resolveServedConnection()`, which verifies role access before returning credentials.
 - Role check failures return 403 with no credential information.
-- While `ALLOW_CUSTOM_CONNECTIONS` is off, that body also refuses a connection supplied in the request with 403, so only seeds reach a provider (see [Custom Connections](#custom-connections)).
+- While `ALLOW_CUSTOM_CONNECTIONS` is off, `resolveServedConnection()` also refuses a connection supplied in the request with 403, so only seeds reach a provider (see [Custom Connections](#custom-connections)).
 
 ### Audit Trail
 
-`resolveConnection()` and `resolveServedConnection()` (`src/lib/seed/resolve-connection.ts`) log every seed-connection lookup through the structured logger, from the one body they share:
+`resolveServedConnection()` (`src/lib/seed/resolve-connection.ts`) logs every seed-connection lookup through the structured logger:
 
 - A successful resolution logs at `debug` level with `route`, `connectionId`, and `user`.
 - A denied lookup (connection exists but the caller's role isn't in `roles`) logs at `warn` level with `route`, `connectionId`, `user`, and `role`, before the 403 is returned.
@@ -2005,9 +2005,9 @@ seed-connections.yaml (SEED_CONFIG_PATH)
   │ useConnectionManager     │  Merge managed + user connections
   └─────┬────────────────────┘
         │
-  ┌─────▼────────────────────────────────────────────────────────┐
-  │ resolveConnection() / resolveServedConnection() (all routes) │  seed: prefix → server-side credential resolution
-  └─────┬────────────────────────────────────────────────────────┘  a literal connection (discovered, or a file seed with SEED_LITERAL_VALUES on) skips Vault
+  ┌─────▼────────────────────────────────────┐
+  │ resolveServedConnection() (all routes)   │  seed: prefix → server-side credential resolution
+  └─────┬────────────────────────────────────┘  a literal connection (discovered, or a file seed with SEED_LITERAL_VALUES on) skips Vault
         │
   ┌─────▼────────────────────┐
   │ VaultClient (lazy)       │  ${vault:...} → KV v2 read + per-path TTL cache

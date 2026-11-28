@@ -259,7 +259,7 @@ export async function createDatabaseProvider(
   // open function.
   return await buildPhase(async () =>
     openedProvider(
-      await openEngine(legacyProviderEngine(connection.type, "open"), {
+      await openEngine(legacyProviderEngine(connection.type), {
         connection,
         execution,
         purpose: "connect",
@@ -304,7 +304,7 @@ export async function readProviderDeclarations(
 ): Promise<ProviderDeclarations> {
   const provider = await buildPhase(async () =>
     openedProvider(
-      await openEngine(legacyProviderEngine(connection.type, "open"), {
+      await openEngine(legacyProviderEngine(connection.type), {
         connection,
         execution,
         purpose: "declarations",
@@ -435,7 +435,7 @@ export async function withOneShotTunnel<T>(
 ): Promise<T> {
   // First, before the tunnel is dialled: a type that names no provider is refused by name (FND-1). The checks below
   // read the engine's record (./open-check).
-  const engine = legacyProviderEngine(connection.type, "open");
+  const engine = legacyProviderEngine(connection.type);
   assertProviderEnabled(engine);
   assertReadOnlyHonoured(engine, connection);
   assertClaimsGranted(engine);
@@ -840,7 +840,7 @@ export function findOpenSingleWriterProvider(
     // `grants.readsFileAccessPosture`, answers which engines, so this is not a `connection.type` branch (CLAUDE.md);
     // today DuckDB and SQLite do, and of the two only DuckDB is a single-writer engine.
     if (
-      legacyProviderEngine(connection.type, "open").grants.readsFileAccessPosture &&
+      legacyProviderEngine(connection.type).grants.readsFileAccessPosture &&
       (held.allowExternalFileAccess === true) !== wantAccess
     ) {
       continue;
@@ -1350,7 +1350,7 @@ async function openWritable(
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539). The type
   // check comes before both: the key frames the type too, and a type that names no provider is refused by name (FND-1).
-  const engine = legacyProviderEngine(connection.type, "open");
+  const engine = legacyProviderEngine(connection.type);
   assertConnectionIdPresent(connection);
   assertProviderEnabled(engine);
   assertReadOnlyHonoured(engine, connection);
@@ -2123,7 +2123,7 @@ export async function acquireExecutionProfileProvider(
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539). The type check
   // comes before both, as in getOrCreateProvider (FND-1).
-  const engine = legacyProviderEngine(connection.type, "open");
+  const engine = legacyProviderEngine(connection.type);
   assertConnectionIdPresent(connection);
   assertProviderEnabled(engine);
   assertReadOnlyHonoured(engine, connection);

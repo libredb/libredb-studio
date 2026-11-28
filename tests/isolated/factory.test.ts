@@ -500,7 +500,7 @@ const { assertReadOnlyHonoured: assertReadOnlyOf } = await import("@/lib/db/open
 const { legacyConnection, legacyProviderEngine, servedEngineRecord } = await import("@/lib/db/server-catalog");
 /** `assertReadOnlyHonoured` of `connection`, read with its engine's record as the factory's entry points read it. */
 function assertReadOnlyHonoured(connection: DatabaseConnection): void {
-  assertReadOnlyOf(legacyProviderEngine(connection.type, "open"), connection);
+  assertReadOnlyOf(legacyProviderEngine(connection.type), connection);
 }
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
@@ -565,7 +565,7 @@ describe("createDatabaseProvider", () => {
       const connection = makeConnection("sqlite", { database: ":memory:" });
       const provider = await createDatabaseProvider(connection);
       await readProviderDeclarations(connection);
-      const record = legacyProviderEngine("sqlite", "open");
+      const record = legacyProviderEngine("sqlite");
       expect(open).toHaveBeenCalledTimes(2);
       expect(open.mock.calls[0]?.[0]).toBe(record);
       expect(open.mock.calls[1]?.[0]).toBe(record);
@@ -1966,7 +1966,7 @@ describe("getOrCreateProvider", () => {
 // Reported privately 2026-09-20 and reproduced here before anything was changed.
 //
 // `getOrCreateProvider` keyed `providerCache` on `connection.id`, and that id arrives in the
-// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts`) hands an inline
+// request body: `resolveServedConnection` (`src/lib/seed/resolve-connection.ts`) hands an inline
 // `connection` back verbatim, id included, so any signed-in caller can name any id. Naming one
 // another session already opened returned THAT session's live provider, still authenticated as
 // them, without ever comparing the credentials the caller sent. A `seed:` id is an operator-chosen
@@ -8149,7 +8149,7 @@ describe("the Snowflake provider in the factory", () => {
         () => getOrCreateProvider(record),
         () => acquireExecutionProfileProvider(record, "agent-operations"),
         () =>
-          testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection", {
+          testConnection(record, legacyProviderEngine(record.type), {}, "/api/db/test-connection", {
             logged: false,
           }),
       ]) {
@@ -8791,7 +8791,7 @@ describe("a field its engine refuses is refused by core on every connect path (F
           () => getOrCreateProvider(record),
           () => acquireExecutionProfileProvider(record, "agent-operations"),
           () =>
-            testConnection(record, legacyProviderEngine(record.type, "route"), {}, "/api/db/test-connection", {
+            testConnection(record, legacyProviderEngine(record.type), {}, "/api/db/test-connection", {
               logged: false,
             }),
         ]) {

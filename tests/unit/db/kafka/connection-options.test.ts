@@ -198,7 +198,7 @@ describe("kafkaConnectionOptions", () => {
 });
 
 /**
- * A connection sent to the API reaches the options as the caller wrote it (`resolveConnection`
+ * A connection sent to the API reaches the options as the caller wrote it (`resolveServedConnection`
  * hands an inline connection on untouched), so a field can hold any JSON value. The client checks
  * none: its SCRAM step reads the user as a string inside its socket handler, where a number throws
  * past every caller, and its PLAIN step joins the credential into text, so `["reader"]` would

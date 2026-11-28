@@ -74,7 +74,7 @@ const ROUTE = "api/db/objects/edit-apply";
  * NO ADMIN GATE, and the ruling is MEASURED rather than preferred: it is recorded in full on
  * `edit-plan/route.ts` beside the same decision, with the limit that the measurement covers SQL
  * engines and Redis was not probed. This route inherits the seed role filter for free by going
- * through `resolveConnection` and adds no role test of its own.
+ * through `resolveServedConnection` and adds no role test of its own.
  *
  * ONCE `applyObjectEdit` HAS BEEN CALLED, NO ERROR ESCAPES AS AN HTTP ERROR. Every throw becomes
  * `{ outcome: "interrupted", committed: "unknown" }` at 200, and so does an answer the outcome
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
       // 2. THE SEAL, against the fingerprint of the connection THIS request resolved. The
       //    fingerprint is recomputed here and never taken from the plan, which is the whole of the
       //    different-server check: a plan is bound to a SERVER and never to `connection.id`, and
-      //    MEASURED, `resolveConnection` returns an inline connection object verbatim, id included,
+      //    MEASURED, `resolveServedConnection` returns an inline connection object verbatim, id included,
       //    so an id check is satisfied by a caller typing the id it wants. Framed on `providerConnection`
       //    of it, the copy the provider was built from, so the plan's seal and this one digest the same
       //    fields (FND-2 slice 6).
@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
  * mean.
  *
  * THE TWO FALLBACKS ARE NOT THE SAME KIND OF THING, and the difference is measured rather than
- * assumed. `connectionName`'s two arms both have a live population: `resolveConnection` returns an
+ * assumed. `connectionName`'s two arms both have a live population: `resolveServedConnection` returns an
  * INLINE caller-supplied connection object verbatim, so a connection whose `name` is empty is the
  * caller's to send, and both the database arm and the `"unknown"` arm are driven by
  * `tests/api/db/objects/edit-apply.test.ts`. `user`'s arm has NONE: `guardRoute` keys the rate

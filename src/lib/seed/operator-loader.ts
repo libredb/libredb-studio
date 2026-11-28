@@ -5,7 +5,7 @@
  * resolves every `${NAME}` of a non-literal entry once, and records what each source delivered, skipped and noted.
  * The result is cached for SEED_CACHE_TTL_MS and shared by concurrent callers through the one fill in flight.
  * Environment variables are fixed for the process lifetime, so resolving in the fill equals resolving per request;
- * a `${vault:...}` is still left for resolveConnection to read when one connection is opened.
+ * a `${vault:...}` is still left for resolveServedConnection to read when one connection is opened.
  *
  * The literal mode (SEED_LITERAL_VALUES) is read on every call, and a fill records the mode it ran with: a call that
  * reads another mode does not take that fill's cache or join it in flight, so a warm cache never pins the mode.

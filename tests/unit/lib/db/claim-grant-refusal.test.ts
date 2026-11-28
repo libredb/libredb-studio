@@ -14,7 +14,7 @@ import { type EngineRecord, legacyProviderEngine } from "@/lib/db/server-catalog
 
 /** The record of `type` with `ungrantedRefusals` set to `refusal`. */
 function refusing(type: string, refusal: string): EngineRecord {
-  const engine = legacyProviderEngine(type, "open");
+  const engine = legacyProviderEngine(type);
   return Object.freeze({ ...engine, grants: Object.freeze({ ...engine.grants, ungrantedRefusals: refusal }) });
 }
 
@@ -29,12 +29,12 @@ describe("the open refusal of an engine whose claims no grant covers", () => {
     expect(thrown).toBeInstanceOf(DatabaseConfigError);
     expect((thrown as DatabaseConfigError).message).toBe(UNGRANTED_SINGLE_WRITER_FILE_SENTENCE);
     expect((thrown as DatabaseConfigError).provider).toBe("duckdb");
-    expect(() => assertClaimsGranted(legacyProviderEngine("postgres", "open"))).not.toThrow();
+    expect(() => assertClaimsGranted(legacyProviderEngine("postgres"))).not.toThrow();
     // The bundled records refuse no shipped engine.
     for (const type of SHIPPED_DATABASE_TYPES) {
-      expect(() => assertClaimsGranted(legacyProviderEngine(type, "open"))).not.toThrow();
+      expect(() => assertClaimsGranted(legacyProviderEngine(type))).not.toThrow();
     }
     // A type outside the union is refused by name before any record is read.
-    expect(() => assertClaimsGranted(legacyProviderEngine("acmefoo", "open"))).toThrow(UnknownProviderError);
+    expect(() => assertClaimsGranted(legacyProviderEngine("acmefoo"))).toThrow(UnknownProviderError);
   });
 });

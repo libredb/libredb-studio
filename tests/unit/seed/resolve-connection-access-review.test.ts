@@ -16,7 +16,7 @@ import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../helpers/ku
 import * as seedIndex from "@/lib/seed";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetAccessReviewDecisions } from "@/lib/kubernetes-access/decisions";
 import { recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -125,16 +125,16 @@ afterEach(() => {
 
 describe("with the review on", () => {
   test("a reviewed connection the review allows opens, with its values as written", async () => {
-    const opened = await resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE);
+    const { connection: opened } = await resolveServedConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE);
     expect(opened).toMatchObject({ id: "seed:k8s-cnpg-orders", password: "example-only-password", literal: true });
   });
 
   test("a denied reviewed id, an unknown id and a seed the role may not see answer the same 404, with no unfiltered lookup", async () => {
-    const denied = await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-analytics" }, ALICE));
-    const unknown = await failureOf(resolveConnection({ connectionId: "seed:no-such-connection" }, ALICE));
-    const hiddenByRole = await failureOf(resolveConnection({ connectionId: "seed:admin-only" }, ALICE));
+    const denied = await failureOf(resolveServedConnection({ connectionId: "seed:k8s-cnpg-analytics" }, ALICE));
+    const unknown = await failureOf(resolveServedConnection({ connectionId: "seed:no-such-connection" }, ALICE));
+    const hiddenByRole = await failureOf(resolveServedConnection({ connectionId: "seed:admin-only" }, ALICE));
     const claimed = await failureOf(
-      resolveConnection(
+      resolveServedConnection(
         { connection: { id: "seed:k8s-cnpg-analytics", name: "Copy", type: "postgres", createdAt: new Date(0) } },
         ALICE,
       ),
@@ -148,14 +148,14 @@ describe("with the review on", () => {
 
   test("a review that fails answers the same 404", async () => {
     api.answer = { status: 500, body: "{}" };
-    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
+    expect(await failureOf(resolveServedConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
       NOT_FOUND,
     );
   });
 
   test("a session without a groups record answers the same 404, and no review runs", async () => {
     resetGroupRecords();
-    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
+    expect(await failureOf(resolveServedConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
       NOT_FOUND,
     );
     expect(api.seen).toHaveLength(0);
@@ -164,7 +164,7 @@ describe("with the review on", () => {
   test("a miss is audited on its own target, metered on the anon bucket per account", async () => {
     for (let attempt = 0; attempt < 7; attempt += 1) {
       // oxlint-disable-next-line no-await-in-loop -- each miss spends the bucket in turn.
-      await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-analytics" }, ALICE));
+      await failureOf(resolveServedConnection({ connectionId: "seed:k8s-cnpg-analytics" }, ALICE));
     }
     const lines = auditLines();
     expect(lines).toHaveLength(6);
@@ -185,7 +185,7 @@ describe("with the review on", () => {
 describe("with the review off", () => {
   test("a seed the role may not see still answers 403, which is why the review needs the uniform 404", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "off";
-    const error = await failureOf(resolveConnection({ connectionId: "seed:admin-only" }, ALICE));
+    const error = await failureOf(resolveServedConnection({ connectionId: "seed:admin-only" }, ALICE));
     expect(error).toMatchObject({ statusCode: 403 });
     expect(unfiltered).toHaveBeenCalled();
   });

@@ -27,7 +27,7 @@ import {
   getKubernetesDiscoveredConnections,
   resetKubernetesDiscoveryCache,
 } from "@/lib/seed/kubernetes-discovery-loader";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import { resetSampleSeedStates } from "@/lib/seed/samples";
 import { LITERAL_SEED_FILE } from "@/lib/types";
@@ -263,9 +263,10 @@ describe("seed/index with the Kubernetes discovery source", () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "on";
     const { before } = await getSeedListing(["admin"]);
     expect(seedIds(before).slice(0, 2)).toEqual(["pg", "acme"]);
-    const refused = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "admin" }).catch(
-      (thrown: unknown) => thrown,
-    );
+    const refused = await resolveServedConnection(
+      { connectionId: "seed:acme" },
+      { role: "admin", username: "admin" },
+    ).catch((thrown: unknown) => thrown);
     expect(refused).toBeInstanceOf(UnknownProviderError);
     expect((refused as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
   });

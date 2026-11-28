@@ -43,7 +43,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/seed/kubernetes-discovery-export.ts": ["parseKubernetesDiscoveryExport"],
   "src/lib/seed/kubernetes-discovery-contract.ts": ["mapKubernetesDatabase"],
   "src/lib/governance/visible.ts": ["visibleConnections", "visibleConnectionById"],
-  "src/lib/seed/resolve-connection.ts": ["resolveConnection", "resolveServedConnection"],
+  "src/lib/seed/resolve-connection.ts": ["resolveServedConnection"],
   "src/lib/kubernetes-access/gate.ts": [
     "connectionsUnderAccessReview",
     "connectionUnderAccessReview",
@@ -89,7 +89,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
 
 /** A route that serves every engine: it opens the request's connection through the dispatcher before anything else. */
 const RESOLVED_BY_THE_SERVED_ROUTE =
-  "resolves the request's connection through resolveServedConnection, resolveConnection's body with the record of its engine, which opens a seed id only through visibleConnectionById and so through the review, and answers every miss with the uniform 404 (tests/security/kubernetes-access-review.test.ts)";
+  "resolves the request's connection through resolveServedConnection, which opens a seed id only through visibleConnectionById and so through the review, and answers every miss with the uniform 404 (tests/security/kubernetes-access-review.test.ts)";
 
 /** A route that serves every engine and builds only for the connection it resolved through the dispatcher. */
 const BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED =
@@ -143,7 +143,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   visibleConnectionById: {
     "src/lib/seed/resolve-connection.ts":
-      "resolveConnection's only lookup of a seed id: the dispatcher answers with the review applied, and while the review is on every miss is the uniform 404",
+      "resolveServedConnection's only lookup of a seed id: the dispatcher answers with the review applied, and while the review is on every miss is the uniform 404",
   },
   resolveServedConnection: {
     "src/app/api/admin/fleet-health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
@@ -1081,7 +1081,7 @@ describe("the census reads every import form", () => {
       FILE,
       [
         'import { getManagedConnections, seedRolesOf as roles } from "@/lib/seed";',
-        'import {\n  resolveConnection as open,\n  type SeedConnectionError,\n} from "../seed/resolve-connection";',
+        'import {\n  resolveServedConnection as open,\n  type SeedConnectionError,\n} from "../seed/resolve-connection";',
         'const { visibleConnectionById: byId } = await import("@/lib/governance/visible");',
         'import { getOrCreateProvider as build } from "@/lib/db";',
       ].join("\n"),
@@ -1089,7 +1089,7 @@ describe("the census reads every import form", () => {
     );
     expect(bindings.map(boundAs)).toEqual([
       { origin: "src/lib/seed/index.ts", fn: "getManagedConnections", local: "getManagedConnections" },
-      { origin: "src/lib/seed/resolve-connection.ts", fn: "resolveConnection", local: "open" },
+      { origin: "src/lib/seed/resolve-connection.ts", fn: "resolveServedConnection", local: "open" },
       { origin: "src/lib/governance/visible.ts", fn: "visibleConnectionById", local: "byId" },
       { origin: "src/lib/db/index.ts", fn: "getOrCreateProvider", local: "build" },
     ]);
@@ -1149,7 +1149,7 @@ describe("the census reads every import form", () => {
         'export { seedRolesOf } from "@/lib/seed";',
         'export type { SeedListing } from "@/lib/seed";',
         '// import { getManagedConnections } from "@/lib/seed";',
-        '/* const { resolveConnection } = await import("@/lib/seed/resolve-connection"); */',
+        '/* const { resolveServedConnection } = await import("@/lib/seed/resolve-connection"); */',
       ].join("\n"),
       GATED,
     );
@@ -1417,10 +1417,8 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    // No file imports resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
-    // metadata, statement analysis, transaction and multi-query routes, the object source read and agent mode's three
-    // routes and drive moved to the served resolve, so the count the census finds today is pinned at none.
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBe(0);
+    // Every request that names a connection resolves it through the served resolve, the one resolve the module exports.
+    expect(census.importers.get("resolveServedConnection")?.size ?? 0).toBeGreaterThan(0);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

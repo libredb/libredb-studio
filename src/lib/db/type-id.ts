@@ -5,10 +5,10 @@
  * shares the same server storage, a hand-edited record, one with no type at all, or one whose type is not text. A value
  * that is not exactly a type id is refused by name, never normalised (no trimming, no lowercasing).
  *
- * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists, the connection
- * hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so do the five
- * contract registry lookups and the query generators' SQL engine rows (through `typeIdRow`) and the migration's dialect
- * header, and the published
+ * The provider factory, `resolveServedConnection`, the `db-ui-config` lookups, the Studio connection lists, the
+ * connection hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so
+ * do the five contract registry lookups and the query generators' SQL engine rows (through `typeIdRow`) and the
+ * migration's dialect header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
  * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `GRANTED_WRITE_REACH` by
  * the read-only marker and the connection form hook and `GRANTED_SSH_TUNNEL_REFUSAL` by the connection dialog (each
