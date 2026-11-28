@@ -1348,12 +1348,13 @@ describe("a package engine's register row", () => {
     expect(looseningOf(grantsOf([data], rowOf(data, declaredLanguageSha256(changedManifest)), "acmedata"))).toEqual(
       NONE,
     );
-    // A row stating no digest grants no loosening claim, which the register refuses, nor the language of the data.
+    // A row stating no digest grants no loosening claim nor the language of the data: the register refuses both.
     expect(() => rowOf(data, null)).toThrow("package-language-unreviewed at /0/grants/languageSha256");
-    const languageOnly = registerOf(
-      packageRow(data, "acmedata", { statementLanguage: "acmeql", grammarSha256: grammar, languageSha256: null }),
-    );
-    expect(looseningOf(grantsOf([data], languageOnly, "acmedata"))).toEqual(NONE);
+    expect(() =>
+      registerOf(
+        packageRow(data, "acmedata", { statementLanguage: "acmeql", grammarSha256: grammar, languageSha256: null }),
+      ),
+    ).toThrow("package-language-unreviewed at /0/grants/languageSha256");
     // A package stating no data under a row that reviewed some: none of the three.
     expect(looseningOf(grantsOf([plain], rowOf(plain, reviewed), "acmedata"))).toEqual(NONE);
   });

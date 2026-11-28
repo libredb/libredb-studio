@@ -150,19 +150,27 @@ describe("the MCP readers of a grant", () => {
       agentExecution: true,
       exposable: true,
       statementRead: true,
-      statementLanguage: "mqttread",
+      statementLanguage: null,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
       readRootsRequired: false,
       deniedFileAccessRefusal: null,
     };
     const register = parseGrantRegister([packageRow(rowed, "acmerowed", granted)], LEGACY_ENGINE_IDS);
+    // A package engine states no data for a module language, so a row granting it one is refused by name (M-87).
+    expect(() =>
+      parseGrantRegister(
+        [packageRow(rowed, "acmerowed", { ...granted, statementLanguage: "mqttread" })],
+        LEGACY_ENGINE_IDS,
+      ),
+    ).toThrow("package-language-unreviewed at /0/grants/languageSha256");
     const catalog = composeServerCatalog([rowed, bare] as readonly AdmittedForCatalog[], [], register);
 
     await withCatalog(catalog, () => {
       // The register row's grant.
       expect(metadataReadAnnotations(new Set(["acmerowed" as DatabaseType]))).toBe(MCP_READ_ONLY_ANNOTATIONS);
-      expect(mcpWithholdsDatabase("acmerowed" as DatabaseType)).toBe(true);
+      // No module language reaches a package engine (M-87), so its database is withheld by no arm.
+      expect(mcpWithholdsDatabase("acmerowed" as DatabaseType)).toBe(false);
       // No arm serves an engine whose record offers no execution profile, as no package engine's record does.
       expect(mcpStatementToolFor("acmerowed" as DatabaseType)).toBeNull();
 

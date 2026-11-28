@@ -1149,6 +1149,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "packages/grant-register/tests/reader.test.ts": [
         "a package row granting readsSqlText false or decidesAlone true with no language digest is refused by name",
+        "a package row granting a statement language other than SQL with a null digest is refused by name",
         "the statement language is a name of the form, and no row is refused for naming a language Studio has no module for",
       ],
       "tests/unit/db/claim-grants.test.ts": [

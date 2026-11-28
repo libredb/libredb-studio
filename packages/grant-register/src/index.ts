@@ -34,9 +34,10 @@
  *   caller's, since this package imports nothing of Studio's;
  * - `package-command-redaction`: a package row granting a `command` redaction, whose reader Studio binds only for an
  *   engine its legacy adapter serves, through its own grammar function table, so a package row grants `sql` or `none`;
- * - `package-language-unreviewed`: a package row granting `readsSqlText: false` or `decidesAlone: true` with a null
- *   `languageSha256`, so a package engine that states no statement language data is never granted either claim. A
- *   legacy row is not subject to it: a legacy engine's language is Studio's own module, reviewed with Studio's code.
+ * - `package-language-unreviewed`: a package row granting a statement language other than SQL, `readsSqlText: false`
+ *   or `decidesAlone: true` with a null `languageSha256`, so a package engine that states no statement language data
+ *   is never granted any of the three. A legacy row is not subject to it: a legacy engine's language is Studio's own
+ *   module, reviewed with Studio's code.
  * Every refusal of one read is reported together in one error, one line each, `<rule> at <JSON Pointer>: <sentence>`,
  * naming no value of the register beyond a key's name. The code rules are read only once the schema admits the
  * register.
@@ -49,6 +50,12 @@
 import committed from "./register.json";
 import schema from "./register.schema.json";
 import { schemaRefusals, where } from "./schema-subset";
+
+/**
+ * The SQL family's statement language. An engine that speaks it states no statement language data (CONTRACT.md M-85,
+ * the SDK's `statement-language-data-sql`), so a null `languageSha256` is the review of a package row granting it.
+ */
+const SQL_LANGUAGE = "sql";
 
 /** The key of a legacy row: the source name of Studio's legacy adapter. */
 export const LEGACY_KEY = "@libredb/studio";
@@ -180,10 +187,12 @@ export function parseGrantRegister(value: unknown, legacyEngines: readonly strin
     if (
       "package" in row &&
       row.grants.languageSha256 === null &&
-      (!row.grants.readsSqlText || row.grants.decidesAlone)
+      ((row.grants.statementLanguage !== null && row.grants.statementLanguage !== SQL_LANGUAGE) ||
+        !row.grants.readsSqlText ||
+        row.grants.decidesAlone)
     ) {
       lines.push(
-        `package-language-unreviewed at /${index}/grants/languageSha256: a package row grants readsSqlText false or decidesAlone true only with the digest of the statement language data it reviewed`,
+        `package-language-unreviewed at /${index}/grants/languageSha256: a package row grants a statement language other than SQL, readsSqlText false or decidesAlone true only with the digest of the statement language data it reviewed`,
       );
     }
   });
