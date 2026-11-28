@@ -59,6 +59,7 @@ mock.module("@/lib/auth", () => ({
 mock.module("@/lib/seed/resolve-connection", () => ({
   ...realResolveConnection,
   resolveConnection: recorder("resolveConnection"),
+  resolveServedConnection: recorder("resolveServedConnection"),
 }));
 mock.module("@/lib/db", () => ({ ...realDb, createDatabaseProvider: recorder("createDatabaseProvider") }));
 mock.module("@/lib/db/factory", () => ({

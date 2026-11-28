@@ -88,7 +88,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
   "agent/runs/[runId]/handover":
     "opens only the run's recorded connectionId, resolved as a seed id under the run's own actor; the request carries no connection (tests/api/agent/handover.test.ts)",
   "agent/runs":
-    "reads the declaration of the connectionId it resolved through resolveConnection, and opens it only to admit the run's catalog (#1530); an inline connection is refused before that (tests/api/agent/runs.test.ts)",
+    "reads the declaration of the connectionId it resolved through resolveServedConnection, and opens it only to admit the run's catalog (#1530); an inline connection is refused before that (tests/api/agent/runs.test.ts)",
 };
 
 /**
@@ -96,7 +96,8 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
  * its connection comes from. Paths are relative to src/lib.
  */
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
-  "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
+  "agent/runtime.ts":
+    "drives an agent run on the seed its recorded connectionId resolves to through resolveServedConnection",
   "api/editor-provider.ts":
     "editorProvider, editorTarget, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget, editorMaintenanceOpening and metadataMaintenanceOpening build for the connection their caller hands them, and every caller is a route this census reaches or the maintenance route helper, handleMaintenanceRequest, which every maintenance route reaches, each having resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":

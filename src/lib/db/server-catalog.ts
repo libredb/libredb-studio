@@ -63,8 +63,8 @@
  * A refused package's engine is refused there as `ProviderUnavailableError`, an engine whose record offers no legacy
  * provider as `PackageEngineUnsupportedError` until the request serves package engines, and every other value exactly
  * as `assertDatabaseType` refuses it. Only Test Connection, the query route and its cancel, a disconnect, the object
- * tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read and
- * MCP serve an engine whose record offers no legacy provider in this Studio: each reads the type through
+ * tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read,
+ * MCP and agent mode serve an engine whose record offers no legacy provider in this Studio: each reads the type through
  * `servedEngineRecord`, the routes when they resolve the connection with its record through `resolveServedConnection`
  * (src/lib/seed/resolve-connection.ts); Test Connection then runs one test for every record, which reads what differs
  * from the record's offers and grants (`testConnection` in src/lib/api/test-connection.ts), the query route opens every
@@ -92,6 +92,9 @@
  * package's engine on the record's metadata session (`metadataTreeTarget`). The object edit and key scan requests, the
  * column profile and the statement analysis resolve through `resolveServedConnection` too and refuse a package's engine
  * by the record's offer (`objectEdit`, `keyScan`, `columnProfile`, `connectionDeclarations`) or its statement grammar.
+ * Agent mode's classify, runs and hand-over routes and an agent run's drive resolve through `resolveServedConnection`
+ * too: a run grounds on the record's metadata session (`metadataTreeTarget`), and a run whose workflow sends
+ * statements, which needs a read-only statement session, is refused where the record offers no execution profiles.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged.
  *
@@ -215,8 +218,8 @@ export interface EngineOffers {
   /**
    * A legacy `DatabaseProvider` the provider factory builds (./factory): every request other than Test Connection, the
    * query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health
-   * and maintenance requests, the provider metadata read, MCP's schema reads and the requests that refuse a package's
-   * engine by another offer before any open reads one, through `legacyProviderEngine`.
+   * and maintenance requests, the provider metadata read, MCP's schema reads, agent mode and the requests that refuse a
+   * package's engine by another offer before any open reads one, through `legacyProviderEngine`.
    */
   readonly legacyProvider: boolean;
   /** A plan of a statement (`explain`), built by the connected provider's strategy. */
@@ -244,7 +247,8 @@ export interface EngineOffers {
    * MCP's profiles, with the seed's agent credential, its read roots and a read-only statement session. A package's
    * session is opened through its package, with none of them (C-109), until Studio opens a read-only statement session
    * through a package. MCP's statement tools serve only an engine whose record offers it
-   * (src/lib/mcp/tools/served-engines.ts).
+   * (src/lib/mcp/tools/served-engines.ts), and agent mode sends statements only to such an engine
+   * (`workflowAvailability`'s `no-statement-session` in src/lib/agent/agent-manifest.ts).
    */
   readonly executionProfiles: boolean;
   /**
@@ -345,7 +349,7 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog; [BOOT_KEY]?: "begun" | "un
 /** The refusal of an engine whose record offers no legacy provider, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
-    "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read and MCP in this LibreDB Studio, and this is another request.",
+    "This request is served for an engine of a provider package only by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
   open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 

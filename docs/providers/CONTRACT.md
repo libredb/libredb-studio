@@ -466,7 +466,7 @@ For an engine that states no SQL text, whose register row reviews no grammar, th
 ### M-88 (informative): A package engine's statement language in agent mode and on MCP
 
 A package engine's statement language data (M-85) will be served in agent mode and on MCP only as the engine's register row grants it (M-87).
-Until then agent mode refuses a package engine's connection as C-107 says, and MCP serves no package engine's statement language, so nothing checks the first sentence yet.
+Until then neither agent mode nor MCP sends a package engine a statement, so nothing checks the first sentence yet.
 
 ### M-89 (normative): An engine's object model is data of its declaration
 
@@ -1212,7 +1212,7 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read and MCP, its session opening through its package (C-109), except on the provider metadata read, which answers from its record without opening one; the object source read where the package does not offer `objects.source`, and the object edit, key scan, column profile and statement analysis requests, refuse it by what its record offers before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+An admitted package's engine is served by Test Connection, the query route and its cancel, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode, its session opening through its package (C-109), except on the provider metadata read, which answers from its record without opening one; the object source read where the package does not offer `objects.source`, and the object edit, key scan, column profile and statement analysis requests, refuse it by what its record offers before any open as `FACET_NOT_OFFERED`, 400, outcome not-sent, and every other request refuses it as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
 `PROVIDER_UNAVAILABLE` and `PACKAGE_ENGINE_UNSUPPORTED` are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
 
 ### C-109 (normative): A package's open receives only the context core builds

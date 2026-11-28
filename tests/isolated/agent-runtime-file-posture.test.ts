@@ -22,6 +22,7 @@ import { forgetStorageLocation } from "@/lib/data-dir";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { legacyRegisterTable } from "../helpers/legacy-register";
+import { servedResolveOver } from "../helpers/served-resolve";
 
 const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
 
@@ -37,7 +38,10 @@ const CONNECTION = { id: "seed:app", name: "App", type: "sqlite", database: file
 
 let investigated: string[] = [];
 mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedgerWorld: async () => world }));
-mock.module("@/lib/seed/resolve-connection", () => ({ ...realResolve, resolveConnection: async () => CONNECTION }));
+mock.module("@/lib/seed/resolve-connection", () => ({
+  ...realResolve,
+  resolveServedConnection: servedResolveOver(async () => CONNECTION),
+}));
 mock.module("@/lib/agent/model-adapter", () => ({
   createAgentModel: async () => ({ provider: "gemini", modelId: "gemini-3-pro" }),
 }));

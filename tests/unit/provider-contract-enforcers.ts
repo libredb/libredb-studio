@@ -3228,6 +3228,13 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the query route runs one gate and one run for a legacy and a package engine, told apart only by the record's offers",
         "a refused package's engine and an unknown type answer as the server catalog answers them",
       ],
+      "tests/api/agent/classify.test.ts": ["classify answers a package engine's connection"],
+      "tests/api/agent/runs.test.ts": [
+        "a run on a package engine with no register row plans, and its execution is refused as not reviewed, by name",
+      ],
+      "tests/isolated/agent-package-engine-drive.test.ts": [
+        "a plan-mode run on a package engine is driven from its ledger through the served resolve, and grounds through its package's metadata session",
+      ],
     },
   },
   "C-109": {

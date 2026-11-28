@@ -11,12 +11,15 @@ import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
+import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
+import { StudioProfileRefusal } from "@/lib/db/errors";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { legacyConnection } from "@/lib/db/server-catalog";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -48,9 +51,12 @@ import type { DatabaseConnection } from "@/lib/types";
  *    was never opened with the setting at all. Both are refused here as well as on
  *    the surface, so a client that forgot cannot cause what the run decided against.
  *  - **The connection is the run's own**, resolved server-side from the persisted
- *    `connectionId` under the persisted actor — the same authority a drive
- *    authorizes against. A caller cannot name a different database for a statement
- *    another database approved.
+ *    `connectionId` under the persisted actor through the served resolve, the same
+ *    authority a drive authorizes against. A caller cannot name a different database for
+ *    a statement another database approved. An engine whose record offers no execution
+ *    profiles, a provider package's, is refused by name before anything opens
+ *    (`statementSessionRefusal`), since the replay runs on a read-only statement session
+ *    and Studio opens none through a package yet.
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
  *
@@ -108,13 +114,21 @@ export async function POST(req: Request, context?: HandoverParams) {
 
   let connection: DatabaseConnection;
   try {
-    const resolved = await resolveConnection(
+    const resolved = await resolveServedConnection(
       { connectionId: record.connectionId },
       { role: record.actor.role, username: record.actor.sessionId },
     );
+    // Answered as the acquisition's refusal of an engine with no read-only statement path is.
+    if (!resolved.engine.offers.executionProfiles) {
+      throw new StudioProfileRefusal(
+        `${statementSessionRefusal(resolved.engine.displayName)} So the hand-over runs nothing.`,
+        "PROFILE_UNSUPPORTED_BY_PROVIDER",
+      );
+    }
+    const legacy = legacyConnection(resolved.engine, resolved.connection);
     // In the database the run read, on a server-level connection (#1530): the run drafted the
     // statement against that database's objects, so it runs there and nowhere else.
-    connection = record.catalog === undefined ? resolved : catalogSessionConnection(resolved, record.catalog);
+    connection = record.catalog === undefined ? legacy : catalogSessionConnection(legacy, record.catalog);
   } catch (error) {
     return createErrorResponse(error, { route: ROUTE });
   }

@@ -32,7 +32,7 @@ import {
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { withheldErrorMessage, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
-import { SeedConnectionError } from "@/lib/seed/resolve-connection";
+import * as realResolveConnection from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
@@ -41,6 +41,7 @@ import * as realFactory from "@/lib/db/factory";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { AgentToolResources } from "@/lib/agent/investigation";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
+import { servedResolveOver } from "../helpers/served-resolve";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { AgentRunFailureReason, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -63,6 +64,7 @@ const world = createLocalWorld({ dataDir: freshDataDir(), recoverActiveRuns: fal
 const CONNECTION = { id: "seed:sales", name: "Sales", type: "postgres" } as unknown as DatabaseConnection;
 const CAPABILITIES = { supportsTransactions: true } as unknown as ProviderCapabilities;
 
+const { SeedConnectionError } = realResolveConnection;
 const mockResolveConnection = mock(async () => CONNECTION);
 const mockGetCapabilities = mock(() => CAPABILITIES);
 // Read from the same provider as the capabilities (#414): the run's declared behaviour
@@ -78,7 +80,10 @@ const mockRunInvestigation = mock(async (runId: string, options: { resources: Ag
 });
 
 mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedgerWorld: async () => world }));
-mock.module("@/lib/seed/resolve-connection", () => ({ resolveConnection: mockResolveConnection }));
+mock.module("@/lib/seed/resolve-connection", () => ({
+  ...realResolveConnection,
+  resolveServedConnection: servedResolveOver(mockResolveConnection),
+}));
 // What the run's declarations were read with, so the context they come from can be read back.
 const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
   void args;

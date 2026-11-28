@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { openWorkflows } from "@/lib/agent/agent-manifest";
+import { openWorkflows, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
-import { grantedAgentLanguage } from "@/lib/agent/granted-language";
+import { grantedAgentStatementLanguage } from "@/lib/agent/languages/client";
+import { startRefusalSentence } from "@/lib/agent/posture";
+import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 
 /**
  * Reads one objective and names the workflow a run would open as
@@ -49,7 +50,11 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  * plan mode opens every workflow. Without the mode the route cannot know what opens,
  * and defaulting either way would hide a caller's omission, so a connection without
  * one is refused before it is resolved. Without a connection there is no engine to
- * narrow for, and the mode is not read.
+ * narrow for, and the mode is not read. Where agent mode opens no workflow at all on the
+ * connection's engine (a provider package's engine with no register row offers agent mode
+ * no reading and no statement language), the connection is refused with 400 and the
+ * sentence the run route refuses Start with, `refused: "engine-unsupported"`, before any
+ * model is called: there is nothing to classify into.
  *
  * There is no failure path for classification itself. `classifyAgentWorkflow`
  * resolves for every model error, timeout and unrecognised reply, so a failed
@@ -92,9 +97,10 @@ export async function POST(req: Request) {
     }
 
     // The connection is optional, so a caller that sends none is classified in SQL's terms as before. A supplied
-    // one is resolved under the caller's own session, the way the run route resolves it, so the language comes from
-    // a connection this caller may open and never from a type the body claims: the statement language its engine
-    // record grants (`grantedAgentLanguage`), which every type `resolveConnection` admits has.
+    // one is resolved under the caller's own session through the served resolve, the way the run route resolves it,
+    // so the language comes from a connection this caller may open and never from a type the body claims: the
+    // statement language its engine record grants (`grantedAgentStatementLanguage`), a legacy engine's or a provider
+    // package's.
     const { connectionId } = body;
     if (connectionId !== undefined && (typeof connectionId !== "string" || connectionId.trim() === "")) {
       return badRequest("connectionId must be a non-empty string when provided");
@@ -108,10 +114,20 @@ export async function POST(req: Request) {
       if (mode !== "planning" && mode !== "agent") {
         return badRequest('mode must be "planning" or "agent" when connectionId is provided');
       }
-      const connection = await resolveConnection({ connectionId }, guard.session);
+      const { engine } = await resolveServedConnection({ connectionId }, guard.session);
+      const workflows = openWorkflows(mode, engine);
+      // Only agent mode can open nothing, and then the default workflow is closed too: the second conjunct narrows the
+      // type and is never the one that decides.
+      const fallback = workflowAvailability(mode, DEFAULT_AGENT_WORKFLOW_TYPE, engine);
+      if (workflows.length === 0 && !fallback.open) {
+        return NextResponse.json(
+          { error: startRefusalSentence(fallback, engine), refused: "engine-unsupported" },
+          { status: 400 },
+        );
+      }
       classification = await classifyAgentWorkflow(objective, {
-        statementLanguage: grantedAgentLanguage(connection.type) ?? undefined,
-        workflows: openWorkflows(mode, servedEngineRecord(connection.type)),
+        statementLanguage: grantedAgentStatementLanguage(engine) ?? undefined,
+        workflows,
       });
     }
 

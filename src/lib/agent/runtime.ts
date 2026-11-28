@@ -17,7 +17,7 @@
  *    process that is resuming somebody else's run, and taking one from the drive
  *    request's body would let a caller keep the id while pointing the run at a
  *    different server.
- *  - **The actor is read from the ledger, never from the caller.** `resolveConnection`
+ *  - **The actor is read from the ledger, never from the caller.** `resolveServedConnection`
  *    is given the run's own persisted role, so a run resumed by anything at all still
  *    resolves exactly the connections its opener was allowed to see.
  *  - **Budget accounting and artifacts are process-wide and paired.** They are keyed
@@ -28,19 +28,30 @@
 
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
 import { metadataTreeTarget } from "@/lib/api/editor-provider";
-import { legacyConnection, servedEngineRecord } from "@/lib/db/server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderType,
+} from "@/lib/db/server-catalog";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, type ProviderTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
-import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import {
+  type ExecutionProfileDenyCode,
+  ExecutionProfileError,
+  StudioProfileRefusal,
+  UnknownProviderError,
+} from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import type { QueryResult } from "@/lib/types";
+import { statementSessionRefusal } from "./agent-manifest";
 import { AgentRunDeadline } from "./deadline";
 import { agentEngineDeclarations } from "./engine-view";
 import { deriveDriveCeilings } from "./drive-budget";
@@ -50,7 +61,7 @@ import { createAgentModel } from "./model-adapter";
 import { AgentRepairLedger } from "./repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "./run-service";
 import { AgentRunStore, resolveAgentLedgerWorld } from "./run-store";
-import type { AgentRunFailureReason } from "./types";
+import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunFailureReason } from "./types";
 
 /**
  * How long a run's results stay readable. Sized against the run deadline rather than
@@ -174,7 +185,9 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
  *         or goal rule this build does not have, before anything is resolved or
  *         recorded: the store refuses the read, which is this function's first step.
  * @throws SeedConnectionError when the run's connection is no longer resolvable —
- *         it was removed, or the actor's role no longer reaches it.
+ *         it was removed, or the actor's role no longer reaches it, or the run reads a
+ *         database (`catalog`) and its engine's record now offers no catalog session, a
+ *         provider package serving the engine the run was recorded on.
  */
 export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOutcome> {
   const service = await getAgentRunService();
@@ -187,14 +200,28 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
   }
 
   const { actor, connectionId, catalog } = report.record;
-  let connection: DatabaseConnection;
+  let connection: EngineConnection;
+  let engine: EngineRecord;
   try {
     // The persisted actor is the sole authority: the role that decides which managed
-    // connections are visible is the one recorded when the run was opened.
-    const resolved = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
+    // connections are visible is the one recorded when the run was opened. The served resolve answers the record of
+    // the connection's engine too, a legacy engine's or a provider package's.
+    const resolved = await resolveServedConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
+    engine = resolved.engine;
     // On a server-level connection the run reads the one database it opened on (#1530). A session
-    // in that database IS the connection naming it, so from here on this is a single-database run.
-    connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
+    // in that database IS the connection naming it, so from here on this is a single-database run. A run recorded with
+    // a database on an engine whose record now offers no catalog session (a provider package serves the engine it was
+    // recorded on) has no such session, so its connection no longer resolves, recorded as a removed one is.
+    if (catalog !== undefined && !engine.offers.catalog) {
+      throw new SeedConnectionError(
+        `This run reads the database "${catalog}" of connection "${connectionId}", and its engine, ${engine.displayName}, offers no catalog session in this LibreDB Studio, so the run's connection no longer resolves.`,
+        409,
+      );
+    }
+    connection =
+      catalog === undefined
+        ? resolved.connection
+        : catalogSessionConnection(legacyConnection(engine, resolved.connection), catalog);
   } catch (error) {
     await recordUnlessDrivenElsewhere(service, runId, error);
     throw error;
@@ -204,11 +231,21 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
   // the callers' log lines and error responses, which do not hold the connection. The ledger still records the
   // failure from the original error, by its class and code. The scrub covers every provider of the
   // connection ("any"): the capability read below is built from the connection's own credential, the statement
-  // providers from the agent's.
-  const scrub = providerTextScrub(connection, "any");
-  // The record of the run's engine: `resolveConnection` admits only an engine whose record offers a legacy provider.
-  const engine = servedEngineRecord(connection.type);
+  // providers from the agent's, and a provider package's session opens with the connection's own credential.
+  const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
   try {
+    // An agent-mode run whose workflow sends statements on an engine whose record offers no execution profiles (a
+    // provider package's) is refused by name before its first model turn and before anything opens: Studio opens no
+    // read-only statement session through a package yet, and the start route refuses such a run before it exists, so
+    // only a run recorded before is refused here. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
+    if (
+      report.record.mode === "agent" &&
+      AGENT_WORKFLOW_SENDS_STATEMENTS[report.record.workflowType] &&
+      !engine.offers.executionProfiles
+    ) {
+      throw new StudioProfileRefusal(statementSessionRefusal(engine.displayName), "PROFILE_UNSUPPORTED_BY_PROVIDER");
+    }
+
     // The engine's capabilities and labels are read from its record without connecting
     // (`agentEngineDeclarations`): a legacy engine's are its provider's own, read the way
     // /api/db/provider-meta reads them, and a provider package's engine's are its admitted

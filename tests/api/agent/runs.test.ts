@@ -26,7 +26,7 @@ import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { LLMConfigError } from "@/lib/llm/types";
 import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
-import { agentPosture } from "@/lib/agent/posture";
+import { agentPosture, noAdapterSentence } from "@/lib/agent/posture";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -34,6 +34,8 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
+import { servedResolveOver } from "../../helpers/served-resolve";
+import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
 import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
 
 const { SeedConnectionError } = realSeed;
@@ -66,6 +68,12 @@ const realConnectBudget = await import("@/lib/db/connect-budget");
 const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
 const realOpenDeadlineSentence = realConnectBudget.openDeadlineSentence;
 let budgetOverride: number | undefined;
+
+/** The real declaration read, captured before `@/lib/db` is replaced, recorded by the replacement below. */
+const realReadProviderDeclarations = realDb.readProviderDeclarations;
+const mockReadProviderDeclarations = mock((...args: Parameters<typeof realReadProviderDeclarations>) =>
+  realReadProviderDeclarations(...args),
+);
 
 const mockForCatalog = mock(async (_catalog: string) => ({}));
 // The provider stands for the connection it is handed, which `catalogChoice` reads (M-57).
@@ -209,9 +217,16 @@ function installMocks(): void {
   // The gate would otherwise build a real model and, where a key is configured, put a
   // live probe call inside this suite.
   mock.module("@/lib/agent/capability-gate", () => ({ ...realGate, admitAgentModel: mockAdmitAgentModel }));
-  mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
+  mock.module("@/lib/seed/resolve-connection", () => ({
+    ...realSeed,
+    resolveServedConnection: servedResolveOver(mockResolveConnection),
+  }));
   // Opening a database's session connects; the suite answers it instead (#1530).
-  mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: mockGetOrCreateProvider }));
+  mock.module("@/lib/db", () => ({
+    ...realDb,
+    getOrCreateProvider: mockGetOrCreateProvider,
+    readProviderDeclarations: mockReadProviderDeclarations,
+  }));
   mock.module("@/lib/db/connect-budget", () => ({
     openDeadlineSentence: realOpenDeadlineSentence,
     connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
@@ -268,6 +283,7 @@ beforeEach(() => {
   mockAdmitAgentModel.mockImplementation(async () => ({ kind: "allowed", protocol: "native" }));
   mockStart.mockClear();
   mockResolveConnection.mockClear();
+  mockReadProviderDeclarations.mockClear();
   mockPause.mockClear();
   mockUnpause.mockClear();
   mockWorkflowAvailability.mockClear();
@@ -2004,5 +2020,103 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     } finally {
       for (const spy of logged) spy.mockRestore();
     }
+  });
+});
+
+/*
+  A connection of an engine an admitted provider package serves, resolved through the served resolve and read by its
+  record (tests/helpers/agent-package-catalog.ts): plan mode opens on it, and every refusal names the engine by its
+  record's display name before the capability gate and before a run is opened.
+*/
+describe("POST /api/agent/runs on a provider package's engine", () => {
+  const { BARE, REQUESTING, EXECUTING } = AGENT_PACKAGE_ENGINES;
+  const STATEMENT_WORKFLOWS = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+
+  /** The status and body of a start on a connection of `type`, with the package catalog installed. */
+  async function startOn(type: string, body: Record<string, unknown>) {
+    return withCatalog(agentPackageCatalog(), async () => {
+      mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type });
+      const res = await POST(startRequest({ ...VALID_BODY, connectionId: "seed:acme", ...body }));
+      return {
+        status: res.status,
+        body: await parseResponseJSON<{ error?: string; refused?: string }>(res),
+        displayName: servedEngineRecord(type).displayName,
+      };
+    });
+  }
+
+  test("a run on a package engine with no register row plans, and its execution is refused as not reviewed, by name", async () => {
+    const planned = await startOn(REQUESTING, { mode: "planning", workflowType: "investigation" });
+    expect(planned.status).toBe(202);
+    const persisted = mockStart.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+    expect(persisted?.engine).toBe(REQUESTING);
+    expect(persisted?.statementLanguage).toBeUndefined();
+    expect(persisted?.connectionId).toBe("seed:acme");
+
+    mockStart.mockClear();
+    mockAdmitAgentModel.mockClear();
+    const refused = await startOn(REQUESTING, { workflowType: "investigation" });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({
+      error: realManifest.notReviewedSentence(refused.displayName, false),
+      refused: "engine-unsupported",
+    });
+    const operations = await startOn(REQUESTING, { workflowType: "operations" });
+    expect(operations.status).toBe(400);
+    expect(operations.body).toEqual({
+      error:
+        "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
+      refused: "engine-unsupported",
+    });
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockDriveAgentRun).toHaveBeenCalledTimes(1);
+  });
+
+  test("a package engine granted agent execution is refused by name at start while Studio opens no read-only statement session through a package, its row reviewing no grammar", async () => {
+    const record = await withCatalog(agentPackageCatalog(), () => servedEngineRecord(EXECUTING));
+    // Vacuity: the row grants the language and agent execution and reviews no grammar.
+    expect(record.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true, reviewedGrammar: false });
+    expect(record.offers.executionProfiles).toBe(false);
+    for (const workflowType of STATEMENT_WORKFLOWS) {
+      // oxlint-disable-next-line no-await-in-loop -- one start at a time, each reading the mocks the one before left.
+      const refused = await startOn(EXECUTING, { workflowType });
+      expect(refused.status, workflowType).toBe(400);
+      expect(refused.body, workflowType).toEqual({
+        error: realManifest.noStatementSessionSentence(record.displayName, false),
+        refused: "engine-unsupported",
+      });
+    }
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockDriveAgentRun).not.toHaveBeenCalled();
+  });
+
+  test("a catalog on a package engine's connection is refused as on a connection that names its own database, with no provider declaration read", async () => {
+    mockForCatalog.mockClear();
+    const refused = await startOn(BARE, { mode: "planning", catalog: "shop" });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({
+      error: "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+    });
+    expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
+    expect(mockForCatalog).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a package engine that requests no statement language is refused with the no-adapter sentence naming it, and names the operations workflow only where it opens", async () => {
+    const refused = await startOn(BARE, { workflowType: "investigation" });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({
+      error: noAdapterSentence(refused.displayName, false),
+      refused: "engine-unsupported",
+    });
+    expect(refused.body.error).toContain(`On ${refused.displayName} a run whose workflow sends a statement is refused`);
+    expect(refused.body.error).not.toContain("operations workflow");
+    // A legacy engine with no language opens the operations workflow, and its refusal names it.
+    expect(noAdapterSentence(getDBConfig("spark").label, true)).toContain("The operations workflow still runs here");
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
   });
 });
