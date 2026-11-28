@@ -121,14 +121,14 @@ const PROVIDER_BUILDERS = [
 
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So do
- * `editorProvider`, which every editor route but the query and transaction routes opens its provider through (#1530),
- * `editorTarget`, which the query and transaction routes open every engine through, `metadataMonitoringTarget` and
- * `editorMonitoringTarget`, which the monitoring, health and fleet health routes open every engine's metadata session
- * through and the pool statistics route its editor session, `editorConsoleTarget`, which the cancel route opens every
- * engine's editor session through, `handleMaintenanceRequest`, the shared path the maintenance and preview routes open
- * every engine's editor session through, and a kill its metadata session, by `editorMaintenanceOpening` and
- * `metadataMaintenanceOpening`, and so does `testConnection`, the Test Connection core, which opens the connection it
- * is handed.
+ * `editorProvider`, which every editor route but the query, multi-query and transaction routes opens its provider
+ * through (#1530), `editorTarget`, which the query, multi-query and transaction routes open every engine through,
+ * `metadataMonitoringTarget` and `editorMonitoringTarget`, which the monitoring, health and fleet health routes open
+ * every engine's metadata session through and the pool statistics route its editor session, `editorConsoleTarget`,
+ * which the cancel route opens every engine's editor session through, `handleMaintenanceRequest`, the shared path the
+ * maintenance and preview routes open every engine's editor session through, and a kill its metadata session, by
+ * `editorMaintenanceOpening` and `metadataMaintenanceOpening`, and so does `testConnection`, the Test Connection core,
+ * which opens the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
   `\\b(${[

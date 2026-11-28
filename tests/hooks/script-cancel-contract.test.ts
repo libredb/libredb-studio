@@ -5,6 +5,7 @@ import "../helpers/mock-navigation";
 import { afterAll, beforeAll, describe, test, expect, mock, beforeEach } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { createMockProvider } from "../helpers/mock-provider";
+import { editorEntryOf } from "../helpers/editor-session-entry";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
@@ -22,6 +23,8 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -80,12 +83,19 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection as DatabaseConnection;
+  };
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
+    resolveConnection: mock(resolveConnection),
+    // The route's resolve: the connection with the server catalog's record of its type, as the real one answers a
+    // legacy engine's.
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
+      const connection = await resolveConnection(body);
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -113,6 +123,14 @@ mock.module("@/lib/db", () => ({
   isTimeoutError,
   isAuthenticationError,
   mapDatabaseError,
+}));
+
+// The route opens the editor's session of the connection's record (`editorTarget`); a legacy record's entry holds the
+// provider this file's own mock answers, never the factory reached through its mocked module.
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateEditorSession: async () => editorEntryOf((await mockGetOrCreateProvider()) as DatabaseProvider),
 }));
 
 mock.module("@/components/QuerySafetyDialog", () => ({

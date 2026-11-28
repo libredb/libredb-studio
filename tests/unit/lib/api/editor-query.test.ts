@@ -1411,16 +1411,16 @@ describe("the core's import closure stays free of Next", () => {
         "src/lib/api/first-result-set.ts",
         "src/lib/api/page-probe.ts",
         "src/lib/db/errors.ts",
-        "src/lib/db/query-cancel.ts",
         "src/lib/db/statement-language-row.ts",
         "src/lib/db/types.ts",
         "src/lib/db/utils/query-limiter.ts",
         "src/lib/non-finite.ts",
         "src/lib/provider-host/access.ts",
         "src/lib/provider-host/instance.ts",
-        "src/lib/provider-host/legacy-bridge.ts",
       ]),
     );
+    // It builds no bridged session: the end of a script's scope runs on the console target its caller opened.
+    expect(closure.modules).not.toContain("src/lib/provider-host/legacy-bridge.ts");
     // The facade reads the process's host core and holds no copy of the core's calls (clause C-52).
     expect(closure.modules).not.toContain("src/lib/provider-host/core/console.ts");
     expect(closure.modules).not.toContain("src/lib/provider-host/core/turns.ts");
@@ -1466,6 +1466,9 @@ describe("cancelEditorRun", () => {
       },
       transactionScriptUnit: () => {
         throw new Error("the cancel read a script unit form");
+      },
+      scriptUnit: () => {
+        throw new Error("the cancel read an editor script unit form");
       },
       explainSupport: () => {
         throw new Error("the cancel read a plan");

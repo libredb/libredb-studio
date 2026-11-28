@@ -1,8 +1,9 @@
 /**
  * The editor's script facade (src/lib/api/editor-script.ts; docs/providers/CONTRACT.md, clause C-83): every unit of a
- * script of `POST /api/db/multi-query` runs through one host core console execute on a script unit session of its
- * own, under its own deadline and the request's signal, its answer built from the provider's result by reference
- * before its page record is released, and the script's scope ended once after the last unit it ran.
+ * script of `POST /api/db/multi-query` runs through one host core console execute on the unit form its console target
+ * states, a legacy provider's script unit session of its own or a provider package's session itself, under its own
+ * deadline and the request's signal, its answer built from the unit's result before its page record is released, and
+ * the script's scope ended once after the last unit it ran.
  *
  * The real host core is installed for the file; a case that needs to see the call installs a core of its own around
  * the real one and restores it. A deadline case hands the facade a unit start that puts the deadline a few tens of
@@ -18,6 +19,7 @@ import {
   CLEANUP_DEADLINE_MS,
   envReader,
   type EndScopeRequest,
+  type ExecuteAnswer,
   type ExecuteRequest,
   PAGE_MAX_BYTES,
   type ResultSource,
@@ -25,6 +27,7 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeViews } from "@/lib/api/editor-query";
 import {
+  type EditorScript,
   type EditorScriptRun,
   openEditorScript,
   openTransactionScript,
@@ -43,6 +46,7 @@ import {
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
 import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type TransactionProvider } from "@/lib/db/types";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import type { ConsoleSession, ExecuteRecord } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
@@ -110,8 +114,11 @@ function withTimeout<P extends DatabaseProvider>(provider: P, queryTimeout: numb
 function scriptOf(sql: string, over: Partial<EditorScriptRun> = {}): EditorScriptRun {
   return {
     units: splitExecutionUnits(sql, resolveSqlGrammar("postgres")),
-    dialect: "postgres",
     options: { limit: 50 },
+    scrub: providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", host: "db.internal" } as DatabaseConnection,
+      "any",
+    ),
     signal: new AbortController().signal,
     route: ROUTE,
     ...over,
@@ -123,7 +130,12 @@ const asIs = (result: QueryResult): QueryResult => result;
 
 /** Runs every unit of `script` on `provider` in order, stopping at the first failure, and answers each outcome. */
 async function runAll(provider: DatabaseProvider, script: EditorScriptRun): Promise<ScriptUnitOutcome<QueryResult>[]> {
-  const opened = openEditorScript(provider, script);
+  const opened = openEditorScript(providerConsoleTarget(provider), script);
+  return runOpened(opened, script);
+}
+
+/** Runs every unit of the script `opened` holds, `script`, in order, stopping at the first failure. */
+async function runOpened(opened: EditorScript, script: EditorScriptRun): Promise<ScriptUnitOutcome<QueryResult>[]> {
   const outcomes: ScriptUnitOutcome<QueryResult>[] = [];
   for (let index = 0; index < script.units.length; index++) {
     // oxlint-disable-next-line no-await-in-loop -- the units run in order, as the route runs them.
@@ -272,7 +284,7 @@ describe("openEditorScript", () => {
     expect(seen.map((call) => call.request.statement)).toEqual(["SELECT 1", "SELECT 2", "SELECT 3"]);
     expect(provider.query.mock.calls.map((call) => call[0])).toEqual(["SELECT 1", "SELECT 2", "SELECT 3 LIMIT 50"]);
 
-    const opened = openEditorScript(provider, scriptOf("SELECT 1"));
+    const opened = openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT 1"));
     expect(() => opened.runUnit(1, asIs)).toThrow(
       "The editor's script was asked for its unit at index 1, and it holds 1, a defect of the caller.",
     );
@@ -339,7 +351,7 @@ describe("openEditorScript", () => {
         },
       }),
       () =>
-        openEditorScript(provider, scriptOf("SELECT n FROM t")).runUnit(0, (answered) => {
+        openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT n FROM t")).runUnit(0, (answered) => {
           releasedAtBuild = releases;
           return answered;
         }),
@@ -372,7 +384,7 @@ describe("openEditorScript", () => {
         },
       }),
       () =>
-        openEditorScript(provider, scriptOf("SELECT n FROM t")).runUnit(0, () => {
+        openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT n FROM t")).runUnit(0, () => {
           throw thrown;
         }),
     );
@@ -387,7 +399,10 @@ describe("openEditorScript", () => {
     const result = resultOf(rows);
     const provider = providerOf(async () => result);
 
-    const outcome = await openEditorScript(provider, scriptOf("SELECT n FROM t; SELECT 1")).runUnit(0, asIs);
+    const outcome = await openEditorScript(
+      providerConsoleTarget(provider),
+      scriptOf("SELECT n FROM t; SELECT 1"),
+    ).runUnit(0, asIs);
 
     expect(outcome.kind === "answered" && outcome.value).toBe(result);
     expect(result.rows).toHaveLength(40);
@@ -397,7 +412,9 @@ describe("openEditorScript", () => {
     const wide = "x".repeat(33 * MIB);
     const provider = providerOf(async () => resultOf([{ wide }]));
 
-    const refused = failedWith(await openEditorScript(provider, scriptOf("SELECT wide FROM t")).runUnit(0, asIs));
+    const refused = failedWith(
+      await openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT wide FROM t")).runUnit(0, asIs),
+    );
 
     expect(refused).toBeInstanceOf(StudioByteBudgetRefusal);
     expect((refused as Error).message).toMatch(
@@ -411,7 +428,9 @@ describe("openEditorScript", () => {
     for (let depth = 0; depth < 300; depth++) deep = { d: deep };
     const provider = providerOf(async () => resultOf([{ n: deep }]));
 
-    const refused = failedWith(await openEditorScript(provider, scriptOf("SELECT n FROM t")).runUnit(0, asIs));
+    const refused = failedWith(
+      await openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT n FROM t")).runUnit(0, asIs),
+    );
 
     expect((refused as Error).name).toBe("ValueCodecError");
     expect((refused as Error).message).toStartWith(
@@ -427,7 +446,7 @@ describe("openEditorScript", () => {
     forgetHostCore();
     let thrown: unknown;
     try {
-      openEditorScript(provider, scriptOf("SELECT 1"));
+      openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT 1"));
     } catch (error) {
       thrown = error;
     } finally {
@@ -438,7 +457,90 @@ describe("openEditorScript", () => {
     expect(provider.query).not.toHaveBeenCalled();
     expect(provider.prepareQuery).not.toHaveBeenCalled();
   });
+
+  test("each unit of a script on a package entry's console target is one host core execute on the session itself with the request's run id and scope, counted on the entry, and the scope is ended once through the session's console.endScope under its declared environment", async () => {
+    const queryId = marker();
+    const { entry, session, env, seen, ends } = packageScriptEntry();
+    const target = entryConsoleTarget(entry, PACKAGE_CONNECTION);
+    const script = scriptOf("SELECT 1; SELECT 2", { queryId, options: { limit: 1 } });
+
+    const opened = openEditorScript(target, script);
+    const outcomes = await runOpened(opened, script);
+    expect(entry.running).toBe(0);
+    const ended = await opened.end();
+
+    const scope = seen[0]?.request.scope;
+    expect(typeof scope).toBe("string");
+    expect(seen.map((call) => call.request)).toEqual([
+      { statement: "SELECT 1", page: { unlimited: true }, runId: queryId, scope },
+      { statement: "SELECT 2", page: { limit: 1, offset: 0 }, runId: queryId, scope },
+    ]);
+    // Each unit is counted on the entry while its call runs, under the session's declared environment.
+    expect(seen.map((call) => call.running)).toEqual([1, 1]);
+    expect(seen.map((call) => call.ctx.env === env)).toEqual([true, true]);
+    expect(outcomes).toEqual([
+      { kind: "answered", value: { rows: [{ n: 1 }, { n: 2 }], fields: ["n"], rowCount: 2, executionTime: 6 } },
+      { kind: "answered", value: { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, executionTime: 6 } },
+    ]);
+    // The scope is ended once, on the session itself, under its declared environment, counted on the entry.
+    expect(ended).toEqual({ offered: true, openTransaction: "rolled-back" });
+    expect(ends.map((end) => [end.request, end.ctx.env === env, end.running])).toEqual([
+      [{ scope: scope as string }, true, 1],
+    ]);
+    expect(entry.running).toBe(0);
+    expect(session.cancel).not.toHaveBeenCalled();
+  });
 });
+
+/** A provider package's connection, as the route resolves it. */
+const PACKAGE_CONNECTION = { id: "p", name: "p", type: "acmescript" } as unknown as EngineConnection;
+
+/**
+ * A provider package's editor cache entry whose session offers `console.cancel` and `console.endScope`: its execute
+ * answers two rows through `execute` when a case sets one, its end answers `rolled-back`, and each records what it was
+ * sent, its context and how many calls the entry counted while it ran.
+ */
+function packageScriptEntry(execute?: (request: ExecuteRequest) => Promise<ExecuteAnswer>) {
+  const seen: { request: ExecuteRequest; ctx: CallContext; running: number }[] = [];
+  const ends: { request: EndScopeRequest; ctx: CallContext; running: number }[] = [];
+  const env = envReader([], () => undefined);
+  const session = {
+    calls: {
+      console: {
+        execute: { honours: ["offset"] },
+        cancel: "offered",
+        endScope: "offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered", source: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    },
+    readOnlyStatements: false,
+    execute: async (request: ExecuteRequest, ctx: CallContext): Promise<ExecuteAnswer> => {
+      seen.push({ request, ctx, running: entry.running });
+      if (execute !== undefined) return execute(request);
+      return {
+        results: [rowsSource([{ name: "n" }], [[1], [2]], 2)],
+        warnings: [],
+        executionTimeMs: 6,
+        pageApplied: false,
+      };
+    },
+    cancel: mock(async (_request: unknown, _ctx: CallContext) => ({ cancelled: true })),
+    endScope: async (request: EndScopeRequest, ctx: CallContext) => {
+      ends.push({ request, ctx, running: entry.running });
+      return { openTransaction: "rolled-back" as const };
+    },
+  } satisfies ConsoleSession;
+  const entry = {
+    opened: { form: "session", session, env },
+    engine: { grants: { ownWords: "scrubbed" } },
+    running: 0,
+    lastUsed: 0,
+  } as unknown as CachedSession;
+  return { entry, session, env, seen, ends };
+}
 
 describe("a script unit's wait", () => {
   test("a unit's deadline is its connection's statement timeout plus ten seconds from the unit's start", async () => {
@@ -451,8 +553,8 @@ describe("a script unit's wait", () => {
     const now = Date.now();
 
     await withCore(countingCore(seen), async () => {
-      await openEditorScript(configured, scriptOf("SELECT 1")).runUnit(0, asIs, now);
-      await openEditorScript(defaulted, scriptOf("SELECT 1")).runUnit(0, asIs, now);
+      await openEditorScript(providerConsoleTarget(configured), scriptOf("SELECT 1")).runUnit(0, asIs, now);
+      await openEditorScript(providerConsoleTarget(defaulted), scriptOf("SELECT 1")).runUnit(0, asIs, now);
     });
 
     expect(seen.map((call) => call.ctx.deadline)).toEqual([
@@ -471,7 +573,11 @@ describe("a script unit's wait", () => {
     const script = scriptOf("SELECT 1; SELECT 2");
 
     const warned = await warningsOf(async () => {
-      const outcome = await openEditorScript(provider, script).runUnit(0, asIs, startFor(provider, 30));
+      const outcome = await openEditorScript(providerConsoleTarget(provider), script).runUnit(
+        0,
+        asIs,
+        startFor(provider, 30),
+      );
       const stopped = failedWith(outcome);
 
       expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
@@ -509,10 +615,10 @@ describe("a script unit's wait", () => {
     const queryId = marker();
 
     const warned = await warningsOf(async () => {
-      const running = openEditorScript(provider, scriptOf("SELECT 1", { signal: controller.signal, queryId })).runUnit(
-        0,
-        asIs,
-      );
+      const running = openEditorScript(
+        providerConsoleTarget(provider),
+        scriptOf("SELECT 1", { signal: controller.signal, queryId }),
+      ).runUnit(0, asIs);
       await reached.promise;
       controller.abort(new DOMException("The request went away.", "AbortError"));
       const stopped = failedWith(await running);
@@ -534,7 +640,11 @@ describe("a script unit's wait", () => {
     const script = scriptOf("SELECT n FROM t; SELECT 1");
 
     // A deadline about 300 ms out, which the page spends waiting for the slot.
-    const outcome = await openEditorScript(provider, script).runUnit(0, asIs, startFor(provider, 300));
+    const outcome = await openEditorScript(providerConsoleTarget(provider), script).runUnit(
+      0,
+      asIs,
+      startFor(provider, 300),
+    );
     await slot.release();
     const stopped = failedWith(outcome);
 
@@ -556,7 +666,10 @@ describe("a script unit's wait", () => {
     const provider = providerOf(async () => resultOf([]), { endOpenQueryTransaction });
     const controller = new AbortController();
     controller.abort(new DOMException("The request went away.", "AbortError"));
-    const opened = openEditorScript(provider, scriptOf("SELECT 1; SELECT 2", { signal: controller.signal }));
+    const opened = openEditorScript(
+      providerConsoleTarget(provider),
+      scriptOf("SELECT 1; SELECT 2", { signal: controller.signal }),
+    );
 
     const refused = failedWith(await opened.runUnit(0, asIs));
 
@@ -574,7 +687,9 @@ describe("a script unit's wait", () => {
       throw thrown;
     });
 
-    expect(failedWith(await openEditorScript(provider, scriptOf("SELECT 1")).runUnit(0, asIs))).toBe(thrown);
+    expect(
+      failedWith(await openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT 1")).runUnit(0, asIs)),
+    ).toBe(thrown);
   });
 });
 
@@ -589,7 +704,7 @@ describe("a script's scope", () => {
 
     const before = Date.now();
     const ended = await withCore(countingCore(seen, ends), async () => {
-      const opened = openEditorScript(provider, script);
+      const opened = openEditorScript(providerConsoleTarget(provider), script);
       await opened.runUnit(0, asIs);
       await opened.runUnit(1, asIs);
       expect(endOpenQueryTransaction).not.toHaveBeenCalled();
@@ -614,7 +729,7 @@ describe("a script's scope", () => {
     const ends: { request: EndScopeRequest; ctx: CallContext }[] = [];
 
     const ended = await withCore(countingCore(seen, ends), async () => {
-      const opened = openEditorScript(provider, scriptOf("SELECT 1; SELECT 2"));
+      const opened = openEditorScript(providerConsoleTarget(provider), scriptOf("SELECT 1; SELECT 2"));
       await opened.runUnit(0, asIs);
       await opened.runUnit(1, asIs);
       return opened.end();
@@ -646,7 +761,10 @@ describe("a script's scope", () => {
 
     const warned = await warningsOf(async () => {
       await withCore(countingCore([], ends), async () => {
-        const opened = openEditorScript(provider, scriptOf("BEGIN; SELECT 1", { signal: controller.signal }));
+        const opened = openEditorScript(
+          providerConsoleTarget(provider),
+          scriptOf("BEGIN; SELECT 1", { signal: controller.signal }),
+        );
         const running = opened.runUnit(0, asIs);
         await reached.promise;
         controller.abort(new DOMException("The request went away.", "AbortError"));
@@ -671,6 +789,52 @@ describe("a script's scope", () => {
       ],
     ]);
     expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+
+  test("a package script unit whose request leaves sends the package's cancel with its run id, and the scope is ended once its call settled", async () => {
+    const queryId = marker();
+    const reached = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<ExecuteAnswer>();
+    const { entry, session, seen, ends } = packageScriptEntry(() => {
+      reached.resolve();
+      return pending.promise;
+    });
+    const endReached = Promise.withResolvers<void>();
+    const endScope = session.endScope;
+    session.endScope = async (request, ctx) => {
+      const answer = await endScope(request, ctx);
+      endReached.resolve();
+      return answer;
+    };
+    const controller = new AbortController();
+
+    const opened = openEditorScript(
+      entryConsoleTarget(entry, PACKAGE_CONNECTION),
+      scriptOf("BEGIN; SELECT 1", { signal: controller.signal, queryId }),
+    );
+    const running = opened.runUnit(0, asIs);
+    await reached.promise;
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+    expect(failedWith(await running)).toBeInstanceOf(QueryCancelledError);
+    // The core sent the package's cancel once, with the run id the execute was sent.
+    expect(session.cancel.mock.calls.map((call) => call[0])).toEqual([{ runId: queryId }]);
+
+    // The script is answered at once; its scope is ended once the stopped unit's call settled.
+    expect(await opened.end()).toEqual({ offered: true, openTransaction: "none" });
+    await turn();
+    expect(ends).toEqual([]);
+    expect(entry.running).toBe(1);
+    pending.resolve({
+      results: [rowsSource([{ name: "n" }], [])],
+      warnings: [],
+      executionTimeMs: 1,
+      pageApplied: false,
+    });
+    await endReached.promise;
+    await turn();
+    expect(ends).toHaveLength(1);
+    expect(ends.map((end) => end.request)).toEqual([{ scope: seen[0]?.request.scope as string }]);
+    expect(entry.running).toBe(0);
   });
 });
 

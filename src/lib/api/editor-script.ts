@@ -7,64 +7,59 @@ import {
 import {
   callContext,
   endEditorScope,
-  executeDeadline,
   executeDeadlineFor,
-  executeViews,
   executeViewsFor,
   hostPorts,
   lateScopeEnd,
   pageBound,
 } from "@/lib/api/editor-query";
 import type { UnansweredCall } from "@/lib/api/editor-transaction";
-import {
-  type ConsoleTarget,
-  providerConsoleTarget,
-  type ScriptUnitForm,
-  type SessionTarget,
-} from "@/lib/api/session-target";
-import { type DatabaseProvider, newQueryCallScope, type QueryPrepareOptions } from "@/lib/db/types";
+import type { ConsoleTarget, ScriptUnitForm, SessionTarget } from "@/lib/api/session-target";
+import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { newQueryCallScope, type QueryPrepareOptions } from "@/lib/db/types";
 import { refusalError, stopError } from "@/lib/provider-host/access";
 import type { ExecuteRecord, HostCallPorts, RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedScriptUnit } from "@/lib/provider-host/legacy-bridge";
 import type { ExecutionUnit } from "@/lib/sql/statement-splitter";
-import type { DatabaseType, QueryResult } from "@/lib/types";
+import type { QueryResult } from "@/lib/types";
 
 /*
  * THE EDITOR'S SCRIPT ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-83, C-84, C-53 and C-60).
  *
  * `openEditorScript` is the caller facade of a script of `POST /api/db/multi-query`: every unit of the script runs
- * through one host core console execute, one unit at a time, each on a script unit session of its own that the legacy
- * bridge serves (`bridgedScriptUnit`, clause C-50), so a native provider serves the script through the contract alone.
+ * through one host core console execute, one unit at a time, each on the unit form its console target states
+ * (`ConsoleTarget.scriptUnit` in ./session-target): the bridge's script unit session for a legacy provider
+ * (`bridgedScriptUnit`, clause C-50), and the session itself for a provider package's, whose unit's rows exist only in
+ * its page. Each unit is counted on the cache entry its session lives in until its page record was released.
  *
  * The process's host core is read when the script opens, synchronously, after the connection opened and before any
  * unit, so a script opened before the install throws `HostCoreBootOrderError` before any promise and is never taken
  * for a unit's failure. Each unit's request is fresh: its text, every row for every unit but the last and the request's
  * page for the last, the request's `queryId` as its run id, and the script's scope on a session that offers
- * `console.endScope`. Each unit's context is fresh too: the unit's own deadline, the connection's statement timeout
- * plus `EXECUTE_SLACK_MS` from the unit's start (`executeDeadline`), and a signal that aborts at it or when the
- * request's signal aborts first.
+ * `console.endScope`. Each unit's context is fresh too: the unit's own deadline, the target's statement timeout plus
+ * `EXECUTE_SLACK_MS` from the unit's start (`executeDeadlineFor`), a signal that aborts at it or when the request's
+ * signal aborts first, and the target's declared environment.
  *
  * The host pumps each unit's first result within its 32 MiB page, waiting for the core's large-page slot when the page
  * needs more than one batch (clause C-53): the page is the host's measure and wait, never a cut. The unit's answer is
- * built by the caller's builder from the provider's result by reference, every row, and the page record is released
- * once, in a `finally`, after the builder ran or threw. So a row larger than one page is the unit's
- * `StudioByteBudgetRefusal`, outcome unknown, and nothing is cut: a script's answer has no field to say where a cut
- * fell (backlog D920).
+ * built by the caller's builder from the unit's result, a legacy provider's by reference, every row, and the page
+ * record is released once, in a `finally`, after the builder ran or threw. So a row larger than one page is the unit's
+ * `StudioByteBudgetRefusal`, outcome unknown, and nothing is cut, as is a provider package's page the host cut by
+ * bytes: a script's answer has no field to say where a cut fell (backlog D920).
  *
  * A unit is never answered by a rejection: its outcome is the builder's value or the unit's error, which the route
  * answers inside the script's answer as a provider's error always was. A stop is answered by the editor's views
- * (`executeViews`): `QueryCancelledError` when the request left, `StudioTimeoutRefusal` in the editor's sentence for
+ * (`executeViewsFor`): `QueryCancelledError` when the request left, `StudioTimeoutRefusal` in the editor's sentence for
  * the statement, the slot, the page or the other results; the core sends the stopped run's cancel where the session
  * offers `console.cancel`, and a later failure is logged under the script's route by kind and code, the engine's
  * cancellation answer after that cancel not logged (`hostPorts`). A unit started after the request left is refused
  * before its call, not-sent, and reaches no provider. A provider's error passes as the same object.
  *
- * The scope is the facade's: minted when the script opens, only for a provider whose session offers
+ * The scope is the facade's: minted when the script opens, only where the target's session offers
  * `console.endScope`, sent with every unit, and ended once after the last unit the script ran, through
- * `endEditorScope` under a cleanup context of its own (clause C-60): at once when that unit answered or failed, and,
- * when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged by kind and
+ * `endEditorScope` on the target under a cleanup context of its own (clause C-60): at once when that unit answered or
+ * failed, and, when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged by kind and
  * code (`lateScopeEnd`), the script answered with no `openTransaction`. A script none of whose units reached its
  * provider ends none.
  *
@@ -90,20 +85,20 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * reads no session state: the route reads the state after the script, C-58.
  */
 
-/** A script of execution units, split under its connection's dialect, and the request it runs for. */
+/** A script of execution units, split under its engine's grammar, and the request it runs for. */
 export interface EditorScriptRun {
   /** The units in the script's order. */
   readonly units: readonly ExecutionUnit[];
-  /** The connection's dialect, which the last unit's last statement is read under. */
-  readonly dialect: DatabaseType;
   /** The page bounds as sent, already passed by `pageOptionError`. */
   readonly options: QueryPrepareOptions;
   /** The id a provider tracks each unit's run under and a cancel names it by. */
   readonly queryId?: string;
   /** The request's signal: a unit whose request left is stopped, and no further unit starts. */
   readonly signal: AbortSignal;
-  /** The label a late failure, a failed cancel and a failed end are logged under. */
+  /** The label a late failure, a failed cancel, a failed end and a provider package's warnings are logged under. */
   readonly route: string;
+  /** Core's scrub of the connection, which a provider package's unit warnings are answered through. */
+  readonly scrub: ProviderTextScrub;
 }
 
 /** How one unit ended: the builder's answer, or the unit's error, by reference. */
@@ -140,14 +135,10 @@ interface ScriptProgress {
   stopped?: StoppedRecord;
 }
 
-/**
- * What every unit of one script runs with: the host core, the provider, the marks of the entry its sessions live in,
- * the script, its scope and its progress.
- */
+/** What every unit of one script runs with: the host core, the console target, the script, its scope and progress. */
 interface ScriptRunState {
   readonly core: HostCore;
-  readonly provider: DatabaseProvider;
-  readonly marks: UnitMarks;
+  readonly target: ConsoleTarget;
   readonly script: EditorScriptRun;
   readonly scope: string | undefined;
   readonly progress: ScriptProgress;
@@ -192,18 +183,18 @@ async function callUnit<T>(
   }
 }
 
-/** Runs unit `index` of the script through the host core on a script unit session of its own. */
+/** Runs unit `index` of the script through the host core on the unit form its console target states for it. */
 async function runScriptUnit<T>(
-  { core, provider, marks, script, scope, progress }: ScriptRunState,
+  { core, target, script, scope, progress }: ScriptRunState,
   index: number,
   build: (result: QueryResult) => T,
   now: number,
 ): Promise<ScriptUnitOutcome<T>> {
   const unit = script.units[index] as ExecutionUnit;
   const last = index === script.units.length - 1;
-  const bridged = bridgedScriptUnit(
-    provider,
-    last ? { unit, tailBound: { dialect: script.dialect, options: script.options } } : { unit },
+  const { scrub, route } = script;
+  const form = target.scriptUnit(
+    last ? { unit, lastUnitOptions: script.options, scrub, route } : { unit, scrub, route },
   );
   const request: ExecuteRequest = {
     statement: unit.sql,
@@ -211,14 +202,15 @@ async function runScriptUnit<T>(
     ...(script.queryId === undefined ? {} : { runId: script.queryId }),
     ...(scope === undefined ? {} : { scope }),
   };
-  const views = executeViews(provider, script.signal);
+  const timeout = target.timeout();
+  const views = executeViewsFor(timeout, script.signal);
   const call = await callUnit(
     core,
-    bridged,
-    marks,
+    form,
+    target,
     request,
-    callContext(executeDeadline(provider, now), script.signal),
-    hostPorts(script.route, bridged.cancelSent),
+    callContext(executeDeadlineFor(timeout, now), script.signal, target.env),
+    hostPorts(route, form.cancelSent),
     build,
   );
   progress.called ||= call.kind !== "refused" || call.called;
@@ -231,18 +223,17 @@ async function runScriptUnit<T>(
 }
 
 /**
- * Opens `script` on `provider`, a provider the caller opened under the editor's posture: reads the host core and mints
- * the script's scope where the provider's session offers `console.endScope`.
+ * Opens `script` on `target`, a console target the caller opened under the editor's posture: reads the host core and
+ * mints the script's scope where the target's session offers `console.endScope`.
  *
  * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any call.
  */
-export function openEditorScript(provider: DatabaseProvider, script: EditorScriptRun): EditorScript {
+export function openEditorScript(target: ConsoleTarget, script: EditorScriptRun): EditorScript {
   const core = hostCore();
-  const target = providerConsoleTarget(provider);
   const ends = checkConsoleFacet(target.session.calls, "endScope").length === 0;
   const scope = ends ? newQueryCallScope() : undefined;
   const progress: ScriptProgress = { called: false };
-  const state: ScriptRunState = { core, provider, marks: target, script, scope, progress };
+  const state: ScriptRunState = { core, target, script, scope, progress };
   return {
     runUnit(index, build, now = Date.now()) {
       if (script.units[index] === undefined) {
@@ -257,10 +248,10 @@ export function openEditorScript(provider: DatabaseProvider, script: EditorScrip
       if (!progress.called) return { offered: true, openTransaction: "none" };
       const { stopped } = progress;
       if (stopped === undefined) {
-        return { offered: true, openTransaction: await endEditorScope(provider, scope, script.signal, script.route) };
+        return { offered: true, openTransaction: await endEditorScope(target, scope, script.signal, script.route) };
       }
       stopped.settled
-        .then(() => endEditorScope(provider, scope, script.signal, script.route))
+        .then(() => endEditorScope(target, scope, script.signal, script.route))
         .then(() => undefined, lateScopeEnd(script.route));
       return { offered: true, openTransaction: "none" };
     },

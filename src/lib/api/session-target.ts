@@ -4,10 +4,14 @@
  *
  * Every builder of a legacy provider's session target lives here, the object tree's (`providerTreeTarget`), the object
  * source's (`providerSourceTarget`), the monitoring and health reads' (`providerMonitoringTarget`), the maintenance
- * calls' (`providerMaintenanceTarget`) and the console's, of the cancel, the editor's statements and the transaction
- * calls (`providerConsoleTarget`), so this is the one module of the caller facades that builds a bridged session for
- * them (`bridgedConsole` and `bridgedMaintenance` in
- * src/lib/provider-host/legacy-bridge.ts), and every builder of a target from a cache entry of the provider factory, by
+ * calls' (`providerMaintenanceTarget`) and the console's, of the cancel, the editor's statements, the transaction calls
+ * and the editor's script (`providerConsoleTarget`), so this is the one module of the caller facades that builds a
+ * bridged session (`bridgedConsole`, `bridgedMaintenance`, `bridgedScriptUnit`, `bridgedTransactionScriptUnit` and
+ * `bridgedComposedStatements` in src/lib/provider-host/legacy-bridge.ts). The data profile's sample and a statement
+ * Studio composed read a legacy provider alone, so their bridged sessions are built here as read forms of the provider
+ * (`providerSampleRead` for `openProfileReads` in src/lib/api/profile-reads.ts, `providerComposedRead` for
+ * `composedStatementOn` in src/lib/api/composed-statement.ts), not as targets. It also holds every builder of a target
+ * from a cache entry of the provider factory, by
  * the entry's form, so no facade and no route forks on who serves an engine. This module value-imports no provider
  * factory module (src/lib/db/factory.ts), so the VS Code backend, which is handed the factory's functions and imports
  * none of them, builds its targets here too; the builders that open through the factory live in
@@ -20,10 +24,11 @@
  * settled, a statement and a unit of a script inside a transaction among its calls; a legacy provider's target marks
  * nothing, since its provider reports its own runs in flight (`hasRunsInFlight`), as it did before targets.
  *
- * A console target also states how a statement and a unit of a script inside a transaction run on its session
- * (`StatementForm`, `ScriptUnitForm`): through the legacy bridge for a legacy provider, on the session itself for a
- * provider package's, so `runEditorQuery`, the transaction calls and the script inside a transaction run on a target and
- * none of them forks on who serves the engine.
+ * A console target also states how a statement, a unit of a script inside a transaction and a unit of the editor's
+ * script run on its session (`StatementForm`, `ScriptUnitForm`, `EditorScriptUnitForm`): through the legacy bridge for
+ * a legacy provider, on the session itself for a provider package's, so `runEditorQuery`, the transaction calls, the
+ * script inside a transaction and the editor's script (`openEditorScript` in src/lib/api/editor-script.ts) run on a
+ * target and none of them forks on who serves the engine.
  *
  * A caller that answers a provider package's failure by its record (`packageFailureAnswer` in ./package-errors), the
  * object routes and MCP's `inspect_schema`, answers so only what the package's own tree or source read raised: it
@@ -51,6 +56,7 @@ import {
   type EditorQueryRun,
   editorPageBody,
   packagePageBody,
+  packageWarningsByGrant,
   pageBound,
   statementTimeout,
 } from "@/lib/api/editor-query";
@@ -74,13 +80,15 @@ import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import { HostDefectError } from "@/lib/provider-host/access";
 import {
+  bridgedComposedStatements,
   bridgedConsole,
   bridgedMaintenance,
+  bridgedScriptUnit,
   bridgedTransactionScriptUnit,
   type TransactionScriptUnitOpen,
 } from "@/lib/provider-host/legacy-bridge";
 import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
-import type { DatabaseType, QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /**
  * How a call on a target ended, as its marks read it: an execute's page among the answers; undefined for a call that
@@ -190,17 +198,64 @@ export interface ScriptUnitForm {
 }
 
 /**
+ * What one unit of a script of POST /api/db/multi-query runs with: the unit, the request's page options for the last
+ * unit only, core's scrub of its connection and the route a provider package's warnings are logged under.
+ */
+export type EditorScriptUnitRun = TransactionScriptUnitOpen & Pick<StatementRun, "scrub" | "route">;
+
+/** How one unit of the editor's script runs on a console target: its unit form, and whether its cancel was sent. */
+export interface EditorScriptUnitForm extends ScriptUnitForm {
+  readonly cancelSent: () => boolean;
+}
+
+/**
  * A session target of the console's calls: the cancel (`cancelEditorRun` in src/lib/api/editor-query.ts), the editor's
- * statement (`runEditorQuery`), and the transaction calls and the script inside a transaction
- * (src/lib/api/editor-transaction.ts, `openTransactionScript` in src/lib/api/editor-script.ts).
+ * statement (`runEditorQuery`), the transaction calls and the script inside a transaction
+ * (src/lib/api/editor-transaction.ts, `openTransactionScript` in src/lib/api/editor-script.ts), and the editor's script
+ * (`openEditorScript`) with the end of its scope (`endEditorScope`).
  */
 export interface ConsoleTarget extends SessionTarget<ConsoleSession> {
   /** How the statement `run` names runs on the target, built when asked, once per statement. */
   statement(run: StatementRun): StatementForm;
   /** How the unit `open` names, of a script inside a transaction, runs on the target, built when asked, once per unit. */
   transactionScriptUnit(open: TransactionScriptUnitOpen): ScriptUnitForm;
+  /**
+   * How the unit `run` names, of a script of POST /api/db/multi-query, runs on the target, built when asked, once per
+   * unit.
+   */
+  scriptUnit(run: EditorScriptUnitRun): EditorScriptUnitForm;
   /** The plan the target's session supports, read when asked: whether it explains a statement, and in which format. */
   explainSupport(): Pick<ProviderCapabilities, "supportsExplain" | "explainFormat">;
+}
+
+/**
+ * How one read whose whole result its caller reads runs on a legacy provider's bridged session: its session, the
+ * pump's limits, and the legacy result its execute answered, by reference.
+ */
+export interface ReadForm {
+  readonly session: ConsoleSession;
+  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
+  /** @throws {Error} When execute has not answered, a host defect. */
+  readonly answered: () => QueryResult;
+}
+
+/**
+ * The data profile's sample read of `provider` (`openProfileReads` in src/lib/api/profile-reads.ts): one bridged
+ * console session of it, built when this is called with a page of `rows`, so the provider's prepare writes its own
+ * bound, one row past the page; its legacy result answered by reference.
+ */
+export function providerSampleRead(provider: DatabaseProvider, rows: number): ReadForm {
+  const bridged = bridgedConsole(provider, { limit: rows });
+  return { session: bridged.session, pumpLimits: bridged.pumpLimits, answered: () => bridged.answered().result };
+}
+
+/**
+ * A read of `provider` of a statement Studio composed (`composedStatementOn` in src/lib/api/composed-statement.ts):
+ * one composed statement session of it (`bridgedComposedStatements`), built when this is called, whose execute sends
+ * the provider's plain `query` the statement alone.
+ */
+export function providerComposedRead(provider: DatabaseProvider): ReadForm {
+  return bridgedComposedStatements(provider);
 }
 
 /** A legacy provider reads no declared environment, so its calls get a reader of none. */
@@ -304,7 +359,9 @@ export function providerMaintenanceTarget(
  * runs on the bridge's transaction script unit session (`bridgedTransactionScriptUnit`, clause C-50) where the provider
  * holds a transaction session, and otherwise on its bridged console session, whose calls do not offer
  * `console.transaction`, so the host core refuses the unit's request before the call, not-sent, as it refuses that
- * request for every session that does not offer it.
+ * request for every session that does not offer it. Each unit of the editor's script runs on the bridge's script unit
+ * session (`bridgedScriptUnit`, clause C-50), the last one's last read bounded under the provider's own type, which is
+ * its connection's, with the request's page options.
  */
 export function providerConsoleTarget(provider: DatabaseProvider): ConsoleTarget {
   return {
@@ -325,6 +382,13 @@ export function providerConsoleTarget(provider: DatabaseProvider): ConsoleTarget
       const bridged = bridgedConsole(provider, {});
       return { session: bridged.session, pumpLimits: bridged.pumpLimits, answered: () => bridged.answered().result };
     },
+    scriptUnit: (run) =>
+      bridgedScriptUnit(
+        provider,
+        run.lastUnitOptions === undefined
+          ? { unit: run.unit }
+          : { unit: run.unit, tailBound: { dialect: provider.type, options: run.lastUnitOptions } },
+      ),
     explainSupport: () => provider.getCapabilities(),
   };
 }
@@ -362,17 +426,22 @@ function packageStatement(entry: CachedSession, session: ConsoleSession, run: St
 const UNIT_OVER_PAGE_SENTENCE = `The unit's result is more than the ${PAGE_MAX_BYTES} bytes one page of a result may hold, and a script's answer has no field to say where a page ends, so Studio answers none of its rows.`;
 
 /**
- * A unit of a script inside a transaction on a provider package's session: the session itself, whose unit's rows exist
- * only in its page, so the pump takes every row of a unit but the last, and the request's page for the last
- * (`lastUnitOptions`), no row past it, since a script's answer carries no pagination. Its result is the page's rows as
- * records keyed by their column names, each cell in the value codec's wire form, its fields, the declared types of the
- * columns that state one, the package's own row count where the page holds every row and the package stated one, and
- * the rows answered otherwise, and the package's execution time; it carries no warnings, which the transaction route's
- * answer does not read. A page the host cut by bytes is `StudioByteBudgetRefusal`, outcome unknown, since the
- * statement ran, naming none of its rows: never a shorter result. The unit's text is the facade's request; the form
- * reads nothing else of `open`.
+ * A unit of a script on a provider package's session, inside a transaction or of POST /api/db/multi-query: the session
+ * itself, whose unit's rows exist only in its page, so the pump takes every row of a unit but the last, and the
+ * request's page for the last (`lastUnitOptions`), no row past it, since a script's answer carries no pagination. Its
+ * result is the page's rows as records keyed by their column names, each cell in the value codec's wire form, its
+ * fields, the declared types of the columns that state one, the package's own row count where the page holds every row
+ * and the package stated one, and the rows answered otherwise, and the package's execution time; and its warnings as
+ * `warnings` answers them, present only where it answers at least one. A unit inside a transaction is handed no
+ * `warnings`, since the transaction route's answer reads none. A page the host cut by bytes is
+ * `StudioByteBudgetRefusal`, outcome unknown, since the statement ran, naming none of its rows: never a shorter result.
+ * The unit's text is the facade's request; the form reads nothing else of `open`.
  */
-function packageScriptUnit(session: ConsoleSession, open: TransactionScriptUnitOpen): ScriptUnitForm {
+function packageScriptUnit(
+  session: ConsoleSession,
+  open: TransactionScriptUnitOpen,
+  warnings?: (record: PageRecord) => QueryWarning[],
+): ScriptUnitForm {
   const page = open.lastUnitOptions === undefined ? undefined : pageBound(open.lastUnitOptions);
   const maxRows = page === undefined || "unlimited" in page ? Number.MAX_SAFE_INTEGER : page.limit;
   let columns: readonly Column[] = [];
@@ -389,6 +458,7 @@ function packageScriptUnit(session: ConsoleSession, open: TransactionScriptUnitO
         Object.fromEntries(fields.map((field, index) => [field, encodeValue(row[index])])),
       );
       const typed = columns.filter((column) => typeof column.type === "string");
+      const answered = warnings?.(record) ?? [];
       return {
         rows,
         fields,
@@ -397,6 +467,7 @@ function packageScriptUnit(session: ConsoleSession, open: TransactionScriptUnitO
         }),
         rowCount: record.page.end === "done" && record.rowCount !== undefined ? record.rowCount : rows.length,
         executionTime: record.executionTimeMs,
+        ...(answered.length > 0 && { warnings: answered }),
       };
     },
   };
@@ -408,8 +479,10 @@ const NO_PLAN = Object.freeze({ supportsExplain: false });
 /**
  * The console target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
  * provider's through `providerConsoleTarget`; a provider package's session with its declared environment, the
- * connection's own statement timeout or Studio's default, the marks of each call on the entry, its statements and the
- * units of a script inside a transaction on the session itself (`packageStatement`, `packageScriptUnit`), and no plan.
+ * connection's own statement timeout or Studio's default, the marks of each call on the entry, its statements, the
+ * units of a script inside a transaction and the units of the editor's script on the session itself
+ * (`packageStatement`, `packageScriptUnit`), the editor's units' warnings by how the entry's engine record grants the
+ * package its own words (`packageWarningsByGrant`), and no plan.
  */
 export function entryConsoleTarget(entry: CachedSession, connection: EngineConnection): ConsoleTarget {
   const { opened } = entry;
@@ -422,6 +495,12 @@ export function entryConsoleTarget(entry: CachedSession, connection: EngineConne
     ...entryMarks(entry),
     statement: (run) => packageStatement(entry, session, run),
     transactionScriptUnit: (open) => packageScriptUnit(session, open),
+    scriptUnit: (run) => ({
+      ...packageScriptUnit(session, run, (record) =>
+        packageWarningsByGrant(record.warnings, entry.engine.grants.ownWords, run.scrub, run.route),
+      ),
+      cancelSent: () => false,
+    }),
     explainSupport: () => NO_PLAN,
   };
 }

@@ -4,6 +4,7 @@ import { installStandInRecord } from "../../helpers/stand-in-record";
 import { STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
@@ -21,6 +22,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
@@ -90,13 +92,20 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = async (body: Record<string, unknown>) => {
+    if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection;
+  };
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
+    resolveConnection: mock(resolveConnection),
+    // The route's resolve: the connection with the server catalog's record of its type, as the real one answers a
+    // legacy engine's.
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
+      const connection = (await resolveConnection(body)) as DatabaseConnection;
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -125,6 +134,22 @@ mock.module("@/lib/db", () => ({
   isTimeoutError,
   isAuthenticationError,
   mapDatabaseError,
+}));
+
+// ─── The editor's session of a legacy record, as the route opens it ─────────
+//
+// The route opens the editor's session of the connection's record (`editorTarget`); a legacy record's entry holds the
+// provider `getOrCreateProvider` answers, handed the factory's arguments, so `args[2]` is the execution context and
+// `args[3]` the request's wait. The stand-in calls this file's own mock, never the factory through its mocked module.
+const realFactory = { ...(await import("@/lib/db/factory")) };
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  getOrCreateEditorSession: async (
+    connection: DatabaseConnection,
+    _engine: unknown,
+    execution: unknown,
+    wait?: OpenWait,
+  ) => editorEntryOf(await mockGetOrCreateProvider(connection, {}, execution, wait)),
 }));
 
 // ─── The query event insert, faked: the sink, the builder and the admission gate stay real ──────

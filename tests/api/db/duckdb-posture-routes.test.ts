@@ -185,6 +185,7 @@ function onTheMetadataSession(route: string): boolean {
 const OPENS_THE_EDITOR_SESSION = new Set([
   "query",
   "transaction",
+  "multi-query",
   "objects/source",
   "pool-stats",
   "cancel",
