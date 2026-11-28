@@ -5,33 +5,34 @@
  * string value of that body carries (a query plan column, for example), which the outer pass rightly leaves alone,
  * so the inner parse runs the scanner a second time.
  *
- * Every body replayed below was captured verbatim from a SQL server's HTTP answer, and the hazard is pinned first:
+ * Every body replayed below was captured from a SQL server's HTTP answer, verbatim except for the table and column
+ * names, which are neutral ones, and the hazard is pinned first:
  * `JSON.parse` rounds a 64-bit literal silently, with no error whatsoever.
  */
 import { describe, expect, test } from "bun:test";
 import { carriesLossyNumber, quoteUnsafeIntegers } from "@libredb/provider-sdk/values";
 
 /**
- * `SELECT id, name, snowflake_id FROM libredb_demo WHERE region = ? LIMIT 1` as the
+ * `SELECT id, name, wide_id FROM demo_table WHERE region = ? LIMIT 1` as the
  * server returned it: three header rows and then the data, with the BIGINT unquoted
  * - the exact 2^53+1 value that `JSON.parse` rounds to ...992.
  */
 const CAPTURED_SELECT_BODY =
-  '[["id","name","snowflake_id"],["LONG","STRING","LONG"],["BIGINT","VARCHAR","BIGINT"],[1030,"alpha",9007199254740993]]';
+  '[["id","name","wide_id"],["LONG","STRING","LONG"],["BIGINT","VARCHAR","BIGINT"],[1030,"alpha",9007199254740993]]';
 
 /**
- * One EXPLAIN plan column, verbatim, for
- * `SELECT id FROM "libredb_demo" WHERE snowflake_id = 9007199254740993`. It is the
+ * One EXPLAIN plan column, verbatim except for those names, for
+ * `SELECT id FROM "demo_table" WHERE wide_id = 9007199254740993`. It is the
  * value of a JSON string, which is why the outer pass leaves its digits alone and
  * the inner parse has to run the scanner itself.
  */
 const CAPTURED_PLAN_COLUMN =
-  '[{"query":{"queryType":"scan","dataSource":{"type":"table","name":"libredb_demo"},' +
-  '"filter":{"type":"equals","column":"snowflake_id","matchValueType":"LONG","matchValue":9007199254740993},' +
+  '[{"query":{"queryType":"scan","dataSource":{"type":"table","name":"demo_table"},' +
+  '"filter":{"type":"equals","column":"wide_id","matchValueType":"LONG","matchValue":9007199254740993},' +
   '"columns":["id"]}}]';
 
 describe("quoteUnsafeIntegers", () => {
-  /** The exact value the captured server returned for libredb_demo.snowflake_id. */
+  /** The exact value the captured server returned for demo_table.wide_id. */
   const LIVE_UNSAFE = "9007199254740993";
 
   test("proves the hazard it exists for", () => {

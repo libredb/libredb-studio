@@ -102,7 +102,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/sql-writing/export-shared.ts` | SDK /manifest | Pure helpers the export forms share, which Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
 | `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder building blocks Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
 | `src/lib/db/sql-writing/types.ts` | SDK /manifest | The types of the SQL writing row and of the SQL writing functions a declaration names. |
-| `src/lib/db/types.ts` | core only | The legacy provider interface and its types; the provider-facing types of the same names are SDK /calls's. |
+| `src/lib/db/types.ts` | core only | The legacy provider interface and its types. Some of the types provider code imports have a type of the same name in SDK /calls, the result, schema, source and monitoring shapes such as `ColumnSchema`, `ObjectDetail` and `HealthInfo`; the rest have none, among them `DatabaseConnection` and `ProviderOptions`, which a contract-form provider reads from its open context (`OpenContext`), `ProviderExecutionContext`, from its call context (`CallContext`), `QueryResult`, `ReadOnlyStatementBudget` and `ReadOnlyStatementMode`, which are `ExecuteAnswer`, `ReadBudget` and `ReadOnlyMode` of SDK /calls, and `ProviderCapabilities`, `ProviderLabels` and `ObjectKindSpec`, which are members of its declaration. |
 | `src/lib/db/utils/admitted-file.ts` | host service: file admission | The file the host's legacy open admitted, read from what the host passed. |
 | `src/lib/db/utils/bounded-limiter.ts` | host service: run registry | Process-wide in-flight bounds and the run registry a provider cancels by. |
 | `src/lib/db/utils/catalog-sessions.ts` | SDK /util | An instance-scoped holder of per-catalog sessions with an injected clock, holding no process-wide state. |
@@ -110,7 +110,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/utils/measured-aggregate.ts` | SDK /rows | Pure reading of a nullable aggregate. |
 | `src/lib/db/utils/pool-manager.ts` | SDK /values | Provider code imports only `formatDuration`, pure display formatting that joins `formatBytes` there when a package needs it; the pool helpers stay core. |
 | `src/lib/db/utils/positional-rows.ts` | SDK /rows | Pure keying of positionally read rows by column name. |
-| `src/lib/db/utils/query-limiter.ts` | host service: row limit | The default and maximum row limits are host policy; a package's row bound is its execute request's page. |
+| `src/lib/db/utils/query-limiter.ts` | host service: row limit | The default and maximum row limits are host policy, and the limiter resolves a grammar through core's registry, which the other providers' imports of it still reach; a package's row bound is its execute request's page. |
 | `src/lib/db/utils/regular-file.ts` | host service: files | It opens and inspects files on the host's file system. |
 | `src/lib/db/utils/require-trust-material.ts` | host service: trust material | It reads the operator's CA material the host built the provider with. |
 | `src/lib/db/utils/require-tunnel-route.ts` | host service: tunnel route | It reads the tunnel route the host's factory decided and opened. |
@@ -268,6 +268,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 
 The table names every symbol Kafka's provider directory `src/lib/db/providers/stream/kafka/` imported from core when #2623 measured it, its home in the contract-form Kafka the provider's move builds, and where the legacy class imports it from now.
 "leaves with the legacy class" means the import belongs to a member of the legacy provider interface, or to a legacy row core reads through an inward pair, and leaves with Kafka's move; any other source is the `@libredb/provider-sdk` subpath the directory imports the symbol from.
+Every symbol the directory imports from `@libredb/provider-sdk` or one of its subpaths has a row as well.
 The Module cell is the core module's path at that measurement, so a moved piece keeps the path of a file that no longer exists.
 `tests/unit/db/kafka/core-imports.test.ts` holds the table to the source in "Kafka's provider imports from core only what leaves with the legacy class".
 
