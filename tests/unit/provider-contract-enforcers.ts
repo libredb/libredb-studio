@@ -3178,6 +3178,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "fleet health reads a package engine's health",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
+      "tests/api/db/objects-source-package-engine.test.ts": [
+        "the source route answers a package engine's source through its package",
+        "a package engine whose session does not offer objects.source is refused by the record's offer, by name",
+      ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "each tree route answers a package engine's tree through its package",
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
@@ -3287,6 +3291,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
       ],
+      "tests/api/db/objects-source-package-engine.test.ts": [
+        "a refinement that withdraws objects.source is refused after the open by the session's offer, not-sent, and the package is not called",
+      ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
         "the host core's execute, cancel, endScope, tree, source, panel, pool statistics and health run on the session unchanged",
@@ -3320,6 +3327,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a tree answer's sentence is scrubbed where the record grants its words and Studio's sentence where it does not, logged once",
         "a maintenance run's message and a preview's summary, refusal and note are scrubbed where the record grants its words and Studio's sentence where it does not, logged once, and every legacy record grants its words scrubbed",
         "scrubMonitoringData reads the overview's table count sentence and the cache advice under the record's grant: Studio's sentence where it grants none, logged once each, through core's scrub where it does, and a panel error through core's scrub on either grant",
+        "a source document's sentences are scrubbed where the record grants its words and Studio's sentence where it does not, Studio's own bound sentence kept, logged once",
+      ],
+      "tests/api/db/objects-source-package-engine.test.ts": [
+        "a code-only package's sentences in a source document reach the client as Studio's sentence, and a granted one's through core's scrub, Studio's own bound sentence kept",
+        "the source route answers a package's open failure as not-sent, a malformed source answer as the package's defect and the package's own error as a source read, never as a tree read",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a code-only package's sentences in a tree answer reach the client as Studio's sentence, and a granted one's through core's scrub",
@@ -3502,6 +3514,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/netconf/provider.test.ts": [
         "a key read the device answers with no data is the engine's statement, never an empty part, through the host core's source call",
+      ],
+      "tests/api/db/objects-source-package-engine.test.ts": [
+        "the source route answers a package engine's source through its package",
       ],
       "tests/api/db-objects.test.ts": [
         "a source path deeper than the connection's object model admits is refused before any provider call, outcome not-sent, in Studio's words",

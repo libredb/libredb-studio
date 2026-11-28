@@ -20,8 +20,9 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * standalone app, which reads through `/api/db/objects/source`, and the embedded library
  * surface, where a HOST supplies the document and no route of ours runs at all. That second
  * half is the one the server-side stripping cannot cover. The route deletes `edit` from any part
- * whose kind the CONNECTED provider does not declare editable: `offeredSourceEdits` reads
- * `kindAcceptsSourceEdits(model, document.kind)` and passes the answer to `stripEdit`
+ * whose kind the CONNECTED provider does not declare editable, or whose engine's record offers no object edit:
+ * `offeredSourceEdits` reads `kindAcceptsSourceEdits(model, document.kind)` and the record's offer, and passes the
+ * conjunction to `stripEdit`
  * (`offeredSourceEdits` in `src/lib/api/object-route.ts`). This paragraph said that stripping was
  * NOT WRITTEN YET, which was true when this file landed and stopped being true in the same phase;
  * corrected here rather than left, because a stale claim about a guard reads as a statement that

@@ -3806,9 +3806,10 @@ export type ObjectSourcePart =
        * mapper turns that into HTTP 500 because the message matches none of its substrings. A
        * user who learns that before typing is the whole point of this field.
        *
-       * ABSENT means this provider offers no edit for this part, and only a HOST or a provider
-       * that declares no editable kind produces absence, because the route deletes the field
-       * from any part whose kind fails `kindAcceptsSourceEdits` on the CONNECTED provider.
+       * ABSENT means this provider offers no edit for this part, and only a HOST, a provider
+       * that declares no editable kind or a provider package's engine produces absence, because the route deletes the field
+       * from any part whose kind fails `kindAcceptsSourceEdits` on the CONNECTED provider, and from
+       * every part where the engine's record offers no object edit, as a provider package's does not yet.
        */
       readonly edit?: ObjectPartEdit;
     }

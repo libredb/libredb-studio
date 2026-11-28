@@ -77,6 +77,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "metadataMonitoringTarget",
     "editorMonitoringTarget",
     "editorConsoleTarget",
+    "editorSourceTarget",
     "editorMaintenanceOpening",
     "metadataMaintenanceOpening",
     "cachedEditorProvider",
@@ -108,7 +109,7 @@ const BUILDS_WHAT_THE_ROUTE_RESOLVED =
 
 /** A db/objects route or db/keys/scan: handleObjectRequest is its whole body. */
 const OBJECT_ROUTE =
-  "hands its request to handleObjectRequest, which resolves the connection through resolveConnection or resolveServedConnection before it builds anything";
+  "hands its request to handleObjectRequest, which resolves the connection through resolveServedConnection before it builds anything";
 
 /** The maintenance route or its preview: handleMaintenanceRequest is its whole path past the guard and admin check. */
 const MAINTENANCE_ROUTE =
@@ -159,8 +160,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/app/api/agent/runs/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
-    "src/lib/api/object-route.ts":
-      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the source read's connection here before it builds",
   },
   resolveServedConnection: {
     "src/app/api/admin/fleet-health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
@@ -175,7 +174,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/lib/api/object-route.ts":
-      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, edit and key scan requests' connection here before it builds",
+      "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, source, edit and key scan requests' connection here before it builds",
     "src/lib/api/maintenance-route.ts":
       "handleMaintenanceRequest, the shared path of the maintenance route and its preview, resolves the request's connection here before it opens anything",
   },
@@ -266,7 +265,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/api/editor-provider.ts":
       "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection first",
     "src/lib/api/object-route.ts":
-      "handleObjectRequest builds only after resolving the request's connection through resolveConnection or resolveServedConnection",
+      "handleObjectRequest builds the edit and key scan requests' provider only after resolving the request's connection through resolveServedConnection",
   },
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
@@ -281,7 +280,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateEditorSession: {
     "src/lib/api/editor-provider.ts":
-      "editorTarget, editorMonitoringTarget, editorConsoleTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query, a route listed under editorMonitoringTarget or editorConsoleTarget or the maintenance route helper listed under editorMaintenanceOpening here, resolved it through resolveServedConnection first",
+      "editorTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query, handleObjectRequest, a route listed under editorMonitoringTarget or editorConsoleTarget or the maintenance route helper listed under editorMaintenanceOpening here, resolved it through resolveServedConnection first",
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
@@ -328,6 +327,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest opens the tree routes' metadata session only after resolving the request's connection through resolveServedConnection",
     "src/lib/mcp/context.ts":
       "metadataTarget opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
+  },
+  editorSourceTarget: {
+    "src/lib/api/object-route.ts":
+      "handleObjectRequest opens the source route's editor session only after resolving the request's connection through resolveServedConnection",
   },
   cachedEditorProvider: {
     "src/app/api/db/transaction/route.ts":
@@ -1423,10 +1426,10 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    // Seven files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
-    // metadata and statement analysis routes moved to the served resolve, so the floor sits at the count the census
-    // finds today.
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(7);
+    // Six files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
+    // metadata and statement analysis routes and the object source read moved to the served resolve, so the floor sits
+    // at the count the census finds today.
+    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(6);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

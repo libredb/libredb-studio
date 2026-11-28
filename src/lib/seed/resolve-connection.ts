@@ -129,15 +129,15 @@ export async function resolveConnection(
 }
 
 /**
- * The connection a request names, resolved under `session` with every guard `resolveConnection` runs, in its order,
- * and the server catalog's record of its engine, for a route that serves every engine the catalog serves, or refuses a
+ * The connection a request names, resolved under `session` with every guard `resolveConnection` runs, in its order, and
+ * the server catalog's record of its engine, for a route that serves every engine the catalog serves, or refuses a
  * package's engine by the record's offer: Test Connection, the query route, the cancel and disconnect routes, the six
- * tree routes, the object edit and key scan requests (`handleObjectRequest` in src/lib/api/object-route.ts), the
- * monitoring, health and pool statistics routes, the maintenance and preview routes, fleet health, the provider
- * metadata route, the column profile and the statement analysis (docs/providers/CONTRACT.md, clause C-107). The type
- * is read by `servedEngineRecord`
- * (src/lib/db/server-catalog.ts) at the place `resolveConnection` reads it, so an engine whose record offers no legacy
- * provider resolves too; the caller reads what the record offers, never who serves it.
+ * tree routes, the object source read, the object edit and key scan requests (`handleObjectRequest` in
+ * src/lib/api/object-route.ts), the monitoring, health and pool statistics routes, the maintenance and preview routes,
+ * fleet health, the provider metadata route, the column profile and the statement analysis (docs/providers/CONTRACT.md,
+ * clause C-107). The type is read by `servedEngineRecord` (src/lib/db/server-catalog.ts) at the place
+ * `resolveConnection` reads it, so an engine whose record offers no legacy provider resolves too; the caller reads what
+ * the record offers, never who serves it.
  *
  * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
  * entry's type names no provider.
