@@ -19,9 +19,12 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realClassifier from "@/lib/agent/workflow-classifier";
 import * as realSeed from "@/lib/seed/resolve-connection";
-import { legacyAgentEngine, openWorkflows } from "@/lib/agent/agent-manifest";
-import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { legacyAgentEngine, notReviewedSentence, openWorkflows } from "@/lib/agent/agent-manifest";
+import { noAdapterSentence } from "@/lib/agent/posture";
+import { servedEngineRecord, serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
 import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
+import { servedResolveOver } from "../../helpers/served-resolve";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
@@ -56,7 +59,10 @@ function installMocks(): void {
     ...realClassifier,
     classifyAgentWorkflow: mockClassify,
   }));
-  mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
+  mock.module("@/lib/seed/resolve-connection", () => ({
+    ...realSeed,
+    resolveServedConnection: servedResolveOver(mockResolveConnection),
+  }));
 }
 
 installMocks();
@@ -395,6 +401,48 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("what is running", {
       statementLanguage: undefined,
       workflows: ["operations"],
+    });
+  });
+
+  test("classify answers a package engine's connection", async () => {
+    const { BARE, REQUESTING, READING } = AGENT_PACKAGE_ENGINES;
+    await withCatalog(agentPackageCatalog(), async () => {
+      const post = async (type: string, mode: string) => {
+        mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type });
+        const res = await POST(classifyRequest({ objective: "what is slow", connectionId: "seed:acme", mode }));
+        return { status: res.status, body: await parseResponseJSON<Record<string, unknown>>(res) };
+      };
+
+      // Plan mode opens every workflow on a package engine with no register row, in SQL's terms.
+      expect(await post(BARE, "planning")).toEqual({
+        status: 200,
+        body: { workflowType: "query-optimization", outcome: "classified" },
+      });
+      expect(mockClassify).toHaveBeenLastCalledWith("what is slow", {
+        statementLanguage: undefined,
+        workflows: ["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"],
+      });
+
+      // Agent mode opens nothing on a package engine with no row: refused by name, the classifier never asked.
+      mockClassify.mockClear();
+      const bare = servedEngineRecord(BARE);
+      expect(await post(BARE, "agent")).toEqual({
+        status: 400,
+        body: { error: noAdapterSentence(bare.displayName, false), refused: "engine-unsupported" },
+      });
+      const requesting = servedEngineRecord(REQUESTING);
+      expect(await post(REQUESTING, "agent")).toEqual({
+        status: 400,
+        body: { error: notReviewedSentence(requesting.displayName, false), refused: "engine-unsupported" },
+      });
+      expect(mockClassify).not.toHaveBeenCalled();
+
+      // A package engine whose row grants one reading is offered only the operations workflow.
+      expect((await post(READING, "agent")).status).toBe(200);
+      expect(mockClassify).toHaveBeenCalledWith("what is slow", {
+        statementLanguage: undefined,
+        workflows: ["operations"],
+      });
     });
   });
 

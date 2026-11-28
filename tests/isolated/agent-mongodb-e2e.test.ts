@@ -17,6 +17,7 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import * as realResolveConnection from "@/lib/seed/resolve-connection";
 import type { DatabaseConnection } from "@/lib/types";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../helpers/mongodb-driver";
+import { servedResolveOver } from "../helpers/served-resolve";
 import ferretBuildInfo from "../unit/db/mongodb/fixtures/buildinfo-ferretdb-2.7.0.json";
 import noAuthReaderStatus from "../unit/db/mongodb/fixtures/connection-status-no-auth-libredb-agent-9.0.4.json";
 import rootStatus from "../unit/db/mongodb/fixtures/connection-status-root-9.0.4.json";
@@ -39,8 +40,8 @@ import {
  * Driven through the composition root, `driveAgentRun`, rather than `runInvestigation` as the Kubernetes runs are:
  * the driver is replaced at the module, so no seam has to reach the provider, and the composition root is where a
  * refused run is given its failure reason (`classifyDriveFailure`), which is what a refusal case here asserts. What
- * the root resolves from its environment is supplied: the run's connection (`resolveConnection`), its ledger world
- * (`resolveAgentLedgerWorld`) and its model (`createAgentModel`, a scripted model over the ratified adapter). The
+ * the root resolves from its environment is supplied: the run's connection (`resolveServedConnection`), its ledger
+ * world (`resolveAgentLedgerWorld`) and its model (`createAgentModel`, a scripted model over the ratified adapter). The
  * factory is the real one, observed but not replaced: every acquisition is recorded with its profile and handed to
  * the real `acquireExecutionProfileProvider`, so the profile's context (`executionContextFor`), the profiled cache and
  * the provider's verification at open all run as they do on a server. The cache is cleared between cases, so no case
@@ -135,10 +136,10 @@ mock.module("@/lib/agent/model-adapter", () => ({
 }));
 mock.module("@/lib/seed/resolve-connection", () => ({
   ...resolveConnectionExports,
-  resolveConnection: async () => {
+  resolveServedConnection: servedResolveOver(async () => {
     if (inFlight === null) throw new Error("no drive is in flight");
     return inFlight.connection;
-  },
+  }),
 }));
 
 const { driveAgentRun, getAgentRunService } = await import("@/lib/agent/runtime");

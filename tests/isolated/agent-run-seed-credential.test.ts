@@ -2,8 +2,8 @@
  * A run on a seed that declares an agent credential signs in as that credential, from the seed file to the provider.
  *
  * Driven end to end from what an operator writes: a seed file with `agentUser` and `agentPassword` as `${ENV}`
- * references, a run started through `POST /api/agent/runs`, the real drive, the real `resolveConnection` and the real
- * factory. The assertion reads the user and password each provider was constructed with, never the connection the
+ * references, a run started through `POST /api/agent/runs`, the real drive, the real `resolveServedConnection` and the
+ * real factory. The assertion reads the user and password each provider was constructed with, never the connection the
  * test wrote, so it fails if the schema, the projection or the resolution drops a field.
  *
  * Isolated because it mocks the run ledger's world, the model and the investigation loop, which other suites import

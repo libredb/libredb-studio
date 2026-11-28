@@ -1,10 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  notReviewedSentence,
-  operationsWorkflowOpens,
-  persistedRunFacts,
-  workflowAvailability,
-} from "@/lib/agent/agent-manifest";
+import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
@@ -15,7 +10,7 @@ import {
 } from "@/lib/agent/execution-policy";
 import { decodeHistoryCursor, type AgentHistoryCursor } from "@/lib/agent/history";
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
-import { agentPosture } from "@/lib/agent/posture";
+import { startRefusalSentence } from "@/lib/agent/posture";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
 import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
@@ -35,17 +30,20 @@ import {
 import { createErrorResponse } from "@/lib/api/errors";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { catalogChoice, catalogChoiceBound, catalogSessionConnection } from "@/lib/db/catalog-scope";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderType,
+} from "@/lib/db/server-catalog";
 import { READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { openWithinCall } from "@/lib/api/editor-query";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
-import { getDBConfig } from "@/lib/db-ui-config";
 import { logger } from "@/lib/logger";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import type { DatabaseConnection } from "@/lib/types";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
 
 /**
  * Opens an agent run (#329 T9).
@@ -207,17 +205,20 @@ export async function GET(req: Request) {
 }
 
 /**
- * Whether Studio honours a caller's choice of database on the connection (#1530): `catalogChoice` (M-57) over the
- * capabilities read through `readProviderDeclarations` without connecting and without opening the connection's tunnel
- * (FND-2 slice 5). A record that cannot be built declares nothing; `catalogChoice` runs outside that catch, so its own
- * refusal of a type that names no provider is never read as a declaration.
+ * Whether Studio honours a caller's choice of database on the connection (#1530): none where the engine's record offers
+ * no catalog session (a provider package's engine), before any declaration is read; otherwise `catalogChoice` (M-57)
+ * over the capabilities read through `readProviderDeclarations` without connecting and without opening the connection's
+ * tunnel (FND-2 slice 5). A record that cannot be built declares nothing; `catalogChoice` runs outside that catch, so
+ * its own refusal of a type that names no provider is never read as a declaration.
  */
-async function catalogChoiceOn(connection: DatabaseConnection) {
-  const capabilities = await readProviderDeclarations(connection).then(
+async function catalogChoiceOn(connection: EngineConnection, engine: EngineRecord) {
+  if (!engine.offers.catalog) return "not-declared";
+  const legacy = legacyConnection(engine, connection);
+  const capabilities = await readProviderDeclarations(legacy).then(
     (declarations) => declarations.capabilities,
     () => null,
   );
-  return capabilities === null ? "not-declared" : catalogChoice(connection, capabilities);
+  return capabilities === null ? "not-declared" : catalogChoice(legacy, capabilities);
 }
 
 export async function POST(req: Request) {
@@ -330,8 +331,8 @@ export async function POST(req: Request) {
       return badRequest("catalog must be a non-empty string when provided");
     }
 
-    const connection = await resolveConnection({ connectionId }, guard.session);
-    scrub = providerTextScrub(connection, "any");
+    const { connection, engine } = await resolveServedConnection({ connectionId }, guard.session);
+    scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
 
     /*
       An engine whose provider implements no read-only statement path,
@@ -371,17 +372,22 @@ export async function POST(req: Request) {
          engine whose language would open the run but whose record grants no agent execution, or
          that requests a language its record does not grant, is answered with `notReviewedSentence`,
          naming it, and naming the operations workflow only where it opens. Read after the language,
-         so an engine with neither keeps the posture's sentence below.
+         so an engine with neither keeps the no-adapter sentence below.
+       - **The READ-ONLY STATEMENT SESSION**, the engine record's `offers.executionProfiles`. An engine
+         whose record grants agent execution and whose session opens through its provider package is
+         answered with `noStatementSessionSentence`, naming it, since Studio opens no read-only
+         statement session through a package yet. Every legacy record offers execution profiles.
        - **The VARIANT and what it requires.** A language may have no variant of the
          workflow, or a variant whose tools need a reading this engine does not serve;
          either is refused with the manifest's own sentence.
 
-      An engine with no language is answered with the posture's sentence, which is the one
-      the rail's own amber card shows as its reason: it names the engines that DO have
-      such a path, that `operations` runs here (every such engine offers a reading), and
-      that plan mode drafts here, so a
+      An engine with no language is answered with `noAdapterSentence`, the body of the
+      posture the rail's own amber card shows as its reason on a legacy engine: it names the
+      engines that DO have such a path, that `operations` runs here where it opens (on every
+      legacy engine with no language it does), and that plan mode drafts here, so a
       refused user is told both ways forward rather than a third phrasing of the same
-      fact. The other three refusals carry the same marker, because they are the same kind
+      fact. Every refusal names the engine by its record's display name
+      (`startRefusalSentence`). The other three refusals carry the same marker, because they are the same kind
       of fact: the request has to change its workflow, its mode or its connection.
 
       Ahead of `admitAgentModel` on purpose: that gate probes the configured model,
@@ -395,20 +401,10 @@ export async function POST(req: Request) {
       is the same status the route's other cross-field refusal (`autoExecute` on a
       workflow that presents no answer) answers with.
     */
-    const engine = servedEngineRecord(connection.type);
     const availability = workflowAvailability(mode as AgentRunMode, requestedWorkflow, engine);
     if (!availability.open) {
       return badRequest(
-        availability.cause === "no-adapter"
-          ? agentPosture({
-              mode: "agent",
-              engine: connection.type,
-              engineLabel: getDBConfig(connection.type).label,
-              handover: false,
-            }).body
-          : availability.cause === "not-reviewed"
-            ? notReviewedSentence(getDBConfig(connection.type).label, operationsWorkflowOpens(engine))
-            : availability.sentence,
+        startRefusalSentence(availability, engine),
         // The only refusal here that a client can already be explaining for itself, so
         // the only one that carries a code (#513).
         "engine-unsupported",
@@ -416,7 +412,7 @@ export async function POST(req: Request) {
     }
     /*
       An engine agent mode reads only beneath read roots its seed declares (its engine record's `readRootsRequired`
-      grant, read through `servedEngineRecord`), on a connection that declares none: refused here, before a run exists,
+      grant, read from the record the served resolve answered), on a connection that declares none: refused here, before a run exists,
       for the reason the engine refusal above is. The provider would refuse the profile at its first acquisition, but
       an engine that declares no object kinds is grounded without one, so without this the run would open, take its
       first model turn and fail at its first read. Only a workflow that sends statements in agent mode: plan mode and
@@ -450,7 +446,7 @@ export async function POST(req: Request) {
       provider declares sessions Studio does not honour. A database the role cannot open is
       refused before the run exists rather than after its first drive fails to connect.
     */
-    const choice = await catalogChoiceOn(connection);
+    const choice = await catalogChoiceOn(connection, engine);
     const serverLevel = choice === "honoured";
     if (serverLevel !== (catalog !== undefined)) {
       if (serverLevel) {
@@ -470,10 +466,10 @@ export async function POST(req: Request) {
     }
     if (catalog !== undefined) {
       // The request waits for the open within its engine's connect budget and its own signal: a client that leaves is
-      // answered 499 at once and an open past the budget 504, both not-sent, and no run is opened.
-      await openWithinCall(req.signal, connection.type, (wait) =>
-        editorProvider(guard.session, connection, catalog, wait),
-      );
+      // answered 499 at once and an open past the budget 504, both not-sent, and no run is opened. Only a legacy
+      // record honours a catalog (`catalogChoiceOn`), so the connection is its legacy provider's.
+      const legacy = legacyConnection(engine, connection);
+      await openWithinCall(req.signal, legacy.type, (wait) => editorProvider(guard.session, legacy, catalog, wait));
     }
 
     /*
@@ -485,7 +481,7 @@ export async function POST(req: Request) {
       itself, which is why this is that function and not a hash of the record.
     */
     const connectionIdentityOfRun = connectionIdentity(
-      catalog === undefined ? connection : catalogSessionConnection(connection, catalog),
+      catalog === undefined ? connection : catalogSessionConnection(legacyConnection(engine, connection), catalog),
     );
 
     /*

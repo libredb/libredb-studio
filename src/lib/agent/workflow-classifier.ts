@@ -152,9 +152,9 @@ const classifySystems = new Map<string, string>();
  * so the model is never offered it. The order comes from the SQL record, which is total over `AgentRunWorkflowType`
  * and written in the union's order.
  *
- * @throws AgentManifestError when nothing is left to offer, before any model is called: every engine opens at least
- *         one workflow in each mode (`tests/unit/lib/agent/agent-manifest.test.ts`), so an empty set is a defect in
- *         the caller or the manifest rather than an answer.
+ * @throws AgentManifestError when nothing is left to offer, before any model is called: every legacy engine opens at
+ *         least one workflow in each mode (`tests/unit/lib/agent/agent-manifest.test.ts`), and the classify route asks
+ *         only where one opens, so an empty set is a defect in the caller or the manifest rather than an answer.
  */
 function offeredWorkflows(
   language: AgentStatementLanguageId,

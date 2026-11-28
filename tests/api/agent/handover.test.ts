@@ -40,6 +40,7 @@ import {
   RefusedBeforeSendError,
   RowBudgetRefusal,
   SerialisedResultRefusal,
+  StudioProfileRefusal,
   TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
@@ -55,6 +56,11 @@ import * as realAuth from "@/lib/auth";
 import type { DatabaseType } from "@/lib/types";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedResolveOver } from "../../helpers/served-resolve";
+import { AGENT_PACKAGE_ENGINES, agentPackageCatalog } from "../../helpers/agent-package-catalog";
+import { withCatalog } from "../../helpers/package-catalog";
+import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 // The replay's statement runs through the host core's read-only execute, so this file installs one for its requests.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -161,7 +167,7 @@ function installMocks(): void {
     readAgentArtifact: mock(() => undefined),
   }));
   mock.module("@/lib/seed/resolve-connection", () => ({
-    resolveConnection: mockResolveConnection,
+    resolveServedConnection: servedResolveOver(mockResolveConnection),
     SeedConnectionError: class SeedConnectionError extends Error {
       constructor(
         message: string,
@@ -847,6 +853,52 @@ describe("a replay whose provider's text carries the connection's credential", (
       for (const each of forms) expect(JSON.stringify(body)).not.toContain(each);
     } finally {
       mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+});
+
+describe("the hand-over on a provider package's engine", () => {
+  type RefusalBody = { error: string; code?: string; kind?: string; outcome?: string };
+
+  test("a hand-over of a run on a package engine is refused by name before any session opens", async () => {
+    // The route's log of an unhandled refusal is silenced; the answer is what the case reads.
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // The answer the legacy acquisition's refusal of an engine with no read-only statement path gets, measured here.
+      mockAcquire.mockRejectedValueOnce(
+        new StudioProfileRefusal(
+          'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        ),
+      );
+      const legacyRes = await POST(request(), params());
+      const legacy = await parseResponseJSON<RefusalBody>(legacyRes);
+      mockAcquire.mockClear();
+
+      for (const engine of Object.values(AGENT_PACKAGE_ENGINES)) {
+        // oxlint-disable-next-line no-await-in-loop -- one hand-over at a time, each under the catalog it installs.
+        const { res, body, displayName } = await withCatalog(agentPackageCatalog(), async () => {
+          mockResolveConnection.mockResolvedValueOnce({ id: "seed:acme", name: "Acme", type: engine });
+          const answered = await POST(request(), params());
+          return {
+            res: answered,
+            body: await parseResponseJSON<RefusalBody>(answered),
+            displayName: servedEngineRecord(engine).displayName,
+          };
+        });
+        expect(body.error, engine).toBe(`${statementSessionRefusal(displayName)} So the hand-over runs nothing.`);
+        expect({ status: res.status, code: body.code, kind: body.kind, outcome: body.outcome }, engine).toEqual({
+          status: legacyRes.status,
+          code: legacy.code,
+          kind: legacy.kind,
+          outcome: legacy.outcome,
+        });
+      }
+      expect(mockAcquire).not.toHaveBeenCalled();
+      expect(mockQueryReadOnly).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
     }
   });
 });

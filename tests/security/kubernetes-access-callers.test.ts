@@ -101,7 +101,7 @@ const BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED =
 
 /** An agent route: resolved through the dispatcher, and held while the review is on. */
 const RESOLVED_BY_THE_AGENT_ROUTE =
-  "resolves the request's connection through resolveConnection under the signed-in session, so a reviewed id passes the review first, and agent mode is held while the review is on (src/lib/agent/config.ts)";
+  "resolves the request's connection through resolveServedConnection under the signed-in session, so a reviewed id passes the review first, and agent mode is held while the review is on (src/lib/agent/config.ts)";
 
 /** A route that builds only for the connection it resolved through the dispatcher. */
 const BUILDS_WHAT_THE_ROUTE_RESOLVED =
@@ -117,7 +117,7 @@ const MAINTENANCE_ROUTE =
 
 /** The agent runtime: its principal carries no identity provider subject. */
 const AGENT_RUNTIME =
-  "drives a run on the connection its recorded connectionId resolves to through resolveConnection, with a principal that carries no identity provider subject or issuer, so the review denies every reviewed connection; agent mode is held while the review is on";
+  "drives a run on the connection its recorded connectionId resolves to through resolveServedConnection, with a principal that carries no identity provider subject or issuer, so the review denies every reviewed connection; agent mode is held while the review is on";
 
 /** Every file that imports a gated function, under that function, with the reason it may. */
 const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -156,13 +156,12 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   resolveConnection: {
     "src/app/api/db/multi-query/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
-    "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
-    "src/app/api/agent/runs/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
-    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
   },
   resolveServedConnection: {
     "src/app/api/admin/fleet-health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
+    "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
+    "src/app/api/agent/runs/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/app/api/db/cancel/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/disconnect/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
@@ -173,6 +172,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, source, edit and key scan requests' connection here before it builds",
     "src/lib/api/maintenance-route.ts":
@@ -242,7 +242,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   readProviderDeclarations: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
-    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
@@ -260,21 +260,21 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "the one open function, gated above, calls it for a record no package serves, after the open check",
   },
   getOrCreateProvider: {
-    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/api/editor-provider.ts":
-      "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection first",
+      "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection or resolveServedConnection first",
     "src/lib/api/object-route.ts":
       "handleObjectRequest builds the edit and key scan requests' provider only after resolving the request's connection through resolveServedConnection",
   },
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
-      "metadataTreeTarget, metadataMonitoringTarget and metadataMaintenanceOpening open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest, a route listed under metadataMonitoringTarget and the maintenance route helper listed under metadataMaintenanceOpening here through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
+      "metadataTreeTarget, metadataMonitoringTarget and metadataMaintenanceOpening open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest, a route listed under metadataMonitoringTarget, the maintenance route helper listed under metadataMaintenanceOpening here and the agent runtime through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
-      "opens the run's recorded connectionId only after resolving it through resolveConnection under the run's actor, and agent mode is held while the review is on",
+      "opens the run's recorded connectionId only after resolving it through resolveServedConnection under the run's actor, and agent mode is held while the review is on",
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/mcp/context.ts":
       "opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
@@ -296,7 +296,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "cachedEditorProvider's lookup of a provider editorProvider already built; it builds nothing",
   },
   editorProvider: {
-    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
@@ -1428,10 +1428,10 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    // Six files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
-    // metadata and statement analysis routes and the object source read moved to the served resolve, so the floor sits
-    // at the count the census finds today.
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(6);
+    // Two files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile,
+    // provider metadata and statement analysis routes, the object source read and agent mode's three routes and drive
+    // moved to the served resolve, so the floor sits at the count the census finds today.
+    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(2);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

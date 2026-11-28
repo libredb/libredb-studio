@@ -10,6 +10,7 @@ import {
   type AgentStatementLanguageId,
   agentVariant,
   legacyAgentEngine,
+  noStatementSessionSentence,
   notReviewedSentence,
   openWorkflows,
   operationsWorkflowOpens,
@@ -18,6 +19,7 @@ import {
   planDeliverableOf,
   planObjectiveOf,
   requiredVariant,
+  statementSessionRefusal,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
 import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/composed-sql";
@@ -28,6 +30,7 @@ import { OPERATIONS_VARIANT } from "@/lib/agent/workflow-tool-sets";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { typeIdRefusal } from "@/lib/db/type-id";
@@ -475,6 +478,14 @@ describe("workflowAvailability", () => {
     expect(none).toEqual([]);
   });
 
+  test("every legacy engine's availability engine offers execution profiles exactly as its record does", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect(legacyAgentEngine(type).offers.executionProfiles, type).toBe(
+        servedEngineRecord(type).offers.executionProfiles,
+      );
+    }
+  });
+
   test("a browser type that is not a type id is refused by name before its open workflows are read", () => {
     expect(() => openWorkflows("agent", legacyAgentEngine("acmefoo" as DatabaseType))).toThrow(UnknownProviderError);
   });
@@ -679,7 +690,7 @@ describe("workflowAvailability", () => {
 
   test("the operations arm refuses an engine whose grants hold no agent reading", () => {
     const spark = legacyAgentEngine("spark");
-    const unread = { id: spark.id, grants: { ...spark.grants, agentReadings: [] } };
+    const unread = { id: spark.id, grants: { ...spark.grants, agentReadings: [] }, offers: spark.offers };
     expect(workflowAvailability("agent", "operations", unread)).toEqual({
       open: false,
       cause: "requirement-unmet",
@@ -707,8 +718,13 @@ describe("workflowAvailability", () => {
         for (const workflow of Object.keys(AGENT_WORKFLOW_PRESENTS_ANSWER) as AgentRunWorkflowType[]) {
           const availability = workflowAvailability(mode, workflow, legacyAgentEngine(type));
           if (availability.open) continue;
-          // `not-reviewed` is answered with `notReviewedSentence`, which names the operations workflow as a way forward.
-          if (availability.cause === "not-reviewed" || availability.cause === "no-adapter") {
+          // `not-reviewed` and `no-statement-session` are answered with sentences that name the operations workflow as a
+          // way forward where it opens.
+          if (
+            availability.cause === "not-reviewed" ||
+            availability.cause === "no-adapter" ||
+            availability.cause === "no-statement-session"
+          ) {
             claims.push(`${type} ${mode} ${workflow}: ${availability.cause}`);
           } else if (
             /operations workflow/.test(availability.sentence) &&
@@ -754,7 +770,11 @@ describe("workflowAvailability", () => {
       },
     } as const;
     const kubernetes = legacyAgentEngine("kubernetes");
-    const unread = { id: kubernetes.id, grants: { ...kubernetes.grants, agentReadings: [] } };
+    const unread = {
+      id: kubernetes.id,
+      grants: { ...kubernetes.grants, agentReadings: [] },
+      offers: kubernetes.offers,
+    };
     expect(workflowAvailability("agent", "investigation", kubernetes, readingInvestigation)).toEqual({
       open: true,
       statementLanguage: "kubectl",
@@ -843,7 +863,11 @@ describe("workflowAvailability", () => {
     PostgreSQL's legacy grants with agent execution taken away, since no shipped engine has a language and no review.
   */
   const postgres = legacyAgentEngine("postgres");
-  const unreviewedPostgres = { id: postgres.id, grants: { ...postgres.grants, agentExecution: false } };
+  const unreviewedPostgres = {
+    id: postgres.id,
+    grants: { ...postgres.grants, agentExecution: false },
+    offers: postgres.offers,
+  };
 
   test("a statement workflow in agent mode on an engine the review record does not list is refused as not reviewed, though its language would open it", () => {
     for (const workflow of statementWorkflows) {
@@ -989,6 +1013,62 @@ describe("workflow availability on a package engine's record", () => {
     expect(openWorkflows("agent", reading)).toEqual(["operations"]);
     expect(operationsWorkflowOpens(reading)).toBe(true);
     expect([...openWorkflows("planning", silent)]).toEqual([...WORKFLOWS]);
+  });
+
+  test("a package record granted agent execution opens no statement workflow in agent mode while Studio opens no read-only statement session through a package", () => {
+    const executing = admittedFor("acme-executing", admittedManifest("acmeexecuting", withLoosestClaims));
+    const unread = admittedFor("acme-executing-unread", admittedManifest("acmeexecutingunread", withLoosestClaims));
+    const register = parseGrantRegister(
+      [
+        packageRow(executing, "acmeexecuting", {
+          statementLanguage: "sql",
+          agentExecution: true,
+          agentReadings: Object.freeze(["health"] as const),
+        }),
+        packageRow(unread, "acmeexecutingunread", { statementLanguage: "sql", agentExecution: true }),
+      ],
+      LEGACY_ENGINE_IDS,
+    );
+    const { engines } = composeServerCatalog([executing, unread], [], register);
+    const reading = engines.get("acmeexecuting");
+    const silent = engines.get("acmeexecutingunread");
+    if (reading === undefined || silent === undefined) throw new Error("the catalog holds no record of the packages");
+    const statementWorkflows = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+    for (const engine of [reading, silent]) {
+      // Vacuity: the row grants the language and agent execution, and the record offers no execution profiles.
+      expect(engine.grants).toMatchObject({ statementLanguage: "sql", agentExecution: true });
+      expect(engine.offers.executionProfiles).toBe(false);
+      for (const workflow of WORKFLOWS) {
+        expect(workflowAvailability("planning", workflow, engine)).toEqual({
+          open: true,
+          statementLanguage: "sql",
+          variant: requiredVariant("sql", workflow),
+        });
+      }
+      for (const workflow of statementWorkflows) {
+        expect(workflowAvailability("agent", workflow, engine)).toEqual({ open: false, cause: "no-statement-session" });
+      }
+    }
+    expect(workflowAvailability("agent", "operations", reading)).toEqual({
+      open: true,
+      statementLanguage: "sql",
+      variant: OPERATIONS_VARIANT,
+    });
+    expect(openWorkflows("agent", reading)).toEqual(["operations"]);
+    expect(workflowAvailability("agent", "operations", silent)).toEqual(AGENT_READINGS_REFUSAL);
+    expect(openWorkflows("agent", silent)).toEqual([]);
+  });
+
+  test("the no-statement-session refusal names the engine and the operations workflow only where it opens", () => {
+    const refusal =
+      "Agent mode sends statements only through a read-only statement session, and the session of Acme opens through its provider package, which Studio does not open read-only yet.";
+    expect(statementSessionRefusal("Acme")).toBe(refusal);
+    expect(noStatementSessionSentence("Acme", true)).toBe(
+      `${refusal} So a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.`,
+    );
+    expect(noStatementSessionSentence("Acme", false)).toBe(
+      `${refusal} So a run whose workflow sends a statement is not opened on it. Plan mode drafts here.`,
+    );
   });
 
   test("the not-reviewed refusal names the operations workflow only where it opens", () => {
