@@ -8,13 +8,16 @@ import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { CallRefusalError } from "@libredb/provider-sdk/calls";
 import {
+  entryMonitoringTarget,
   markedCall,
   providerMaintenanceTarget,
   providerMonitoringTarget,
   providerTreeTarget,
   type SessionTarget,
 } from "@/lib/api/session-target";
-import type { DatabaseProvider, MaintenanceDeclaration } from "@/lib/db/types";
+import type { CachedSession } from "@/lib/db/factory";
+import type { EngineConnection } from "@/lib/db/server-catalog";
+import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type MaintenanceDeclaration } from "@/lib/db/types";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
@@ -120,5 +123,116 @@ describe("the session targets of a legacy provider", () => {
     }
     expect(caught).toBe(thrown);
     expect(marks).toEqual(["started", "ended undefined"]);
+  });
+});
+
+describe("the monitoring target of a cache entry", () => {
+  /** A provider package's session entry offering `maintenance.run` or not, with a full spec and a bare one. */
+  function packageEntry(run: "offered" | "not-offered") {
+    const session = {
+      calls: { maintenance: { run, preview: "offered" } },
+      maintenance: {
+        maintenance: ["vacuum", "kill"],
+        maintenanceSpecs: [
+          {
+            operation: "vacuum",
+            label: "Vacuum",
+            perEntity: true,
+            global: false,
+            title: "Vacuum the table",
+            description: "Reclaims space.",
+            confirmation: "typed-target",
+            preview: true,
+            kinds: ["table"],
+          },
+          {
+            operation: "kill",
+            label: "Kill",
+            perEntity: false,
+            global: false,
+            title: null,
+            description: null,
+            confirmation: null,
+            preview: false,
+            kinds: null,
+          },
+        ],
+      },
+      marker: randomUUID(),
+    };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session, env }, running: 0, lastUsed: 0 } as unknown as CachedSession;
+    return { entry, session, env };
+  }
+  const connection = { id: "p", name: "p", type: "acmemon", queryTimeout: 1234 } as unknown as EngineConnection;
+
+  test("a package entry's monitoring target is its session under its declared environment and the connection's timeout, its calls marked on the entry, and its accepted maintenance the session's narrowed maintenance in Studio's form", async () => {
+    const { entry, session, env } = packageEntry("offered");
+    const target = entryMonitoringTarget(entry, connection);
+    expect(target.session as unknown).toBe(session);
+    expect(target.env as unknown).toBe(env);
+    expect(target.timeout()).toBe(1234);
+    expect(entryMonitoringTarget(entry, { ...connection, queryTimeout: undefined }).timeout()).toBe(
+      DEFAULT_QUERY_TIMEOUT,
+    );
+    await markedCall(target, async () => {
+      expect(entry.running).toBe(1);
+      return { kind: "answered" as const };
+    });
+    expect([entry.running, entry.lastUsed > 0]).toEqual([0, true]);
+
+    // Studio's form: each spec's absent card fields absent, and `preview` only where the spec states it true.
+    const accepted = target.accepted();
+    expect(accepted).toEqual({
+      supportsMaintenance: true,
+      maintenanceOperations: ["vacuum", "kill"],
+      maintenanceOperationSpecs: {
+        vacuum: {
+          label: "Vacuum",
+          perEntity: true,
+          global: false,
+          title: "Vacuum the table",
+          description: "Reclaims space.",
+          confirmation: "typed-target",
+          preview: true,
+          kinds: ["table"],
+        },
+        kill: { label: "Kill", perEntity: false, global: false },
+      },
+    });
+    expect(Object.isFrozen(accepted)).toBe(true);
+    expect(Object.keys(accepted.maintenanceOperationSpecs?.kill ?? {})).toEqual(["label", "perEntity", "global"]);
+    // A copy: what a caller reads cannot reach the session's own lists.
+    expect(accepted.maintenanceOperations).not.toBe(session.maintenance.maintenance);
+    expect(accepted.maintenanceOperationSpecs?.vacuum?.kinds).not.toBe(session.maintenance.maintenanceSpecs[0]?.kinds);
+
+    // A session that does not offer `maintenance.run` accepts none, whatever its declaration lists.
+    expect(entryMonitoringTarget(packageEntry("not-offered").entry, connection).accepted()).toEqual({
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      maintenanceOperationSpecs: {},
+    });
+  });
+
+  test("a provider entry's monitoring target is the provider's, whose accepted maintenance is the provider's capabilities read when asked", () => {
+    const provider = providerOf(4_000);
+    const entry = { opened: { form: "provider", provider }, running: 0 } as unknown as CachedSession;
+    const capabilities = mockOf(provider.getCapabilities);
+    capabilities.mockClear();
+    // A legacy provider's target reads the provider's own statement timeout, never the connection's.
+    const target = entryMonitoringTarget(entry, connection);
+    expect(target.session.calls.monitoring.panel).toBe("offered");
+    expect(target.timeout()).toBe(4_000);
+    expect(target.env).toBe(providerMonitoringTarget(provider).env);
+    target.started();
+    target.ended({ kind: "answered" });
+    expect(entry.running).toBe(0);
+
+    const fresh = { supportsMaintenance: true, maintenanceOperations: ["analyze"] };
+    capabilities.mockImplementation(() => fresh);
+    const before = capabilities.mock.calls.length;
+    expect(target.accepted()).toBe(fresh as never);
+    expect(capabilities.mock.calls.length).toBe(before + 1);
+    expect(providerMonitoringTarget(provider).accepted()).toBe(fresh as never);
   });
 });

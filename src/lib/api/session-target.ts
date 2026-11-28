@@ -16,6 +16,7 @@
  * (`hasRunsInFlight`), as it did before targets.
  */
 import { type EngineMaintenance, type EnvReader, envReader } from "@libredb/provider-sdk/calls";
+import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { statementTimeout } from "@/lib/api/editor-query";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection } from "@/lib/db/server-catalog";
@@ -23,7 +24,10 @@ import {
   DEFAULT_QUERY_TIMEOUT,
   type DatabaseProvider,
   type MaintenanceDeclaration,
+  type MaintenanceOperation,
+  type MaintenanceOperationSpec,
   type ObjectReadOptions,
+  type ProviderCapabilities,
 } from "@/lib/db/types";
 import type { StoppedRecord } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
@@ -62,8 +66,20 @@ export interface TreeTarget extends SessionTarget<ObjectsSession> {
   wholeServer(): DatabaseType | null;
 }
 
+/** The maintenance a session's server accepts, in the form Studio's maintenance checks and its clients read. */
+export type AcceptedMaintenance = Pick<
+  ProviderCapabilities,
+  "supportsMaintenance" | "maintenanceOperations" | "maintenanceOperationSpecs"
+>;
+
 /** A session target of the monitoring and health reads (src/lib/api/provider-monitoring.ts). */
-export type MonitoringTarget = SessionTarget<MonitoringSession & HealthSession>;
+export interface MonitoringTarget extends SessionTarget<MonitoringSession & HealthSession> {
+  /**
+   * The maintenance the session's server accepts, read when asked: the monitoring route answers it beside the
+   * dashboard's panels, since the connection metadata route never connects and answers only the declaration.
+   */
+  accepted(): AcceptedMaintenance;
+}
 
 /** A session target of the maintenance calls (src/lib/api/provider-maintenance.ts). */
 export interface MaintenanceTarget extends SessionTarget<Omit<MaintenanceSession, "maintenance">> {
@@ -133,10 +149,14 @@ function providerFields(provider: DatabaseProvider): Omit<SessionTarget<unknown>
 /**
  * The monitoring target of `provider`: one bridged session of it, built when this is called, whose panels are its
  * engine's and whose health is the provider's; no environment, no marks, and, when asked, the provider's statement
- * timeout.
+ * timeout and its capabilities as the maintenance it accepts.
  */
 export function providerMonitoringTarget(provider: DatabaseProvider): MonitoringTarget {
-  return { session: bridgedConsole(provider, {}).session, ...providerFields(provider) };
+  return {
+    session: bridgedConsole(provider, {}).session,
+    accepted: () => provider.getCapabilities(),
+    ...providerFields(provider),
+  };
 }
 
 /**
@@ -186,6 +206,61 @@ export function entryTreeTarget(entry: CachedSession, connection: EngineConnecti
     env: opened.env,
     timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
     wholeServer: () => null,
+    ...entryMarks(entry),
+  };
+}
+
+/**
+ * `spec`, one spec of a session's maintenance in the SDK's form, in Studio's form: the card fields `title`,
+ * `description`, `confirmation` and `kinds` present only where the spec states them, and `preview` only where it is
+ * true, the inverse of the bridge's `declaredSpec` (src/lib/provider-host/legacy-bridge.ts).
+ */
+function studioSpec(spec: MaintenanceSpec): MaintenanceOperationSpec {
+  return {
+    label: spec.label,
+    perEntity: spec.perEntity,
+    global: spec.global,
+    ...(spec.title === null ? {} : { title: spec.title }),
+    ...(spec.description === null ? {} : { description: spec.description }),
+    ...(spec.confirmation === null ? {} : { confirmation: spec.confirmation }),
+    ...(spec.preview ? { preview: true as const } : {}),
+    ...(spec.kinds === null ? {} : { kinds: [...spec.kinds] }),
+  };
+}
+
+/**
+ * The maintenance `session`, a provider package's, accepts, in Studio's form: its narrowed maintenance where it offers
+ * `maintenance.run`, and none where it does not, since no control may be offered for a run its session cannot make.
+ */
+function acceptedOf(session: { readonly calls: Calls; readonly maintenance: EngineMaintenance }): AcceptedMaintenance {
+  if (session.calls.maintenance.run !== "offered") {
+    return Object.freeze({ supportsMaintenance: false, maintenanceOperations: [], maintenanceOperationSpecs: {} });
+  }
+  const { maintenance, maintenanceSpecs } = session.maintenance;
+  const specs: Partial<Record<MaintenanceOperation, MaintenanceOperationSpec>> = {};
+  for (const spec of maintenanceSpecs) specs[spec.operation] = studioSpec(spec);
+  return Object.freeze({
+    supportsMaintenance: maintenance.length > 0,
+    maintenanceOperations: [...maintenance],
+    maintenanceOperationSpecs: specs,
+  });
+}
+
+/**
+ * The monitoring target of `entry`, an entry of the provider factory's caches for `connection`, by its form: a legacy
+ * provider's through `providerMonitoringTarget`; a provider package's session with its declared environment, the
+ * connection's own statement timeout or Studio's default, the marks of each read on the entry, and the session's
+ * narrowed maintenance as the maintenance it accepts (`acceptedOf`).
+ */
+export function entryMonitoringTarget(entry: CachedSession, connection: EngineConnection): MonitoringTarget {
+  const { opened } = entry;
+  if (opened.form === "provider") return providerMonitoringTarget(opened.provider);
+  const { session } = opened;
+  return {
+    session,
+    env: opened.env,
+    timeout: () => connection.queryTimeout ?? DEFAULT_QUERY_TIMEOUT,
+    accepted: () => acceptedOf(session),
     ...entryMarks(entry),
   };
 }
