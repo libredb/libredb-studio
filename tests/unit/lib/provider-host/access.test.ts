@@ -192,6 +192,7 @@ describe("the accessor", () => {
       "call-deadline-passed",
       "row-over-page",
       "facet-not-offered",
+      "request-transaction-not-offered",
       "request-level-not-stated",
       "request-kind-not-stated",
       "request-source-not-stated",
@@ -260,6 +261,22 @@ describe("the accessor", () => {
     }
   });
 
+  test("a statement sent inside a transaction to a session that does not offer console.transaction is FacetNotOfferedError naming console.transaction, not-sent", () => {
+    const refusal: CallRefusal = { rule: "request-transaction-not-offered", pointer: "/transaction" };
+    const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
+
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    expect([(error as FacetNotOfferedError).code, error.message, errorOutcome(error)]).toEqual([
+      "FACET_NOT_OFFERED",
+      "This connection's provider package does not offer console.transaction, so Studio did not call it.",
+      "not-sent",
+    ]);
+    expect([(error as FacetNotOfferedError).facet, (error as FacetNotOfferedError).operation]).toEqual([
+      "console",
+      "transaction",
+    ]);
+  });
+
   test("any other refusal is a host defect named by its rule", () => {
     const view = { caller: callerOf(), deadlineSentence };
     const handled = new Set([
@@ -267,6 +284,7 @@ describe("the accessor", () => {
       "call-deadline-passed",
       "row-over-page",
       "facet-not-offered",
+      "request-transaction-not-offered",
       "request-level-not-stated",
       "request-kind-not-stated",
       "request-source-not-stated",
@@ -286,7 +304,7 @@ describe("the accessor", () => {
       expect(Object.hasOwn(error, "outcome")).toBe(false);
       expect(errorKind(error)).toBe("internal");
     }
-    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 8);
+    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 9);
   });
 
   test("a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal", () => {

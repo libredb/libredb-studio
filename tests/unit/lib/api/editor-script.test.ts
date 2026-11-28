@@ -36,10 +36,14 @@ import { entryConsoleTarget, providerConsoleTarget } from "@/lib/api/session-tar
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection } from "@/lib/db/server-catalog";
 import { errorOutcome } from "@/lib/db/error-record";
-import { QueryCancelledError, StudioByteBudgetRefusal, StudioTimeoutRefusal } from "@/lib/db/errors";
+import {
+  FacetNotOfferedError,
+  QueryCancelledError,
+  StudioByteBudgetRefusal,
+  StudioTimeoutRefusal,
+} from "@/lib/db/errors";
 import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type TransactionProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { HostDefectError } from "@/lib/provider-host/access";
 import type { ConsoleSession, ExecuteRecord } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -953,7 +957,7 @@ describe("openTransactionScript", () => {
     expect(entry.lastUsed > 0).toBe(true);
   });
 
-  test("a unit of a script inside a transaction on a console target whose session offers no transaction is refused before the call by the host core's rule, and reaches no provider", async () => {
+  test("a unit of a script inside a transaction on a console target whose session offers no transaction is refused before the call as console.transaction not offered, not-sent, and reaches no provider", async () => {
     const provider = providerOf(async () => resultOf([{ n: 1 }]));
 
     // A failure, never unanswered: the core refused the request before the call, so the session's state is unchanged.
@@ -961,9 +965,11 @@ describe("openTransactionScript", () => {
       await openTransactionScript(providerConsoleTarget(provider), transactionScriptOf("SELECT 1")).runUnit(0, asIs),
     );
 
-    expect(refused).toBeInstanceOf(HostDefectError);
-    expect((refused as HostDefectError).refusals).toEqual([
-      { rule: "request-transaction-not-offered", pointer: "/transaction" },
+    expect(refused).toBeInstanceOf(FacetNotOfferedError);
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect([(refused as FacetNotOfferedError).facet, (refused as FacetNotOfferedError).operation]).toEqual([
+      "console",
+      "transaction",
     ]);
     expect(provider.query).not.toHaveBeenCalled();
     expect(provider.prepareQuery).not.toHaveBeenCalled();
