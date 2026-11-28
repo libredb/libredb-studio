@@ -3,16 +3,20 @@
  * provider packages boot admitted and the ones it refused. Only the boot (src/lib/provider-host/boot.ts) and tests
  * import it, so the published library and the VS Code backend carry none of it.
  *
- * `catalogConflicts(admitted)` reads the rules across the whole set that admitting each package on its own cannot see,
- * over Studio's bundled catalog and every admitted declaration at once, and answers every admitted claimant of each
- * rule, so the answer is the same for every order of the packages:
+ * `catalogConflicts(admitted, register)` reads the rules across the whole set that admitting each package on its own
+ * cannot see, over Studio's bundled catalog, every admitted declaration and each one's row of Studio's grant register at
+ * once, and answers every admitted claimant of each rule, so the answer is the same for every order of the packages:
  * - `engine-id`: an engine id the legacy adapter serves (`LEGACY_ENGINES`) or the bundled catalog states as a fence
  *   alias, or another admitted package serves;
  * - `fence-alias`: a fence alias that is a bundled alias or engine id, another admitted package's alias, or another
  *   admitted package's engine id, the package serving that engine a claimant too;
  * - `query-dialect`, `tab-type` and `editor-language`: a query dialect row, a tab type's editor language or an editor
  *   language's accent and console stated otherwise than Studio's bundled catalog states it; a key the bundled catalog
- *   does not state refuses every admitted claimant of it unless they all state it alike.
+ *   does not state refuses every admitted claimant of it unless they all state it alike;
+ * - `statement-language`: a statement language an admitted engine is granted as its own data's name (its register row
+ *   reviewing that data) that a legacy engine of Studio's bundled catalog is granted or states as data, the module
+ *   languages agent mode holds among them, or that another admitted engine is granted; a name no row grants is not
+ *   read, since no registry composes it.
  * A conflict carries the package's name, version and rule, never an alias, dialect, language or id.
  *
  * `composeServerCatalog(admitted, refused, register)` starts from the legacy adapter's records
@@ -20,7 +24,8 @@
  * (`EngineRecord` in ./server-catalog): it projects the admitted declarations with the same projections Studio's
  * generator projects its own declarations with (./engine-catalog/projection), composes each engine's field rules
  * (`packageFieldRules` in ./connection-form), grants each engine's claims through Studio's grant reader
- * (`grantEngineClaims` in ./claim-grants) with its row of `register`, the row keyed by its package's name, version and
+ * (`grantEngineClaims` in ./claim-grants, read through `packageEngineGrants`, the set rules' reading too) with its row
+ * of `register`, the row keyed by its package's name, version and
  * digest, or with none where the register holds none, so each claim is granted at its restrictive value, its SQL text
  * claims with the digest of the grammar it declares (`declaredSqlTextRequest`), so a row grants them only for the
  * grammar it reviewed, or, for an engine whose `sqlText` is null, with the restrictive request, which holds no digest,
@@ -41,7 +46,7 @@ import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import { grantEngineClaims, type LanguageDataRequest, type SqlTextRequest } from "./claim-grants";
+import { type EngineGrants, grantEngineClaims, type LanguageDataRequest, type SqlTextRequest } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
 import { grammarSha256 } from "./grammar-digest";
 import { languageDataSha256 } from "./language-digest";
@@ -160,10 +165,46 @@ function editorFactClaimants(
 }
 
 /**
- * Every admitted package a set rule refuses, by each rule it breaks, sorted by name and then rule, each once. Pure: it
- * reads `admitted` and Studio's bundled catalog only.
+ * The grants of admitted engine `engine` of package `pkg`: its row of `register`, keyed by its package's name, version
+ * and digest, read by Studio's grant reader. The one reading of an admitted engine's grants, at the set rules and at
+ * composition. Each projection reads the engine's own declaration alone, so a set still holding a repeated engine id is
+ * read (the projections refuse a repeated id), and `grantEngine` reads only the engine's own seed-only row, so it grants
+ * exactly what a projection over the whole set grants.
  */
-export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): readonly CatalogConflict[] {
+function packageEngineGrants({ pkg, engine }: Claim, register: GrantRegister): EngineGrants {
+  return grantEngineClaims(
+    engine.id,
+    projectClaimRequests([engine])[engine.id],
+    declaredSqlTextRequest(engine),
+    declaredLanguageDataRequest(engine),
+    register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: engine.id }),
+    projectConnectionTables([engine]).seedOnly,
+  );
+}
+
+/**
+ * The statement language names Studio's bundled catalog holds: each legacy engine's granted statement language, which
+ * is its request, so the module languages agent mode holds and the bundled declared ones are all here, and the name of
+ * the statement language data it states, which the browser's composition holds whatever its grant.
+ */
+function bundledLanguageNames(): Set<string> {
+  const names = new Set<string>();
+  for (const record of LEGACY_ENGINES.values()) {
+    if (record.grants.statementLanguage !== null) names.add(record.grants.statementLanguage);
+    if (record.statementLanguageData !== null) names.add(record.statementLanguageData.name);
+  }
+  return names;
+}
+
+/**
+ * Every admitted package a set rule refuses, by each rule it breaks, sorted by name and then rule, each once. Pure: it
+ * reads `admitted`, `register`, the grant register each admitted engine's statement language grant is read from, and
+ * Studio's bundled catalog only.
+ */
+export function catalogConflicts(
+  admitted: readonly AdmittedForCatalog[],
+  register: GrantRegister,
+): readonly CatalogConflict[] {
   const claims = claimsOf(admitted);
   const ids = statedBy(claims, (engine) => [engine.id]);
   const aliases = statedBy(claims, (engine) => engine.editor.fenceAliases);
@@ -193,6 +234,20 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
   ])[];
   for (const [rule, read, bundled] of editorRules) {
     for (const pkg of editorFactClaimants(claims, read, bundled)) refuse(pkg, rule);
+  }
+  // Only an engine stating data is read: a package's own name is granted only as its data's name, the selection the
+  // agent's registries compose by (`servedLanguageData` in ./operations/served-language-data).
+  const granted: { readonly claim: Claim; readonly name: string }[] = [];
+  for (const claim of claims) {
+    const data = claim.engine.statementLanguageData;
+    if (data !== null && packageEngineGrants(claim, register).statementLanguage === data.name) {
+      granted.push({ claim, name: data.name });
+    }
+  }
+  const bundledLanguages = bundledLanguageNames();
+  for (const { claim, name } of granted) {
+    const grantedElsewhere = granted.some((other) => other.claim !== claim && other.name === name);
+    if (bundledLanguages.has(name) || grantedElsewhere) refuse(claim.pkg, "statement-language");
   }
   return Object.freeze(
     [...found.values()].sort(
@@ -257,7 +312,7 @@ export function composeServerCatalog(
   refused: readonly RefusedForCatalog[],
   register: GrantRegister,
 ): ServerCatalog {
-  const conflicts = catalogConflicts(admitted);
+  const conflicts = catalogConflicts(admitted, register);
   if (conflicts.length > 0) {
     const named = conflicts.map(({ name, version, rule }) => `${name} ${version} ${rule}`).join(", ");
     throw new Error(
@@ -269,9 +324,9 @@ export function composeServerCatalog(
   const catalog = projectCatalog(declarations);
   const tables = projectConnectionTables(declarations);
   const forms = projectConnectionForms(declarations);
-  const requests = projectClaimRequests(declarations);
   const engines = new Map<string, EngineRecord>(LEGACY_ENGINES);
-  for (const { pkg, engine } of claims) {
+  for (const claim of claims) {
+    const { pkg, engine } = claim;
     const { id } = engine;
     const fields = tables.fields[id];
     engines.set(
@@ -316,14 +371,7 @@ export function composeServerCatalog(
           dialogOffersUri: tables.dialogOffersUri[id],
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
-        grants: grantEngineClaims(
-          id,
-          requests[id],
-          declaredSqlTextRequest(engine),
-          declaredLanguageDataRequest(engine),
-          register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: id }),
-          tables.seedOnly,
-        ),
+        grants: packageEngineGrants(claim, register),
         // The grammar the query route's confirmation gate and the query event log read the engine's statements under,
         // compiled once here; the gate counts only the exempt forms its record grants (docs/providers/CONTRACT.md,
         // clause S-8). An engine that states no SQL text has none (clause S-3).

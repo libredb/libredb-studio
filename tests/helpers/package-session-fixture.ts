@@ -156,17 +156,18 @@ export async function admitSessionPackages(
     return lockEntryOf(providers, fixture);
   });
   writeLock(providers, entries);
-  const answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
-  if (!answer.read) throw new Error(`the fixture lock is refused: ${answer.refusal.sentence}`);
-  if (answer.refused.length > 0) {
-    throw new Error(`fixture packages refused: ${answer.refused.map((pkg) => `${pkg.name} ${pkg.code}`).join(", ")}`);
-  }
   const granted = entries.flatMap((entry) =>
     entry.engines
       .filter((engine) => Object.hasOwn(rows, engine))
       .map((engine) => packageRow(entry, engine, rows[engine])),
   );
+  // One register, read by the catalog's set rules at admission and by the composition.
   const register = granted.length === 0 ? STUDIO_GRANT_REGISTER : parseGrantRegister(granted, LEGACY_ENGINE_IDS);
+  const answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register);
+  if (!answer.read) throw new Error(`the fixture lock is refused: ${answer.refusal.sentence}`);
+  if (answer.refused.length > 0) {
+    throw new Error(`fixture packages refused: ${answer.refused.map((pkg) => `${pkg.name} ${pkg.code}`).join(", ")}`);
+  }
   installServerCatalog(composeServerCatalog(answer.admitted, answer.refused, register));
   const engines = new Map<string, EngineRecord>();
   for (const pkg of packages) {

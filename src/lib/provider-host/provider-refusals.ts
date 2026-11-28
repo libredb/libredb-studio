@@ -20,9 +20,10 @@ import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
 import { LOCK_FILE_RULES, LOCK_SHAPE_RULES } from "./lock-refusals";
 
 /**
- * The rules across the whole set of admitted packages and Studio's bundled catalog (`catalogConflicts` in
- * src/lib/db/server-catalog-compose.ts), each the rule of a `PROVIDER_CATALOG_CONFLICT` refusal. Kept here with the
- * other closed rule lists, so a module that refuses a package reaches no record of the server's engine catalog.
+ * The rules across the whole set of admitted packages, Studio's bundled catalog and Studio's grant register
+ * (`catalogConflicts` in src/lib/db/server-catalog-compose.ts), each the rule of a `PROVIDER_CATALOG_CONFLICT`
+ * refusal. Kept here with the other closed rule lists, so a module that refuses a package reaches no record of the
+ * server's engine catalog.
  */
 export const CATALOG_CONFLICT_RULES = Object.freeze([
   "engine-id",
@@ -30,6 +31,7 @@ export const CATALOG_CONFLICT_RULES = Object.freeze([
   "query-dialect",
   "tab-type",
   "editor-language",
+  "statement-language",
 ] as const);
 
 export type CatalogConflictRule = (typeof CATALOG_CONFLICT_RULES)[number];
@@ -315,6 +317,7 @@ const CATALOG_CONFLICT_SENTENCES: Readonly<Record<CatalogConflictRule, string>> 
   "tab-type": "it opens a tab type in another editor language than Studio's catalog or another package",
   "editor-language":
     "it states an editor language with another accent or console than Studio's catalog or another package",
+  "statement-language": "it is granted a statement language Studio's catalog holds or another engine is granted",
 };
 
 /**

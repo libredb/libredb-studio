@@ -11,7 +11,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { parseGrantRegister, type RegisterGrants, type RegisterRow } from "@libredb/grant-register";
+import { type GrantRegister, parseGrantRegister, type RegisterGrants, type RegisterRow } from "@libredb/grant-register";
+import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
+import { DEFAULT_STATEMENT_LANGUAGE } from "@/lib/agent/languages/client";
 import {
   type EngineGrants,
   STUDIO_GRANT_REGISTER,
@@ -65,7 +67,7 @@ import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import type { EngineDeclaration, GrammarFacts } from "@libredb/provider-sdk/manifest";
+import type { EngineDeclaration, GrammarFacts, StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import { consoleTextByteLimit, typeStatementLanguageRow } from "@/lib/db/destructive-commands";
 import { rowTextByteLimit } from "@/lib/db/statement-language-row";
 import { readingOfRecord, readingOfType } from "@/lib/sql/dangerous-query";
@@ -86,6 +88,7 @@ import {
   withLoosestClaims,
   withStatementLanguageData,
 } from "../../../helpers/package-catalog";
+import { acmereadData } from "../../../helpers/declared-agent-language";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 
@@ -931,9 +934,9 @@ describe("the set rules", () => {
     );
   }
 
-  /** `name version rule` of each conflict. */
-  const named = (packages: readonly AdmittedForCatalog[]) =>
-    catalogConflicts(packages).map(({ name, version, rule }) => `${name} ${version} ${rule}`);
+  /** `name version rule` of each conflict, the set read against `register` (Studio's own unless named). */
+  const named = (packages: readonly AdmittedForCatalog[], register: GrantRegister = STUDIO_GRANT_REGISTER) =>
+    catalogConflicts(packages, register).map(({ name, version, rule }) => `${name} ${version} ${rule}`);
 
   test("a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order", () => {
     const bundledAlias = admittedFor(
@@ -1053,6 +1056,126 @@ describe("the set rules", () => {
     expect(named([studioRow])).toEqual([]);
   });
 
+  /** A statement language name generated at run time, never written here. */
+  const generatedLanguage = () => `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+
+  /**
+   * Package `name` serving engine `engine`, whose declaration states `data` and requests its name as its agent
+   * language, with the register row granting that name under the digest of the data it declares.
+   */
+  function languagePackage(name: string, engine: string, data: NonNullable<StatementLanguageData>) {
+    const manifest = admittedManifest(engine, (declared) => {
+      declared.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
+      withStatementLanguageData(declared, data);
+    });
+    const pkg = admittedFor(name, manifest);
+    const row = packageRow(pkg, engine, {
+      statementLanguage: data.name,
+      languageSha256: declaredLanguageSha256(manifest),
+    });
+    return { pkg, manifest, row };
+  }
+
+  /** A register of `rows`, read as Studio reads its own. */
+  const registerOf = (rows: readonly RegisterRow[]) => parseGrantRegister([...rows], LEGACY_ENGINE_IDS);
+
+  test("a package whose granted statement language name a module language, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT", () => {
+    const language = generatedLanguage();
+    const one = languagePackage("acme-language-one", "acmelanguageone", acmereadData(language));
+    const two = languagePackage("acme-language-two", "acmelanguagetwo", acmereadData(language));
+    const quiet = languagePackage("acme-language-quiet", "acmelanguagequiet", acmereadData(generatedLanguage()));
+    const register = registerOf([one.row, two.row, quiet.row]);
+    const expected = ["acme-language-one 1.0.0 statement-language", "acme-language-two 1.0.0 statement-language"];
+    for (const order of permutations([one, two, quiet])) {
+      expect(
+        named(
+          order.map(({ pkg }) => pkg),
+          register,
+        ),
+      ).toEqual(expected);
+    }
+    // Composing the set is the host defect boot never reaches: it refuses both before it composes.
+    expect(() => composeServerCatalog([one.pkg, two.pkg, quiet.pkg], [], register)).toThrow(
+      "the admitted packages still conflict (acme-language-one 1.0.0 statement-language, acme-language-two 1.0.0 statement-language)",
+    );
+
+    // Two engines of one package granted one name: the package is refused, as two packages are.
+    const raw = rawManifest("acmetwoa");
+    const second = structuredClone(raw.engines[0]) as EditableEngine;
+    second.id = "acmetwob";
+    raw.engines.push(second);
+    const compatibility = raw.compatibility as Record<string, unknown>[];
+    compatibility.push({ ...structuredClone(compatibility[0]), engine: "acmetwob" });
+    const shared = acmereadData(generatedLanguage());
+    for (const engine of raw.engines) {
+      engine.agent = { statementLanguage: shared.name, overlay: { dialect: null, grounding: null } };
+      withStatementLanguageData(engine, shared);
+    }
+    const verdict = VALIDATOR.validate(raw);
+    if (!verdict.admitted) throw new Error(`the two-engine manifest is refused: ${JSON.stringify(verdict.refusals)}`);
+    const twoEngines = admittedFor("acme-two-engines", verdict.manifest);
+    const sha = declaredLanguageSha256(verdict.manifest);
+    const rows = ["acmetwoa", "acmetwob"].map((engine) =>
+      packageRow(twoEngines, engine, { statementLanguage: shared.name, languageSha256: sha }),
+    );
+    expect(named([twoEngines], registerOf(rows))).toEqual(["acme-two-engines 1.0.0 statement-language"]);
+
+    // Every language agent mode holds with nothing installed, each read from its registry, granted to a package as its
+    // data's name: SQL aside, which the SDK refuses as a data name.
+    const held = Object.keys(AGENT_LANGUAGE_COPY).filter((name) => name !== DEFAULT_STATEMENT_LANGUAGE);
+    expect(held.length).toBeGreaterThan(0);
+    for (const name of held) {
+      const claimant = languagePackage("acme-held", "acmeheld", acmereadData(name));
+      expect(named([claimant.pkg, quiet.pkg], registerOf([claimant.row, quiet.row])), name).toEqual([
+        "acme-held 1.0.0 statement-language",
+      ]);
+    }
+    // The name is read, not the agent part: data named a module language with no agent part, granted, is refused too.
+    const moduleName = held[0] as string;
+    const silent = languagePackage("acme-silent", "acmesilent", { ...acmereadData(moduleName), agent: null });
+    expect(named([silent.pkg], registerOf([silent.row]))).toEqual(["acme-silent 1.0.0 statement-language"]);
+
+    // The refusal names the package and the rule, and neither it nor its sentence holds the language's name.
+    const [conflict] = catalogConflicts([one.pkg, quiet.pkg, two.pkg], register);
+    const refusal = catalogConflictRefusal(conflict as NonNullable<typeof conflict>, "statement-language");
+    expect([refusal.code, refusal.rule, refusal.name, refusal.version, refusal.sentence]).toEqual([
+      "PROVIDER_CATALOG_CONFLICT",
+      "statement-language",
+      "acme-language-one",
+      "1.0.0",
+      "PROVIDER_CATALOG_CONFLICT: acme-language-one 1.0.0: it is granted a statement language Studio's catalog holds or another engine is granted",
+    ]);
+    expect(`${JSON.stringify(conflict)} ${refusal.sentence}`).not.toContain(language);
+  });
+
+  test("a statement language a package's row does not grant, or SQL, is no catalog conflict", () => {
+    const language = generatedLanguage();
+    const one = languagePackage("acme-language-one", "acmelanguageone", acmereadData(language));
+    const two = languagePackage("acme-language-two", "acmelanguagetwo", acmereadData(language));
+    const packages = [one.pkg, two.pkg];
+    // Only one granted, and neither: no registry composes the other's name, so nothing collides.
+    expect(named(packages, registerOf([one.row]))).toEqual([]);
+    expect(named(packages, registerOf([]))).toEqual([]);
+    expect(named(packages)).toEqual([]);
+    // A row reviewing another digest of the data grants no language.
+    const otherDigest = packageRow(two.pkg, "acmelanguagetwo", {
+      statementLanguage: language,
+      languageSha256: declaredLanguageSha256(one.manifest),
+    });
+    expect(named(packages, registerOf([one.row, otherDigest]))).toEqual([]);
+    // Two packages stating no data, each granted SQL by its row: the rule reads no engine without data.
+    const sqlOne = admittedFor("acme-sql-one", admittedManifest("acmesqlone"));
+    const sqlTwo = admittedFor("acme-sql-two", admittedManifest("acmesqltwo"));
+    const sqlRows = [
+      packageRow(sqlOne, "acmesqlone", { statementLanguage: "sql" }),
+      packageRow(sqlTwo, "acmesqltwo", { statementLanguage: "sql" }),
+    ];
+    expect(named([sqlOne, sqlTwo], registerOf(sqlRows))).toEqual([]);
+    // A package granted a name no one else holds.
+    const unique = languagePackage("acme-unique", "acmeunique", acmereadData(generatedLanguage()));
+    expect(named([unique.pkg], registerOf([unique.row]))).toEqual([]);
+  });
+
   test("a set rule refusal carries the package's name, version and rule and no value of its declaration", () => {
     const marker = "acmemarkerfence";
     const pkg = admittedFor(
@@ -1073,7 +1196,7 @@ describe("the set rules", () => {
         (engine.editor as Record<string, unknown>).fenceAliases = [marker];
       }),
     );
-    const conflicts = catalogConflicts([pkg, other]);
+    const conflicts = catalogConflicts([pkg, other], STUDIO_GRANT_REGISTER);
     expect(conflicts.length).toBeGreaterThan(0);
     for (const conflict of conflicts) {
       expect(Object.keys(conflict).sort()).toEqual(["name", "rule", "version"]);
