@@ -6,10 +6,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { SOURCE_PART_LIMIT, applySourceBound, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
-  SOURCE_PART_LIMIT,
   acceptedContainerShapes,
-  applySourceBound,
   containerDepth,
   enumerableKinds,
   findKind,
@@ -19,7 +18,6 @@ import {
   type ObjectKindView,
   type ObjectModelView,
   renderContainerShapes,
-  sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
 import type {

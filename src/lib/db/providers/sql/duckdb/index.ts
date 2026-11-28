@@ -78,8 +78,8 @@ import {
   type StorageStats,
   type TableStats,
 } from "../../../types";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,

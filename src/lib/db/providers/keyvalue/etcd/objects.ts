@@ -15,7 +15,8 @@
  * typed (plan Review Focus 2).
  */
 import { DatabaseError, QueryError } from "@/lib/db/errors";
-import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   DatabaseObject,
   DatabaseType,

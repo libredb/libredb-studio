@@ -5,7 +5,7 @@
  */
 import { stringify } from "yaml";
 import { QueryError } from "@/lib/db/errors";
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type { ObjectSourceDocument } from "@/lib/db/types";
 import { findResource, withTypeRefresh } from "./discovery";
 import { KubernetesRequestError, notServedSentence } from "./errors";

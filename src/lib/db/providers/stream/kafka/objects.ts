@@ -17,7 +17,8 @@ import type {
   ObjectSourcePart,
   ProviderCapabilities,
 } from "@/lib/db/types";
-import { applySourceBound, assertObjectPathShape, callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { assertObjectPathShape, callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
 import {
   KafkaError,
   type KafkaConfigEntry,

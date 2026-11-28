@@ -27,13 +27,8 @@
 import { randomBytes } from "node:crypto";
 import { safeDecodeURIComponent } from "@/lib/db/connection-string/shared";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import {
-  applySourceBound,
-  callerBoundTruncationReason,
-  containerDepth,
-  declaredKinds,
-  findKind,
-} from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   AuthenticationError,
   ByteBudgetRefusal,

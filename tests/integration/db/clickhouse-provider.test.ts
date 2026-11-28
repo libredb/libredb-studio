@@ -24,11 +24,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach, spyOn, afterAll, beforeAll } from "bun:test";
-import {
-  callerBoundTruncationReason,
-  isSourcePartUnavailable,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import type { DatabaseProvider, ObjectSourceDocument } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse";

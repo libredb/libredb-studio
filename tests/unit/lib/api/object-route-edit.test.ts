@@ -9,7 +9,7 @@ import {
   readObjectRouteBody,
 } from "@/lib/api/object-route";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectSourceDocument, ProviderCapabilities } from "@/lib/db/types";
 
 const EDITABLE: ProviderCapabilities = {

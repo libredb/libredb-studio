@@ -19,7 +19,8 @@
  *   `LIKE` answer takes only the row whose `name` equals the name it asked for, and no such row means absent.
  */
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, INVENTORY_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
-import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   Container,
   DatabaseObject,

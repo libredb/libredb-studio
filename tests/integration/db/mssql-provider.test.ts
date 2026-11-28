@@ -1,9 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import {
-  callerBoundTruncationReason,
-  isSourcePartUnavailable,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 

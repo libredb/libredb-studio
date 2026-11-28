@@ -34,8 +34,8 @@
  */
 import { createHash } from "node:crypto";
 import { DatabaseError, QueryError } from "@/lib/db/errors";
+import { applySourceBound, SOURCE_PART_LIMIT } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertObjectPathShape,
   callerBoundTruncationReason,
   containerDepth,
@@ -43,7 +43,6 @@ import {
   findKind,
   type ObjectPathShapeEngine,
   requireSourceKind,
-  SOURCE_PART_LIMIT,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {

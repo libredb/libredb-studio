@@ -7,7 +7,7 @@ import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ObjectSource } from "@/components/object-tree";
 import type { ObjectSourceApplier, ObjectSourceReader } from "@/components/object-source";
 import { EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import { useReadGeneration } from "@/hooks/use-read-generation";
 import { defaultConnection, unavailableConnectionNotice, type UnavailableNotice } from "@/lib/connection-availability";
 import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";

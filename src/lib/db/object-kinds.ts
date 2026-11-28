@@ -678,20 +678,9 @@ export function isSourcePartStatement(
 }
 
 /**
- * The source bounds, their sentence and the bound helper are the provider SDK's (clause C-115), re-exported here so
- * every provider and browser reader keeps its import; the SDK is their one home.
- */
-export {
-  applySourceBound,
-  SOURCE_CHARACTER_LIMIT,
-  SOURCE_PART_LIMIT,
-  sourceBoundTruncationReason,
-} from "@libredb/provider-sdk/calls";
-
-/**
  * The entry guard every `readObjectSource` opens with, in ONE place (#789 Phase 2).
  *
- * Hoisted in the same spirit as `applySourceBound` above it and for the same measured reason
+ * Hoisted in the same spirit as the provider SDK's `applySourceBound` and for the same measured reason
  * standing ruling 5h gives for `comparePaths`: this preamble was written NINE times, verbatim,
  * across `sqlite`, `libsql`, `clickhouse`, `cassandra`, `trino`, `postgres`, `mssql`, `mysql`
  * and `duckdb`, and SonarCloud's duplication report on PR #820 named one of its copies as a

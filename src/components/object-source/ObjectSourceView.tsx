@@ -20,7 +20,8 @@ import {
 import { partEditability, type SourceEditability } from "./source-editable";
 import { Button } from "@/components/ui/button";
 import { isObjectEditBuildResponseShape, isObjectEditOutcomeShape } from "@/lib/api/object-edit-wire";
-import { isSourcePartStatement, isSourcePartUnavailable, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
+import { isSourcePartStatement, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import { connectionResolutionKey } from "@/hooks/use-connection-payload";
 import type {

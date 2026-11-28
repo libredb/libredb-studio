@@ -12,7 +12,7 @@
  * `on_disk`, `always_ram` or `on_disk_payload` flag, the two can contradict each other, so the flag is kept under a
  * key that says `memory` decides.
  */
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type { ObjectSourcePart } from "@/lib/db/types";
 import type { QdrantPayloadSample, QdrantSampledKey } from "./sample";
 import { qdrantSampleCoverage, qdrantSampleNotices } from "./sample";

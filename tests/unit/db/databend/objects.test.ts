@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
 import {
   DATABEND_OBJECT_SENTENCES,

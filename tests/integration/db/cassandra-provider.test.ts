@@ -92,11 +92,8 @@ import {
   cassandraKeyspaceColumnsCql,
   cassandraKeyspaceTypesCql,
 } from "@/lib/db/providers/sql/cassandra/objects";
-import {
-  callerBoundTruncationReason,
-  isSourcePartUnavailable,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";

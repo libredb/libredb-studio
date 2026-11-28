@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { gzipSync } from "node:zlib";
 import { QueryError } from "@/lib/db/errors";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import * as consoleConstants from "@/lib/db/providers/objectstore/s3/console/constants";
 import {
   S3_CELL_CHARS,

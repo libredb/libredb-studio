@@ -18,8 +18,8 @@ import { createHash, randomUUID } from "node:crypto";
 import Redis, { type RedisOptions } from "ioredis";
 import { logger } from "@/lib/logger";
 import { BaseDatabaseProvider } from "../../base-provider";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,

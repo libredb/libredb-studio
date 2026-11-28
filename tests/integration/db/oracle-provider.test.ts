@@ -1,10 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn, afterAll, beforeAll } from "bun:test";
-import {
-  callerBoundTruncationReason,
-  isSourcePartUnavailable,
-  kindHasColumns,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
 import type oracledb from "oracledb";
 import {
   AuthenticationError,

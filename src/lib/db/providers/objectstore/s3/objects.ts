@@ -10,7 +10,7 @@
  * connection fails the whole document.
  */
 import { AuthenticationError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import { applySourceBound } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import type {
   DatabaseObject,
   KindCount,

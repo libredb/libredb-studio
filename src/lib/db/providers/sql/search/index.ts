@@ -101,13 +101,8 @@ import {
   TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
-import {
-  applySourceBound,
-  callerBoundTruncationReason,
-  containerDepth,
-  declaredKinds,
-  findKind,
-} from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import {
   type ActiveSessionDetails,

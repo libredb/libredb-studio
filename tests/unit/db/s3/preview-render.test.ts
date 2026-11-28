@@ -8,7 +8,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { isSourceDocumentShape } from "@/components/object-source/source-reader";
 import * as shellWords from "@/lib/db/console/shell-words";
-import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import { previewObject, type S3Preview } from "@/lib/db/providers/objectstore/s3/preview";
 import {
   EMPTY_OBJECT_SENTENCE,

@@ -12,7 +12,8 @@
  * that starts with an    `x-databend-` header name, in any case. 6. `index.ts` holds no `system.` SQL: every statement
  * it sends comes from `objects.ts` or `introspect.ts`. 7. A value is imported from outside this directory only from
  * `@/lib/db/http/*`, `@/lib/db/errors`,    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes,
- * `@/lib/db/object-kinds`,    `@/lib/app-version` (I15) and the runtime's `node:crypto`; types are free. The SSH
+ * `@/lib/db/object-kinds`, the provider SDK's `@libredb/provider-sdk/calls`,    `@/lib/app-version` (I15) and the
+ * runtime's `node:crypto`; types are free. The SSH
  * tunnel's route comes from core under    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of
  * `@/lib/db/utils/require-tunnel-route`, so no value of    `@/lib/db/connection-fingerprint` is allowed: this directory
  * frames no route of its own (FND-2 slice 5b).    `migration-ddl.ts`, the engine's migration DDL contract module, may
@@ -51,6 +52,7 @@ const OUTSIDE_VALUES = [
   "src/lib/db/base-provider.ts",
   SQL_BASE,
   "src/lib/db/object-kinds.ts",
+  "packages/provider-sdk/src/calls/",
   "src/lib/app-version.ts",
 ];
 /**

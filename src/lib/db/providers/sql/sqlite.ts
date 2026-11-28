@@ -71,8 +71,8 @@ import {
 } from "./sqlite-worker";
 import { declaredColumnTypes } from "./column-types";
 import { SQLITE_CREATE_TABLE } from "./sqlite-create-table";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
 import {
-  applySourceBound,
   assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,

@@ -2,7 +2,8 @@
  * The object surface over the provider's metadata session: every read is a statement this module writes, sent as a
  * command that Spark answers inline with no job, and every answer is read by column name, whole or not at all.
  */
-import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { applySourceBound } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   Container,
   DatabaseObject,

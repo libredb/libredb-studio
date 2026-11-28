@@ -17,7 +17,8 @@
  * 6. The wire envelope's field names (`statementHandle`, `resultSetMetaData`, `rowType`, `partitionInfo`), as names
  *    or literals, appear only in `statements.ts`, `rows.ts` and `decode.ts`.
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
- *    `@/lib/db/types`, `@/lib/db/utils/*`, `@/lib/db/object-kinds`, `@/lib/db/inventory-bounds`, `@/lib/sql/*`,
+ *    `@/lib/db/types`, `@/lib/db/utils/*`, `@/lib/db/object-kinds`, the provider SDK's `@libredb/provider-sdk/calls`,
+ *    `@/lib/db/inventory-bounds`, `@/lib/sql/*`,
  *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `jose`, `node:crypto` and `node:zlib`; types
  *    are free. `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
  *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
@@ -75,7 +76,7 @@ const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "typed-literals": "src/lib/db/sql-writing/",
   paste: "src/lib/db/connection-string/shared.ts",
 };
-const PACKAGE_VALUES = new Set(["jose"]);
+const PACKAGE_VALUES = new Set(["jose", "@libredb/provider-sdk/calls"]);
 const BUILTIN_VALUES = new Set(["node:crypto", "node:zlib"]);
 const SOCKET_FACTORIES = ["createNodeTransport", "createNodeByteTransport"];
 const SOCKET_FILES = new Set(["transport", "index"]);

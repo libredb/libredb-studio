@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { isObjectEditBuildResponseShape, isObjectEditOutcomeShape } from "@/lib/api/object-edit-wire";
 import { QueryError, TimeoutError } from "@/lib/db/errors";
 import { EDIT_CHARACTER_LIMIT, planExecutableLength, renderSegments } from "@/lib/db/object-edit";
-import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import {
   EtcdError,
   type EtcdKeyValue,

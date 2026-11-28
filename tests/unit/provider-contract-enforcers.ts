@@ -3346,7 +3346,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package session that offers objects.source binds it with its handle first and states its declaration's object model",
       ],
       "tests/unit/provider-sdk/call-surface-parity.test.ts": ["the object source document is Studio's own shape"],
-      "tests/unit/db/object-kinds.test.ts": ["the source bounds, reason and bound helper are the SDK's"],
+      "tests/unit/db/object-kinds.test.ts": [
+        "object-kinds states no source bound, reason or bound helper, so every reader imports the SDK's",
+      ],
     },
     schema: ["/$defs/objectsCalls/properties/source"],
   },

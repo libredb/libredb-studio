@@ -10,12 +10,8 @@
 import { describe, expect, test } from "bun:test";
 import { AuthenticationError, ConnectionError, QueryError } from "@/lib/db/errors";
 import { INVENTORY_LIMIT } from "@/lib/db/inventory-bounds";
-import {
-  callerBoundTruncationReason,
-  enumerableKinds,
-  keyBrowserKind,
-  sourceBoundTruncationReason,
-} from "@/lib/db/object-kinds";
+import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
+import { callerBoundTruncationReason, enumerableKinds, keyBrowserKind } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectSourceDocument, ProviderCapabilities } from "@/lib/db/types";
 import { EtcdError, type EtcdPermission, type EtcdRangeRequest } from "@/lib/db/providers/keyvalue/etcd/client";
 import type { EtcdErrorConnection } from "@/lib/db/providers/keyvalue/etcd/errors";
