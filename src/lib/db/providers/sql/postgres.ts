@@ -5458,9 +5458,10 @@ export class PostgresProvider extends SQLBaseProvider {
       let slowQueries: SlowQuery[] = [];
       try {
         const slowRes = await client.query(HEALTH_SLOW_QUERIES_SQL);
+        // `calls` is a bigint, which pg answers as text, and the health answer's call count is a number.
         slowQueries = slowRes.rows.map((r) => ({
           query: r.query,
-          calls: r.calls,
+          calls: parseInt(r.calls),
           avgTime: r.avgtime,
         }));
       } catch {
@@ -5919,8 +5920,10 @@ export class PostgresProvider extends SQLBaseProvider {
       try {
         const res = await client.query(SLOW_QUERIES_SQL, [this.monitoredDatabase(), limit]);
 
+        // pg_stat_statements answers `queryid` NULL for another role's statement to a role without
+        // pg_read_all_stats, and an id nobody published is absent, not a NULL.
         return res.rows.map((r) => ({
-          queryId: r.query_id,
+          ...(r.query_id === null ? {} : { queryId: r.query_id }),
           query: r.query || "",
           calls: parseInt(r.calls || "0"),
           totalTime: parseFloat(r.total_time || "0"),

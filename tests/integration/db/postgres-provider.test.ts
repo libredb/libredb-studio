@@ -3,7 +3,7 @@
  * Uses mock.module() to intercept pg before provider import.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach, mock, spyOn } from "bun:test";
 import { sourceBoundTruncationReason } from "@libredb/provider-sdk/calls";
 import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { createHash } from "node:crypto";
@@ -326,6 +326,9 @@ mock.module("pg", () => ({
 
 // Dynamic import AFTER mock is installed
 const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
+const { readGrantedHealth, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
+const { createHostCore } = await import("@/lib/provider-host/core/host-core");
+const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 
 // ============================================================================
 // Helpers
@@ -3610,6 +3613,75 @@ describe("PostgresProvider", () => {
       // With limit=5, the query passes $2=5 to the mock; our mock always returns 1 row
       const slowQueries = await provider.getSlowQueries({ limit: 5 });
       expect(Array.isArray(slowQueries)).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The health and slow queries read through the bridge and the host core
+  // --------------------------------------------------------------------------
+
+  describe("the health and slow queries read through the bridge and the host core, in pg's own value types", () => {
+    beforeAll(() => installHostCore(createHostCore(), "test"));
+    afterAll(forgetHostCore);
+
+    const grant = () => ({
+      deadline: Date.now() + 30_000,
+      deadlineSentence: "The granted reading did not answer within its grant.",
+      route: "test",
+      holdUntilSettled: () => {},
+    });
+
+    test("a health slow query's call count, a bigint pg answers as text, is read as a count", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // pg_stat_statements.calls is a bigint, which pg answers as text unless a type parser says otherwise.
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_statements") && normalized.includes("left(query, 100)")) {
+          return { rows: [{ query: "SELECT 1", calls: "100", avgtime: "12.50ms" }], fields: [], rowCount: 1 };
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      const health = await readGrantedHealth(provider, grant());
+      expect(health.slowQueries).toEqual([{ query: "SELECT 1", calls: 100, avgTime: "12.50ms" }]);
+    });
+
+    test("a slow query whose query id pg answers as NULL, another role's statement, is read without one", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // pg_stat_statements shows queryid as NULL for another role's statement to a role without pg_read_all_stats.
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_statements") && normalized.includes("queryid::text")) {
+          return {
+            rows: [
+              {
+                query_id: null,
+                query: "<insufficient privilege>",
+                calls: "3",
+                total_time: "30.00",
+                avg_time: "10.00",
+                min_time: "5.00",
+                max_time: "15.00",
+                rows: "3",
+                shared_blks_hit: "8",
+                shared_blks_read: "0",
+              },
+            ],
+            fields: [],
+            rowCount: 1,
+          };
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      const read = await readGrantedPanel(provider, { panel: "slowQueries", limit: 5 }, grant());
+      expect(read.kind).toBe("answered");
+      const [entry] = read.kind === "answered" ? read.member : [];
+      expect(entry).toBeDefined();
+      expect(Object.hasOwn(entry ?? {}, "queryId")).toBe(false);
+      expect(entry?.calls).toBe(3);
     });
   });
 
