@@ -2,13 +2,14 @@
  * What a caller facade of the provider host core runs its calls on: a session target (`SessionTarget`), the session,
  * the environment every call of it is given, its statement timeout and the run marks of the cache entry it lives in.
  *
- * Every builder of a legacy provider's session target lives here, the tree's (`providerTreeTarget`), the monitoring and
- * health reads' (`providerMonitoringTarget`) and the maintenance calls' (`providerMaintenanceTarget`), so this is the
- * one module of the caller facades that builds a bridged session for them (`bridgedConsole` and `bridgedMaintenance` in
- * src/lib/provider-host/legacy-bridge.ts), and every builder of a target from a cache entry of the provider factory, by
- * the entry's form, so no facade and no route forks on who serves an engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code backend, which
- * is handed the factory's functions and imports none of them, builds its targets here too; the builders that open
- * through the factory live in src/lib/api/editor-provider.ts and call these.
+ * Every builder of a legacy provider's session target lives here, the object tree's (`providerTreeTarget`), the object
+ * source's (`providerSourceTarget`), the monitoring and health reads' (`providerMonitoringTarget`) and the maintenance
+ * calls' (`providerMaintenanceTarget`), so this is the one module of the caller facades that builds a bridged session
+ * for them (`bridgedConsole` and `bridgedMaintenance` in src/lib/provider-host/legacy-bridge.ts), and every builder of
+ * a target from a cache entry of the provider factory, by the entry's form, so no facade and no route forks on who
+ * serves an engine. This module value-imports no provider factory module (src/lib/db/factory.ts), so the VS Code
+ * backend, which is handed the factory's functions and imports none of them, builds its targets here too; the builders
+ * that open through the factory live in src/lib/api/editor-provider.ts and call these.
  *
  * A target's marks count a call on its cache entry while the call runs, so the factory's idle sweep keeps the entry: a
  * provider package's session is marked from `started` until the call answered, or until the call a stop answered has
@@ -121,20 +122,23 @@ function entryMarks(entry: CachedSession): Pick<SessionTarget<unknown>, "started
 }
 
 /**
- * The tree target of `provider`: one bridged session of it, built when this is called, which reads the provider's
+ * The target of `provider`: one bridged session of it, built when this is called, which reads the provider's
  * capabilities once for its object model, before any host core is read; no environment, no marks, and, when asked,
- * the provider's statement timeout and the provider's type as `wholeServer` where its capabilities declare catalog
- * sessions.
+ * the provider's statement timeout. `objectReads` is handed to the bridge as it is.
+ */
+function providerTarget(provider: DatabaseProvider, objectReads: ObjectReadOptions): SessionTarget<ObjectsSession> {
+  return { session: bridgedConsole(provider, {}, objectReads).session, ...providerFields(provider) };
+}
+
+/**
+ * The tree target of `provider`: its target (`providerTarget`) and, when asked, the provider's type as `wholeServer`
+ * where its capabilities declare catalog sessions.
  * `objectReads` is handed to the bridge as it is: the agent's billed-read allowance, where the walk has one.
  */
 export function providerTreeTarget(provider: DatabaseProvider, objectReads: ObjectReadOptions = {}): TreeTarget {
-  const { session } = bridgedConsole(provider, {}, objectReads);
   return {
-    session,
-    env: NO_ENVIRONMENT,
-    timeout: () => statementTimeout(provider),
+    ...providerTarget(provider, objectReads),
     wholeServer: () => (provider.getCapabilities().catalogSessions === true ? provider.type : null),
-    ...NO_MARKS,
   };
 }
 
@@ -191,6 +195,14 @@ export async function markedCall<Record extends CallEnd>(
   } finally {
     target.ended(record);
   }
+}
+
+/**
+ * The source target of `provider` (src/lib/api/object-source.ts): its target (`providerTarget`), whose session offers
+ * `objects.source` exactly where the provider defines `readObjectSource`.
+ */
+export function providerSourceTarget(provider: DatabaseProvider): SessionTarget<ObjectsSession> {
+  return providerTarget(provider, {});
 }
 
 /**

@@ -3443,6 +3443,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/netconf/provider.test.ts": [
         "a key read the device answers with no data is the engine's statement, never an empty part, through the host core's source call",
       ],
+      "tests/api/db-objects.test.ts": [
+        "a source path deeper than the connection's object model admits is refused before any provider call, outcome not-sent, in Studio's words",
+        "a readable part with its own undefined unavailable, a text past the bound and a provider truncation sentence holding the connection's secret is cut, marked and scrubbed through the host core",
+      ],
     },
     schema: ["/$defs/objectsCalls/properties/source"],
   },

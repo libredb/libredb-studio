@@ -70,9 +70,8 @@
  * Its source call runs the provider's own `readObjectSource`, bound to the provider, with a fresh copy of the frozen
  * request's path, so a legacy member may write what it receives, the request's kind, and `SOURCE_CHARACTER_LIMIT` as
  * the limit, the bound the source route always passed. It answers the provider's document by reference, never calls
- * `forCatalog`, and passes a provider's error by reference; the host core's source call checks and cuts the answer. No
- * route reads it yet: the source route still calls the provider's own `readObjectSource` (`requireSourceReader` in
- * src/lib/api/object-route.ts).
+ * `forCatalog`, and passes a provider's error by reference; the host core's source call checks and cuts the answer. The
+ * facade that reads it is `objectSource` in src/lib/api/object-source.ts.
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,

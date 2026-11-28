@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import {
   ObjectRouteError,
-  boundSourceDocument,
   objectRouteErrorBody,
+  offeredSourceEdits,
   readObjectRouteBody,
 } from "@/lib/api/object-route";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
+import { boundSourceAnswer, SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
 import type { ObjectSourceDocument, ProviderCapabilities } from "@/lib/db/types";
 
 const EDITABLE: ProviderCapabilities = {
@@ -139,23 +139,15 @@ describe("readObjectRouteBody", () => {
 
 describe("the affordance the route strips", () => {
   test("a part of an editable kind keeps the provider's offer", () => {
-    const bounded = boundSourceDocument(
-      document({ ...READABLE, edit: { offered: true } }),
-      SOURCE_CHARACTER_LIMIT,
-      EDITABLE,
-    );
-    expect((bounded.parts[0] as { edit?: unknown }).edit).toEqual({ offered: true });
+    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }), EDITABLE);
+    expect((offered.parts[0] as { edit?: unknown }).edit).toEqual({ offered: true });
   });
 
   test("a part whose KIND declares no edit loses it, however the provider answered", () => {
-    // ENFORCE rather than trust, on `boundSourceDocument`'s own precedent: a number merely passed
-    // to an implementation is a request and not a bound.
-    const bounded = boundSourceDocument(
-      document({ ...READABLE, edit: { offered: true } }, "view"),
-      SOURCE_CHARACTER_LIMIT,
-      EDITABLE,
-    );
-    expect(Object.hasOwn(bounded.parts[0], "edit")).toBe(false);
+    // ENFORCE rather than trust: a declaration merely read from an implementation is a report and
+    // not a bound, as the host core holds the document's shape and bound (`checkSourceAnswer`).
+    const offered = offeredSourceEdits(document({ ...READABLE, edit: { offered: true } }, "view"), EDITABLE);
+    expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
 
   test("a REFUSAL part carrying an offer loses it", () => {
@@ -163,34 +155,42 @@ describe("the affordance the route strips", () => {
     // any member of it, so a provider spreading a conditional affordance onto a refusal would ship
     // an editable refusal. The test CONSTRUCTS the hybrid deliberately, because that is the only
     // way to reach it.
-    const bounded = boundSourceDocument(
+    const offered = offeredSourceEdits(
       document({ id: "definition", label: "Definition", unavailable: "no", edit: { offered: true } }),
-      SOURCE_CHARACTER_LIMIT,
       EDITABLE,
     );
-    expect(Object.hasOwn(bounded.parts[0], "edit")).toBe(false);
+    expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
 
-  test("a part the ROUTE truncates loses it, and the ORDER is what makes that true", () => {
-    // `boundPart` MARKS truncation itself when a provider over-answers, so the stripping must run
-    // AFTER the bound or a route-truncated part keeps the affordance. This is the case that fails
-    // if the two are swapped.
-    const bounded = boundSourceDocument(
-      document({ ...READABLE, text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1), edit: { offered: true } }),
-      SOURCE_CHARACTER_LIMIT,
+  test("a part the HOST CORE cut loses it, since the route decides the offer after the core's bound", () => {
+    // The host core's `boundSourceAnswer` MARKS truncation itself when a provider over-answers, and
+    // the route decides the affordance on the document the core answered, so a part the core cut
+    // never keeps the offer.
+    const offered = offeredSourceEdits(
+      boundSourceAnswer(
+        document({ ...READABLE, text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1), edit: { offered: true } }),
+      ),
       EDITABLE,
     );
-    expect(Object.hasOwn(bounded.parts[0], "truncated")).toBe(true);
-    expect(Object.hasOwn(bounded.parts[0], "edit")).toBe(false);
+    expect(Object.hasOwn(offered.parts[0], "truncated")).toBe(true);
+    expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
 
   test("a part the PROVIDER already marked truncated loses it too", () => {
-    const bounded = boundSourceDocument(
+    const offered = offeredSourceEdits(
       document({ ...READABLE, truncated: { limit: 10, reason: "bounded by the provider" }, edit: { offered: true } }),
-      SOURCE_CHARACTER_LIMIT,
       EDITABLE,
     );
-    expect(Object.hasOwn(bounded.parts[0], "edit")).toBe(false);
+    expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
+  });
+
+  test("the offer is read by each member's value: a part with no truncation keeps it, and an edit of no value is no offer", () => {
+    // The host core rebuilds each part to the members holding a value, so the route reads a member
+    // by its value, as the tree's readers do; an own `undefined` is no truncation and no offer.
+    const kept = offeredSourceEdits(document({ ...READABLE, truncated: undefined, edit: { offered: true } }), EDITABLE);
+    expect((kept.parts[0] as { edit?: unknown }).edit).toEqual({ offered: true });
+    const unoffered = document({ ...READABLE, edit: undefined }, "view");
+    expect(offeredSourceEdits(unoffered, EDITABLE).parts[0]).toBe(unoffered.parts[0]);
   });
 });
 

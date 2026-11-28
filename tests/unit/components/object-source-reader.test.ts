@@ -230,7 +230,7 @@ describe("isSourceDocumentShape", () => {
 
   test("an `edit` on a REFUSAL part does not make the part editable", () => {
     // The client half of the same rule the route enforces, and the only half that runs on the
-    // embedded shell, where a host cannot reach `boundSourceDocument` at all. The refusal arm never
+    // embedded shell, where a host cannot reach `offeredSourceEdits` at all. The refusal arm never
     // reaches `partEditability`: `SourceEditablePart` is the TEXT arm and the refusal pane draws
     // first, so an `edit` sitting beside `unavailable` decides nothing.
     const refusal = {

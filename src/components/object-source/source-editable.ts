@@ -20,13 +20,13 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * standalone app, which reads through `/api/db/objects/source`, and the embedded library
  * surface, where a HOST supplies the document and no route of ours runs at all. That second
  * half is the one the server-side stripping cannot cover. The route deletes `edit` from any part
- * whose kind the CONNECTED provider does not declare editable: `boundSourceDocument` reads
- * `kindAcceptsSourceEdits(capabilities, document.kind)` and passes the answer to `stripEdit`
- * (`boundSourceDocument` in `src/lib/api/object-route.ts`). This paragraph said that stripping was NOT
- * WRITTEN YET, which was true when this file landed and stopped being true in the same phase;
+ * whose kind the CONNECTED provider does not declare editable: `offeredSourceEdits` reads
+ * `kindAcceptsSourceEdits(model, document.kind)` and passes the answer to `stripEdit`
+ * (`offeredSourceEdits` in `src/lib/api/object-route.ts`). This paragraph said that stripping was
+ * NOT WRITTEN YET, which was true when this file landed and stopped being true in the same phase;
  * corrected here rather than left, because a stale claim about a guard reads as a statement that
  * the guard is absent. What did NOT change is the half that matters to this file: a host never
- * reaches `boundSourceDocument`, so on the embedded shell `edit` arrives exactly as the host
+ * reaches `offeredSourceEdits`, so on the embedded shell `edit` arrives exactly as the host
  * wrote it, and the route's stripping covers the standalone path only.
  * Ordering the core facts first is what lets the embedded shell inherit the truncation and form
  * refusals with no route in the path, and it is what gives three of the four false arms a
@@ -83,7 +83,7 @@ import type { ObjectSourcePart } from "@/lib/db/types";
 /**
  * The text arm of a part. The refusal arm never reaches here: the refusal pane draws first, and
  * the hybrid that could defeat that ordering is refused at both seams, by `isSourceDocumentShape`
- * on the client and by `boundPart` on the route.
+ * on the client and by the host core's `checkSourceAnswer` on the route's source call.
  */
 export type SourceEditablePart = Extract<ObjectSourcePart, { readonly text: string }>;
 

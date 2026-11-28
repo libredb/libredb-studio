@@ -71,7 +71,7 @@ describe("POST /api/db/objects/edit-plan", () => {
     // NOT in the brief's list and added because the method is OPTIONAL on `DatabaseProvider`, so
     // the route holds a branch for its absence and a branch nothing drives is a line the coverage
     // gate counts and no mutation can kill. Same two-conjunct shape and same 400 grammar as
-    // `requireSourceReader`, whose second conjunct exists for exactly this state.
+    // `requireSourceReader`, whose first conjunct exists for exactly this state.
     const build = provider.buildObjectEdit;
     (provider as { buildObjectEdit?: unknown }).buildObjectEdit = undefined;
     try {
@@ -245,7 +245,7 @@ describe("POST /api/db/objects/edit-plan", () => {
     // route, so nothing in this repository built the population for it. The provider writes the
     // fingerprint from the connection it was built with; the route recomputes it from the
     // connection THIS request resolved and refuses the difference, which is the enforce-rather-than-
-    // trust precedent `boundSourceDocument` set.
+    // trust precedent the host core's source call sets.
     provider.buildObjectEdit.mockResolvedValueOnce({
       built: true,
       plan: { ...PLAN, connectionFingerprint: `${PLAN.connectionFingerprint}00` },

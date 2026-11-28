@@ -48,8 +48,9 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * IT LIVES IN CORE rather than beside the plan token, because both sides need it: the PROVIDER
  * writes it onto the plan it issues, from the connection it was built with, and the ROUTE
  * recomputes it from the connection THIS request resolved and refuses a mismatch. That is the
- * enforce-rather-than-trust precedent `boundSourceDocument` already sets, and a fingerprint only
- * the provider could compute would be a field nobody checked.
+ * enforce-rather-than-trust precedent the host core's source call already sets
+ * (`checkSourceAnswer` and `boundSourceAnswer` on every source answer), and a fingerprint only the
+ * provider could compute would be a field nobody checked.
  *
  * Length-framed, so two fields cannot slide across their boundary and answer the same digest for
  * two different servers. Stated as a limit rather than left to be discovered: it does not catch a

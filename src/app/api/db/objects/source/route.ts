@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
+import { objectSource, sourceModel } from "@/lib/api/object-source";
 import {
-  boundSourceDocument,
   handleObjectRequest,
+  offeredSourceEdits,
   requireObjectPath,
   requireSourceReader,
   requireString,
 } from "@/lib/api/object-route";
-import { SOURCE_CHARACTER_LIMIT } from "@libredb/provider-sdk/calls";
+import { providerSourceTarget } from "@/lib/api/session-target";
 import { scrubSourceDocument } from "@/lib/db/operations/provider-text";
-import { bridgedObjectModel } from "@/lib/provider-host/legacy-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -25,36 +25,36 @@ export const dynamic = "force-dynamic";
  * name addresses more than one object of different kinds in one container, so a path alone reads
  * the wrong object.
  *
- * No depth check, for the reason `describe/route.ts` gives: this is an object path, not a
- * container path, and how deep a kind nests is a per-kind fact the provider's declaration carries.
- * Two engines have a kind at mixed depth.
+ * The read is a contract call (docs/providers/CONTRACT.md, clause C-115): one host core source call
+ * (`objectSource` in src/lib/api/object-source.ts) on the legacy bridge's session of the editor's
+ * provider (`providerSourceTarget`), which offers `objects.source` exactly where the provider
+ * defines `readObjectSource`. The core holds the request to the session's object model, so a path
+ * deeper than the model admits for its kind is refused before any call as Studio's object model
+ * refusal, 400, outcome not-sent; the depth below that bound is the provider's to read. The core
+ * reads the answer once with `checkSourceAnswer` and cuts it with `boundSourceAnswer`, so the route
+ * checks and cuts nothing of its own, and an answer that is not the source document of its request
+ * is Studio's own defect, 500, for a legacy provider.
  *
- * `limit` is NOT accepted from the caller in Phase 2 and the route always passes
- * `SOURCE_CHARACTER_LIMIT`. The argument exists on the provider method because that is where a
- * bound belongs and because the conformance helper drives the bounded arm with a small number. An
- * unused request field would be a second way to reach one behaviour. The route then applies the
- * same bound to the ANSWER rather than trusting it: a number passed to an implementation is a
- * request and not a bound, and the providers that implement the method are the population
- * that reaches this handler. CORRECTED after review: the first version of this sentence also named
- * the embedded seam's host, and MEASURED, a host cannot reach here at all, because the provider
- * comes from a closed `switch (connection.type)` in `src/lib/provider-host/legacy-adapter/open.ts`
- * and the embedded shell has no API routes.
+ * `limit` is NOT accepted from the caller: the bridge passes `SOURCE_CHARACTER_LIMIT` to the
+ * provider, as this route always did, and the core cuts any text past it whatever the provider
+ * answered. An unused request field would be a second way to reach one behaviour.
  *
- * Whether the kind has source, and whether its parts may be edited, is read from the engine's object
- * model (docs/providers/CONTRACT.md, clause M-89): the model the legacy bridge states for the
- * provider's session (`bridgedObjectModel`), until the source read is a contract call made on the
- * record's session and reads that session's model.
+ * The read waits until the connection's statement timeout plus ten seconds from its start, and
+ * until the request's signal, so a caller that leaves stops the wait; a failure after that is
+ * logged by kind and code.
+ *
+ * Whether the kind has source, and whether its parts may be edited, is read from the object model
+ * the session states (`sourceModel`), the one the core holds the read to (clause M-89). The
+ * document is scrubbed of the provider's sentences, then the route decides the edit affordance
+ * (`offeredSourceEdits`).
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/source", async (provider, body, context) => {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
-    const model = bridgedObjectModel(provider);
-    const read = requireSourceReader(provider, model, kind);
-    return boundSourceDocument(
-      scrubSourceDocument(context.scrub, await read(path, kind, SOURCE_CHARACTER_LIMIT)),
-      SOURCE_CHARACTER_LIMIT,
-      model,
-    );
+    const target = providerSourceTarget(provider);
+    requireSourceReader(target.session, provider.type, kind);
+    const document = await objectSource(target, req.signal, context.route).read(path, kind);
+    return offeredSourceEdits(scrubSourceDocument(context.scrub, document), sourceModel(target.session));
   });
 }

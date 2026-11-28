@@ -3,10 +3,11 @@
  * capabilities (docs/providers/CONTRACT.md, clause M-89).
  *
  * Every call of a member named `getCapabilities` in the object routes' helpers (src/lib/api/object-route.ts), the tree
- * facade (src/lib/api/object-tree.ts), the container walk (src/lib/db/container-walk.ts) and every route under
- * src/app/api/db/objects is found with the TypeScript parser, so a comment or a string that names the member is not a
- * call. Each allowed call is listed by file with its reason, and a new call anywhere else fails here by file.
- * Files are read with `path.join` and parsed whole, so no platform's path separator or line ending reaches the census.
+ * facade (src/lib/api/object-tree.ts), the source facade (src/lib/api/object-source.ts), the container walk
+ * (src/lib/db/container-walk.ts) and every route under src/app/api/db/objects is found with the TypeScript parser, so a
+ * comment or a string that names the member is not a call. Each allowed call is listed by file with its reason, and a
+ * new call anywhere else fails here by file. Files are read with `path.join` and parsed whole, so no platform's path
+ * separator or line ending reaches the census.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -35,6 +36,7 @@ function censusFiles(): string[] {
     .map((entry) => [ROUTES, entry.name, "route.ts"].join("/").split(path.sep).join("/"));
   return [
     "src/lib/api/object-route.ts",
+    "src/lib/api/object-source.ts",
     "src/lib/api/object-tree.ts",
     "src/lib/db/container-walk.ts",
     ...routes.sort(),
@@ -80,6 +82,7 @@ describe("the object routes' model readers", () => {
         "src/app/api/db/objects/list/route.ts",
         "src/app/api/db/objects/source/route.ts",
         "src/app/api/db/objects/edit-plan/route.ts",
+        "src/lib/api/object-source.ts",
       ]),
     );
     expect(files.length).toBeGreaterThan(9);

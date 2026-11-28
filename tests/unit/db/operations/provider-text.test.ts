@@ -540,11 +540,6 @@ describe("the object read sentences", () => {
     });
   });
 
-  test("scrubSourceDocument answers a document with no parts as given, for the source route's bound to refuse", () => {
-    const empty = { path: ["report"], kind: "view", parts: [] } as unknown as ObjectSourceDocument;
-    expect(scrubSourceDocument(scrub, empty)).toBe(empty);
-  });
-
   test("scrubSourceDocument reads a part's form by value, so a readable part with its own undefined unavailable has its truncation and refused edit sentences scrubbed", () => {
     const part = {
       id: "body",

@@ -193,8 +193,8 @@ export function providerRanges(step: ObjectEditStep): readonly { readonly start:
  * truncation.
  *
  * BOTH ROUTES CALL IT. The build refuses to issue a plan it knows cannot be posted back; the apply
- * re-checks the plan's own unit, ENFORCING rather than trusting, which is the precedent
- * `boundSourceDocument` set for a provider defect.
+ * re-checks the plan's own unit, ENFORCING rather than trusting, which is the precedent the host
+ * core's source call sets for a provider defect (`checkSourceAnswer` and `boundSourceAnswer`).
  */
 export function planExecutableLength(unit: ObjectEditUnit): number {
   if (unit.medium === "command") {
