@@ -4,7 +4,7 @@
  * Uses mock.module() from bun:test to mock the 'ioredis' driver
  * before importing the RedisProvider class.
  */
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach, mock, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -801,6 +801,8 @@ mock.module("ioredis", () => {
         return databasesReply;
       }
       if (cmd === "SLOWLOG" && slowlogRefusal !== null) throw replyError(slowlogRefusal);
+      // `SLOWLOG GET <count>` answers at most `count` entries, newest first, as a server does.
+      if (cmd === "SLOWLOG") return (mockCallResults.SLOWLOG as unknown[]).slice(0, Number(args[1]));
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
         if (functionTransportFailure !== null) throw functionTransportFailure;
@@ -828,6 +830,9 @@ mock.module("ioredis", () => {
 const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
 const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
 const { logger } = await import("@/lib/logger");
+const { providerMonitoring, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
+const { createHostCore } = await import("@/lib/provider-host/core/host-core");
+const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 
 // ============================================================================
 // Test Config
@@ -2911,6 +2916,16 @@ describe("RedisProvider", () => {
       expect(slow[1].query).toBe("HGETALL user:2");
       expect(slow[1].totalTime).toBe(2.5);
     });
+
+    test("asks SLOWLOG for the caller's limit of entries, and for 10 without one", async () => {
+      capturedCalls.length = 0;
+      expect((await provider.getSlowQueries({ limit: 1 })).map((entry) => entry.queryId)).toEqual(["1"]);
+      await provider.getSlowQueries();
+      expect(capturedCalls.filter((call) => call.command === "SLOWLOG")).toEqual([
+        { command: "SLOWLOG", args: ["GET", "1"] },
+        { command: "SLOWLOG", args: ["GET", "10"] },
+      ]);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -2950,6 +2965,53 @@ describe("RedisProvider", () => {
         ["bx", "waiting"],
         ["N", "idle"],
       ]);
+    });
+
+    test("answers the first clients of CLIENT LIST up to the caller's limit, and every client without one", async () => {
+      expect((await provider.getActiveSessions({ limit: 1 })).map((session) => session.pid)).toEqual(["1"]);
+      expect((await provider.getActiveSessions()).map((session) => session.pid)).toEqual(["1", "2"]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The sessions and slow queries panels read through the bridge and the host core
+  // --------------------------------------------------------------------------
+
+  describe("the sessions and slow queries panels read through the bridge and the host core", () => {
+    beforeAll(() => installHostCore(createHostCore(), "test"));
+    afterAll(forgetHostCore);
+
+    beforeEach(async () => {
+      // 60 connected clients: more than the dashboard's default session limit of 50.
+      mockClientList = Array.from(
+        { length: 60 },
+        (_, at) => `id=${at + 1} addr=127.0.0.1:${7000 + at} name= db=0 flags=N cmd=get idle=1 user=default`,
+      ).join("\n");
+      await provider.connect();
+    });
+
+    const grant = () => ({
+      deadline: Date.now() + 30_000,
+      deadlineSentence: "The granted reading did not answer within its grant.",
+      route: "test",
+      holdUntilSettled: () => {},
+    });
+
+    test("a server with more clients than the dashboard's default session limit answers that many", async () => {
+      const data = await providerMonitoring(provider, new AbortController().signal, "test").readDashboard({});
+      expect(data.errors?.activeSessions).toBeUndefined();
+      expect(data.activeSessions).toHaveLength(50);
+      expect(data.slowQueries).toHaveLength(2);
+    });
+
+    test("an agent's sessions reading with a limit below the connected clients answers the limit", async () => {
+      const read = await readGrantedPanel(provider, { panel: "activeSessions", limit: 3 }, grant());
+      expect(read.kind === "answered" ? read.member.map((session) => session.pid) : read.kind).toEqual(["1", "2", "3"]);
+    });
+
+    test("an agent's slow queries reading with a limit below the logged entries answers the limit", async () => {
+      const read = await readGrantedPanel(provider, { panel: "slowQueries", limit: 1 }, grant());
+      expect(read.kind === "answered" ? read.member.map((entry) => entry.queryId) : read.kind).toEqual(["1"]);
     });
   });
 

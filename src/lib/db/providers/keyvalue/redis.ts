@@ -2983,11 +2983,13 @@ export class RedisProvider extends BaseDatabaseProvider {
     };
   }
 
-  public async getSlowQueries(): Promise<SlowQueryStats[]> {
+  /** The newest `limit` SLOWLOG entries, 10 when the caller asks for no limit. */
+  public async getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     try {
+      const count = String(options?.limit ?? 10);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const slowlog = (await (this.client as any).call("SLOWLOG", "GET", "10")) as unknown[][];
+      const slowlog = (await (this.client as any).call("SLOWLOG", "GET", count)) as unknown[][];
       if (!Array.isArray(slowlog)) return [];
 
       return slowlog.map((entry) => ({
@@ -3007,13 +3009,15 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
   }
 
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+  /** The clients `CLIENT LIST` names, in its order: the first `limit` of them when the caller asks for one, else all. */
+  public async getActiveSessions(options?: { limit?: number }): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     try {
       const clientList = (await this.client!.client("LIST")) as string;
       const sessions: ActiveSessionDetails[] = [];
 
       for (const line of clientList.split("\n")) {
+        if (options?.limit !== undefined && sessions.length >= options.limit) break;
         if (!line.trim()) continue;
         const fields = Object.fromEntries(
           line.split(" ").map((pair) => {
