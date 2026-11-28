@@ -1,9 +1,10 @@
 /**
  * The legacy bridge (docs/providers/CONTRACT.md, clause C-50): a legacy `DatabaseProvider` served as one session of
  * console execute, cancel, endScope and transaction, so today's providers run through the host core's console calls. It lives in
- * the calling bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` and
- * `cancelEditorRun` in src/lib/api/editor-query.ts, the transaction calls in src/lib/api/editor-transaction.ts); the
- * bridge and the facades leave together, once every provider is a contract provider.
+ * the calling bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` in
+ * src/lib/api/editor-query.ts, the transaction calls in src/lib/api/editor-transaction.ts) or by the session target a
+ * facade runs on (src/lib/api/session-target.ts, the cancel's `providerConsoleTarget` among them); the bridge and the
+ * facades leave together, once every provider is a contract provider.
  *
  * Its calls are declared once: execute honours `params` and `offset` for every engine, so each provider answers both as
  * it always has, its own `OffsetUnsupportedError` included; `console.cancel` is offered exactly when the provider can
@@ -11,9 +12,12 @@
  * query path left open (`endsOpenQueryTransactions`), and its `endScope` runs the provider's `endOpenQueryTransaction`
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
- * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
- * session, since every legacy provider holds the five tree members, and `objects.source` exactly where the provider
- * defines `readObjectSource`. `maintenance.run` is offered on every session,
+ * minted a run's scope ends it through the host core's endScope call (clause C-60). The host core reads the cancel's
+ * and the end of scope's answers with `checkCancelAnswer` and `checkEndScopeAnswer` (clause C-112), as it reads a
+ * package's, so a provider's `cancelQuery` or `endOpenQueryTransaction` answering outside the SDK's types is refused as
+ * a defect of Studio's bridge. `objects.tree` is offered on every session, since every legacy provider holds the five
+ * tree members, and `objects.source` exactly where the provider defines `readObjectSource`. `maintenance.run` is
+ * offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
  * `previewMaintenance`. `monitoring.panel` is offered on every session, and `monitoring.poolStats` exactly where the
  * provider holds a pool statistics read (`getPoolStats`, a function on the provider or its prototype). The session's

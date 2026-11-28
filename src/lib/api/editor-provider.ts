@@ -12,6 +12,8 @@ import { type DeclaredFacet, FacetNotOfferedError, markNotSent } from "@/lib/db/
 import { type EngineConnection, type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import {
+  type ConsoleTarget,
+  entryConsoleTarget,
   entryMonitoringTarget,
   entryTreeTarget,
   type MonitoringTarget,
@@ -33,9 +35,8 @@ import type { DatabaseConnection } from "@/lib/types";
  * `POST /api/db/query` opens every engine, and `metadataProvider` is the one other provider this file decides, the
  * same way, for the maintenance kill that must not wait for the editor's statements, as `metadataTreeTarget` decides
  * the object tree's session of any record and `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring
- * reads' sessions of any record. Routes that act on the whole
- * connection rather than in one database, such as cancel, which finds a statement in whichever session runs it, call
- * `getOrCreateProvider` directly.
+ * reads' sessions of any record. The cancel, which acts on the whole connection rather than in one database and finds
+ * a statement in whichever session runs it, opens through `editorConsoleTarget` below, with no catalog.
  *
  * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
  * `getOrCreateProvider` as it is; a catalog session opens after it, on the same connection.
@@ -79,6 +80,26 @@ export async function editorTarget(
     throw new HostDefectError([{ rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" }]);
   }
   return { form: "session", session: opened.session, env: opened.env, entry, queryTimeout: connection.queryTimeout };
+}
+
+/**
+ * The console target of `connection`'s editor session of `engine`, for any record the server serves: the entry
+ * `getOrCreateEditorSession` answers (src/lib/db/factory.ts), opened under the session's editor posture as
+ * `editorProvider` opens the editor's provider, with the same owner, and with no catalog, since a cancel acts on the
+ * whole connection, read by its form (`entryConsoleTarget` in ./session-target): a legacy provider's bridged session,
+ * or a provider package's session with its declared environment and each call counted on the entry. `wait` is the
+ * request's own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it is.
+ * `POST /api/db/cancel` opens through it, so a cancel finds the run on the editor's session the run's own request
+ * opened; where none is cached it opens one, which finds no run.
+ */
+export async function editorConsoleTarget(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+  wait?: OpenWait,
+): Promise<ConsoleTarget> {
+  const entry = await getOrCreateEditorSession(connection, engine, editorExecutionContext(session, connection), wait);
+  return entryConsoleTarget(entry, connection);
 }
 
 /**

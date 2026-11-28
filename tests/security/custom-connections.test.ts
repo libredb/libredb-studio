@@ -98,7 +98,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider, editorTarget, metadataProvider, metadataTreeTarget, metadataMonitoringTarget and editorMonitoringTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
+    "editorProvider, editorTarget, metadataProvider, metadataTreeTarget, metadataMonitoringTarget, editorMonitoringTarget and editorConsoleTarget build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection or resolveServedConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection or resolveServedConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts":
@@ -124,7 +124,8 @@ const PROVIDER_BUILDERS = [
  * which the query route opens every engine through, `metadataProvider`, which the maintenance route opens the
  * connection's metadata session through, `metadataMonitoringTarget` and `editorMonitoringTarget`, which the
  * monitoring and health routes open every engine's metadata session through and the pool statistics route its editor
- * session, and so does `testConnection`, the Test Connection core, which opens the connection it is handed.
+ * session, `editorConsoleTarget`, which the cancel route opens every engine's editor session through, and so does
+ * `testConnection`, the Test Connection core, which opens the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
   `\\b(${[
@@ -135,6 +136,7 @@ const ROUTE_BUILDS = new RegExp(
     "metadataProvider",
     "metadataMonitoringTarget",
     "editorMonitoringTarget",
+    "editorConsoleTarget",
     "testConnection",
   ].join("|")})\\s*\\(`,
 );

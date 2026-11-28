@@ -179,9 +179,9 @@ function onTheMetadataSession(route: string): boolean {
 
 /**
  * The routes that open the editor's session of the connection's record rather than its editor provider: the query
- * route, and pool statistics, which reads the editor's pool.
+ * route, pool statistics, which reads the editor's pool, and the cancel, which finds a run on the editor's session.
  */
-const OPENS_THE_EDITOR_SESSION = new Set(["query", "pool-stats"]);
+const OPENS_THE_EDITOR_SESSION = new Set(["query", "pool-stats", "cancel"]);
 
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);

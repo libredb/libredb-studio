@@ -30,12 +30,14 @@
  *
  * Every other refusal is a defect of Studio's own code: its bridge honours every request field, offers every facet a
  * legacy caller asks for and is sent a scope only where it offers `console.endScope`, and a legacy provider whose
- * execute, tree, source, monitoring panel, pool statistics, health, maintenance run or maintenance preview answer the
- * host core refuses (`checkExecuteAnswer`, `checkTreeAnswer`, `checkSourceAnswer`, `checkPanelAnswer`,
- * `checkPoolStatsAnswer`, `checkHealthAnswer`, `checkMaintenanceRunAnswer`, `checkMaintenancePreviewAnswer`) is Studio's
- * own provider. It is a `HostDefectError` naming each refusal's sentence and carrying the refusals, and the errors of the
- * closes that failed after a refused execute answer, answered 500. On a provider package's session a refusal of what
- * the package answered (an execute answer's member, a tree, source, monitoring, health or maintenance answer, a batch, a row) is the package's defect instead, as is a refinement its open answered, which the one
+ * execute, cancel, end of scope, tree, source, monitoring panel, pool statistics, health, maintenance run or
+ * maintenance preview answer the host core refuses (`checkExecuteAnswer`, `checkCancelAnswer`, `checkEndScopeAnswer`,
+ * `checkTreeAnswer`, `checkSourceAnswer`, `checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`,
+ * `checkMaintenanceRunAnswer`, `checkMaintenancePreviewAnswer`) is Studio's own provider. It is a `HostDefectError`
+ * naming each refusal's sentence and carrying the refusals, and the errors of the closes that failed after a refused
+ * execute answer, answered 500. On a provider package's session a refusal of what the package answered (an execute
+ * answer's member, a cancel, end of scope, tree, source, monitoring, health or maintenance answer, a batch, a row) is
+ * the package's defect instead, as is a refinement its open answered, which the one
  * open function raises as a `HostDefectError` carrying those refusals (`openEngine` in ./open-engine.ts); every route
  * reads the package's defect from the refusals (`packageFailureAnswer` in src/lib/api/package-errors.ts).
  */

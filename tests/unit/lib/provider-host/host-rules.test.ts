@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:te
 import { randomUUID } from "node:crypto";
 import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, rowsSource } from "@libredb/provider-sdk/calls";
 import { cancelEditorRun, runEditorQuery } from "@/lib/api/editor-query";
+import { providerConsoleTarget } from "@/lib/api/session-target";
 import { beginInTransaction, runInTransaction } from "@/lib/api/editor-transaction";
 import { databaseErrorBody } from "@/lib/api/error-body";
 import { errorOutcome } from "@/lib/db/error-record";
@@ -115,7 +116,12 @@ describe("E21-K10: cancellation and abandonment", () => {
     const cancelQuery = mock(async (id: string) => id === "known");
     const provider = Object.assign(createMockProvider({ config: connection }), { cancelQuery });
 
-    const answer = await cancelEditorRun(provider, marker(), new AbortController().signal, "host-rules");
+    const answer = await cancelEditorRun(
+      providerConsoleTarget(provider),
+      marker(),
+      new AbortController().signal,
+      "host-rules",
+    );
 
     expect(answer).toEqual({ offered: true, cancelled: false });
     expect(callsOf(cancelQuery)).toHaveLength(1);
@@ -124,7 +130,12 @@ describe("E21-K10: cancellation and abandonment", () => {
   test("an engine that cannot cancel is reported still running, and nothing is called", async () => {
     const provider = createMockProvider({ config: connection });
 
-    const answer = await cancelEditorRun(provider, marker(), new AbortController().signal, "host-rules");
+    const answer = await cancelEditorRun(
+      providerConsoleTarget(provider),
+      marker(),
+      new AbortController().signal,
+      "host-rules",
+    );
 
     expect(answer).toEqual({ offered: false });
     expect("cancelQuery" in provider).toBe(false);

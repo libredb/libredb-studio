@@ -2140,6 +2140,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a request field or a console facet the session does not offer is refused before any frame",
       ],
       "tests/api/db/cancel.test.ts": ["provider without cancelQuery returns 400"],
+      "tests/api/db/rest-package-engine.test.ts": [
+        "a package engine whose session does not offer console.cancel answers the cancel route's one refusal, cancelled false, calling nothing",
+      ],
       "tests/unit/lib/provider-host/host-rules.test.ts": [
         "an engine that cannot cancel is reported still running, and nothing is called",
       ],
@@ -3155,6 +3158,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-107": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "cancel runs on a package engine's session through the console's cancel",
+        "disconnect removes every cache entry of a package engine's record, and no other record's",
+        "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "monitoring, health and pool statistics answer a package engine through its package, each refused by the session's offer where it offers none",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
@@ -3166,7 +3174,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health and pool statistics routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel and disconnect routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3175,6 +3183,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "Test Connection runs one test for a legacy and a package engine, told apart only by the record's offers",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
+        "a package engine's record keys its editor session by the frame editorCacheKey answers",
         "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build",
         "an admitted package's engine is refused at each factory entry point that answers a legacy provider, its session opening through the factory's editor session",
       ],
@@ -3236,6 +3245,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-111": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "cancel runs on a package engine's session through the console's cancel",
+      ],
+      "tests/unit/lib/api/editor-query.test.ts": [
+        "the cancel runs on any session its target states, a package's and the bridge's alike, and one that does not offer console.cancel is answered not offered without a call",
+      ],
+      "tests/unit/lib/api/session-target.test.ts": [
+        "a provider's console target is one bridged session with no environment and no marks, and an entry's is its session by form, the package's counting each call on the entry",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
@@ -3274,6 +3292,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
   },
   "C-112": {
     tests: {
+      "tests/api/db/rest-package-engine.test.ts": [
+        "the cancel route answers a package's open failure as not-sent, its cancel failure by its grant, and a malformed cancel answer as the package's defect",
+      ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",
       ],
@@ -3294,6 +3315,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a pool statistics or health answer outside the SDK's types is refused by its rule at its pointer, a count held to a safe integer",
         "a maintenance run answer whose rows have no fields, a key outside them or a value outside the value codec, and a preview outside its form, are refused by their rules",
         "a getter in any of the five answers is refused and never called, an optional member present with no value reads as absent, and an inherited key name does not throw",
+        "a cancel answer that is not a plain record of one boolean cancelled is refused as cancel-answer-unreadable at its pointer, a getter never called",
+        "an end of scope answer whose openTransaction is outside none and rolled-back, or that holds another key, is refused as end-scope-answer-unreadable, no value named",
+        "a well-formed cancel and end of scope answer pass, and a reading that throws is refused, never thrown",
       ],
       "packages/provider-sdk/tests/calls/answer-bounds.test.ts": [
         "a list within its bound whose every item is a hole is refused at its first hole alone, in a bounded child",
@@ -3301,11 +3325,16 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/testing/serve.test.ts": [
         "a served execute answer outside the SDK's types is refused on the host side with the core's refusals, and its sources are closed",
         "a served panel, pool statistics, health, maintenance run or preview answer outside the SDK's types is refused on the host side with the core's refusals",
+        "a served cancel or end of scope answer outside its form is refused at its frame, and the core's check refuses the same answer",
       ],
       "tests/unit/lib/provider-host/core/console.test.ts": [
         "a malformed execution time, row count or warning list is refused at the core as the package's defect",
         "a refused execute answer closes every source once and pulls none, and a page record carries the checked members, its warnings a fresh frozen list",
         "closing a refused answer never throws past the refused record: an element that is no object or an accessor is never read or closed",
+        "a malformed cancel answer is refused at the core as the package's defect, and the cancel a stopped run sends is not read",
+      ],
+      "tests/unit/lib/provider-host/core/console-scope.test.ts": [
+        "a malformed end of scope answer is refused at the core as the package's defect, and a well-formed one answers its outcome",
       ],
       "tests/unit/lib/provider-host/core/objects.test.ts": [
         "a malformed tree answer is refused at the core as the package's defect",
@@ -3335,6 +3364,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a warning outside the contract's shape is refused at the core as the package's defect on both grants, its members never answered",
         "warnings that are not a list are refused at the core as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
         "an execution time or a row count outside the contract's types is refused at the core as the package's defect, on both paths",
+        "a malformed end of scope answer is the package's defect, never read as no open transaction",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
         "a granted package's open failure answers a not-sent connection error with its scrubbed words, as a code-only one answers Studio's sentence",
@@ -3344,6 +3374,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a refused health answer reads as a degraded test naming the package's defect, logged once",
       ],
       "tests/unit/lib/api/package-errors.test.ts": [
+        "a package's cancel failure is answered by its grant, and a refused cancel or end of scope answer as the package's defect on both grants",
         "packageFailureAnswer answers a legacy record's failure as raised, a Studio failure as itself, a package's host defect as its defect on both grants, and a package's open failure as a not-sent connection error by grant",
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a code-only package's defect names each rule it broke once, and the close failures of a refused answer go to its one log line only, through core's scrub",

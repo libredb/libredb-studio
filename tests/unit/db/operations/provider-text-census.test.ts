@@ -529,7 +529,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [routeEvents, "failure", "withheldProviderError"],
   [recordedRun, "runRecorded", "providerTextScrub"],
   [recordedRun, "runRecorded", "withheldProviderError"],
-  [dbRoute("cancel"), "POST", "providerTextScrub"],
+  [dbRoute("cancel"), "POST", "connectionTextScrub"],
   [dbRoute("health"), "POST", "connectionTextScrub"],
   [dbRoute("pool-stats"), "POST", "connectionTextScrub"],
   [dbRoute("provider-meta"), "POST", "providerTextScrub"],

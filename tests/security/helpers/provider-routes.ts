@@ -97,8 +97,8 @@ export const PROVIDER_ROUTES = ALL_ROUTES.filter(([key]) => !(key in ROUTES_WITH
 
 /**
  * The provider routes that pass the request body to `resolveConnection`, directly, through `resolveServedConnection`
- * (its body with the engine's record, which Test Connection, the query route, the monitoring, health and pool
- * statistics routes and `handleObjectRequest` call) or through
+ * (its body with the engine's record, which Test Connection, the query route, the cancel route, the monitoring, health
+ * and pool statistics routes and `handleObjectRequest` call) or through
  * `handleObjectRequest` in src/lib/api/object-route.ts, each with a minimal well-formed body: the fields the route reads beside the
  * connection. A test adds a `connectionId` or an inline `connection` to it, so every route that turns a request into
  * a connection is sent both, and the inventory test in tests/security/governance-grants.test.ts fails until a new
@@ -147,7 +147,7 @@ export const PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY: Readonly<Record<string, 
   "ai/explain": "reaches only an LLM: the statement and the plan arrive as text, and no connection is resolved",
   "ai/query-safety": "reaches only an LLM: the statement arrives as text, and no connection is resolved",
   "db/disconnect":
-    "builds none, and under governance resolves no connection: it removes only the caller's own cached providers of the connection id it names, which needs no grant; without governance it resolves a connection of the user's own only to name the cache entries it removes, the editor's and the execution profiles' of that record (tests/api/db/disconnect.test.ts)",
+    "builds none, and under governance resolves no connection: it removes only the caller's own cached providers of the connection id it names, which needs no grant; without governance it resolves a connection of the user's own, of any engine, through resolveServedConnection only to name the cache entries it removes, a legacy provider's editor and execution-profile entries or a provider package's editor and metadata sessions of that record (tests/api/db/disconnect.test.ts)",
   "mcp/token":
     "mints an MCP token for the session's own user and takes no connection; under governance MCP is held off, so it mints none (tests/unit/mcp/config.test.ts)",
 };

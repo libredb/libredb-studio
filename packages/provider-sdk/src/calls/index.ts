@@ -17,9 +17,9 @@
  * `checkExecuteAnswer`, which refuses a member of an execute answer the host reads that is not of the SDK's type there,
  * `checkTreeAnswer`, which refuses a tree answer that is not its action's form, `checkSourceAnswer`, which refuses a
  * source answer that is not the SDK's closed source document, `checkPanelAnswer`, `checkPoolStatsAnswer`,
- * `checkHealthAnswer`, `checkMaintenanceRunAnswer` and
- * `checkMaintenancePreviewAnswer`, which refuse a monitoring panel, pool statistics, health, maintenance run or
- * maintenance preview answer outside the SDK's type, each answering the answer itself, typed, where it refuses nothing
+ * `checkHealthAnswer`, `checkMaintenanceRunAnswer`, `checkMaintenancePreviewAnswer`, `checkCancelAnswer` and
+ * `checkEndScopeAnswer`, which refuse a monitoring panel, pool statistics, health, maintenance run, maintenance
+ * preview, cancel or end of scope answer outside the SDK's type, each answering the answer itself, typed, where it refuses nothing
  * (`AnswerCheck`), and each holding every list to its bound, `ANSWER_LIST_MAX`, the source bounds `SOURCE_PART_LIMIT`
  * and `SOURCE_CHARACTER_LIMIT` with the bound helper `applySourceBound`, its sentence `sourceBoundTruncationReason`, and
  * `boundSourceAnswer`, the host's cut of a source answer, `checkRefinement` and `sessionCalls`, which narrow a session's
@@ -55,6 +55,8 @@ export {
 export {
   ANSWER_LIST_MAX,
   type AnswerCheck,
+  checkCancelAnswer,
+  checkEndScopeAnswer,
   checkExecuteAnswer,
   checkHealthAnswer,
   checkMaintenancePreviewAnswer,

@@ -8,7 +8,7 @@ import {
 import type { ObjectModel } from "@libredb/provider-sdk/manifest";
 import { callContext, contextOn, EXECUTE_SLACK_MS, executeDeadlineFor } from "@/lib/api/editor-query";
 import { type BudgetGrant, budgetGrantEnd } from "@/lib/api/provider-monitoring";
-import type { TreeTarget } from "@/lib/api/session-target";
+import { markedCall, type TreeTarget } from "@/lib/api/session-target";
 import type { ContainerSource } from "@/lib/db/container-walk";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { waitedSeconds } from "@/lib/db/errors";
@@ -194,7 +194,7 @@ function offeredModel(target: TreeTarget, end: (record: RefusedRecord) => Error)
 
 /**
  * One host core tree call of `request` on `target`'s session under `ctx`, counted on the target's entry from its start
- * until it ended (`started`, `ended`), a later failure logged under `route`.
+ * until it ended (`markedCall`), a later failure logged under `route`.
  */
 async function markedTreeCall<R extends TreeRequest>(
   core: HostCore,
@@ -203,14 +203,9 @@ async function markedTreeCall<R extends TreeRequest>(
   ctx: ReturnType<typeof contextOn>,
   route: string,
 ): Promise<TreeRecord<TreeAnswerOf<R["action"]>>> {
-  target.started();
-  let record: TreeRecord<TreeAnswerOf<R["action"]>> | undefined;
-  try {
-    record = await core.treeCall(target.session, request, ctx, { late: treeLate(route, request.action) });
-    return record;
-  } finally {
-    target.ended(record);
-  }
+  return markedCall(target, () =>
+    core.treeCall(target.session, request, ctx, { late: treeLate(route, request.action) }),
+  );
 }
 
 /**

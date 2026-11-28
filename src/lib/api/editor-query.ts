@@ -18,6 +18,7 @@ import {
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { packageWarnings } from "@/lib/api/package-errors";
+import type { ConsoleTarget } from "@/lib/api/session-target";
 import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import { consoleTextOverLimit, rowTextByteLimit } from "@/lib/db/statement-language-row";
@@ -37,6 +38,7 @@ import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { type CallerView, openStopError, refusalError, stopError } from "@/lib/provider-host/access";
 import type {
+  CancelRecord,
   ConsoleSession,
   EndScopeRecord,
   ExecuteRecord,
@@ -771,12 +773,18 @@ export async function runEditorQuery(target: EditorRunTarget, run: EditorQueryRu
 export type EditorCancelAnswer = { readonly offered: false } | { readonly offered: true; readonly cancelled: boolean };
 
 /**
- * Cancels the run `queryId` names on `provider` through the host core's cancel call, under the cleanup deadline,
- * `CLEANUP_DEADLINE_MS`, and the caller's signal. A provider that cannot cancel is answered `offered: false` without a
- * call, and each caller keeps its own answer for it; a caller already gone starts nothing.
+ * Cancels the run `queryId` names on `target`'s session through the host core's cancel call, under the cleanup
+ * deadline, `CLEANUP_DEADLINE_MS`, the target's environment and the caller's signal, the call counted on the target's
+ * cache entry from its start until it ended (`started`, `ended`): a legacy provider's bridged session
+ * (`providerConsoleTarget` in ./session-target) or a provider package's own (`entryConsoleTarget`). A session that does
+ * not offer `console.cancel` is answered `offered: false` without a call, and each caller keeps its own answer for it;
+ * a caller already gone starts nothing.
+ *
+ * @throws The session's error by reference; `StudioTimeoutRefusal` when the cleanup deadline stopped the cancel; a host
+ * defect for any other refusal, an answer the core refused (`cancel-answer-unreadable`) included.
  */
 export async function cancelEditorRun(
-  provider: DatabaseProvider,
+  target: ConsoleTarget,
   queryId: string,
   caller: AbortSignal,
   route: string,
@@ -786,12 +794,18 @@ export async function cancelEditorRun(
     caller,
     deadlineSentence: `The cancel did not answer within ${waitedSeconds(CLEANUP_DEADLINE_MS)}, so Studio stopped waiting for it.`,
   };
-  const record = await core.cancelCall(
-    bridgedConsole(provider, {}).session,
-    { runId: queryId },
-    callContext(Date.now() + CLEANUP_DEADLINE_MS, caller),
-    hostPorts(route),
-  );
+  target.started();
+  let record: CancelRecord | undefined;
+  try {
+    record = await core.cancelCall(
+      target.session,
+      { runId: queryId },
+      callContext(Date.now() + CLEANUP_DEADLINE_MS, caller, target.env),
+      hostPorts(route),
+    );
+  } finally {
+    target.ended(record);
+  }
   if (record.kind === "answered") return { offered: true, cancelled: record.cancelled };
   if (record.kind === "stopped") throw stopError(record.reason, view);
   if (record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) return { offered: false };

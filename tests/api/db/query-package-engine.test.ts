@@ -122,6 +122,7 @@ const REVIEWED = "acmeqreviewed";
 const NOSQL = "acmeqnosql";
 const DECIDES = "acmeqdecides";
 const CHANGED = "acmeqchanged";
+const SCOPED = "acmeqscoped";
 const providers = scratchDirectory("studio-query-package-");
 let engines: Map<string, EngineRecord>;
 
@@ -180,6 +181,7 @@ beforeAll(async () => {
       // No register row reviews the grammar of MAIN, BARE or WORDS.
       { name: "acme-q-main", engine: MAIN, offered: ["console.cancel"] },
       { name: "acme-q-bare", engine: BARE },
+      { name: "acme-q-scoped", engine: SCOPED, offered: ["console.endScope"] },
       LOOSE_PACKAGE,
       { name: "acme-q-words", engine: WORDS },
       REVIEWED_PACKAGE,
@@ -247,7 +249,11 @@ function source(rows: unknown[][]) {
 /** Hooks for `engine`'s package that open, answer `rows` to every execute and close; `execute` replaces the answer. */
 function hooksFor(
   engine: string,
-  options: { execute?: (...args: unknown[]) => Promise<unknown>; cancel?: (...args: unknown[]) => unknown } = {},
+  options: {
+    execute?: (...args: unknown[]) => Promise<unknown>;
+    cancel?: (...args: unknown[]) => unknown;
+    endScope?: (...args: unknown[]) => unknown;
+  } = {},
 ): Seen {
   const seen: Seen = { calls: [] };
   const push =
@@ -277,6 +283,7 @@ function hooksFor(
           })),
     ),
     cancel: push("cancel", options.cancel ?? (() => Promise.resolve({ cancelled: true }))),
+    endScope: push("endScope", options.endScope ?? (() => Promise.resolve({ openTransaction: "none" }))),
   });
   return seen;
 }
@@ -979,6 +986,39 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       expect(JSON.stringify(answered.body)).not.toContain(secret);
     } finally {
       hooksFor(WORDS);
+    }
+  });
+
+  test("a malformed end of scope answer is the package's defect, never read as no open transaction", async () => {
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // A well-formed end that rolled a transaction back is answered beside the rows.
+      hooksFor(SCOPED, { endScope: () => Promise.resolve({ openTransaction: "rolled-back" }) });
+      const rolledBack = await post({ connection: connectionOf(SCOPED), sql: "SELECT 1" });
+      expect([rolledBack.status, rolledBack.body.openTransaction]).toEqual([200, "rolled-back"]);
+
+      const seen = hooksFor(SCOPED, { endScope: () => Promise.resolve({ openTransaction: "maybe" }) });
+      error.mockClear();
+      const answered = await post({ connection: connectionOf(SCOPED), sql: "SELECT 1" });
+      expect([answered.status, answered.body.code, answered.body.error]).toEqual([
+        500,
+        "INTERNAL_ERROR",
+        codeOnlyDefectSentence("end-scope-answer-unreadable"),
+      ]);
+      expect(names(seen)).toEqual(["open", "execute", "endScope"]);
+      // The end names the scope the execute was sent.
+      const [, executed, ended] = seen.calls.map(({ args }) => args[1] as { scope?: string });
+      expect(ended).toEqual({ scope: executed?.scope });
+      // Logged once, as the package's defect, naming the pointer.
+      expect(error.mock.calls.map(([line, value]) => [line, (value as Error).message])).toEqual([
+        [
+          "A provider package's execute failed",
+          `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence({ rule: "end-scope-answer-unreadable", pointer: "/openTransaction" })}`,
+        ],
+      ]);
+    } finally {
+      error.mockRestore();
+      hooksFor(SCOPED);
     }
   });
 

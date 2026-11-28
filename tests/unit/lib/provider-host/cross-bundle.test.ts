@@ -45,7 +45,8 @@ interface RouteBundle {
     target: { form: "provider"; provider: DatabaseProvider },
     run: object,
   ): Promise<{ body: { rows: unknown[] } }>;
-  cancelEditorRun(provider: DatabaseProvider, queryId: string, caller: AbortSignal, route: string): Promise<object>;
+  cancelEditorRun(target: object, queryId: string, caller: AbortSignal, route: string): Promise<object>;
+  providerConsoleTarget(provider: DatabaseProvider): object;
   hostCore(): CoreShape;
   providerTextScrub(connection: DatabaseConnection, reach: "any"): object;
   errorKind(error: unknown): string;
@@ -81,6 +82,7 @@ beforeAll(async () => {
   ]);
   route = await bundled<RouteBundle>("route", [
     `export { cancelEditorRun, runEditorQuery } from ${source("lib", "api", "editor-query.ts")};`,
+    `export { providerConsoleTarget } from ${source("lib", "api", "session-target.ts")};`,
     `export { hostCore } from ${source("lib", "provider-host", "instance.ts")};`,
     `export { providerTextScrub } from ${source("lib", "db", "operations", "provider-text.ts")};`,
     `export { errorKind, errorOutcome } from ${source("lib", "db", "error-record.ts")};`,
@@ -166,7 +168,8 @@ describe("one host core across two bundles", () => {
       "test",
     );
     const answered = await route.runEditorQuery({ form: "provider", provider: provider(oneRow) }, runOf());
-    await route.cancelEditorRun(provider(oneRow), randomUUID(), new AbortController().signal, "test");
+    const target = route.providerConsoleTarget(provider(oneRow));
+    await route.cancelEditorRun(target, randomUUID(), new AbortController().signal, "test");
 
     expect(answered.body.rows).toEqual([{ n: 1 }]);
     expect(calls).toEqual(["execute", "cancel"]);
