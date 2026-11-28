@@ -25,9 +25,9 @@ export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
  * The operator entries these roles may see, in source order.
  *
  * The operator loader (operator-loader.ts) has resolved every `${NAME}` of a non-literal entry in its cache fill, and
- * a `${vault:...}` is left for `resolveConnection` to read when the connection is opened. An entry that fill read as
+ * a `${vault:...}` is left for `resolveServedConnection` to read when the connection is opened. An entry that fill read as
  * literal (every file-like entry while SEED_LITERAL_VALUES is on) carries the literal marker, which
- * `resolveConnection` honours by skipping Vault, so no value of it is resolved anywhere. The marker is set after
+ * `resolveServedConnection` honours by skipping Vault, so no value of it is resolved anywhere. The marker is set after
  * filterByRoles, because filterByRoles copies a fixed field list and SeedConnectionSchema strips an undeclared key,
  * so a marker set any earlier would not survive; filterByRoles builds a new object for every connection, so setting
  * it never reaches the loader's cache.

@@ -1,27 +1,22 @@
 /**
- * `resolveConnection` (src/lib/seed/resolve-connection.ts) with a server catalog installed
- * (src/lib/db/server-catalog.ts): an engine whose provider package was refused at boot is answered
- * `PROVIDER_UNAVAILABLE` naming the refusal code, for an inline record and a seed alike, after the access decision and
- * before any Vault reference is read, whichever engines the route serves; an admitted package's engine is refused by
- * name by `resolveConnection`, which takes no source parameter, and resolved with its record by
- * `resolveServedConnection`, the same resolve with the same guards, which only Test Connection, the query route, the
- * transaction route, the multi-query route, the cancel and disconnect routes, every object route, the monitoring,
- * health and pool statistics routes, the maintenance and preview routes, fleet health, the provider metadata route, the
- * column profile, the statement analysis, the agent classify, runs and hand-over routes and an agent run's drive call
- * in this Studio.
+ * `resolveServedConnection` (src/lib/seed/resolve-connection.ts), the one resolve of every request that names a
+ * connection, with a server catalog installed (src/lib/db/server-catalog.ts): an engine whose provider package was
+ * refused at boot is answered `PROVIDER_UNAVAILABLE` naming the refusal code, for an inline record and a seed alike,
+ * after the access decision and before any Vault reference is read; an admitted package's engine resolves with the
+ * record the server catalog answers, and a bundled engine with its legacy record.
  */
 // oxlint-disable no-await-in-loop -- each case resolves after the one before, so a failure names its case.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/db/errors";
+import { ProviderUnavailableError } from "@/lib/db/errors";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { forgetServerCatalog, installServerCatalog, legacyConnection, serverEngine } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { resetCache } from "@/lib/seed";
-import { type ConnectionBody, resolveConnection, resolveServedConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import * as vaultClient from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
@@ -80,30 +75,16 @@ function inline(type: string): DatabaseConnection {
 
 describe("a package engine on a connection route", () => {
   test("an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code", async () => {
-    const routes = [
-      (body: ConnectionBody) => resolveConnection(body, ADMIN),
-      (body: ConnectionBody) => resolveServedConnection(body, ADMIN),
-    ];
-    for (const resolve of routes) {
-      for (const body of [{ connection: inline("acmegone") }, { connectionId: "seed:gone" }]) {
-        const refusal = await resolve(body).catch((error: unknown) => error);
-        expect(refusal).toBeInstanceOf(ProviderUnavailableError);
-        expect((refusal as ProviderUnavailableError).codes).toEqual(["PROVIDER_DIGEST_MISMATCH"]);
-        expect((refusal as Error).message).toContain("(PROVIDER_DIGEST_MISMATCH)");
-      }
+    for (const body of [{ connection: inline("acmegone") }, { connectionId: "seed:gone" }]) {
+      const refusal = await resolveServedConnection(body, ADMIN).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(ProviderUnavailableError);
+      expect((refusal as ProviderUnavailableError).codes).toEqual(["PROVIDER_DIGEST_MISMATCH"]);
+      expect((refusal as Error).message).toContain("(PROVIDER_DIGEST_MISMATCH)");
     }
     expect(readVaultSecret).not.toHaveBeenCalled();
   });
 
-  test("an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, multi-query, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read", async () => {
-    for (const body of [{ connection: inline("acmeserved") }, { connectionId: "seed:served" }]) {
-      const refusal = await resolveConnection(body, ADMIN).catch((error: unknown) => error);
-      expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
-      expect((refusal as Error).message).toBe(
-        "This request is served for an engine of a provider package only by Test Connection, the query route, its cancel and a transaction, a multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
-      );
-    }
-
+  test("an admitted engine's connection, inline or seed, resolves with its record through the served resolve every request that names a connection reads, and a bundled engine's with its legacy record", async () => {
     const resolved = await resolveServedConnection({ connection: inline("acmeserved") }, ADMIN);
     expect(resolved.connection).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
     expect(resolved.engine.source.name).toBe("acme-served");
@@ -121,29 +102,7 @@ describe("a package engine on a connection route", () => {
     expect([bundled.connection.type, bundled.engine.source.name]).toEqual(["postgres", "@libredb/studio"]);
   });
 
-  test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", async () => {
-    // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
-    // catalog whose offer disagrees with the id, so a route that serves bundled engines alone follows a valid record's
-    // offer.
-    forgetServerCatalog();
-    installServerCatalog(
-      composeServerCatalog([admittedFor("acme-served", admittedManifest("acmeserved"))], [], STUDIO_GRANT_REGISTER),
-    );
-    const refusal = await resolveConnection({ connection: inline("acmeserved") }, ADMIN).catch(
-      (error: unknown) => error,
-    );
-    expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
-    expect([
-      (refusal as PackageEngineUnsupportedError).code,
-      (refusal as PackageEngineUnsupportedError).typeId,
-    ]).toEqual(["PACKAGE_ENGINE_UNSUPPORTED", "acmeserved"]);
-    expect((refusal as Error).message).toBe(
-      "This request is served for an engine of a provider package only by Test Connection, the query route, its cancel and a transaction, a multi-statement script, a disconnect, the object tree's and the object source's reads, the monitoring, health and maintenance requests, the provider metadata read, MCP and agent mode in this LibreDB Studio, and this is another request.",
-    );
-    const resolved = await resolveConnection({ connection: inline("postgres") }, ADMIN);
-    expect(resolved).toMatchObject({ type: "postgres", host: "db.example", managed: false });
-  });
-  test("resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter", async () => {
+  test("resolveServedConnection answers a package engine's connection with the record the server catalog answers, by reference", async () => {
     const served = serverEngine("acmeserved");
     if (served.kind !== "served") throw new Error(`acmeserved is ${served.kind}`);
     const inlineAnswer = await resolveServedConnection({ connection: inline("acmeserved") }, ADMIN);
@@ -158,16 +117,6 @@ describe("a package engine on a connection route", () => {
     const bundled = await resolveServedConnection({ connection: inline("postgres") }, ADMIN);
     expect(bundled.engine).toBe(legacy.engine);
     expect(bundled.engine.offers.legacyProvider).toBe(true);
-
-    const refusal = await resolveConnection(
-      { connection: inline("acmeserved") },
-      ADMIN,
-      undefined,
-      // @ts-expect-error resolveConnection takes no source parameter
-      "bundled-and-package",
-    ).catch((error: unknown) => error);
-    expect(refusal).toBeInstanceOf(PackageEngineUnsupportedError);
-    expect((refusal as PackageEngineUnsupportedError).code).toBe("PACKAGE_ENGINE_UNSUPPORTED");
   });
 
   test("every shipped engine's inline connection resolves through the served resolve to itself with its engine's legacy record, as a legacy provider takes it", async () => {
@@ -181,5 +130,12 @@ describe("a package engine on a connection route", () => {
       expect(resolved.engine.offers.legacyProvider).toBe(true);
       expect(resolved.connection).toBe(legacyConnection(resolved.engine, resolved.connection));
     }
+  });
+
+  test("the served resolve is the one resolve the module exports", async () => {
+    expect(Object.keys(await import("@/lib/seed/resolve-connection")).sort()).toEqual([
+      "SeedConnectionError",
+      "resolveServedConnection",
+    ]);
   });
 });

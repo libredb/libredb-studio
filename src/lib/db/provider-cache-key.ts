@@ -8,7 +8,7 @@ import { LITERAL_SEED_FILE, type WithLiteralSeedFile, type WithTunnelFarEnd } fr
  *
  * A cache key is an EQUALITY CLAIM: two callers answering the same key are told they may share
  * one open connection. `getOrCreateProvider` used to key on `connection.id`, and that id arrives
- * in the request body - `resolveConnection` in `src/lib/seed/resolve-connection.ts` returned an
+ * in the request body - `resolveServedConnection` in `src/lib/seed/resolve-connection.ts` returned an
  * inline `connection` verbatim, id included. So the equality claim was written by the caller.
  * Naming an id another session had open returned THAT session's provider, already authenticated
  * as them, with the sent credentials never compared; a `seed:` id is an operator-chosen slug and

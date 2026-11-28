@@ -52,7 +52,7 @@ export const dynamic = "force-dynamic";
  * `POST /api/db/maintenance` and a seed scoped to `admin` refused it 403. So the role decides WHICH
  * connection may be opened and nothing about what may be done with it, and an admin gate here would
  * remove no capability while teaching an operator that Studio restricts DDL. This route inherits
- * the seed role filter FOR FREE by going through `resolveConnection`, and it adds no role test of
+ * the seed role filter FOR FREE by going through `resolveServedConnection`, and it adds no role test of
  * its own. `POST /api/db/maintenance` stays the only admin-gated route that reaches a user's
  * database. THE LIMIT IS RECORDED WITH THE RULING: that measurement covers SQL engines, which is
  * two of the three day-one engines, and Redis was NOT probed, so for Redis the ruling is inherited
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
       //    against the provider's. A provider cannot see the resolved connection, so a plan whose
       //    fingerprint the route did not verify would seal a value nobody checked, and the apply
       //    route's different-server refusal would be comparing two numbers that came from the same
-      //    unverified source. `context.connection` and never a second `resolveConnection`: a second
+      //    unverified source. `context.connection` and never a second `resolveServedConnection`: a second
       //    resolution can answer a different connection. Framed on `providerConnection` of it, the
       //    copy the provider was built from, so both sides digest the same fields (FND-2 slice 6).
       if (plan.connectionFingerprint !== (await connectionFingerprint(providerConnection(context.connection)))) {

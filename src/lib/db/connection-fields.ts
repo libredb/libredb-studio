@@ -96,7 +96,7 @@ export type ConnectionField =
   | "hostKeyFingerprint";
 /**
  * The fields a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI,
- * or an OPC UA seed's read roots. Only the operator's seed file or an embedder's own code sets one: `resolveConnection`
+ * or an OPC UA seed's read roots. Only the operator's seed file or an embedder's own code sets one: `resolveServedConnection`
  * (src/lib/seed/resolve-connection.ts) refuses by name a connection a browser or a client supplies inline that sets
  * one, and the managed connection list (src/app/api/connections/managed/route.ts) never sends one to the browser.
  */

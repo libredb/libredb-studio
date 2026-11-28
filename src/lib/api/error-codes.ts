@@ -24,8 +24,8 @@ export const ApiErrorCode = {
   PROVIDER_UNAVAILABLE: "PROVIDER_UNAVAILABLE",
   /**
    * The connection's type is an engine an admitted provider package serves, and the caller needs a legacy provider for
-   * it (501, `PackageEngineUnsupportedError`): `resolveConnection` and the provider factory's open of a session. Every
-   * request of this Studio serves such an engine or refuses it by its record's offer (docs/providers/CONTRACT.md,
+   * it (501, `PackageEngineUnsupportedError`): the provider factory's legacy entry points, its open of a session among
+   * them. Every request of this Studio serves such an engine or refuses it by its record's offer (docs/providers/CONTRACT.md,
    * clause C-107), so no request answers it. No setting is at fault and no retry succeeds.
    */
   PACKAGE_ENGINE_UNSUPPORTED: "PACKAGE_ENGINE_UNSUPPORTED",

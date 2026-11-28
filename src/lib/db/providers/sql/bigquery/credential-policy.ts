@@ -6,7 +6,7 @@
  *   parsed and used; it needs no server setting.
  * - An empty field: refused for a connection a browser sent and for a row of a seed file read in literal mode
  *   (SEED_LITERAL_VALUES, the record carries the literal-mode marker); for an operator seed (`managed: true`, which
- *   resolveConnection forces false on every browser-sent connection) refused unless BIGQUERY_SERVER_CREDENTIALS is
+ *   resolveServedConnection forces false on every browser-sent connection) refused unless BIGQUERY_SERVER_CREDENTIALS is
  *   exactly "true", and then the server's own identity in ADC order. The resolver passes the record it was given, so
  *   the marker reaches the shared gate.
  *

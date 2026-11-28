@@ -25,7 +25,7 @@ import { logger } from "@/lib/logger";
  * boot preflight refuses a value that keeps them on; answering off here as well holds the refusal
  * on a server whose preflight was bypassed.
  *
- * The rule is enforced in the one body of `resolveConnection` and `resolveServedConnection`
+ * The rule is enforced in `resolveServedConnection`
  * (`src/lib/seed/resolve-connection.ts`), the one place an inline connection becomes a provider's
  * input; `GET /api/connections/policy` reports it
  * to the editor so the editor stops offering what the server would refuse.

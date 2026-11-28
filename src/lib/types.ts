@@ -732,7 +732,7 @@ export interface DatabaseConnection {
   /**
    * OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read and
    * nowhere else. Set only by the operator's seed file: the managed listing strips it before a seed reaches the browser,
-   * and `resolveConnection` refuses a connection a caller supplies that carries it. The editor never reads it.
+   * and `resolveServedConnection` refuses a connection a caller supplies that carries it. The editor never reads it.
    */
   agentReadRoots?: readonly string[];
   /**

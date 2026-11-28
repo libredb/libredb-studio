@@ -41,7 +41,7 @@ export function queryEventRequest(
 }
 
 /**
- * The id a request names its connection by, the way `resolveConnection()` reads it: `connectionId`, else the `seed:`
+ * The id a request names its connection by, the way `resolveServedConnection()` reads it: `connectionId`, else the `seed:`
  * id an inline record claims.
  */
 export function requestedConnectionId(body: unknown): string | undefined {

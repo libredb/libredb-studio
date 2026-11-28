@@ -140,8 +140,8 @@ export class ProviderUnavailableError extends DatabaseConfigError {
 }
 
 /**
- * A legacy provider asked for an engine an admitted provider package serves: by `resolveConnection` or by the provider
- * factory's open of a session (`legacyProviderEngine` in ./server-catalog). Every request of this Studio serves such an
+ * A legacy provider asked for an engine an admitted provider package serves, by one of the provider factory's legacy entry
+ * points, its open of a session among them (`legacyProviderEngine` in ./server-catalog). Every request of this Studio serves such an
  * engine or refuses it by its record's offer (docs/providers/CONTRACT.md, clause C-107), so no request answers it.
  * Answered 501 `PACKAGE_ENGINE_UNSUPPORTED` with its sentence. A `DatabaseError` and not a `DatabaseConfigError`: no
  * setting of the connection is wrong, as `FacetNotOfferedError` reasons.

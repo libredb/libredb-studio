@@ -580,7 +580,7 @@ describe("POST /api/db/query", () => {
     mockReadProviderDeclarations.mockClear();
     mockGetOrCreateEditorSession.mockImplementationOnce(async (...args: unknown[]) => {
       const connection = args[0] as DatabaseConnection;
-      assertReadOnlyHonoured(legacyProviderEngine(connection.type, "open"), connection);
+      assertReadOnlyHonoured(legacyProviderEngine(connection.type), connection);
       return editorEntryOf(mockProvider);
     });
 

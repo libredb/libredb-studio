@@ -32,7 +32,7 @@ export const dynamic = "force-dynamic";
  * answer is the one it always was.
  *
  * The answer only decides what the editor offers. The rule itself is enforced in
- * `resolveConnection` or `resolveServedConnection`, on every route that builds a provider, whatever a client believes.
+ * `resolveServedConnection`, on every route that builds a provider, whatever a client believes.
  */
 export async function GET() {
   const session = await getSession();

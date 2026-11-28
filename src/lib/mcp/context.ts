@@ -44,7 +44,7 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
  * into its own explicit error.
  *
  * The listing hands a `${vault:...}` reference back unresolved, as the managed list does, so it is
- * read at acquisition, after the role filter and before the cache key, exactly as resolveConnection
+ * read at acquisition, after the role filter and before the cache key, exactly as resolveServedConnection
  * reads it for the editor and agent routes; a literal connection is the text it carries and is never
  * resolved. A reference that cannot be read refuses the open, with no fallback.
  */

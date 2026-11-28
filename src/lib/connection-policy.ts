@@ -7,7 +7,7 @@ import type { DatabaseConnection } from "@/lib/types";
  * answers it from `ALLOW_CUSTOM_CONNECTIONS` (docs/SEED_CONNECTIONS.md, "Custom Connections").
  *
  * THE BROWSER'S COPY DECIDES WHAT THE EDITOR OFFERS AND NOTHING ELSE. The server refuses a
- * connection the caller supplied in `resolveConnection` or `resolveServedConnection`
+ * connection the caller supplied in `resolveServedConnection`
  * (`src/lib/seed/resolve-connection.ts`) whatever the editor drew, so an editor that read this wrong can show a control that fails with
  * 403, and can never open a connection the server would refuse.
  */
@@ -43,7 +43,7 @@ const POLICY_UNREAD =
 /**
  * Whether the server would open this connection under the policy.
  *
- * An id in the `seed:` namespace is the operator's. `resolveConnection` resolves it from the seed
+ * An id in the `seed:` namespace is the operator's. `resolveServedConnection` resolves it from the seed
  * file whether it arrives as `connectionId` (a managed seed) or as the id of an inline record (an
  * unmanaged seed's editable copy, which keeps `seed:<id>`), so the switch never touches it. Every
  * other id is a connection the user created or duplicated, which the server refuses while custom

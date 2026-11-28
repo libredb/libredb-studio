@@ -871,7 +871,7 @@ describe("the one scrub of provider text", () => {
       ({ file, census }) =>
         file.startsWith(join("src", "app", "api") + sep) &&
         basename(file) === "route.ts" &&
-        (census.identifiers.has("resolveConnection") || census.identifiers.has("resolveServedConnection")),
+        census.identifiers.has("resolveServedConnection"),
     ).map(({ file }) => file);
     expect(routes.length).toBeGreaterThan(0);
     expect(routes.filter((file) => !covered.has(file))).toEqual([]);

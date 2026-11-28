@@ -186,7 +186,7 @@ export function resetLiteralModeNotices(): void {
  * user name, to a server whose log the platform user reads. With the mode on, the operator loader
  * (`src/lib/seed/operator-loader.ts`) records the mode for its fill and resolves no file-like entry,
  * `src/lib/seed/index.ts` marks each of them literal after the role filter,
- * and `resolveConnection` returns a marked connection without calling `resolveVaultCredentials`, so
+ * and `resolveServedConnection` returns a marked connection without calling `resolveVaultCredentials`, so
  * nothing is looked up when connections are listed, when a refused id is checked or when one is
  * opened. The plaintext-password warning is not logged either, because every value in such a file
  * is a literal on purpose. With the mode off, a file written by hand with references is resolved
@@ -277,7 +277,7 @@ function parseVaultReference(value: string, connId: string, fieldName: Resolvabl
 /**
  * Resolves every `${vault:...}` reference on one connection.
  *
- * Called from `resolveConnection` after the role check, so a reference is read only for a
+ * Called from `resolveServedConnection` after the role check, so a reference is read only for a
  * connection the caller may already open, and only once per connection. A connection with
  * no `${vault:...}` reference returns unchanged without touching Vault.
  */

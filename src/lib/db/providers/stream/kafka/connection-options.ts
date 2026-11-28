@@ -3,7 +3,7 @@
  * spec 3.6 K1 and K3. Pure: no socket opens here.
  *
  * Every field read here is checked before it is used, because a connection sent to the API
- * arrives as the caller wrote it (`resolveConnection` hands an inline connection on untouched)
+ * arrives as the caller wrote it (`resolveServedConnection` hands an inline connection on untouched)
  * and the client checks none of it: its SCRAM step reads the user as a string inside its socket
  * handler, where a number throws past every caller and ends a Node process that handles no
  * uncaught exception, and its PLAIN step joins the credential into text, so `["reader"]` would
