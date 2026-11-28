@@ -231,7 +231,6 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mockResolveConnection,
     // The edit routes resolve through the served resolve: the same connection, with its engine's legacy record.
     resolveServedConnection: async (body: Record<string, unknown>, session: unknown) => {
       const connection = await (mockResolveConnection as (...args: unknown[]) => Promise<DatabaseConnection>)(
@@ -291,7 +290,7 @@ export function request(body: Record<string, unknown>): NextRequest {
  * `{ ...CONNECTION, database }`, which is the only way to build the population the apply route's
  * different-server arm exists for. A plan built against `db1` reaching a request that resolved
  * `db2` differs ONLY in database, so `connection.id` is IDENTICAL on both sides and an id check
- * would pass. That is the case an id check cannot see: MEASURED, `resolveConnection` returns an
+ * would pass. That is the case an id check cannot see: MEASURED, `resolveServedConnection` returns an
  * inline connection object verbatim, id included.
  *
  * `clock` is threaded to `mintPlanToken`, so the expiry arm is asserted rather than waited out.

@@ -9,7 +9,7 @@ process.env.USER_MYSQL_PASS = "user-secret";
 process.env.SHARED_PG_PASS = "shared-secret";
 process.env.BOTH_PG_PASS = "both-secret";
 
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetCache } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 
@@ -38,7 +38,7 @@ describe("resolve-connection with custom connections switched off", () => {
       createdAt: new Date(),
     };
 
-    const error = await resolveConnection({ connection: own }, { role: "admin", username: "test" }).catch(
+    const error = await resolveServedConnection({ connection: own }, { role: "admin", username: "test" }).catch(
       (thrown: unknown) => thrown,
     );
 
@@ -57,7 +57,7 @@ describe("resolve-connection with custom connections switched off", () => {
       createdAt: new Date(),
     } as unknown as DatabaseConnection;
 
-    const error = await resolveConnection({ connection: own }, { role: "admin", username: "test" }).catch(
+    const error = await resolveServedConnection({ connection: own }, { role: "admin", username: "test" }).catch(
       (thrown: unknown) => thrown,
     );
 
@@ -77,7 +77,7 @@ describe("resolve-connection with custom connections switched off", () => {
         createdAt: new Date(),
       };
 
-      await resolveConnection({ connection: own }, { role: "user", username: "ada" }).catch(() => undefined);
+      await resolveServedConnection({ connection: own }, { role: "user", username: "ada" }).catch(() => undefined);
 
       expect(warn).toHaveBeenCalledWith("Custom connection refused", {
         route: "seed/resolve-connection",
@@ -98,7 +98,9 @@ describe("resolve-connection with custom connections switched off", () => {
   ])("refuses a connection of the caller's own with %s with the same 403", async (_label, fields) => {
     const own = { id: "user-conn", host: "platform-postgres", ...fields } as unknown as DatabaseConnection;
 
-    await expect(resolveConnection({ connection: own }, { role: "admin", username: "test" })).rejects.toMatchObject({
+    await expect(
+      resolveServedConnection({ connection: own }, { role: "admin", username: "test" }),
+    ).rejects.toMatchObject({
       name: "SeedConnectionError",
       message: "Custom connections are disabled on this server",
       statusCode: 403,
@@ -107,7 +109,10 @@ describe("resolve-connection with custom connections switched off", () => {
   });
 
   it("still resolves a seed named by connectionId", async () => {
-    const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connectionId: "seed:everyone" },
+      { role: "user", username: "test" },
+    );
 
     expect(result.host).toBe("shared-pg.internal");
     expect(result.password).toBe("shared-secret");
@@ -128,7 +133,10 @@ describe("resolve-connection with custom connections switched off", () => {
       createdAt: new Date(),
     };
 
-    const result = await resolveConnection({ connection: copy }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: copy },
+      { role: "user", username: "test" },
+    );
 
     expect(result.host).toBe("shared-pg.internal");
     expect(result.password).toBe("shared-secret");
@@ -143,7 +151,7 @@ describe("resolve-connection with custom connections switched off", () => {
       createdAt: new Date(),
     };
 
-    const error = await resolveConnection({ connection: forged }, { role: "user", username: "test" }).catch(
+    const error = await resolveServedConnection({ connection: forged }, { role: "user", username: "test" }).catch(
       (thrown: unknown) => thrown,
     );
 
@@ -182,7 +190,7 @@ describe("resolve-connection under governance", () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
 
     try {
-      const error = await resolveConnection({ connection: own }, { role: "admin", username: "test" }).catch(
+      const error = await resolveServedConnection({ connection: own }, { role: "admin", username: "test" }).catch(
         (thrown: unknown) => thrown,
       );
 

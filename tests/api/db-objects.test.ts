@@ -122,7 +122,6 @@ const mockResolveServedConnection = mock(async (body: Record<string, unknown>) =
 });
 
 mock.module("@/lib/seed/resolve-connection", () => ({
-  resolveConnection: mockResolveConnection,
   resolveServedConnection: mockResolveServedConnection,
   SeedConnectionError,
 }));
@@ -2878,7 +2877,7 @@ describe("the body read the handler actually performs", () => {
   });
 
   test("the two reads DIVERGE on an empty JSON object, and the divergence is pinned here", async () => {
-    // `readDefaultBody` refuses `{}` itself; `readObjectRouteBody` RETURNS it and `resolveConnection` is
+    // `readDefaultBody` refuses `{}` itself; `readObjectRouteBody` RETURNS it and `resolveServedConnection` is
     // what then refuses. Both answers are 400 and both sentences are true of the body, but they are
     // different sentences on one handler, so the pair is asserted rather than left for a later reader
     // to discover from a bug report.

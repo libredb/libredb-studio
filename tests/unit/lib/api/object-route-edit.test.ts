@@ -124,7 +124,7 @@ describe("readObjectRouteBody", () => {
   test("an EMPTY JSON object is returned rather than refused, which the default read does not do", async () => {
     // The divergence between the two body reads on one handler, pinned on this side. `readObjectRouteBody`
     // has three conditions and "no named fields" is not one of them: `{}` parsed, and it is a JSON
-    // object, so it is answered and `resolveConnection` is what refuses it. `readDefaultBody` refuses
+    // object, so it is answered and `resolveServedConnection` is what refuses it. `readDefaultBody` refuses
     // `{}` itself with `Empty request body`. The handler-level half of this pair, both answers
     // measured end to end through `handleObjectRequest`, is `tests/api/db-objects.test.ts`, under
     // `describe("the body read the handler actually performs")`.

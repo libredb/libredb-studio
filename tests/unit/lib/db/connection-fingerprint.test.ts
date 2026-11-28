@@ -183,7 +183,7 @@ describe("connectionFingerprint", () => {
   });
 
   test("the connection's id and name are NOT in it", async () => {
-    // MEASURED, `resolveConnection` in `src/lib/seed/resolve-connection.ts` returns an inline connection object
+    // MEASURED, `resolveServedConnection` in `src/lib/seed/resolve-connection.ts` returns an inline connection object
     // verbatim, `id` included, so on the majority path the id is a string the caller typed.
     // Binding a plan to it would be vacuous for exactly the case the binding exists for.
     const base = await connectionFingerprint(BASE);

@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { SeedConfigSchema, type ManagedConnection } from "@/lib/seed/types";
 
 const FIXTURE = path.resolve(import.meta.dir, "../../fixtures/dokploy-golden-seed.json");
@@ -178,7 +178,7 @@ describe("what Studio makes of the golden seed file", () => {
   });
 
   it("hands the libSQL seed's user and password to the server-side resolution a provider is built from", async () => {
-    const resolved = await resolveConnection(
+    const { connection: resolved } = await resolveServedConnection(
       { connectionId: "seed:dokploy-libsql-6af07a96089c" },
       { role: "user", username: "user@libredb.org" },
     );

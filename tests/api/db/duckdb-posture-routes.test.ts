@@ -9,7 +9,7 @@
  * away, fails here by name.
  *
  * The factory is replaced, so what each route hands it is read back from the mock; the session,
- * the seed loader and `resolveConnection` are the real ones, so a seed resolves to the record the
+ * the seed loader and `resolveServedConnection` are the real ones, so a seed resolves to the record the
  * product builds. Each request carries only the fields its route checks before opening a provider.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";

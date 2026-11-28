@@ -68,7 +68,6 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
     resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
       connection: body.connection,
       engine: servedEngineRecord(body.connection.type),

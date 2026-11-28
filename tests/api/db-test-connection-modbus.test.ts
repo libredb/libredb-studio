@@ -35,7 +35,6 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 mock.module("@/lib/seed/resolve-connection", () => ({
-  resolveConnection: mock(async (body: { connection?: unknown }) => body.connection),
   resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
     connection: body.connection,
     engine: servedEngineRecord(body.connection.type),

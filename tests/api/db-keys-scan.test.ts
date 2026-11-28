@@ -95,17 +95,16 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = mock(async (body: Record<string, unknown>) => {
+  const connectionOfBody = mock(async (body: Record<string, unknown>) => {
     if (!body.connection && !body.connectionId) {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
     }
     return (body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" }) as { type: string };
   });
   return {
-    resolveConnection,
     // The key scan resolves through the served resolve: the same connection, with its engine's legacy record.
     resolveServedConnection: async (body: Record<string, unknown>) => {
-      const connection = await resolveConnection(body);
+      const connection = await connectionOfBody(body);
       return { connection, engine: servedEngineRecord(connection.type) };
     },
     SeedConnectionError,
@@ -995,7 +994,7 @@ describe("POST /api/db/keys/scan under governance", () => {
     GOVERNANCE_INSTANCE_ID: "libredb-studio",
   };
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
-  /** A governed connection as `resolveConnection` hands it to the route: a seed id and the grant's level. */
+  /** A governed connection as `resolveServedConnection` hands it to the route: a seed id and the grant's level. */
   const GOVERNED = { ...CONNECTION, id: "seed:cache", name: "Cache", grantLevel: "read" };
   let saved: Record<string, string | undefined> = {};
 

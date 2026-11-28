@@ -66,7 +66,6 @@ mock.module("@/lib/auth", () => ({
 const realResolveConnection = await import("@/lib/seed/resolve-connection");
 mock.module("@/lib/seed/resolve-connection", () => ({
   ...realResolveConnection,
-  resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
   resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
     connection: body.connection,
     engine: servedEngineRecord(body.connection.type),

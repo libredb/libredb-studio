@@ -3,7 +3,7 @@ import path from "path";
 import { getManagedConnections, getSeedConnectionByIdUnfiltered, resetCache } from "@/lib/seed";
 import { resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { resetVaultCache } from "@/lib/seed/vault-client";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
 const REFERENCE = "${vault:secret/data/prod/postgres#password}";
@@ -55,11 +55,11 @@ describe("seed pipeline with Vault references", () => {
   });
 
   it("resolves one reference when that connection is opened, then serves it from cache", async () => {
-    const first = await resolveConnection({ connectionId: "seed:vault-postgres" }, SESSION);
+    const { connection: first } = await resolveServedConnection({ connectionId: "seed:vault-postgres" }, SESSION);
     expect(first.password).toBe("vault-secret");
     expect(vaultCalls).toEqual(["http://127.0.0.1:8200/v1/secret/data/prod/postgres"]);
 
-    const second = await resolveConnection({ connectionId: "seed:vault-postgres" }, SESSION);
+    const { connection: second } = await resolveServedConnection({ connectionId: "seed:vault-postgres" }, SESSION);
     expect(second.password).toBe("vault-secret");
     expect(vaultCalls).toHaveLength(1);
   });
@@ -80,18 +80,20 @@ describe("seed pipeline with Vault references", () => {
       });
     }) as unknown as typeof fetch;
 
-    await expect(resolveConnection({ connectionId: "seed:vault-postgres" }, SESSION)).rejects.toThrow(/HTTP 503/);
+    await expect(resolveServedConnection({ connectionId: "seed:vault-postgres" }, SESSION)).rejects.toThrow(/HTTP 503/);
   });
 
   it("names the missing VAULT_ADDR when the scheme is inert", async () => {
     delete process.env.VAULT_ADDR;
 
-    await expect(resolveConnection({ connectionId: "seed:vault-postgres" }, SESSION)).rejects.toThrow(/VAULT_ADDR/);
+    await expect(resolveServedConnection({ connectionId: "seed:vault-postgres" }, SESSION)).rejects.toThrow(
+      /VAULT_ADDR/,
+    );
     expect(vaultCalls).toHaveLength(0);
   });
 
   it("resolves env-var connections without touching Vault", async () => {
-    const conn = await resolveConnection({ connectionId: "seed:env-postgres" }, SESSION);
+    const { connection: conn } = await resolveServedConnection({ connectionId: "seed:env-postgres" }, SESSION);
 
     expect(conn.password).toBe("env-secret");
     expect(vaultCalls).toHaveLength(0);
@@ -133,7 +135,7 @@ describe("seed pipeline with an agent credential", () => {
   });
 
   it("resolves the agent password from Vault when the connection is opened", async () => {
-    const conn = await resolveConnection({ connectionId: "seed:agent-postgres" }, SESSION);
+    const { connection: conn } = await resolveServedConnection({ connectionId: "seed:agent-postgres" }, SESSION);
 
     expect([conn.agentUser, conn.agentPassword]).toEqual(["agent_reader", "not-a-real-agent-password"]);
     expect(conn.password).toBe("not-a-real-owner-password");

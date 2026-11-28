@@ -46,7 +46,8 @@ process.env.MILVUS_READER_PASSWORD = "not-a-real-password";
 const { MilvusProvider } = await import("@/lib/db/providers/vector/milvus/index");
 const { clearProviderCache, getOrCreateProvider } = await import("@/lib/db/factory");
 const { resetCache } = await import("@/lib/seed");
-const { resolveConnection } = await import("@/lib/seed/resolve-connection");
+const { resolveServedConnection } = await import("@/lib/seed/resolve-connection");
+const { legacyConnection } = await import("@/lib/db/server-catalog");
 
 const CONNECTION: DatabaseConnection = {
   id: "milvus-read-only",
@@ -94,9 +95,12 @@ describe("a read-only Milvus connection, down to the client the adapter built", 
   );
 
   test("set in the operator's seed file: the mode survives the load and the resolver, and Load and Release are refused with nothing sent", async () => {
-    const connection = await resolveConnection({ connectionId: "seed:vectors-read" }, { role: "user", username: "u" });
+    const { connection, engine } = await resolveServedConnection(
+      { connectionId: "seed:vectors-read" },
+      { role: "user", username: "u" },
+    );
     expect(connection).toMatchObject({ seedId: "vectors-read", type: "milvus", readOnly: true });
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(legacyConnection(engine, connection));
     expect(clients).toHaveLength(1);
     const [client] = clients;
     const mark = client.calls.length;

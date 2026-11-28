@@ -63,18 +63,17 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = mockResolveConnection.mockImplementation(async (body: Record<string, unknown>) => {
+  const connectionOfBody = mockResolveConnection.mockImplementation(async (body: Record<string, unknown>) => {
     if (!body.connection && !body.connectionId) {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
     }
     return body.connection;
   });
   return {
-    resolveConnection,
     // The served resolve the route reads: the same resolution, with the record of the resolved type's engine, a legacy
     // engine's, as the server catalog holds it, and its refusal of a type it does not serve.
     resolveServedConnection: async (body: Record<string, unknown>) => {
-      const connection = (await resolveConnection(body)) as { type?: unknown };
+      const connection = (await connectionOfBody(body)) as { type?: unknown };
       return { connection, engine: servedEngineRecord(connection.type) };
     },
     SeedConnectionError,

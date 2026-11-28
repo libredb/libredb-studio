@@ -1,6 +1,6 @@
 /**
  * Which connections a caller may see and open (docs/GOVERNANCE.md#grants-and-the-connection-list): the dispatcher
- * behind the managed route and `resolveConnection`.
+ * behind the managed route and `resolveServedConnection`.
  *
  * Without governance it answers what the seed connections always answered for the caller's role, with the rows only
  * the Kubernetes access review may list handed to the review in their place, and an open reviewing only the row it

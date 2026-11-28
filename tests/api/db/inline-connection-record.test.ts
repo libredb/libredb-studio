@@ -23,12 +23,12 @@ import { ALL_ROUTES, CONNECTION_ROUTES } from "../../security/helpers/provider-r
  *
  * The routes are the connection route inventory, `CONNECTION_ROUTES` in tests/security/helpers/provider-routes.ts,
  * which tests/security/governance-grants.test.ts holds equal to every provider route that passes its request body to
- * `resolveConnection`, so a route added there is sent these records too. `POST /api/db/disconnect`, which resolves a
+ * `resolveServedConnection`, so a route added there is sent these records too. `POST /api/db/disconnect`, which resolves a
  * record of the caller's own only to name the cache entries it removes, and `POST /api/admin/fleet-health`, which
  * resolves each item of its list and reports a refusal as that item's error, are sent them beside the inventory.
  *
  * Only the session reader is replaced, with an admin session, so the admin-only routes reach their connection handling
- * too. `resolveConnection` and the factory are the real ones. A provider is counted where it is built, by the legacy
+ * too. `resolveServedConnection` and the factory are the real ones. A provider is counted where it is built, by the legacy
  * adapter's open's `[DB] Creating <type> provider` line, as tests/security/custom-connections.test.ts counts it, and
  * the control at the end sees that line for a well-formed record.
  */

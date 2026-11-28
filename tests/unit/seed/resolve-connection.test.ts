@@ -21,7 +21,7 @@ process.env.BOTH_PG_PASS = "both-secret";
 
 import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, resetCache } from "@/lib/seed";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
@@ -44,7 +44,10 @@ describe("resolve-connection", () => {
       host: "localhost",
       createdAt: new Date(),
     };
-    const result = await resolveConnection({ connection: conn }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: conn },
+      { role: "user", username: "test" },
+    );
     expect(result.id).toBe("user-conn");
   });
 
@@ -58,7 +61,10 @@ describe("resolve-connection", () => {
       location: "EU",
       createdAt: new Date(),
     } as DatabaseConnection;
-    const result = await resolveConnection({ connection: conn }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: conn },
+      { role: "user", username: "test" },
+    );
     expect(result.managed).toBe(false);
     expect(result.location).toBe("EU");
   });
@@ -72,7 +78,10 @@ describe("resolve-connection", () => {
       managed: true,
       createdAt: new Date(),
     } as DatabaseConnection;
-    const result = await resolveConnection({ connection: conn }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: conn },
+      { role: "user", username: "test" },
+    );
     expect(result.managed).toBe(false);
     expect(result.database).toBe("acme-orders");
   });
@@ -96,7 +105,9 @@ describe("resolve-connection", () => {
       createdAt: new Date(),
     };
 
-    await expect(resolveConnection({ connection: forged }, { role: "user", username: "test" })).rejects.toMatchObject({
+    await expect(
+      resolveServedConnection({ connection: forged }, { role: "user", username: "test" }),
+    ).rejects.toMatchObject({
       statusCode: 403,
     });
   });
@@ -119,7 +130,7 @@ describe("resolve-connection", () => {
       };
 
       await expect(
-        resolveConnection(
+        resolveServedConnection(
           { connection: forged, connectionId: connectionId as unknown as string },
           { role: "user", username: "test" },
         ),
@@ -140,7 +151,9 @@ describe("resolve-connection", () => {
       createdAt: new Date(),
     } as unknown as DatabaseConnection;
 
-    await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject({
+    await expect(
+      resolveServedConnection({ connection: inline }, { role: "user", username: "test" }),
+    ).rejects.toMatchObject({
       name: "SeedConnectionError",
       message: "Invalid connection ID format",
       statusCode: 400,
@@ -179,7 +192,7 @@ describe("resolve-connection", () => {
       ...fields,
     } as unknown as DatabaseConnection;
 
-    const refused = resolveConnection({ connection: inline }, { role: "user", username: "test" });
+    const refused = resolveServedConnection({ connection: inline }, { role: "user", username: "test" });
     await expect(refused).rejects.toBeInstanceOf(UnknownProviderError);
     await expect(refused).rejects.toMatchObject({ ...expected, code: "PROVIDER_UNKNOWN" });
   });
@@ -205,13 +218,13 @@ describe("resolve-connection", () => {
         ...fields,
       } as unknown as DatabaseConnection;
 
-      await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject(
-        {
-          name: "SeedConnectionError",
-          message: "Valid connection configuration is required",
-          statusCode: 400,
-        },
-      );
+      await expect(
+        resolveServedConnection({ connection: inline }, { role: "user", username: "test" }),
+      ).rejects.toMatchObject({
+        name: "SeedConnectionError",
+        message: "Valid connection configuration is required",
+        statusCode: 400,
+      });
     },
   );
 
@@ -220,7 +233,7 @@ describe("resolve-connection", () => {
     "refuses an inline connection that is %p",
     async (connection) => {
       await expect(
-        resolveConnection(
+        resolveServedConnection(
           { connection: connection as unknown as DatabaseConnection },
           { role: "user", username: "test" },
         ),
@@ -235,7 +248,10 @@ describe("resolve-connection", () => {
   it("resolves an inline connection that names no name, as a connection without one", async () => {
     const inline = { id: "user-conn", type: "postgres", host: "db.example.com" } as unknown as DatabaseConnection;
 
-    const result = await resolveConnection({ connection: inline }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: inline },
+      { role: "user", username: "test" },
+    );
 
     expect(result as unknown).toEqual({ id: "user-conn", type: "postgres", host: "db.example.com", managed: false });
   });
@@ -243,7 +259,10 @@ describe("resolve-connection", () => {
   it("resolves a seed id claim from the file, whatever type and name the caller's copy carries", async () => {
     const claimed = { id: "seed:everyone", type: 5, name: null } as unknown as DatabaseConnection;
 
-    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: claimed },
+      { role: "user", username: "test" },
+    );
 
     expect(result.id).toBe("seed:everyone");
     expect(result.type).toBe("postgres");
@@ -263,7 +282,10 @@ describe("resolve-connection", () => {
 
     // Resolved from the seed config rather than from what was posted: the caller may reach this
     // one, but the operator's record is what it means, not the caller's copy of it.
-    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: claimed },
+      { role: "user", username: "test" },
+    );
     expect(result.host).not.toBe("attacker.example.com");
     expect(result.password).toBe("shared-secret");
   });
@@ -277,7 +299,7 @@ describe("resolve-connection", () => {
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
       createdAt: new Date(),
     } as DatabaseConnection;
-    const refused = resolveConnection({ connection: conn }, { role: "admin", username: "test" });
+    const refused = resolveServedConnection({ connection: conn }, { role: "admin", username: "test" });
     await expect(refused).rejects.toBeInstanceOf(SeedConnectionError);
     await expect(refused).rejects.toMatchObject({
       statusCode: 400,
@@ -295,7 +317,9 @@ describe("resolve-connection", () => {
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
       createdAt: new Date(),
     } as unknown as DatabaseConnection;
-    await expect(resolveConnection({ connection: conn }, { role: "admin", username: "test" })).rejects.toMatchObject({
+    await expect(
+      resolveServedConnection({ connection: conn }, { role: "admin", username: "test" }),
+    ).rejects.toMatchObject({
       name: "SeedConnectionError",
       statusCode: 400,
       message:
@@ -312,7 +336,10 @@ describe("resolve-connection", () => {
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
       createdAt: new Date(),
     } as DatabaseConnection;
-    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: claimed },
+      { role: "user", username: "test" },
+    );
     expect(result.id).toBe("seed:everyone");
     expect(result.agentReadRoots).toBeUndefined();
   });
@@ -336,7 +363,7 @@ describe("resolve-connection", () => {
             createdAt: new Date(),
           } as unknown as DatabaseConnection;
           // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next request.
-          const refused = await resolveConnection({ connection: conn }, { role: "admin", username: "test" }).then(
+          const refused = await resolveServedConnection({ connection: conn }, { role: "admin", username: "test" }).then(
             () => null,
             (error: unknown) => error,
           );
@@ -355,7 +382,9 @@ describe("resolve-connection", () => {
       clientPrivateKeyPath: "/run/secrets/client.key",
       createdAt: new Date(),
     } as unknown as DatabaseConnection;
-    await expect(resolveConnection({ connection: conn }, { role: "admin", username: "test" })).rejects.toMatchObject({
+    await expect(
+      resolveServedConnection({ connection: conn }, { role: "admin", username: "test" }),
+    ).rejects.toMatchObject({
       name: "SeedConnectionError",
       statusCode: 400,
       message:
@@ -374,7 +403,10 @@ describe("resolve-connection", () => {
       clientPrivateKeyPath: "/run/secrets/client.key",
       createdAt: new Date(),
     } as DatabaseConnection;
-    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connection: claimed },
+      { role: "user", username: "test" },
+    );
     expect(result.id).toBe("seed:everyone");
     expect([result.securityPolicyUri, result.clientCertificatePath, result.clientPrivateKeyPath]).toEqual([
       undefined,
@@ -384,14 +416,17 @@ describe("resolve-connection", () => {
   });
 
   it("resolves seed connection by connectionId", async () => {
-    const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connectionId: "seed:everyone" },
+      { role: "user", username: "test" },
+    );
     expect(result.id).toBe("seed:everyone");
     expect(result.password).toBe("shared-secret");
   });
 
   it("throws 403 when role does not have access", async () => {
     try {
-      await resolveConnection({ connectionId: "seed:admin-only" }, { role: "user", username: "test" });
+      await resolveServedConnection({ connectionId: "seed:admin-only" }, { role: "user", username: "test" });
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(SeedConnectionError);
@@ -401,7 +436,7 @@ describe("resolve-connection", () => {
 
   it("throws 404 when seed connection does not exist", async () => {
     try {
-      await resolveConnection({ connectionId: "seed:nonexistent" }, { role: "admin", username: "test" });
+      await resolveServedConnection({ connectionId: "seed:nonexistent" }, { role: "admin", username: "test" });
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(SeedConnectionError);
@@ -410,7 +445,10 @@ describe("resolve-connection", () => {
   });
 
   it("admin can access admin-only connections", async () => {
-    const result = await resolveConnection({ connectionId: "seed:admin-only" }, { role: "admin", username: "test" });
+    const { connection: result } = await resolveServedConnection(
+      { connectionId: "seed:admin-only" },
+      { role: "admin", username: "test" },
+    );
     expect(result.password).toBe("admin-secret");
   });
 
@@ -422,7 +460,7 @@ describe("resolve-connection", () => {
     resetCache();
 
     try {
-      const error = (await resolveConnection(
+      const error = (await resolveServedConnection(
         { connectionId: "seed:broken-secret" },
         { role: "user", username: "test" },
       ).catch((thrown: unknown) => thrown)) as Error;
@@ -437,7 +475,7 @@ describe("resolve-connection", () => {
 
   it("throws 400 when neither connection nor connectionId", async () => {
     try {
-      await resolveConnection({}, { role: "admin", username: "test" });
+      await resolveServedConnection({}, { role: "admin", username: "test" });
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(SeedConnectionError);
@@ -497,9 +535,10 @@ describe("resolve-connection with a seed entry whose type names no provider (FND
   });
 
   it("refuses a seed whose type names no provider by name after the access decision, reading no Vault reference", async () => {
-    const refusal = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "test" }).catch(
-      (error: unknown) => error,
-    );
+    const refusal = await resolveServedConnection(
+      { connectionId: "seed:acme" },
+      { role: "admin", username: "test" },
+    ).catch((error: unknown) => error);
     expect(refusal).toBeInstanceOf(UnknownProviderError);
     expect((refusal as UnknownProviderError).reason).toBe("unknown");
     expect((refusal as UnknownProviderError).typeId).toBe("acmefoo");
@@ -508,13 +547,16 @@ describe("resolve-connection with a seed entry whose type names no provider (FND
   });
 
   it("resolves the file's other seed", async () => {
-    const resolved = await resolveConnection({ connectionId: "seed:pg" }, { role: "user", username: "test" });
+    const { connection: resolved } = await resolveServedConnection(
+      { connectionId: "seed:pg" },
+      { role: "user", username: "test" },
+    );
     expect(resolved.type).toBe("postgres");
     expect(resolved.password).toBe("vault-resolved-secret");
   });
 
   it("answers a role it excludes with the 403 any seed gets", async () => {
-    const refusal = await resolveConnection(
+    const refusal = await resolveServedConnection(
       { connectionId: "seed:acme-admins" },
       { role: "user", username: "test" },
     ).catch((error: unknown) => error);
@@ -561,7 +603,9 @@ describe("resolve-connection and the operator's environment (FND-5 slice 6c)", (
   // connection's environment, so for a seed it must be the operator's, never the caller's copy.
   it("a seed id resolves with the operator's environment, whatever the caller's copy claims", async () => {
     const session = { role: "user" as const, username: "test" };
-    expect((await resolveConnection({ connectionId: "seed:orders" }, session)).environment).toBe("production");
+    expect((await resolveServedConnection({ connectionId: "seed:orders" }, session)).connection.environment).toBe(
+      "production",
+    );
     const claimed = {
       id: "seed:orders",
       name: "Orders",
@@ -570,7 +614,7 @@ describe("resolve-connection and the operator's environment (FND-5 slice 6c)", (
       environment: "development",
       createdAt: new Date(),
     } as DatabaseConnection;
-    expect((await resolveConnection({ connection: claimed }, session)).environment).toBe("production");
+    expect((await resolveServedConnection({ connection: claimed }, session)).connection.environment).toBe("production");
   });
 });
 
@@ -620,9 +664,9 @@ describe("resolve-connection with discovered connections", () => {
   });
 
   it("hands an admin a discovered ${vault:...} password as that literal text, without reading Vault", async () => {
-    const result = await resolveConnection({ connectionId: "seed:caprover-pg" }, ADMIN);
+    const { connection: result } = await resolveServedConnection({ connectionId: "seed:caprover-pg" }, ADMIN);
     expect(result.password).toBe(VAULT_REFERENCE);
-    // The marker is on what resolveConnection received from the list, after the role filter.
+    // The marker is on what resolveServedConnection received from the list, after the role filter.
     expect((result as ManagedConnection).literal).toBe(true);
     expect(readVaultSecret).not.toHaveBeenCalled();
   });
@@ -630,10 +674,12 @@ describe("resolve-connection with discovered connections", () => {
   it("in literal mode, hands over the seed file's row carrying the literal-mode marker and the discovered row without it", async () => {
     process.env.SEED_LITERAL_VALUES = "true";
     try {
-      const fromFile = (await resolveConnection({ connectionId: "seed:caprover-x" }, ADMIN)) as ManagedConnection;
+      const fromFile = (await resolveServedConnection({ connectionId: "seed:caprover-x" }, ADMIN))
+        .connection as ManagedConnection;
       expect(fromFile.literal).toBe(true);
       expect(fromFile[LITERAL_SEED_FILE]).toBe(true);
-      const discovered = (await resolveConnection({ connectionId: "seed:caprover-pg" }, ADMIN)) as ManagedConnection;
+      const discovered = (await resolveServedConnection({ connectionId: "seed:caprover-pg" }, ADMIN))
+        .connection as ManagedConnection;
       expect(discovered.literal).toBe(true);
       expect(discovered[LITERAL_SEED_FILE]).toBeUndefined();
       expect(readVaultSecret).not.toHaveBeenCalled();
@@ -643,7 +689,7 @@ describe("resolve-connection with discovered connections", () => {
   });
 
   it("still resolves a seed-file connection whose id starts with caprover- through Vault", async () => {
-    const result = await resolveConnection({ connectionId: "seed:caprover-x" }, ADMIN);
+    const { connection: result } = await resolveServedConnection({ connectionId: "seed:caprover-x" }, ADMIN);
     expect(result.password).toBe("vault-resolved-secret");
     expect((result as ManagedConnection).literal).toBeUndefined();
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
@@ -678,7 +724,7 @@ describe("resolve-connection with discovered connections", () => {
     expect(listed?.host).toBe("file-pg.internal");
     expect(listed).not.toHaveProperty("literal");
 
-    const result = await resolveConnection({ connectionId: "seed:file-literal" }, ADMIN);
+    const { connection: result } = await resolveServedConnection({ connectionId: "seed:file-literal" }, ADMIN);
     expect(result.password).toBe("vault-resolved-secret");
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
     expect(readVaultSecret).toHaveBeenCalledWith("secret/data/x", "y", undefined);
@@ -686,10 +732,10 @@ describe("resolve-connection with discovered connections", () => {
 
   it("answers a standard user who names a discovered id with the 404 of an unknown id", async () => {
     const session = { role: "user", username: "test" };
-    const discovered = await resolveConnection({ connectionId: "seed:caprover-pg" }, session).catch(
+    const discovered = await resolveServedConnection({ connectionId: "seed:caprover-pg" }, session).catch(
       (thrown: unknown) => thrown,
     );
-    const unknown = await resolveConnection({ connectionId: "seed:caprover-none" }, session).catch(
+    const unknown = await resolveServedConnection({ connectionId: "seed:caprover-none" }, session).catch(
       (thrown: unknown) => thrown,
     );
 
@@ -785,7 +831,9 @@ describe("resolve-connection with SEED_LITERAL_VALUES toggled on a warm operator
       ["vault-ref", VAULT_REFERENCE, true],
       ["plain", "plain-password", true],
     ]);
-    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe(VAULT_REFERENCE);
+    expect((await resolveServedConnection({ connectionId: "seed:vault-ref" }, ADMIN)).connection.password).toBe(
+      VAULT_REFERENCE,
+    );
     expect(readVaultSecret).not.toHaveBeenCalled();
     expect(plaintextWarnings()).toEqual([]);
 
@@ -796,13 +844,19 @@ describe("resolve-connection with SEED_LITERAL_VALUES toggled on a warm operator
       ["vault-ref", VAULT_REFERENCE, false],
       ["plain", "plain-password", false],
     ]);
-    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe("vault-resolved-secret");
+    expect((await resolveServedConnection({ connectionId: "seed:vault-ref" }, ADMIN)).connection.password).toBe(
+      "vault-resolved-secret",
+    );
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
     expect(plaintextWarnings()).toHaveLength(1);
 
     process.env.SEED_LITERAL_VALUES = "true";
-    expect((await resolveConnection({ connectionId: "seed:env-ref" }, ADMIN)).password).toBe(ENV_REFERENCE);
-    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe(VAULT_REFERENCE);
+    expect((await resolveServedConnection({ connectionId: "seed:env-ref" }, ADMIN)).connection.password).toBe(
+      ENV_REFERENCE,
+    );
+    expect((await resolveServedConnection({ connectionId: "seed:vault-ref" }, ADMIN)).connection.password).toBe(
+      VAULT_REFERENCE,
+    );
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
     expect(plaintextWarnings()).toHaveLength(1);
   });
@@ -874,11 +928,11 @@ describe("resolve-connection under governance", () => {
 
   it("governance: an unknown id and a non-granted id answer the same 404 CONNECTION_NOT_FOUND and getSeedConnectionByIdUnfiltered is never called", async () => {
     // Bob holds no grant on orders, which exists; no connection has the id no-such-connection.
-    const notGranted = await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB));
-    const unknown = await failureOf(resolveConnection({ connectionId: "seed:no-such-connection" }, BOB));
+    const notGranted = await failureOf(resolveServedConnection({ connectionId: "seed:orders" }, BOB));
+    const unknown = await failureOf(resolveServedConnection({ connectionId: "seed:no-such-connection" }, BOB));
     // The same answer for an inline record that claims the id, which resolves as the id.
     const claimed = await failureOf(
-      resolveConnection(
+      resolveServedConnection(
         { connection: { id: "seed:orders", name: "Copy", type: "postgres", createdAt: new Date(T) } },
         BOB,
       ),
@@ -897,40 +951,48 @@ describe("resolve-connection under governance", () => {
       return { id, user, password, grantLevel };
     };
 
-    expect(credential(await resolveConnection({ connectionId: "seed:billing" }, ALICE))).toEqual({
+    expect(credential((await resolveServedConnection({ connectionId: "seed:billing" }, ALICE)).connection)).toEqual({
       id: "seed:billing",
       ...READ_CREDENTIAL,
       grantLevel: "read",
     });
-    expect(credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE))).toEqual({
+    expect(credential((await resolveServedConnection({ connectionId: "seed:orders" }, ALICE)).connection)).toEqual({
       id: "seed:orders",
       ...WRITE_CREDENTIAL,
       grantLevel: "write",
     });
-    expect(credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE, { credential: "read" }))).toEqual(
-      { id: "seed:orders", ...READ_CREDENTIAL, grantLevel: "read" },
-    );
     expect(
-      credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE, { credential: "grant" })),
+      credential(
+        (await resolveServedConnection({ connectionId: "seed:orders" }, ALICE, { credential: "read" })).connection,
+      ),
+    ).toEqual({ id: "seed:orders", ...READ_CREDENTIAL, grantLevel: "read" });
+    expect(
+      credential(
+        (await resolveServedConnection({ connectionId: "seed:orders" }, ALICE, { credential: "grant" })).connection,
+      ),
     ).toEqual({ id: "seed:orders", ...WRITE_CREDENTIAL, grantLevel: "write" });
     expect(unfiltered).not.toHaveBeenCalled();
   });
 
   it("governance: an expired grant answers 404 without a reload", async () => {
-    expect((await resolveConnection({ connectionId: "seed:orders" }, ALICE)).user).toBe(WRITE_CREDENTIAL.user);
+    expect((await resolveServedConnection({ connectionId: "seed:orders" }, ALICE)).connection.user).toBe(
+      WRITE_CREDENTIAL.user,
+    );
 
     // The same snapshot object, a minute later: expiry fires no notification, so the clock alone decides.
     setSystemTime(new Date(T + 60_000));
 
-    expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, ALICE))).toMatchObject(NOT_FOUND);
-    expect((await resolveConnection({ connectionId: "seed:billing" }, ALICE)).user).toBe(READ_CREDENTIAL.user);
+    expect(await failureOf(resolveServedConnection({ connectionId: "seed:orders" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect((await resolveServedConnection({ connectionId: "seed:billing" }, ALICE)).connection.user).toBe(
+      READ_CREDENTIAL.user,
+    );
   });
 
   it("governance: a miss is audited as permission_denied with reason connection_not_granted, metered on the anon bucket", async () => {
     // RATE_LIMIT_ANON_MAX is 5 by default: five lines, one more for the request that trips the bucket, then none.
     for (let attempt = 0; attempt < 7; attempt += 1) {
       // oxlint-disable-next-line no-await-in-loop -- each miss spends the bucket in turn.
-      expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
+      expect(await failureOf(resolveServedConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
     }
 
     const lines = auditLines();
@@ -948,7 +1010,7 @@ describe("resolve-connection under governance", () => {
       });
     }
     // The bucket is keyed on the account: another account's misses are audited from its own budget.
-    expect(await failureOf(resolveConnection({ connectionId: "seed:crm" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect(await failureOf(resolveServedConnection({ connectionId: "seed:crm" }, ALICE))).toMatchObject(NOT_FOUND);
     expect(auditLines()).toHaveLength(7);
     expect(auditLines()[6]).toMatchObject({ actor: "alice@example.com", connection: "crm" });
   });
@@ -959,7 +1021,7 @@ describe("resolve-connection under governance", () => {
     });
     const error = spyOn(logger, "error").mockImplementation(() => {});
     try {
-      expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
+      expect(await failureOf(resolveServedConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
       expect(error).toHaveBeenCalledWith("Failed to record permission_denied audit event", expect.any(Error), {
         route: "seed/resolve-connection",
       });
@@ -969,7 +1031,7 @@ describe("resolve-connection under governance", () => {
   });
 
   it("governance: a found connection is not audited", async () => {
-    await resolveConnection({ connectionId: "seed:billing" }, BOB);
+    await resolveServedConnection({ connectionId: "seed:billing" }, BOB);
     expect(auditLines()).toEqual([]);
   });
 
@@ -984,7 +1046,7 @@ describe("resolve-connection under governance", () => {
 
     for (const connectionId of ["seed:billing", "seed:orders", "seed:no-such-connection"]) {
       // oxlint-disable-next-line no-await-in-loop -- one request at a time, as a browser sends them.
-      const error = await failureOf(resolveConnection({ connectionId }, BOB));
+      const error = await failureOf(resolveServedConnection({ connectionId }, BOB));
       expect(error).toBeInstanceOf(SeedConnectionError);
       expect(error).toMatchObject({
         message: "Connection access is unavailable while this server cannot read its governance source",
@@ -1006,9 +1068,9 @@ describe("resolve-connection under governance", () => {
     };
     const refusal = { statusCode: 403, code: "CUSTOM_CONNECTIONS_DISABLED" };
 
-    expect(await failureOf(resolveConnection({ connection: own }, ALICE))).toMatchObject(refusal);
+    expect(await failureOf(resolveServedConnection({ connection: own }, ALICE))).toMatchObject(refusal);
     resetGovernanceState();
-    expect(await failureOf(resolveConnection({ connection: own }, ALICE))).toMatchObject(refusal);
+    expect(await failureOf(resolveServedConnection({ connection: own }, ALICE))).toMatchObject(refusal);
   });
 
   it("governance: an inline record that claims a granted id resolves to the governed record, not the caller's copy", async () => {
@@ -1021,7 +1083,7 @@ describe("resolve-connection under governance", () => {
       createdAt: new Date(T),
     };
 
-    const result = await resolveConnection({ connection: copy }, ALICE);
+    const { connection: result } = await resolveServedConnection({ connection: copy }, ALICE);
 
     expect(result.host).toBe("billing.db.example.internal");
     expect(result.password).toBe(READ_CREDENTIAL.password);
@@ -1034,13 +1096,15 @@ describe("resolve-connection under governance", () => {
       grantedSnapshot([vaulted], [{ subject: ALICE.idpSubject, connection: vaulted, level: "read" }], T),
     );
 
-    expect((await resolveConnection({ connectionId: "seed:vaulted" }, ALICE)).password).toBe(VAULT_REFERENCE);
+    expect((await resolveServedConnection({ connectionId: "seed:vaulted" }, ALICE)).connection.password).toBe(
+      VAULT_REFERENCE,
+    );
     expect(readVaultSecret).not.toHaveBeenCalled();
   });
 
   it("governance: a session without an identity provider subject resolves nothing", async () => {
     const error = await failureOf(
-      resolveConnection({ connectionId: "seed:billing" }, { role: "admin", username: "admin" }),
+      resolveServedConnection({ connectionId: "seed:billing" }, { role: "admin", username: "admin" }),
     );
     expect(error).toMatchObject(NOT_FOUND);
   });

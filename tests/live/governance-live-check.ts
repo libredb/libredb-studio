@@ -37,6 +37,7 @@ import { Client, type Notification } from "pg";
 import { editorExecutionContext } from "../../src/lib/api/execution-context";
 import type { UserPayload } from "../../src/lib/auth";
 import { clearProviderCache, getOrCreateProvider, getProviderCacheStats } from "../../src/lib/db/factory";
+import { legacyConnection } from "../../src/lib/db/server-catalog";
 import { pingChannel } from "../../src/lib/governance/contract";
 import { closeGovernancePool } from "../../src/lib/governance/db";
 import { governanceFreshness } from "../../src/lib/governance/freshness";
@@ -55,7 +56,7 @@ import { buildQueryEvent, queryEventPolicy } from "../../src/lib/query-events/bu
 import { writeQueryEventBatch } from "../../src/lib/query-events/postgres-sink";
 import { queryEventSinkState, recordQueryEvent, resetQueryEventSink } from "../../src/lib/query-events/sink";
 import type { QueryEventInput } from "../../src/lib/query-events/types";
-import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "../../src/lib/seed/resolve-connection";
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
 import { keyringFileOf, removeKeyringFiles, type TestKey, testKey } from "../helpers/governance/keyring-file";
 import { queryEventInput, startInTheFuture } from "../helpers/governance/query-event-input";
@@ -366,10 +367,10 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
-    name: "deleting a grant row makes resolveConnection answer 404 after the next load",
+    name: "deleting a grant row makes resolveServedConnection answer 404 after the next load",
     run: async ({ superuser }) => {
       const bob = { role: "user", username: "bob@example.com", idpSubject: "bob@example.com" };
-      const opened = await resolveConnection({ connectionId: "seed:live-both" }, bob);
+      const { connection: opened } = await resolveServedConnection({ connectionId: "seed:live-both" }, bob);
       same([opened.user, opened.password], [READ.user, READ.password], "the credential Bob's read grant opens");
 
       await superuser((client) =>
@@ -382,7 +383,7 @@ const CASES: readonly LiveCase[] = [
       loadedSnapshot();
 
       const { result: refusal, lines } = await capturingStdout(() =>
-        resolveConnection({ connectionId: "seed:live-both" }, bob).then(
+        resolveServedConnection({ connectionId: "seed:live-both" }, bob).then(
           () => undefined,
           (error: unknown) => error,
         ),
@@ -436,10 +437,10 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
-    name: "deleting a grant makes resolveConnection answer 404 within 1 s with no explicit reload",
+    name: "deleting a grant makes resolveServedConnection answer 404 within 1 s with no explicit reload",
     run: async ({ superuser }) => {
       const alice = { role: "user", username: "alice@example.com", idpSubject: "alice@example.com" };
-      await resolveConnection({ connectionId: "seed:live-both" }, alice);
+      await resolveServedConnection({ connectionId: "seed:live-both" }, alice);
 
       const deletedAt = Date.now();
       await superuser((client) =>
@@ -452,7 +453,7 @@ const CASES: readonly LiveCase[] = [
       const { result: refusal } = await capturingStdout(async () => {
         for (;;) {
           // oxlint-disable-next-line no-await-in-loop -- one attempt at a time, until the refusal or the deadline.
-          const outcome = await resolveConnection({ connectionId: "seed:live-both" }, alice).then(
+          const outcome = await resolveServedConnection({ connectionId: "seed:live-both" }, alice).then(
             () => undefined,
             (error: unknown) => error,
           );
@@ -589,7 +590,8 @@ const CASES: readonly LiveCase[] = [
       );
 
       // Alice opens a transaction on her own provider, as the transaction route does, and writes a row in it.
-      const record = await resolveConnection({ connectionId: "seed:live-target" }, alice);
+      const { connection, engine } = await resolveServedConnection({ connectionId: "seed:live-target" }, alice);
+      const record = legacyConnection(engine, connection);
       const opened = await getOrCreateProvider(record, {}, editorExecutionContext(alice, record));
       const provider = opened as unknown as LiveTransactionProvider;
       await provider.beginTransaction();

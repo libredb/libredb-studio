@@ -7,7 +7,7 @@
  * (docs/SECURITY.md, note 0.9). Under governance each user's requests run on a provider of their own, keyed by the
  * session's identity provider subject, so two users granted the same level on the same connection, which resolve to
  * the same record and the same credential, still never share a provider, a transaction, a cancel or a disconnect. This
- * file proves it through the routes themselves: the governed `resolveConnection`, the real factory and the real
+ * file proves it through the routes themselves: the governed `resolveServedConnection`, the real factory and the real
  * PostgreSQL provider, over a fake `pg` that records which pool and which session each statement reached.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";

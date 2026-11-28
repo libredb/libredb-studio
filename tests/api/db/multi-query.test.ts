@@ -78,7 +78,7 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
-/** What `resolveConnection` answers instead of the default below, for the governance tests at the end of this file. */
+/** What the served resolve answers instead of the default below, for the governance tests at the end of this file. */
 let resolveConnectionOverride: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
 
 mock.module("@/lib/seed/resolve-connection", () => {
@@ -92,7 +92,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = async (body: Record<string, unknown>) => {
+  const connectionOfBody = async (body: Record<string, unknown>) => {
     if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
     if (!body.connection && !body.connectionId) {
       throw new SeedConnectionError("Either connection or connectionId is required", 400);
@@ -100,11 +100,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
     return body.connection;
   };
   return {
-    resolveConnection: mock(resolveConnection),
     // The route's resolve: the connection with the server catalog's record of its type, as the real one answers a
     // legacy engine's.
     resolveServedConnection: mock(async (body: Record<string, unknown>) => {
-      const connection = (await resolveConnection(body)) as DatabaseConnection;
+      const connection = (await connectionOfBody(body)) as DatabaseConnection;
       return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
@@ -1771,7 +1770,7 @@ const { logger } = await import("@/lib/logger");
 describe("POST /api/db/multi-query: query events under governance", () => {
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
   const governedSession = { role: "user", username: "alice@example.com", idpSubject: SUBJECT };
-  /** A governed record as `resolveConnection` hands it out under a read grant. */
+  /** A governed record as `resolveServedConnection` hands it out under a read grant. */
   const governedConnection = {
     id: "seed:orders",
     name: "Orders",

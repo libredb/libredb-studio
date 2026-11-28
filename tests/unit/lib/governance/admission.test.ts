@@ -384,7 +384,7 @@ describe("admitConnectionRows", () => {
       expect(read.password).toBe("${DB_PASSWORD}");
       expect(read.host).toBe("${DB_HOST}");
       expect(read.database).toBe("${vault:secret/data/orders#database}");
-      // The marker resolveConnection reads to hand a connection back with its values as written.
+      // The marker resolveServedConnection reads to hand a connection back with its values as written.
       expect(read.literal).toBe(true);
       expect(JSON.stringify(read)).not.toContain("example-only-environment-password");
     } finally {
