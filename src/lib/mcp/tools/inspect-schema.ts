@@ -1,15 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ObjectTree } from "@/lib/api/object-tree";
+import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
+import { raisedByTreeRead, recordingRaised } from "@/lib/api/session-target";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
+  engineAuthor,
   isStudioRefusal,
-  providerAuthor,
+  providerSentence,
   type ProviderTextScrub,
-  providerTextScrub,
+  type ProviderWords,
   scrubProviderText,
 } from "@/lib/db/operations/provider-text";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, ObjectDetail } from "@/lib/db/types";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -23,18 +27,22 @@ import {
   type McpToolAuditReason,
 } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
+import type { ManagedConnection } from "@/lib/seed";
 import { metadataReadAnnotations } from "./annotations";
 import {
   DATABASE_ARGUMENT_DESCRIPTION,
   databaseRequiredAnswer,
   type McpDatabaseChoice,
   McpDatabaseChoiceError,
+  packageDatabaseChoice,
   providerInDatabase,
 } from "./database-choice";
 import {
   acquireWithinCall,
   MCP_TIMEOUT_BOUNDS_MS,
+  metadataTargetWithinCall,
   mcpObjectTree,
+  mcpTargetTree,
   type Raced,
   raceDeadline,
   treeReadWithinCall,
@@ -46,6 +54,7 @@ import {
   type McpConnectionContext,
   type McpReach,
   type McpToolCall,
+  mcpTextScrub,
 } from "../context";
 import {
   engineError,
@@ -76,23 +85,32 @@ import {
  * resolves, before anything is acquired, and the refusal names the statement tool that reads it, which its arm
  * declares (`holdsNoTables`), rather than answering an empty page.
  *
- * It acquires under agent-operations, which sends no statement and so is served on every engine; an engine's granted
- * agent readings decide only which readings agent mode's `inspect_operations` offers, never this acquisition. The
- * decision event is written before acquisition and the outcome after, and a call whose record
- * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, and
- * the column and index caps count what they leave out instead of adding fake entries.
+ * On an engine whose record offers execution profiles, a legacy engine's, it acquires under agent-operations, which
+ * sends no statement and so is served on every such engine; an engine's granted agent readings decide only which
+ * readings agent mode's `inspect_operations` offers, never this acquisition. On a provider package's engine, whose
+ * record offers none, it reads the record's metadata session instead (`metadataTargetWithinCall`, clause C-66), opened
+ * through the package's own `open`, which also sends no statement; a database named on the call is refused before that
+ * open (`packageDatabaseChoice`), since a package's record offers no catalog session. A failure of that open, and of a
+ * tree read the package's session raised (`recordingRaised`, `raisedByTreeRead`), is answered by the record
+ * (`packageFailureAnswer`, clause C-112), logged once: behind the notice naming the package where its register row
+ * grants the package its own words, and in Studio's sentence naming its code otherwise; every other failure is
+ * Studio's own and is answered as on a legacy engine. A package's sentence in a schema answer, an index read's
+ * `unavailable`, reaches the client under the same grant (`providerSentence`). The decision event is written before
+ * acquisition and the outcome after, and a call whose record cannot be written runs nothing. The page is fitted to the
+ * result cap at a table boundary, and the column and index caps count what they leave out instead of adding fake
+ * entries.
  *
  * The host core is read before anything else, so a call made before its install throws `HostCoreBootOrderError` by name,
  * with no record written and nothing opened (docs/providers/CONTRACT.md, clause C-82).
  *
  * One deadline, the call's start plus timeout_ms, covers every provider call, and none starts after it, while one
- * already started runs on. The open's scrub, the acquisition and the database choice each run through `raceDeadline`;
- * the acquisition also hands the open the call's wait (`acquireWithinCall`), so the host's open releases the call at
- * its deadline or when its request leaves (clause C-81), and the choice's catalog session open is bounded by that race
- * alone. Each container listing, each relation kind's listing and each table's description, and the choice's database
- * listing, is a host core tree call on the call's tree (`mcpObjectTree`, clause C-82), under the call's deadline and the
- * request's signal; a read the call stopped waiting for that fails afterwards is logged under `/api/mcp` by its action,
- * kind and code.
+ * already started runs on. The open's scrub, the acquisition or the metadata session's open, and the database choice
+ * each run through `raceDeadline`; the acquisition and the metadata session's open also hand the open the call's wait
+ * (`acquireWithinCall`, `metadataTargetWithinCall`), so the host's open releases the call at its deadline or when its
+ * request leaves (clause C-81), and the choice's catalog session open is bounded by that race alone. Each container
+ * listing, each relation kind's listing and each table's description, and the choice's database listing, is a host core
+ * tree call on the call's tree (`mcpTargetTree`, clause C-82), under the call's deadline and the request's signal; a
+ * read the call stopped waiting for that fails afterwards is logged under `/api/mcp` by its action, kind and code.
  * Foreign keys come from the description the call makes for columns or indexes anyway, so asking for them alone adds
  * a description only where the engine may declare keys.
  * The schema names are what the last container listing `chooseContainer` made answered, so asking for them sends
@@ -208,6 +226,9 @@ class InspectStopped extends Error {
   }
 }
 
+/** The route MCP's answers and logs name. */
+const MCP_ROUTE = "/api/mcp";
+
 /** One provider call of the call, raced against its signal and deadline: its value, its own error, or the stop. */
 type Step = <T>(work: () => Promise<T>) => Promise<T>;
 
@@ -273,7 +294,9 @@ async function chooseContainer(tree: ObjectTree, schema: string | undefined, ste
 
 /**
  * One table of the page. `declaresForeignKeys` is the provider's editor gate (`ProviderCapabilities.declaresForeignKeys`),
- * read off the provider the call holds, since it is no member of the engine's object model.
+ * read off the provider the call holds, since it is no member of the engine's object model; a provider package's
+ * describe answer always carries its foreign keys, so it is true there. `words` is how a provider's sentence in the
+ * answer reaches the client (`providerSentence`).
  */
 async function inspectTable(
   tree: ObjectTree,
@@ -281,7 +304,7 @@ async function inspectTable(
   object: DatabaseObject,
   args: InspectSchemaInput,
   step: Step,
-  scrub: ProviderTextScrub,
+  words: ProviderWords,
 ): Promise<InspectedTable> {
   const readsForeignKeys = args.include_foreign_keys && declaresForeignKeys;
   const detail =
@@ -311,8 +334,9 @@ async function inspectTable(
     ...(args.include_indexes
       ? {
           indexes: indexesUnavailable
-            ? // The provider's sentence for a refused index read, scrubbed, redacted and cut as an engine message is.
-              { unavailable: engineMessage(detail.indexes.unavailable, scrub) }
+            ? // The provider's sentence for a refused index read, under the record's grant of its words, then
+              // scrubbed, redacted and cut as an engine message is.
+              { unavailable: engineMessage(providerSentence(words, detail.indexes.unavailable), words.scrub) }
             : indexes
                 .slice(0, MAX_INDEXES)
                 .map((index) => ({ name: index.name, columns: [...index.columns], is_unique: index.unique })),
@@ -396,7 +420,7 @@ async function readPage(
   args: InspectSchemaInput,
   signal: AbortSignal,
   step: Step,
-  scrub: ProviderTextScrub,
+  words: ProviderWords,
   author: string,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
   const choice = await chooseContainer(tree, args.schema, step);
@@ -415,7 +439,7 @@ async function readPage(
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
     // oxlint-disable-next-line no-await-in-loop -- one table at a time, so the page stops at the result cap.
-    const table = await inspectTable(tree, declaresForeignKeys, object, args, step, scrub);
+    const table = await inspectTable(tree, declaresForeignKeys, object, args, step, words);
     if (
       resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false, author)) >
       MCP_RESULT_CAP_BYTES
@@ -432,6 +456,100 @@ async function readPage(
     tables.push(table);
   }
   return { result: pageResult(args, container, names, filtered.length, tables, false, author) };
+}
+
+/** The tree a call reads its page from, or the answer that ended the call before one was built. */
+type CallTree =
+  | { readonly kind: "tree"; readonly tree: ObjectTree; readonly declaresForeignKeys: boolean }
+  | { readonly kind: "answered"; readonly result: ToolResult; readonly failure: McpToolAuditReason };
+
+/**
+ * The call of a provider package's session a failure is answered by (`packageFailureAnswer`): the metadata session's
+ * open, then its tree reads, with every value the session's tree function raised (`recordingRaised`).
+ */
+type PackageCall = { readonly call: "open" } | { readonly call: "tree read"; readonly raised: ReadonlySet<unknown> };
+
+/**
+ * The tree of a connection whose record offers execution profiles: the provider acquired under agent-operations
+ * within the call, in the database the call names on a connection that reaches a whole server (#1530), and its object
+ * tree within the call (`mcpObjectTree`).
+ */
+async function profiledTree(
+  args: InspectSchemaInput,
+  call: McpToolCall,
+  connection: ManagedConnection,
+  deadline: number,
+  step: Step,
+  scrub: ProviderTextScrub,
+  author: string,
+): Promise<CallTree> {
+  const acquired = stepOf(await acquireWithinCall(call, connection, "agent-operations", deadline));
+  // The race bounds the choice's catalog session open, which no tree read reaches; its listing ends at the same
+  // deadline and signal on the host, whichever settles first.
+  const choice = choiceOf(await step(() => providerInDatabase(acquired, args.database, call.signal, deadline)));
+  if (choice.kind === "provider-refused") {
+    return {
+      kind: "answered",
+      result: providerTextError("The database could not be opened: ", choice.error, scrub, author),
+      failure: "mcp_execution_failed",
+    };
+  }
+  // The databases the call could name are database content: behind the notice naming the provider, never spliced
+  // into Studio's sentence.
+  if (choice.kind === "database-required") {
+    return { kind: "answered", result: databaseRequiredAnswer(choice, author), failure: "mcp_execution_failed" };
+  }
+  return {
+    kind: "tree",
+    tree: mcpObjectTree(choice.provider, call.signal, deadline),
+    declaresForeignKeys: choice.provider.getCapabilities().declaresForeignKeys !== false,
+  };
+}
+
+/**
+ * The tree of a provider package's connection: the database choice made before any open (`packageDatabaseChoice`), the
+ * record's metadata session opened within the call (`metadataTargetWithinCall`), and its object tree within the call
+ * (`mcpTargetTree`) over the session's tree recording what it raised. `failing` names the package's call a failure is
+ * answered by while each runs.
+ */
+async function packageTree(
+  args: InspectSchemaInput,
+  call: McpToolCall,
+  connection: ManagedConnection,
+  deadline: number,
+  failing: { current?: PackageCall },
+): Promise<CallTree> {
+  packageDatabaseChoice(args.database);
+  failing.current = { call: "open" };
+  const target = stepOf(await metadataTargetWithinCall(call, connection, deadline));
+  const raised = new Set<unknown>();
+  failing.current = { call: "tree read", raised };
+  return {
+    kind: "tree",
+    tree: mcpTargetTree(recordingRaised(target, raised), call.signal, deadline),
+    declaresForeignKeys: true,
+  };
+}
+
+/**
+ * The answer to `error`, a failure of `failing`'s call of `engine`'s package, or null for a failure the package's call
+ * did not raise or that is Studio's own (`isPackageFailure`): the record's answer (`packageFailureAnswer`, which logs it
+ * once), behind the notice naming the package where its register row grants the package its own words, and in
+ * Studio's sentence with its error record otherwise.
+ */
+function packageAnswer(
+  engine: EngineRecord,
+  failing: PackageCall | undefined,
+  error: unknown,
+  scrub: ProviderTextScrub,
+  author: string,
+): ToolResult | null {
+  if (failing === undefined || !isPackageFailure(engine, error)) return null;
+  if (failing.call === "tree read" && !raisedByTreeRead(failing.raised, error)) return null;
+  const answered = packageFailureAnswer(engine, failing.call, error, scrub, MCP_ROUTE);
+  if (engine.grants.ownWords === "scrubbed") return engineError(MCP_ENGINE_ERROR_PREFIX, answered, scrub, author);
+  // Where no row grants the package its words, the record's answer is Studio's sentence, always an `Error`.
+  return ownWordsFailure((answered as Error).message, answered, scrub);
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
@@ -475,37 +593,28 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   const finish = (result: ToolResult, failure?: McpToolAuditReason): ToolResult =>
     recordOrRefuse(() => recordMcpOutcome(resolved, Date.now() - startedAt, failure)) ?? result;
 
+  // Availability refused every type the catalog serves no record of, so the record is read.
+  const engine = servedEngineRecord(connection.type);
   // The listed connection's own values until the open has read Vault; then the open's scrub, over its secrets as
   // resolved, which every provider text this call answers with passes.
-  let scrub = providerTextScrub(connection, "profiled");
-  const author = providerAuthor(connection.type);
+  let scrub = mcpTextScrub(connection, engine);
+  const author = engineAuthor(engine);
+  const failing: { current?: PackageCall } = {};
   try {
     scrub = await step(() => call.context.textScrub(connection));
-    // In the database the call names, on a connection that reaches a whole server (#1530).
-    const acquired = stepOf(await acquireWithinCall(call, connection, "agent-operations", deadline));
-    // The race bounds the choice's catalog session open, which no tree read reaches; its listing ends at the same
-    // deadline and signal on the host, whichever settles first.
-    const choice = choiceOf(await step(() => providerInDatabase(acquired, args.database, call.signal, deadline)));
-    if (choice.kind === "provider-refused") {
-      return finish(
-        providerTextError("The database could not be opened: ", choice.error, scrub, author),
-        "mcp_execution_failed",
-      );
-    }
-    // The databases the call could name are database content: behind the notice naming the provider, never spliced
-    // into Studio's sentence.
-    if (choice.kind === "database-required")
-      return finish(databaseRequiredAnswer(choice, author), "mcp_execution_failed");
+    const opened = engine.offers.executionProfiles
+      ? await profiledTree(args, call, connection, deadline, step, scrub, author)
+      : await packageTree(args, call, connection, deadline, failing);
+    if (opened.kind === "answered") return finish(opened.result, opened.failure);
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const tree = mcpObjectTree(choice.provider, call.signal, deadline);
-    const declaresForeignKeys = choice.provider.getCapabilities().declaresForeignKeys !== false;
+    const words: ProviderWords = { scrub, ownWords: engine.grants.ownWords, route: MCP_ROUTE };
     const { result, failure } = await readPage(
-      tree,
-      declaresForeignKeys,
+      opened.tree,
+      opened.declaresForeignKeys,
       args,
       call.signal,
       treeStep(call.signal),
-      scrub,
+      words,
       author,
     );
     return finish(result, failure);
@@ -514,6 +623,8 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       const text = error.reason === "mcp_timeout" ? inspectSchemaTimeoutText(args.timeout_ms) : MCP_CANCELLED_TEXT;
       return finish(ownWordsError(text), error.reason);
     }
+    const answered = packageAnswer(engine, failing.current, error, scrub, author);
+    if (answered !== null) return finish(answered, "mcp_execution_failed");
     // #1462: the agent-operations profile runs the same role check as agent-read-only
     // (factory.ts), so a superuser seed refuses here too. A refusal Studio wrote reads in
     // Studio's words, scrubbed - no notice, no "The database refused or failed the call:"

@@ -105,14 +105,17 @@ export async function metadataProvider(
  * (`entryTreeTarget` in ./session-target): a legacy provider's bridged session, or a provider package's session with
  * its declared environment, the connection's own statement timeout and each read counted on the entry. The six tree
  * routes read the object tree on it (`handleObjectRequest` in ./object-route), so a tree read never waits for the
- * editor's statements, except on a connection that serves one session.
+ * editor's statements, except on a connection that serves one session, and MCP's `inspect_schema` reads a provider
+ * package's engine on it (`metadataTarget` in src/lib/mcp/context.ts). `wait` is an MCP call's own wait for the open,
+ * handed to the factory as it is; the routes hand none.
  */
 export async function metadataTreeTarget(
   session: { role: string; idpSubject?: string },
   connection: EngineConnection,
   engine: EngineRecord,
+  wait?: OpenWait,
 ): Promise<TreeTarget> {
-  const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection));
+  const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection), wait);
   return entryTreeTarget(entry, connection);
 }
 

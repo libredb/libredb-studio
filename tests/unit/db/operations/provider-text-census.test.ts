@@ -489,7 +489,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [api("runs", "[runId]", "handover", "route.ts"), "POST", "providerTextScrub"],
   [api("runs", "[runId]", "handover", "route.ts"), "POST", "withScrubbedWarnings"],
   [join("src", "lib", "db", "operations", "read-only-statement.ts"), "logLateSettlement", "scrubProviderText"],
-  [mcp("context.ts"), "textScrub", "providerTextScrub"],
+  [mcp("context.ts"), "mcpTextScrub", "connectionTextScrub"],
   [mcp("output.ts"), "engineMessage", "scrubProviderText"],
   [mcp("tools", "run-statement.ts"), "execute", "textScrub"],
   [mcp("tools", "run-statement.ts"), "failureAnswer", "scrubProviderText"],
@@ -502,7 +502,12 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "textScrub"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "scrubProviderText"],
+  [mcp("tools", "inspect-schema.ts"), "profiledTree", "providerTextError"],
   [mcp("tools", "inspect-schema.ts"), "inspectTable", "engineMessage"],
+  // A provider package's sentence in a schema answer and its failure reach the client by its record's grant of its own
+  // words (`providerSentence`, `packageFailureAnswer` in src/lib/api/package-errors.ts, each through core's scrub).
+  [mcp("tools", "inspect-schema.ts"), "inspectTable", "providerSentence"],
+  [mcp("tools", "inspect-schema.ts"), "packageAnswer", "packageFailureAnswer"],
   [dbRoute("query"), "POST", "connectionTextScrub"],
   [dbRoute("multi-query"), "POST", "providerTextScrub"],
   [dbRoute("multi-query"), "runStatement", "withScrubbedWarnings"],
@@ -601,7 +606,7 @@ const LEGACY_SOURCE_ANSWER =
   "a legacy source document carried by reference to the host core's source call and objectSource, whose route answers it through scrubSourceDocument";
 
 /**
- * The reason the server engine catalog's refusal of a connection's type is no provider text: `legacyProviderRefusal`
+ * The reason the server engine catalog's refusal of a connection's type is no provider text: `servedEngineRefusal`
  * (src/lib/db/server-catalog.ts) writes each of its sentences, quoting only the type the operator's seed entry gave
  * and the closed refusal codes (C-96), and no package's code runs to build one.
  */

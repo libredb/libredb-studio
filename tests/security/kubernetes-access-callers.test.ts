@@ -269,7 +269,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
-      "metadataTreeTarget and metadataMonitoringTarget open for the connection their caller hands them, and every caller, handleObjectRequest or a route listed under metadataMonitoringTarget here, resolved it through resolveServedConnection first",
+      "metadataTreeTarget and metadataMonitoringTarget open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest and a route listed under metadataMonitoringTarget here through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
@@ -318,6 +318,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   metadataTreeTarget: {
     "src/lib/api/object-route.ts":
       "handleObjectRequest opens the tree routes' metadata session only after resolving the request's connection through resolveServedConnection",
+    "src/lib/mcp/context.ts":
+      "metadataTarget opens only a seed MCP found in its own getManagedConnections list, which never holds a reviewed connection; MCP is held while the review is on",
   },
   cachedEditorProvider: {
     "src/app/api/db/transaction/route.ts":
@@ -1306,6 +1308,7 @@ describe("the census reads every import form", () => {
     expect(staleCallers(without)).toEqual([
       'REVIEWED_CALLERS.getManagedConnections lists "src/lib/mcp/context.ts", which imports getManagedConnections no more: remove that entry',
       'REVIEWED_CALLERS.acquireExecutionProfileProvider lists "src/lib/mcp/context.ts", which imports acquireExecutionProfileProvider no more: remove that entry',
+      'REVIEWED_CALLERS.metadataTreeTarget lists "src/lib/mcp/context.ts", which imports metadataTreeTarget no more: remove that entry',
     ]);
     const LOADER = "src/lib/seed/kubernetes-discovery-loader.ts";
     const unparsed = (SOURCES.get(LOADER) ?? "").replace(

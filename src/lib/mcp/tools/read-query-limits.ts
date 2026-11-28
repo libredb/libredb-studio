@@ -1,7 +1,7 @@
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { type ObjectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
-import { providerTreeTarget } from "@/lib/api/session-target";
+import { providerTreeTarget, type TreeTarget } from "@/lib/api/session-target";
 import { hostCore } from "@/lib/provider-host/instance";
 import { errorKind } from "@/lib/db/error-record";
 import { QueryCancelledError, type ReadAllowanceExceededError, type RefusedBeforeSendError } from "@/lib/db/errors";
@@ -30,10 +30,11 @@ import type { McpToolCall } from "../context";
  * settles first never changes what the client reads.
  * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
  * yet (backlog D128).
- * An acquisition waits within the call too (`acquireWithinCall`): the factory's open is handed the call's wait, so the
- * host's open releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
+ * An acquisition, and the open of a provider package's metadata session, waits within the call too
+ * (`acquireWithinCall`, `metadataTargetWithinCall`): the factory's open is handed the call's wait, so the host's open
+ * releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
  * The schema reads, inspect_schema's and the database choice's, are host core tree calls within the call too
- * (`mcpObjectTree`, clause C-82), each under the call's one deadline and the request's signal, and `treeReadWithinCall`
+ * (`mcpTargetTree`, clause C-82), each under the call's one deadline and the request's signal, and `treeReadWithinCall`
  * answers each read's end as a raced step's.
  *
  * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
@@ -251,25 +252,23 @@ export async function raceDeadline<T>(
 }
 
 /**
- * The connection's acquisition under `profile`, waited for within the call: the context's `acquire` is handed a wait
- * whose signal aborts when the request's signal does or at `deadline` (`deadlineSignal`), so the host's open releases
- * this call with that reason, and the acquisition is raced against the same signal and deadline (`raceDeadline`), so
- * the call's one deadline also bounds every step of the acquisition the open's wait does not reach, and nothing starts
- * late. A failure that is the wait's own reason, by reference, is that wait ending: `cancelled` when the request left,
- * `timeout` otherwise, never a failure of the acquisition.
+ * An open of the call's connection, `open`, waited for within the call: it is handed a wait whose signal aborts when the
+ * request's signal does or at `deadline` (`deadlineSignal`), so the host's open releases this call with that reason, and
+ * it is raced against the same signal and deadline (`raceDeadline`), so the call's one deadline also bounds every step
+ * of the open the wait does not reach, and nothing starts late. A failure that is the wait's own reason, by reference,
+ * is that wait ending: `cancelled` when the request left, `timeout` otherwise, never a failure of the open.
  */
-export async function acquireWithinCall(
+async function openWithinCall<T>(
   tool: McpToolCall,
-  listed: ManagedConnection,
-  profile: ExecutionProfile,
+  open: (wait: OpenWait) => Promise<T>,
   deadline: number,
-): Promise<Raced<DatabaseProvider>> {
+): Promise<Raced<T>> {
   // The wait is built only once the step starts, so a step `raceDeadline` never starts arms no deadline timer.
   const handed: { wait?: OpenWait } = {};
   const raced = await raceDeadline(
     () => {
       handed.wait = { signal: deadlineSignal(deadline, tool.signal) };
-      return tool.context.acquire(listed, profile, handed.wait);
+      return open(handed.wait);
     },
     tool.signal,
     deadline,
@@ -278,8 +277,30 @@ export async function acquireWithinCall(
   return tool.signal.aborted ? { kind: "cancelled" } : { kind: "timeout" };
 }
 
+/** The connection's acquisition under `profile`, waited for within the call (`openWithinCall`). */
+export function acquireWithinCall(
+  tool: McpToolCall,
+  listed: ManagedConnection,
+  profile: ExecutionProfile,
+  deadline: number,
+): Promise<Raced<DatabaseProvider>> {
+  return openWithinCall(tool, (wait) => tool.context.acquire(listed, profile, wait), deadline);
+}
+
 /**
- * The time refusal of MCP's own tree reads, built only by `mcpObjectTree`: a read the call's deadline ended. Module
+ * The tree target of the connection's metadata session, a provider package's record's, waited for within the call
+ * (`openWithinCall`, `McpConnectionContext.metadataTarget`).
+ */
+export function metadataTargetWithinCall(
+  tool: McpToolCall,
+  listed: ManagedConnection,
+  deadline: number,
+): Promise<Raced<TreeTarget>> {
+  return openWithinCall(tool, (wait) => tool.context.metadataTarget(listed, wait), deadline);
+}
+
+/**
+ * The time refusal of MCP's own tree reads, built only by `mcpTargetTree`: a read the call's deadline ended. Module
  * private, so a provider's own timeout error can never be read as the call's deadline.
  */
 class McpCallDeadline extends Error {
@@ -290,18 +311,15 @@ class McpCallDeadline extends Error {
 }
 
 /**
- * The object tree of `provider` within one MCP call (clause C-82), on its bridged session (`providerTreeTarget`): every
- * read one host core tree call under the call's one `deadline` and the request's `signal`, a read's failure after the
- * call stopped waiting logged under `/api/mcp`.
+ * The object tree of `target`'s session within one MCP call (clause C-82): every read one host core tree call under the
+ * call's one `deadline` and the request's `signal`, a read's failure after the call stopped waiting logged under
+ * `/api/mcp`.
  *
- * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before the provider's capabilities
- *   are read and before any read.
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any read.
+ * @throws {FacetNotOfferedError} Not-sent, before any read, when the session does not offer `objects.tree`.
  */
-export function mcpObjectTree(provider: DatabaseProvider, signal: AbortSignal, deadline: number): ObjectTree {
-  // The boot order is read first, so a call before the host core's install is refused by name before the bridged
-  // session is built, which reads the provider's capabilities; the facade reads the installed core again for its reads.
-  hostCore();
-  return objectTreeWithinCall(providerTreeTarget(provider), {
+export function mcpTargetTree(target: TreeTarget, signal: AbortSignal, deadline: number): ObjectTree {
+  return objectTreeWithinCall(target, {
     deadline,
     caller: signal,
     timeRefusal: () => new McpCallDeadline(),
@@ -310,7 +328,20 @@ export function mcpObjectTree(provider: DatabaseProvider, signal: AbortSignal, d
 }
 
 /**
- * One read of an `mcpObjectTree`, answered as a raced step: its value by reference; `timeout` when the call's deadline
+ * The object tree of `provider` within one MCP call (`mcpTargetTree`), on its bridged session (`providerTreeTarget`).
+ *
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before the provider's capabilities
+ *   are read and before any read.
+ */
+export function mcpObjectTree(provider: DatabaseProvider, signal: AbortSignal, deadline: number): ObjectTree {
+  // The boot order is read first, so a call before the host core's install is refused by name before the bridged
+  // session is built, which reads the provider's capabilities; the facade reads the installed core again for its reads.
+  hostCore();
+  return mcpTargetTree(providerTreeTarget(provider), signal, deadline);
+}
+
+/**
+ * One read of an `mcpTargetTree`, answered as a raced step: its value by reference; `timeout` when the call's deadline
  * ended it; `cancelled` when the request left (`QueryCancelledError` while `signal` has aborted); otherwise the
  * provider's failure by reference with the time it settled, a provider's own timeout or cancel error among them.
  */

@@ -5,16 +5,23 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { parseGrantRegister } from "@libredb/grant-register";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { isFileBased } from "@/lib/db-ui-config";
+import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
-import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
+import { MCP_CONNECTION_UNAVAILABLE_TEXT, MCP_ENGINE_NOT_OFFERED_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_RESULT_CAP_BYTES } from "@/lib/mcp/output";
 import { agentLanguageMcpFacets } from "@/lib/agent/languages/mcp";
-import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
-import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { LIST_CONNECTIONS_DESCRIPTION, registerListConnections } from "@/lib/mcp/tools/list-connections";
+import { mcpStatementToolFor, mcpWithholdsDatabase, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { resetCache } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -25,6 +32,7 @@ import {
   type SeedEntry,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
+import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../helpers/package-catalog";
 import {
   legacyRegisterEngines,
   legacyRegisterTable,
@@ -518,5 +526,98 @@ describe("the registration", () => {
     expect(LIST_CONNECTIONS_DESCRIPTION).toContain(
       "Each connection's read_tool names the tool that runs a statement on it, or is null where inspect_schema is the only read. A connection that carries unavailable cannot be read by any tool, and unavailable says why and what an operator changes.",
     );
+  });
+});
+
+// An admitted package's engine is listed by its record (docs/providers/CONTRACT.md, clause C-107): with no register row
+// offering it to MCP it carries the exposure refusal, and with one it is listed with no read tool, since no statement
+// tool serves a package engine yet, and its database whole, since a package's record opens no host file.
+describe("a connection of an engine an admitted provider package serves", () => {
+  afterEach(() => {
+    forgetServerCatalog();
+  });
+
+  /** list_connections' handler over a context that lists `listed` for an admin. */
+  async function listed(records: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    let handler: ((args: unknown, ctx: unknown) => Promise<{ structuredContent?: unknown }>) | undefined;
+    const registerTool = (_name: string, _config: unknown, callback: typeof handler) => {
+      handler = callback;
+    };
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => records,
+    } as unknown as McpConnectionContext;
+    registerListConnections({ registerTool } as unknown as McpServer, context);
+    if (handler === undefined) throw new Error("list_connections was not registered");
+    const result = await handler(
+      { environment: "all", offset: 0 },
+      { mcpReq: { signal: new AbortController().signal } },
+    );
+    return (result.structuredContent as { connections: Record<string, unknown>[] }).connections;
+  }
+
+  const record = (type: string, database = "/srv/acme/store.db") => ({
+    id: `seed:${type}`,
+    name: "Acme Store",
+    type,
+    database,
+    createdAt: new Date(),
+    managed: true,
+    roles: ["admin"],
+    seedId: type,
+  });
+
+  test("a package engine's connection is listed by its record, with the exposure refusal where no row grants it", async () => {
+    const exposed = (engine: EditableEngine) => {
+      engine.mcp = { ...engine.mcp, exposable: true };
+    };
+    const rowed = admittedFor("acme-list-rowed", admittedManifest("acmelistrowed", exposed));
+    const bare = admittedFor("acme-list-bare", admittedManifest("acmelistbare", exposed));
+    const register = parseGrantRegister(
+      [
+        packageRow(rowed, "acmelistrowed", {
+          exposable: true,
+          agentCredentialRequired: false,
+          readRootsRequired: false,
+          deniedFileAccessRefusal: null,
+        }),
+      ],
+      LEGACY_ENGINE_IDS,
+    );
+    installServerCatalog(composeServerCatalog([rowed, bare], [], register));
+    expect(await listed([record("acmelistbare"), record("acmelistrowed")])).toEqual([
+      {
+        id: "seed:acmelistbare",
+        name: "Acme Store",
+        engine: "acmelistbare",
+        database: "/srv/acme/store.db",
+        read_tool: null,
+        unavailable: MCP_ENGINE_NOT_OFFERED_TEXT,
+      },
+      {
+        id: "seed:acmelistrowed",
+        name: "Acme Store",
+        engine: "acmelistrowed",
+        database: "/srv/acme/store.db",
+        read_tool: null,
+      },
+    ]);
+  });
+
+  test("each listed database is cut to a file name exactly where the engine's record holds a host file, the same as before for every legacy engine", async () => {
+    const rows = await listed(SHIPPED_DATABASE_TYPES.map((type) => record(type, "/srv/acme/data/store.db")));
+    expect(rows.map((row) => row.engine)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    for (const row of rows) {
+      const type = row.engine as DatabaseType;
+      const expected = mcpWithholdsDatabase(type)
+        ? undefined
+        : isFileBased(type)
+          ? "store.db"
+          : "/srv/acme/data/store.db";
+      expect([type, row.database]).toEqual([type, expected]);
+    }
+    // Vacuity: both answers occur.
+    expect(rows.some((row) => row.database === "store.db")).toBe(true);
+    expect(rows.some((row) => row.database === "/srv/acme/data/store.db")).toBe(true);
   });
 });

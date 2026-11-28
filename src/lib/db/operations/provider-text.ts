@@ -466,7 +466,23 @@ export function errorRecord(scrub: ProviderTextScrub, error: unknown): ErrorReco
 
 /** The author a fence or a notice names for a provider's own text: the engine's form label, bundled with Studio. */
 export function providerAuthor(type: DatabaseType): string {
-  return `${CONNECTION_FORM[type].label} provider, bundled with Studio`;
+  return bundledAuthor(CONNECTION_FORM[type].label);
+}
+
+/** The author of a provider bundled with Studio, named by its engine's label. */
+function bundledAuthor(label: string): string {
+  return `${label} provider, bundled with Studio`;
+}
+
+/**
+ * The author a notice names for the text a provider of any engine the server serves relayed: a legacy engine's as
+ * `providerAuthor` names it, since its record's `displayName` is its connection form's label, and a provider package's
+ * engine by its declared display name and the package's name and version, which serve it.
+ */
+export function engineAuthor(engine: EngineRecord): string {
+  const { name, version, package: served } = engine.source;
+  if (served === null) return bundledAuthor(engine.displayName);
+  return `${engine.displayName} provider, from the provider package ${name} ${version}`;
 }
 
 /**

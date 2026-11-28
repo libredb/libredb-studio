@@ -3,7 +3,6 @@ import { encodeValue, ValueCodecError, type WireValue } from "@libredb/provider-
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type ReadOnlyPageAnswer, runReadOnlyPage } from "@/lib/api/read-only-execute";
-import { getDBConfig } from "@/lib/db-ui-config";
 import {
   ExecutionProfileError,
   OffsetUnsupportedError,
@@ -20,6 +19,7 @@ import {
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { hostCore } from "@/lib/provider-host/instance";
@@ -496,11 +496,15 @@ async function statementOnHost(
   }
 }
 
-/** The sentence an engine this arm does not serve is refused with, naming the tool that does serve it. */
+/**
+ * The sentence an engine this arm does not serve is refused with, naming it by its record's display name, a legacy
+ * engine's connection form label, and the tool that does serve it, or `inspect_schema` where none does, as for a
+ * provider package's engine, whose record offers no execution profile.
+ */
 function notServedText(arm: McpStatementArm, type: DatabaseType): string {
   const elsewhere = mcpStatementToolFor(type) ?? "inspect_schema";
   return profileRefusalText(
-    `this tool does not serve ${getDBConfig(type).label}; use ${elsewhere} there`,
+    `this tool does not serve ${servedEngineRecord(type).displayName}; use ${elsewhere} there`,
     arm.engines,
     arm.tool,
   );

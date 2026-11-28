@@ -4,9 +4,9 @@
  * refusal (`mcpConnectionUnavailable`), the open's agent credential and read roots checks
  * (`assertAgentCredentialWhereRequired`, `assertReadRootsWhereRequired`), the `inspect_schema` hints
  * (`metadataReadAnnotations`), the served set of each statement tool (`mcpStatementEngines`) and the statement arm a type
- * reads (`mcpStatementToolFor`, `mcpWithholdsDatabase`). So a package engine's grant reaches the readers that hold no
- * legacy check of their own through its register row (docs/providers/CONTRACT.md, clause M-54), while availability and
- * both open checks still refuse a package's engine before any grant is read, until MCP opens to package engines (M5).
+ * reads (`mcpStatementToolFor`, `mcpWithholdsDatabase`). So a package engine's grant reaches every one of them through
+ * its register row (docs/providers/CONTRACT.md, clause M-54), availability's exposure gate and both open checks
+ * included, and each claim's restrictive value where no row exists.
  *
  * Every catalog here is composed in memory (tests/helpers/package-catalog.ts) and installed by the case that reads it,
  * then forgotten in `finally`, so no case leaves a catalog behind for the next.
@@ -15,10 +15,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
-import { ExecutionProfileError, PackageEngineUnsupportedError } from "@/lib/db/errors";
+import { ExecutionProfileError } from "@/lib/db/errors";
 import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-catalog-compose";
-import { MCP_CONNECTION_UNAVAILABLE_TEXT, mcpConnectionUnavailable } from "@/lib/mcp/availability";
+import {
+  MCP_CONNECTION_UNAVAILABLE_TEXT,
+  MCP_ENGINE_NOT_OFFERED_TEXT,
+  mcpConnectionUnavailable,
+} from "@/lib/mcp/availability";
 import { assertAgentCredentialWhereRequired, assertReadRootsWhereRequired, type McpCaller } from "@/lib/mcp/context";
 import { MCP_READ_ONLY_ANNOTATIONS } from "@/lib/mcp/output";
 import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
@@ -139,7 +143,7 @@ describe("the MCP readers of a grant", () => {
     expect(serverCatalogInstalled()).toBe(false);
   });
 
-  test("an admitted package's engine is read at its register row's grant by the annotations and the statement arms, refused by both open checks and availability, and at each claim's restrictive value where no row exists", async () => {
+  test("an admitted package's engine is read at its register row's grant by the annotations, the statement arms, both open checks and availability, and at each claim's restrictive value where no row exists", async () => {
     const rowed = admittedFor("acme-rowed", admittedManifest("acmerowed", withMqttAgent));
     const bare = admittedFor("acme-bare", admittedManifest("acmebare", withMqttAgent));
     const granted: Partial<RegisterGrants> = {
@@ -148,6 +152,9 @@ describe("the MCP readers of a grant", () => {
       statementRead: true,
       statementLanguage: "mqttread",
       metadataReadChangesState: false,
+      agentCredentialRequired: false,
+      readRootsRequired: false,
+      deniedFileAccessRefusal: null,
     };
     const register = parseGrantRegister([packageRow(rowed, "acmerowed", granted)], LEGACY_ENGINE_IDS);
     const catalog = composeServerCatalog([rowed, bare] as readonly AdmittedForCatalog[], [], register);
@@ -164,17 +171,14 @@ describe("the MCP readers of a grant", () => {
       expect(mcpWithholdsDatabase("acmebare" as DatabaseType)).toBe(false);
       expect(mcpStatementToolFor("acmebare" as DatabaseType)).toBeNull();
 
-      // Every MCP open refuses a package's engine before any grant is read, row or not (M5).
-      for (const type of ["acmerowed", "acmebare"]) {
-        expect(thrownBy(() => assertAgentCredentialWhereRequired(listed(type)))).toBeInstanceOf(
-          PackageEngineUnsupportedError,
-        );
-        expect(thrownBy(() => assertReadRootsWhereRequired(listed(type)))).toBeInstanceOf(
-          PackageEngineUnsupportedError,
-        );
-        const unavailable = mcpConnectionUnavailable(USER, listed(type));
-        expect(unavailable).toBe((thrownBy(() => assertReadRootsWhereRequired(listed(type))) as Error).message);
-      }
+      // Both open checks and availability: the row's grant opens the rowed engine to MCP.
+      expect(thrownBy(() => assertAgentCredentialWhereRequired(listed("acmerowed")))).toBeNull();
+      expect(thrownBy(() => assertReadRootsWhereRequired(listed("acmerowed")))).toBeNull();
+      expect(mcpConnectionUnavailable(USER, listed("acmerowed"))).toBeNull();
+      // No row: each check's grant at its restrictive value, and no MCP client is offered the engine.
+      expect(denyCode(() => assertAgentCredentialWhereRequired(listed("acmebare")))).toBe("AGENT_CREDENTIAL_REQUIRED");
+      expect(denyCode(() => assertReadRootsWhereRequired(listed("acmebare")))).toBe("READ_ROOTS_REQUIRED");
+      expect(mcpConnectionUnavailable(USER, listed("acmebare"))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
     });
     expect(serverCatalogInstalled()).toBe(false);
   });

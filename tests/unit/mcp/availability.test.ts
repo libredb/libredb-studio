@@ -1,18 +1,31 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { parseGrantRegister } from "@libredb/grant-register";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { forgetServerCatalog, installServerCatalog, servedEngines } from "@/lib/db/server-catalog";
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
-import { MCP_CONNECTION_UNAVAILABLE_TEXT, mcpConnectionUnavailable } from "@/lib/mcp/availability";
+import {
+  MCP_CONNECTION_UNAVAILABLE_TEXT,
+  MCP_ENGINE_NOT_OFFERED_TEXT,
+  mcpConnectionUnavailable,
+} from "@/lib/mcp/availability";
 import type { McpCaller } from "@/lib/mcp/context";
 import type { ManagedConnection } from "@/lib/seed";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
-import type { SeedConnection } from "@/lib/seed/types";
+import { type SeedConnection, SeedConnectionSchema } from "@/lib/seed/types";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseType } from "@/lib/types";
-import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import {
+  admittedFor,
+  admittedManifest,
+  craftedCatalog,
+  type EditableEngine,
+  packageRow,
+  withCatalog,
+} from "../../helpers/package-catalog";
 import { namedLabels } from "../../helpers/repo-text-scope";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
 
@@ -51,6 +64,7 @@ describe("mcpConnectionUnavailable", () => {
 
   test("answers null wherever the record it is given holds the engine null", () => {
     const grantsOf = (type: DatabaseType) => ({
+      exposable: true,
       deniedFileAccessRefusal: type === "sqlite" ? null : deniedFileAccessRefusal[type],
     });
     expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]), grantsOf)).toBeNull();
@@ -77,9 +91,10 @@ describe("mcpConnectionUnavailable", () => {
     expect(mcpConnectionUnavailable(ADMIN, copy)).toBe(MCP_CONNECTION_UNAVAILABLE_TEXT);
   });
 
-  // An engine only a provider package serves has no row in any table either (docs/providers/CONTRACT.md, clause C-107):
-  // a refused package's engine answers the sentence naming the refusal code, an admitted one the open's own sentence.
-  test("answers the server catalog's refusal for an engine a provider package serves or a refused package names", () => {
+  // A refused package's engine is answered the server catalog's refusal naming its code, and an admitted package's engine
+  // is read by its record's grants (docs/providers/CONTRACT.md, clause C-107): with no register row it is exposed to no
+  // MCP client, so it is answered the exposure sentence.
+  test("answers the server catalog's refusal for an engine only a refused package names, and the exposure sentence for an admitted one no row offers to MCP", () => {
     installServerCatalog(
       composeServerCatalog(
         [admittedFor("acme-avail-served", admittedManifest("acmeavailserved"))],
@@ -91,26 +106,67 @@ describe("mcpConnectionUnavailable", () => {
     expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailgone"))).toBe(
       'The connection type "acmeavailgone" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_LOAD_FAILED), so no provider can open it; the server\'s log names the package and why.',
     );
-    expect(mcpConnectionUnavailable(USER, listed("acmeavailserved"))).toBe(
-      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
-    );
+    expect(mcpConnectionUnavailable(USER, listed("acmeavailserved"))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
   });
 
-  test("a request that needs the legacy provider surface is refused for a package engine by reading the record's offer, 501 PACKAGE_ENGINE_UNSUPPORTED with today's sentence", () => {
-    // A legacy engine's record offers the legacy provider and a package's record offers none; the install refuses a
-    // catalog whose offer disagrees with the id, so the answer follows the offer of a valid record.
-    installServerCatalog(
-      composeServerCatalog(
-        [admittedFor("acme-avail-offer", admittedManifest("acmeavailoffer"))],
-        [],
-        STUDIO_GRANT_REGISTER,
-      ),
+  test("a package engine's connection is available, refused by tool by its grants where no row exists", () => {
+    // Each declaration requests exposure, so only the register row decides it.
+    const requestsExposure = (engine: EditableEngine) => {
+      engine.mcp = { ...engine.mcp, exposable: true };
+    };
+    const bare = admittedFor("acme-avail-bare", admittedManifest("acmeavailbare", requestsExposure));
+    const open = admittedFor("acme-avail-open", admittedManifest("acmeavailopen", requestsExposure));
+    const files = admittedFor("acme-avail-files", admittedManifest("acmeavailfiles", requestsExposure));
+    const exposed = { exposable: true, agentCredentialRequired: false, readRootsRequired: false } as const;
+    const register = parseGrantRegister(
+      [
+        packageRow(open, "acmeavailopen", { ...exposed, deniedFileAccessRefusal: null }),
+        // Every other claim at its restrictive value, the denied file access refusal among them.
+        packageRow(files, "acmeavailfiles", exposed),
+      ],
+      LEGACY_ENGINE_IDS,
     );
-    const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
-    expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailoffer"))).toBe(
-      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
-    );
-    expect(mcpConnectionUnavailable(ADMIN, listed("sqlite"))).toBeNull();
+    installServerCatalog(composeServerCatalog([bare, open, files], [], register));
+    const adminOnly = (type: string) =>
+      ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
+    const everyRole = (type: string) => ({ ...copyFor(USER, "sqlite", ["*"]), type }) as unknown as ManagedConnection;
+
+    // No row: no MCP client is offered the engine, ahead of any posture, for an admin on an admin-only seed too.
+    expect(mcpConnectionUnavailable(ADMIN, adminOnly("acmeavailbare"))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
+    expect(mcpConnectionUnavailable(USER, everyRole("acmeavailbare"))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
+    // A row granting exposure: available, and the posture read only where the row refuses a denied handle.
+    expect(mcpConnectionUnavailable(USER, everyRole("acmeavailopen"))).toBeNull();
+    expect(mcpConnectionUnavailable(ADMIN, adminOnly("acmeavailfiles"))).toBeNull();
+    expect(mcpConnectionUnavailable(USER, everyRole("acmeavailfiles"))).toBe(MCP_CONNECTION_UNAVAILABLE_TEXT);
+  });
+
+  test("a legacy engine whose record grants no exposure is refused by the exposure sentence before any posture", async () => {
+    // Read from the record, never a type branch: SQLite's record with its exposure withdrawn.
+    expect(mcpConnectionUnavailable(ADMIN, copyFor(ADMIN, "sqlite", ["admin"]))).toBeNull();
+    await withCatalog(craftedCatalog({ sqlite: { exposable: false } }), () => {
+      expect(mcpConnectionUnavailable(ADMIN, copyFor(ADMIN, "sqlite", ["admin"]))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
+      expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
+    });
+  });
+
+  test("every shipped engine the exposure gate refuses is one the seed loader refuses mcp: true on", () => {
+    const unexposed = [...servedEngines().values()].filter((engine) => !engine.grants.exposable);
+    // Vacuity: a population of none would hold nothing.
+    expect(unexposed.length).toBeGreaterThan(0);
+    for (const engine of unexposed) {
+      const parsed = SeedConnectionSchema.safeParse({
+        id: "unexposed",
+        name: "Unexposed",
+        type: engine.id,
+        host: "unexposed.internal",
+        roles: ["*"],
+        mcp: true,
+      });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues.map((issue) => issue.message)).toContain(
+        `mcp is not offered for ${engine.id}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
+      );
+    }
   });
 
   // A connection whose type names no provider (FND-1) has no row in any table, so its refusal is the one sentence every
@@ -125,6 +181,18 @@ describe("mcpConnectionUnavailable", () => {
     expect(mcpConnectionUnavailable(ADMIN, untyped as unknown as ManagedConnection)).toBe(
       typeIdRefusal(undefined)?.sentence as string,
     );
+  });
+
+  test("the exposure sentence names no engine and says what an operator changes", () => {
+    expect(MCP_ENGINE_NOT_OFFERED_TEXT).toBe(
+      "This connection is not available to MCP: LibreDB Studio does not offer its engine to MCP clients, so an operator removes mcp from this seed.",
+    );
+    expect(
+      namedLabels(
+        MCP_ENGINE_NOT_OFFERED_TEXT,
+        SHIPPED_DATABASE_TYPES.map((type) => getDBConfig(type).label),
+      ),
+    ).toEqual([]);
   });
 
   test("the sentence names no engine and says what an operator changes", () => {

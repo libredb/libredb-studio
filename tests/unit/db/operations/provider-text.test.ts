@@ -33,6 +33,7 @@ import {
 import { errorOutcome } from "@/lib/db/error-record";
 import { logger } from "@/lib/logger";
 import {
+  engineAuthor,
   errorRecord,
   isStudioRefusal,
   PROVIDER_TEXT_WITHHELD,
@@ -62,6 +63,11 @@ import {
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { admittedFor, admittedManifest } from "../../../helpers/package-catalog";
 import { CONNECTION_FIELDS, SSH_TUNNEL_FIELDS, SSL_FIELDS, type FieldClass } from "@/lib/storage/secret-fields";
 import type {
   KeyScanPage,
@@ -1041,6 +1047,21 @@ describe("providerAuthor", () => {
     for (const type of Object.keys(CONNECTION_FORM) as DatabaseType[]) {
       expect(providerAuthor(type)).toBe(`${CONNECTION_FORM[type].label} provider, bundled with Studio`);
     }
+  });
+});
+
+describe("engineAuthor", () => {
+  test("names a legacy engine as providerAuthor does and a package's engine by its display name and its package", () => {
+    for (const type of SHIPPED_DATABASE_TYPES)
+      expect(engineAuthor(servedEngineRecord(type))).toBe(providerAuthor(type));
+    const catalog = composeServerCatalog(
+      [admittedFor("acme-author", admittedManifest("acmeauthor"), { version: "2.3.4" })],
+      [],
+      STUDIO_GRANT_REGISTER,
+    );
+    const engine = catalog.engines.get("acmeauthor");
+    if (engine === undefined) throw new Error("the catalog serves no acmeauthor");
+    expect(engineAuthor(engine)).toBe(`${engine.displayName} provider, from the provider package acme-author 2.3.4`);
   });
 });
 
