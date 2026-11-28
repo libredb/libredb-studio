@@ -163,6 +163,18 @@ export function ownWordsFailure(text: string, error: unknown, scrub: ProviderTex
 }
 
 /**
+ * A failure that is Studio's own, as on a provider package's engine no package wrote it: its message in Studio's words
+ * through the connection's `scrub`, with the failure's error record, and no notice.
+ */
+export function studioFailure(error: unknown, scrub: ProviderTextScrub): ToolResult {
+  return ownWordsFailure(
+    scrubProviderText(scrub, error instanceof Error ? error.message : String(error)),
+    error,
+    scrub,
+  );
+}
+
+/**
  * An engine's error message: the notice naming `author`, the provider that relayed it, then `prefix` and the message,
  * and the failure's error record.
  */
@@ -181,8 +193,9 @@ export function engineError(prefix: string, error: unknown, scrub: ProviderTextS
  * The client's answer to a provider package's failure that its record already answered (`answered`, the answer of
  * `packageFailureAnswer` or `packageStatementFailure` in src/lib/api/package-errors.ts, logged once there): behind the
  * notice naming the package, `author`, where its register row grants the package its own words, as a legacy
- * provider's engine error is; and otherwise as Studio's sentence with its error record and no notice, since no package
- * wrote it (docs/providers/CONTRACT.md, clause C-112).
+ * provider's engine error is; and otherwise as Studio's sentence through the connection's `scrub`, with its error
+ * record and no notice, since no package wrote it (`studioFailure`; docs/providers/CONTRACT.md, clause C-112). A
+ * failure that is not the package's is never answered here: its caller answers it as Studio's own.
  */
 export function packageWordsAnswer(
   engine: EngineRecord,
@@ -191,7 +204,7 @@ export function packageWordsAnswer(
   author: string,
 ): ToolResult {
   if (engine.grants.ownWords === "scrubbed") return engineError(MCP_ENGINE_ERROR_PREFIX, answered, scrub, author);
-  return ownWordsFailure(answered instanceof Error ? answered.message : String(answered), answered, scrub);
+  return studioFailure(answered, scrub);
 }
 
 /**

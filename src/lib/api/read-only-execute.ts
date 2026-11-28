@@ -9,7 +9,7 @@ import {
   type PumpLimits,
 } from "@libredb/provider-sdk/calls";
 import { contextOn, hostPorts } from "@/lib/api/editor-query";
-import { packageStatementFailure, packageWarnings } from "@/lib/api/package-errors";
+import { isPackageFailure, packageStatementFailure, packageWarnings } from "@/lib/api/package-errors";
 import { markedCall, type ReadOnlyStatementTarget, readOnlyPageResult } from "@/lib/api/session-target";
 import { markNotSent, QueryError, StudioTimeBudgetRefusal } from "@/lib/db/errors";
 import { scrubProviderWarnings } from "@/lib/db/operations/provider-text";
@@ -85,8 +85,8 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * one sentence naming their count, each logged once through core's scrub (`packageWarnings` in ./package-errors), where
  * the grant is code-only, and through the scrub where it is scrubbed. A failure the package raised, or a refusal of what
  * it answered, is a statement failure, a `QueryError` as a legacy provider's statement failure is, in the words its
- * record grants (`packageStatementFailure` in ./package-errors, clause C-112), logged once; Studio's own failures pass
- * as raised. A row budget past the largest whose one-row-past page is a safe integer, `Number.MAX_SAFE_INTEGER - 1`, is
+ * record grants (`packageStatementFailure` in ./package-errors, clause C-112), logged once and handed to the caller's
+ * `packageAnswered`; Studio's own failures pass as raised. A row budget past the largest whose one-row-past page is a safe integer, `Number.MAX_SAFE_INTEGER - 1`, is
  * refused as a not-sent `QueryError` before anything is sent, on every mode and page, since the arm asks for one row
  * past the budget and the host's pump takes no page limit past the largest safe integer.
  */
@@ -108,6 +108,11 @@ export interface ReadOnlyExecuteCall {
   readonly route: string;
   /** Handed a stopped call's settlement, so a caller that accounts the call keeps it counted until it settles. */
   readonly holdUntilSettled?: (call: PromiseLike<unknown>) => void;
+  /**
+   * Handed each failure a provider package's record answered as the package's (`packageStatementFailure`), the value
+   * then thrown, so a caller tells it by identity from Studio's own failures, which pass as raised.
+   */
+  readonly packageAnswered?: (answer: unknown) => void;
 }
 
 /** One read-only statement for the host core with the page it asks for (clause C-85). */
@@ -279,7 +284,11 @@ async function readOnlySessionPage(
     const maxRows = "unlimited" in page ? Number.MAX_SAFE_INTEGER : page.limit;
     return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
   };
-  const packageAnswer = (error: unknown) => packageStatementFailure(engine, error, scrub, call.route);
+  const packageAnswer = (error: unknown) => {
+    const answer = packageStatementFailure(engine, error, scrub, call.route);
+    if (isPackageFailure(engine, error)) call.packageAnswered?.(answer);
+    return answer;
+  };
   const view = budgetViewOf(call, undefined);
   let record: Awaited<ReturnType<HostCore["executeCall"]>>;
   try {

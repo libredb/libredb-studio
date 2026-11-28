@@ -59,6 +59,7 @@ import {
   packageWordsAnswer,
   providerTextError,
   recordOrRefuse,
+  studioFailure,
   untrustedResult,
   withByteSize,
   type ToolResult,
@@ -138,7 +139,10 @@ import {
  * engine's connection form label, and a provider package's engine's display name with its package. A provider
  * package's failure, already answered and logged once by its record (`packageFailureAnswer` for its open,
  * `packageStatementFailure` for its execute, in src/lib/api/package-errors.ts), reaches the client by its register
- * row's grant of its own words (`packageWordsAnswer`, clause C-112); Studio's own failures are answered as Studio's.
+ * row's grant of its own words (`packageWordsAnswer`, clause C-112), read by identity from the read-only execute's
+ * `packageAnswered`. Studio's own failures on a package's record, a defect of Studio's among them, are answered in
+ * Studio's words through the scrub, with no notice naming the package (`studioFailure`). A failure that settled at or
+ * after the call's deadline is the timeout, a package's open failure among them.
  *
  * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
  * must carry: there they are its `notes`, in the order the provider gave them.
@@ -179,6 +183,21 @@ const StatementOutputSchema = z.object({
 type Answer = readonly [ToolResult, McpToolAuditReason?];
 
 /**
+ * A failed step: its error, when it settled, and whether a provider package's record answered it as the package's
+ * (`packageAnswered`), which only a statement's failure on its read-only statement session can be.
+ */
+interface FailedStep {
+  readonly error: unknown;
+  readonly settledAt: number;
+  readonly packageAnswered: boolean;
+}
+
+/** The statement's end on the host core: a raced step's, its failure a `FailedStep`. */
+type StatementRaced =
+  | Exclude<Raced<ReadOnlyPageAnswer>, { kind: "failed" }>
+  | ({ readonly kind: "failed" } & FailedStep);
+
+/**
  * One call: its arm, its connection's engine record and the name of the provider that relays its texts, its arguments,
  * the statement text the arm read from them, and the offset it pages from.
  */
@@ -196,16 +215,19 @@ interface StatementCall {
  * The answer to a step that failed, with the failure's error record. A failure that settled at or after the deadline is
  * answered as the deadline itself is, Studio's own answer with no record; it can be a real engine or connection error,
  * so the provider's own message, redacted, goes to the server log with the call's correlation id, and never to the
- * client. A time budget refusal before the deadline is answered with the same text and its record.
+ * client. A time budget refusal before the deadline is answered with the same text and its record. An engine error is
+ * a legacy provider's behind the notice naming it; on a provider package's record, the package's failure its record
+ * answered (`packageAnswered`) by the notice its row grants (`packageWordsAnswer`), and any other failure as Studio's
+ * own (`studioFailure`).
  */
 function failureAnswer(
   call: StatementCall,
-  error: unknown,
-  settledAt: number,
+  failed: FailedStep,
   deadline: number,
   record: McpCallRecord,
   scrub: ProviderTextScrub,
 ): Answer {
+  const { error, settledAt } = failed;
   const failure = classifyReadQueryFailure(error, settledAt, deadline, call.arm.tooLarge(call.statement, call.type));
   if (failure.kind === "deadline" || failure.kind === "timeout") {
     logger.warn(`MCP ${call.arm.tool} answered a provider failure as the timeout`, {
@@ -223,11 +245,13 @@ function failureAnswer(
   if (failure.kind === "not-sent") {
     return [providerTextError(NOT_SENT_LEAD, failure.error, scrub, call.author), "mcp_statement_refused"];
   }
+  if (call.engine.offers.legacyProvider)
+    return [engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub, call.author), "mcp_execution_failed"];
   // A provider package's failure was answered and logged once by its record; it is only given the notice its row grants.
   return [
-    call.engine.offers.legacyProvider
-      ? engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub, call.author)
-      : packageWordsAnswer(call.engine, failure.error, scrub, call.author),
+    failed.packageAnswered
+      ? packageWordsAnswer(call.engine, failure.error, scrub, call.author)
+      : studioFailure(failure.error, scrub),
     "mcp_execution_failed",
   ];
 }
@@ -350,7 +374,7 @@ function pageOf(call: StatementCall, type: DatabaseType): { readonly page: PageB
  */
 function statementFailure(
   call: StatementCall,
-  failed: { readonly error: unknown; readonly settledAt: number },
+  failed: FailedStep,
   deadline: number,
   record: McpCallRecord,
   scrub: ProviderTextScrub,
@@ -384,27 +408,37 @@ async function execute(
   const opened = await raceDeadline(() => tool.context.textScrub(connection), tool.signal, deadline);
   if (opened.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (opened.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
-  if (opened.kind === "failed")
-    return acquisitionFailure(call, opened, deadline, record, providerTextScrub(connection, "profiled"));
+  if (opened.kind === "failed") {
+    const studio = providerTextScrub(connection, "profiled");
+    return acquisitionFailure(call, { ...opened, packageAnswered: false }, deadline, record, studio);
+  }
   const scrub = opened.value;
   try {
     return await executeOpened(call, tool, connection, record, deadline, scrub);
   } catch (error) {
-    return [engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, call.author), "mcp_execution_failed"];
+    // Every step of a provider package's record answers its own failures, so a throw past them is Studio's defect,
+    // answered as Studio's own; on a legacy record it can be the provider's, a database listing's failure among them
+    // (`callDatabase`), behind the notice naming it.
+    return [
+      call.engine.offers.legacyProvider
+        ? engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, call.author)
+        : studioFailure(error, scrub),
+      "mcp_execution_failed",
+    ];
   }
 }
 
 /** A failed open or acquisition: a profile refusal by its author, any other failure as a statement's. */
 function acquisitionFailure(
   call: StatementCall,
-  failed: { readonly error: unknown; readonly settledAt: number },
+  failed: FailedStep,
   deadline: number,
   record: McpCallRecord,
   scrub: ProviderTextScrub,
 ): Answer {
   return failed.error instanceof ExecutionProfileError
     ? profileRefusal(call, failed.error, scrub)
-    : failureAnswer(call, failed.error, failed.settledAt, deadline, record, scrub);
+    : failureAnswer(call, failed, deadline, record, scrub);
 }
 
 /**
@@ -445,9 +479,10 @@ async function callDatabase(
 }
 
 /**
- * A failed open of a provider package's read-only statement session: a failure the package's open raised answered by
- * its record (`packageFailureAnswer`, which logs it once) and given the notice its row grants (`packageWordsAnswer`);
- * anything else, the opener's refusals among them, as a failed acquisition is.
+ * A failed open of a provider package's read-only statement session: one that settled at or after the deadline, and
+ * any failure that is not the package's, the opener's refusals among them, as a failed acquisition is, so the first is
+ * the timeout and the second Studio's own; a failure the package's open raised before the deadline answered by its
+ * record (`packageFailureAnswer`, which logs it once) and given the notice its row grants (`packageWordsAnswer`).
  */
 function sessionOpenFailure(
   call: StatementCall,
@@ -456,7 +491,8 @@ function sessionOpenFailure(
   record: McpCallRecord,
   scrub: ProviderTextScrub,
 ): Answer {
-  if (!isPackageFailure(call.engine, failed.error)) return acquisitionFailure(call, failed, deadline, record, scrub);
+  if (failed.settledAt >= deadline || !isPackageFailure(call.engine, failed.error))
+    return acquisitionFailure(call, { ...failed, packageAnswered: false }, deadline, record, scrub);
   const answered = packageFailureAnswer(call.engine, "open", failed.error, scrub, MCP_ROUTE);
   return [packageWordsAnswer(call.engine, answered, scrub, call.author), "mcp_execution_failed"];
 }
@@ -484,7 +520,8 @@ async function executeOpened(
     const acquired = await acquireWithinCall(tool, connection, "agent-read-only", deadline);
     if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
     if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
-    if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);
+    if (acquired.kind === "failed")
+      return acquisitionFailure(call, { ...acquired, packageAnswered: false }, deadline, record, scrub);
     const chosen = await callDatabase(call, tool, acquired.value, deadline, scrub);
     if ("answer" in chosen) return chosen.answer;
     target = providerReadOnlyTarget(chosen.provider);
@@ -515,7 +552,8 @@ async function executeOpened(
  * no race of this module's runs beside it. A call whose request left, or whose deadline passed while the connection
  * opened, sends nothing, as a raced step starts nothing late. The facade's ends are read into the race's kinds: its
  * time refusal, which on this path only the call's deadline builds, is the timeout; a cancel while the request has left
- * is the request leaving; any other error is a failure with its settle time, a provider's by reference.
+ * is the request leaving; any other error is a failure with its settle time, a provider's by reference, and whether a
+ * provider package's record answered it as the package's, read by identity from the facade's `packageAnswered`.
  */
 async function statementOnHost(
   tool: McpToolCall,
@@ -524,10 +562,11 @@ async function statementOnHost(
   statement: string,
   page: PageBound,
   deadline: number,
-): Promise<Raced<ReadOnlyPageAnswer>> {
+): Promise<StatementRaced> {
   if (tool.signal.aborted) return { kind: "cancelled" };
   const remaining = Math.floor(deadline - Date.now());
   if (remaining <= 0) return { kind: "timeout" };
+  const answered = new Set<unknown>();
   try {
     const value = await runReadOnlyPage(target, {
       type,
@@ -542,12 +581,13 @@ async function statementOnHost(
       },
       caller: tool.signal,
       route: MCP_ROUTE,
+      packageAnswered: (answer) => answered.add(answer),
     });
     return { kind: "settled", value };
   } catch (error) {
     if (error instanceof StudioTimeBudgetRefusal) return { kind: "timeout" };
     if (error instanceof QueryCancelledError && tool.signal.aborted) return { kind: "cancelled" };
-    return { kind: "failed", error, settledAt: Date.now() };
+    return { kind: "failed", error, settledAt: Date.now(), packageAnswered: answered.has(error) };
   }
 }
 

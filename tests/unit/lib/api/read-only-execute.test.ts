@@ -844,19 +844,28 @@ describe("a provider package's read-only statement session", () => {
     expect(unpaged.seen).toHaveLength(1);
   });
 
-  test("a provider package's failure of a read-only execute is answered by its record's words grant and logged once", async () => {
-    /** Runs one statement on a fresh session of `id` whose execute rejects with what `thrown` builds from its password. */
+  test("a provider package's failure of a read-only execute is answered by its record's words grant, logged once and handed to the caller's packageAnswered", async () => {
+    /**
+     * Runs one statement on a fresh session of `id` whose execute rejects with what `thrown` builds from its password,
+     * and keeps what the call's `packageAnswered` was handed.
+     */
     const run = async (id: string, thrown: (password: string) => unknown) => {
       const held: { password: string } = { password: "" };
       const session = await packageSession(id, () => Promise.reject(thrown(held.password)));
       held.password = session.connection.password as string;
       const logged: unknown[][] = [];
+      const handed: unknown[] = [];
       const error = spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
         logged.push(args);
       });
       try {
-        const failed = await failure(() => runReadOnlyExecute(session.target, callOf({ type: id })));
-        return { failed, logged, password: held.password };
+        const failed = await failure(() =>
+          runReadOnlyExecute(session.target, {
+            ...callOf({ type: id }),
+            packageAnswered: (answer) => handed.push(answer),
+          }),
+        );
+        return { failed, logged, handed, password: held.password };
       } finally {
         error.mockRestore();
       }
@@ -876,6 +885,9 @@ describe("a provider package's read-only statement session", () => {
     expect(codeOnly.logged[0]?.[0]).toBe("A provider package's execute failed");
     expect(JSON.stringify(codeOnly.logged)).not.toContain(codeOnly.password);
     expect(codeOnly.password).not.toBe("");
+    // The answer thrown is the one handed to the caller, by identity.
+    expect(codeOnly.handed).toHaveLength(1);
+    expect(codeOnly.handed[0]).toBe(codeOnly.failed);
 
     // A value that is no error answers Studio's sentence under code-only.
     const plain = await run(PKG, () => marker);
@@ -888,6 +900,8 @@ describe("a provider package's read-only statement session", () => {
     expect(words.failed).toBeInstanceOf(QueryError);
     expect((words.failed as Error).message).toBe(marker);
     expect(words.logged).toHaveLength(1);
+    expect(words.handed).toHaveLength(1);
+    expect(words.handed[0]).toBe(words.failed);
     const withheld = await run(WORDS, (password) => new Error(`${marker} denied for ${password}`));
     expect(withheld.failed).toBeInstanceOf(QueryError);
     expect((withheld.failed as Error).message).toBe(PROVIDER_TEXT_WITHHELD);
@@ -912,6 +926,7 @@ describe("a provider package's read-only statement session", () => {
     const own = await run(PKG, () => studio);
     expect(own.failed).toBe(studio);
     expect(own.logged).toEqual([]);
+    expect(own.handed).toEqual([]);
   });
 
   test("a row budget whose one-row-past page is no safe integer is refused on a provider package's session before the package is called", async () => {

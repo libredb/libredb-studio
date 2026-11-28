@@ -68,6 +68,7 @@ import {
   providerTextError,
   recordOrRefuse,
   resultBytes,
+  studioFailure,
   untrustedResult,
   utf8Length,
   type ToolResult,
@@ -554,18 +555,6 @@ function packageAnswer(
   if (failing === undefined || !isPackageFailure(engine, error)) return null;
   if (failing.call === "tree read" && !raisedByTreeRead(failing.raised, error)) return null;
   return packageWordsAnswer(engine, packageFailureAnswer(engine, failing.call, error, scrub, MCP_ROUTE), scrub, author);
-}
-
-/**
- * The answer to `error`, a failure on a provider package's engine that the package's own call did not raise: Studio's
- * own words through the open's scrub, with the failure's error record, and no notice, since no package wrote them.
- */
-function studioFailure(error: unknown, scrub: ProviderTextScrub): ToolResult {
-  return ownWordsFailure(
-    scrubProviderText(scrub, error instanceof Error ? error.message : String(error)),
-    error,
-    scrub,
-  );
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {

@@ -21,7 +21,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { CallContext, ExecuteRequest, OpenContext } from "@libredb/provider-sdk/calls";
+import type { ReadOnlyStatementTarget } from "@/lib/api/session-target";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { ConnectionError } from "@/lib/db/errors";
 import { clearProviderCache, getExecutionProfileCacheStats } from "@/lib/db/factory";
 import { languageDataSha256 } from "@/lib/db/language-digest";
 import { engineAuthor, PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
@@ -38,6 +40,7 @@ import { profileRefusalText, timeoutText } from "@/lib/mcp/tools/read-query-limi
 import { type McpStatementInput, runStatement } from "@/lib/mcp/tools/run-statement";
 import { type McpStatementArm, mcpStatementArm, type McpStatementTool } from "@/lib/mcp/tools/statement-arms";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import { mcpPackageLanguageRow, withMcpPackageLanguage } from "../../helpers/agent-package-catalog";
@@ -130,17 +133,21 @@ interface Answered {
   readonly structuredContent?: Record<string, unknown>;
 }
 
-/** `engine`'s tool on `listed` with `request` and `args`, through a context that lists it alone. */
+/**
+ * `engine`'s tool on `listed` with `request` and `args`, through a context that lists it alone, or the one `planted`
+ * builds, and through `engine`'s arm or the one `planted` gives.
+ */
 async function call(
   engine: string,
   listed: ManagedConnection,
   request: string,
   args: Record<string, unknown> = {},
+  planted: { context?: PlantedContext; arm?: McpStatementArm } = {},
 ): Promise<Answered> {
-  const arm = armOf(engine);
+  const arm = planted.arm ?? armOf(engine);
   const parsed = arm.inputSchema.parse({ connection_id: listed.id, [arm.argument]: request, ...args });
   return (await runStatement(arm, parsed as McpStatementInput, {
-    context: new PlantedContext([listed]),
+    context: planted.context ?? new PlantedContext([listed]),
     signal: new AbortController().signal,
   })) as Answered;
 }
@@ -421,6 +428,114 @@ describe("a provider package's engine on its own language's MCP statement tool",
       expect(error.mock.calls.filter(([line]) => String(line).startsWith("A provider package's"))).toEqual([]);
     } finally {
       error.mockRestore();
+    }
+  });
+
+  test("a Studio error on a package's record is answered in Studio's words through the scrub, with no notice naming the package", async () => {
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const engine of [CODE, WORDS]) {
+        // Studio's own refusal of the open, whose words carry the connection's password: withheld whole, no notice.
+        const seen = hooksFor(engine);
+        const listed = listedOf(engine);
+        const refused = new ConnectionError(`Studio could not read the secret ${String(listed.password)}`);
+        const opened = await call(
+          engine,
+          listed,
+          '{"read":"topics"}',
+          {},
+          {
+            context: new (class extends PlantedContext {
+              override statementTarget(): Promise<ReadOnlyStatementTarget> {
+                return Promise.reject(refused);
+              }
+            })([listed]),
+          },
+        );
+        expect([engine, opened]).toEqual([
+          engine,
+          {
+            content: [{ type: "text", text: PROVIDER_TEXT_WITHHELD }],
+            structuredContent: { error: expect.objectContaining({ kind: "connection", code: "CONNECTION_ERROR" }) },
+            isError: true,
+          },
+        ]);
+        expect(seen.calls).toEqual([]);
+
+        // Studio's host defect on the statement, a target of another engine than the call's: Studio's words, no notice.
+        const other = engine === CODE ? WORDS : CODE;
+        const planted = listedOf(engine);
+        const mismatched = await call(
+          engine,
+          planted,
+          '{"read":"topics"}',
+          {},
+          {
+            context: new (class extends PlantedContext {
+              override async statementTarget(
+                opened: ManagedConnection,
+                wait: OpenWait,
+              ): Promise<ReadOnlyStatementTarget> {
+                const target = await super.statementTarget(opened, wait);
+                return { ...target, engine: servedEngineRecord(other) } as ReadOnlyStatementTarget;
+              }
+            })([planted]),
+          },
+        );
+        expect([engine, mismatched.content.map(({ text }) => text)]).toEqual([
+          engine,
+          [
+            `A read-only execute named the engine "${engine}" on the read-only statement session of "${other}": a host defect.`,
+          ],
+        ]);
+      }
+      expect(error.mock.calls.filter(([line]) => String(line).startsWith("A provider package's"))).toEqual([]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a package's open failure that settles at or after the call's deadline is answered as the timeout", async () => {
+    const listed = listedOf(CODE);
+    // The open holds the event loop past the call's deadline, 500 ms from its start, then fails in the package's words,
+    // so the failure settles before the deadline's timer runs.
+    hooksFor(CODE, {
+      open: () => {
+        const until = Date.now() + 600;
+        let spins = 0;
+        while (Date.now() < until) spins += 1;
+        return Promise.reject(new Error(`the sign-in lost ${spins} for ${String(listed.password)}`));
+      },
+    });
+    getServerAuditBuffer().clear();
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const late = await call(CODE, listed, '{"read":"topics"}', { timeout_ms: 500 });
+      expect(late).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
+      expect(auditEvents().at(-1)).toEqual(expect.objectContaining({ result: "failure", reason: "mcp_timeout" }));
+      const lines = linesOf(warn, `MCP ${armOf(CODE).tool} answered a provider failure as the timeout`);
+      expect(lines).toHaveLength(1);
+      expect(JSON.stringify(lines)).not.toContain(String(listed.password));
+      expect(error.mock.calls.filter(([line]) => String(line).startsWith("A provider package's"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("a Studio defect outside the failure answers is answered as Studio's own on a package's record", async () => {
+    for (const engine of [CODE, WORDS]) {
+      hooksFor(engine, { execute: () => Promise.resolve(answerOf(["a", "b", "c"])) });
+      const defect = `Studio's hint builder failed ${randomUUID()}`;
+      const arm: McpStatementArm = {
+        ...armOf(engine),
+        moreRows: () => {
+          throw new Error(defect);
+        },
+      };
+      const answered = await call(engine, listedOf(engine), '{"read":"topics"}', { max_rows: 2 }, { arm });
+      expect([engine, answered.isError, answered.content.map(({ text }) => text)]).toEqual([engine, true, [defect]]);
     }
   });
 
