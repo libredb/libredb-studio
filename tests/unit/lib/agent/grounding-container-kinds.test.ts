@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -11,7 +11,7 @@ import { QueryError } from "@/lib/db/errors";
 import type { Container, DatabaseConnection, DatabaseProvider, KindCount, QueryResult } from "@/lib/db/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
-import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { forgetHostCore, HostCoreBootOrderError, installHostCore } from "@/lib/provider-host/instance";
 
 // The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -118,5 +118,28 @@ describe("the grounding walk reads each container's own kinds", () => {
 
     expect(read.kind).toBe("completed");
     expect(listed).toEqual(["Cluster/pods", "Cluster/nodes", "shop/pods", "shop/nodes"]);
+  });
+});
+
+describe("the grounding walk before the host core's install", () => {
+  test("it is refused by the boot order before the provider's capabilities are read for the walk's session", async () => {
+    const { provider, listed } = clusterProvider([{ path: ["shop"], name: "shop", level: 0 }]);
+    const context = agentContext(provider);
+    const capabilities = provider.getCapabilities as ReturnType<typeof mock>;
+    capabilities.mockClear();
+    forgetHostCore();
+    let read: Awaited<ReturnType<typeof readObjectInventoryForGrounding>> | undefined;
+    let thrown: unknown;
+    try {
+      read = await readObjectInventoryForGrounding(context);
+    } catch (error) {
+      thrown = error;
+    } finally {
+      installHostCore(createHostCore(), "test");
+    }
+
+    expect({ read, thrown }).toEqual({ read: undefined, thrown: expect.any(HostCoreBootOrderError) });
+    expect(capabilities).not.toHaveBeenCalled();
+    expect(listed).toEqual([]);
   });
 });

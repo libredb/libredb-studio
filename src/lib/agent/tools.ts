@@ -75,6 +75,7 @@ import {
 import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
 import { providerTreeTarget } from "@/lib/api/session-target";
+import { hostCore } from "@/lib/provider-host/instance";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runComposedStatement } from "@/lib/api/composed-statement";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
@@ -2826,6 +2827,9 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // was granted, bounds is THE RUN and not the database. Every read is a host core tree call
         // under it (`grantedObjectTree`); the read in flight at the deadline is not cancelled and
         // counts against the run's concurrency until it settles, and the walk sends no further read.
+        // The boot order is read first, so a walk before the host core's install is refused by name before the walk's
+        // bridged session is built, which reads the provider's capabilities.
+        hostCore();
         const target = providerTreeTarget(
           provider,
           context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance },
