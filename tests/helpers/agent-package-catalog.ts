@@ -124,6 +124,8 @@ export interface McpPackageLanguageOptions {
   readonly honours?: readonly string[];
   /** Members its register row grants beyond the plant's own, which they replace. */
   readonly row?: Partial<RegisterGrants>;
+  /** A further edit of its engine declaration, made after the plant's own; none by default. */
+  readonly declare?: (engine: EditableEngine) => void;
 }
 
 /**
@@ -157,12 +159,19 @@ export function withMcpPackageLanguage(data: NonNullable<StatementLanguageData>)
 /**
  * The catalog of Studio's engines and one more package engine, `options.id`, that declares the language data
  * `options.data`, its row granting that language under the digest of its data, agent execution and every MCP claim
- * (`mcpPackageLanguageRow`), changed by `options.row`; its package honours `readOnly` unless the case names other
- * request fields.
+ * (`mcpPackageLanguageRow`), changed by `options.row`, its declaration edited further by `options.declare`; its
+ * package honours `readOnly` unless the case names other request fields.
  */
 export function mcpPackageLanguageCatalog(options: McpPackageLanguageOptions): ServerCatalog {
   const { data } = options;
-  const manifest = admittedManifest(options.id, withMcpPackageLanguage(data), options.honours ?? ["readOnly"]);
+  const manifest = admittedManifest(
+    options.id,
+    (engine) => {
+      withMcpPackageLanguage(data)(engine);
+      options.declare?.(engine);
+    },
+    options.honours ?? ["readOnly"],
+  );
   const spoken = admittedFor(`${options.id}-package`, manifest);
   const register = parseGrantRegister(
     [

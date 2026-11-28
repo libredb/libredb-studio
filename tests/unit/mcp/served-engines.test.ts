@@ -406,7 +406,24 @@ describe("mcpStatementEngines", () => {
       ["a package that takes no read-only execute", { ...plant, honours: [] }],
       ["a row requiring read roots", { ...plant, row: { readRootsRequired: true } }],
       ["a row granting one session", { ...plant, row: { servesOneSession: "One session per connection." } }],
-      ["a row requiring an agent credential", { ...plant, row: { agentCredentialRequired: true } }],
+      // Its connection takes an agent credential in the form its row grants (the row's null reads as pair), so its
+      // record stays exposable.
+      [
+        "a row requiring an agent credential",
+        {
+          ...plant,
+          declare: (engine) => {
+            engine.policy = { ...engine.policy, agentCredentialForm: "pair" };
+            engine.connection = { ...engine.connection, agentCredential: { form: "pair", supersededBy: [] } };
+            engine.mcp = { ...engine.mcp, agentCredentialRequired: true };
+          },
+          row: {
+            agentCredentialRequired: true,
+            agentCredentialForm: null,
+            agentCredential: { form: "pair", supersededBy: [] },
+          },
+        },
+      ],
     ];
     for (const [label, variant] of variants) {
       // oxlint-disable-next-line no-await-in-loop -- each variant installs the one server catalog, one after the other
@@ -414,7 +431,13 @@ describe("mcpStatementEngines", () => {
         // The premise: every grant MCP's exposure reads still lets the engine through.
         expect([label, servedEngines().get(plant.id)?.grants]).toEqual([
           label,
-          expect.objectContaining({ agentExecution: true, statementRead: true, statementLanguage: data.name }),
+          expect.objectContaining({
+            agentExecution: true,
+            exposable: true,
+            statementRead: true,
+            statementLanguage: data.name,
+            ...(label === "a row requiring an agent credential" && { agentCredentialRequired: true }),
+          }),
         ]);
         expect([label, servedIds(language)]).toEqual([label, []]);
         expect([label, mcpStatementToolFor(plant.id as DatabaseType)]).toEqual([label, null]);
