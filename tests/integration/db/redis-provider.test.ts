@@ -835,7 +835,6 @@ const { logger } = await import("@/lib/logger");
 const { providerMonitoring, readGrantedPanel } = await import("@/lib/api/provider-monitoring");
 const { providerMonitoringTarget } = await import("@/lib/api/session-target");
 const { servedEngineRecord } = await import("@/lib/db/server-catalog");
-const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { forgetHostCore, installHostCore } = await import("@/lib/provider-host/instance");
 
