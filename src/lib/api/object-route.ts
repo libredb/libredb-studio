@@ -502,14 +502,14 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * remove two.
  *
  * The parse is refused rather than coerced for the reason `optionalBoolean` gives above: a body
- * that is not an object would reach `resolveConnection` as one, and an array has no `connection`
+ * that is not an object would reach `resolveServedConnection` as one, and an array has no `connection`
  * and no `connectionId`, so the caller would meet a connection error for a body mistake.
  *
  * WHERE THIS DIVERGES FROM `readDefaultBody`, said out loud because the two now run on the SAME
  * handler and answer differently for one body. `readDefaultBody` refuses `{}` itself, with
  * `Empty request body` at 400. This function RETURNS `{}`: it parsed, and it is a JSON object, and
  * "carries no named field this route wants" is a question for the route and not for a body reader.
- * The caller's outcome is a 400 either way, because `resolveConnection({})` raises
+ * The caller's outcome is a 400 either way, because `resolveServedConnection({})` raises
  * `Either connection or connectionId is required` at 400, so this is a difference in SENTENCE and
  * not a hole. Both halves are pinned: the empty object is returned in
  * `tests/unit/lib/api/object-route-edit.test.ts` and both end-to-end answers are measured through

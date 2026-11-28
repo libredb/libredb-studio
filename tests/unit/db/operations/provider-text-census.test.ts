@@ -515,7 +515,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "inspect-schema.ts"), "inspectTable", "providerSentence"],
   [mcp("tools", "inspect-schema.ts"), "packageAnswer", "packageFailureAnswer"],
   [dbRoute("query"), "POST", "connectionTextScrub"],
-  [dbRoute("multi-query"), "POST", "providerTextScrub"],
+  [dbRoute("multi-query"), "POST", "connectionTextScrub"],
   [dbRoute("multi-query"), "runStatement", "withScrubbedWarnings"],
   [dbRoute("multi-query"), "statementError", "withholdProviderError"],
   [dbRoute("transaction"), "POST", "connectionTextScrub"],

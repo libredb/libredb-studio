@@ -1,12 +1,13 @@
 /**
- * The cancel and disconnect routes on an engine an admitted provider package serves, through the real
- * `resolveServedConnection`, the provider factory's real caches, the real host core and the real cancel facade
+ * The cancel, transaction, multi-query and disconnect routes on an engine an admitted provider package serves, through
+ * the real `resolveServedConnection`, the provider factory's real caches, the real host core and the real facades
  * (docs/providers/CONTRACT.md, clauses C-30, C-107, C-111 and C-112): a query's run on the package's editor session is
  * cancelled through the package's `console.cancel`, sent the run id the execute was sent with the session's handle
  * first; a session that does not offer the cancel answers the route's one refusal for every engine, calling nothing; a
  * package's open failure, its cancel's failure and a malformed cancel answer answer the one answer, logged once; and a
- * disconnect closes every cache entry the record's key names, and no other; under governance each user's cancel and
- * disconnect reach only that user's own session.
+ * disconnect closes every cache entry the record's key names, and no other; a script of the multi-query route runs
+ * each unit on the package's session and ends its scope through the package's `console.endScope`; under governance
+ * each user's cancel and disconnect reach only that user's own session.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked.
@@ -46,6 +47,7 @@ const ROUTES: Readonly<Record<string, { POST: (req: never) => Promise<Response> 
   query: await import("@/app/api/db/query/route"),
   cancel: await import("@/app/api/db/cancel/route"),
   transaction: await import("@/app/api/db/transaction/route"),
+  "multi-query": await import("@/app/api/db/multi-query/route"),
   disconnect: await import("@/app/api/db/disconnect/route"),
   health: await import("@/app/api/db/health/route"),
   profile: await import("@/app/api/db/profile/route"),
@@ -69,6 +71,12 @@ const NOSQL = "acmerestnosql";
 const MODELLED = "acmerestmodelled";
 /** A package whose engine states no SQL text and a console text bound, as NOSQL's does, offering no transaction. */
 const BOUNDED = "acmerestbounded";
+/**
+ * A package offering the cancel, the end of a scope and the transaction, and one whose engine states no SQL text and no
+ * console text bound.
+ */
+const SCRIPTED = "acmerestscripted";
+const NOTEXT = "acmerestnotext";
 const providers = scratchDirectory("studio-package-engine-rest-");
 
 /** A tree with one container level and one kind of objects with columns: names no engine of Studio's. */
@@ -137,6 +145,25 @@ beforeAll(async () => {
         },
       },
       {
+        name: "acme-rest-scripted",
+        engine: SCRIPTED,
+        offered: ["console.cancel", "console.endScope", "console.transaction"],
+      },
+      {
+        name: "acme-rest-notext",
+        engine: NOTEXT,
+        edit: (engine) => {
+          withStatementLanguageData(engine, {
+            ...ACME_LANGUAGE_DATA,
+            confirmation: { ...ACME_LANGUAGE_DATA.confirmation, maxTextBytes: null },
+          });
+          const members = engine as Record<string, unknown>;
+          members.sqlText = null;
+          members.sqlWriting = null;
+          members.migrationDdl = null;
+        },
+      },
+      {
         name: "acme-rest-modelled",
         engine: MODELLED,
         offered: ["objects.tree"],
@@ -188,9 +215,10 @@ interface TransactionRequest {
 }
 
 /**
- * Hooks for `engine`'s package: open a fresh handle, close, read health, answer one row, cancel, and hold one
- * transaction per handle, whose state a begin opens and a COMMIT or ROLLBACK closes; a statement sent inside it answers
- * that state too. A case's `transaction` answers instead where it answers anything but undefined.
+ * Hooks for `engine`'s package: open a fresh handle, close, read health, answer one row, cancel, end a scope with
+ * nothing left open, and hold one transaction per handle, whose state a begin opens and a COMMIT or ROLLBACK closes; a
+ * statement sent inside it answers that state too. A case's `transaction` answers instead where it answers anything
+ * but undefined.
  */
 function hooksFor(
   engine: string,
@@ -198,6 +226,7 @@ function hooksFor(
     open?: () => Promise<unknown>;
     execute?: (request: Record<string, unknown>) => Promise<unknown>;
     cancel?: (request: unknown, handle: unknown) => Promise<unknown>;
+    endScope?: (request: unknown) => Promise<unknown>;
     transaction?: (request: TransactionRequest) => Promise<unknown> | undefined;
   } = {},
 ): Seen {
@@ -223,6 +252,9 @@ function hooksFor(
     }),
     cancel: push("cancel", (handle, request) =>
       (options.cancel ?? (() => Promise.resolve({ cancelled: false })))(request, handle),
+    ),
+    endScope: push("endScope", (_handle, request) =>
+      (options.endScope ?? (() => Promise.resolve({ openTransaction: "none" })))(request),
     ),
     transaction: push("transaction", (handle, request) => {
       const sent = request as TransactionRequest;
@@ -703,6 +735,242 @@ describe("the transaction route on a provider package's engine", () => {
       body: NOT_SUPPORTED,
     });
     expect(names(bounded)).toEqual(["open"]);
+  });
+});
+
+describe("the multi-query route on a provider package's engine", () => {
+  /** The not-sent refusal by the record's offer, with `sentence`. */
+  const notOffered = (sentence: string) => ({
+    status: 400,
+    body: expect.objectContaining({ error: sentence, code: "FACET_NOT_OFFERED", outcome: "not-sent" }),
+  });
+  /**
+   * The messages of `lines` but the confirmation gate's own warning, which it writes for each statement of an engine
+   * whose grammar no register row reviews that runs unconfirmed (`ranUnconfirmed` in src/lib/api/run-confirmation.ts).
+   */
+  const routeLines = (lines: [string, string][]) =>
+    lines
+      .map(([message]) => message)
+      .filter((message) => message !== "A statement that needs a confirmation ran without one");
+  /** An execute answer of one row and `warnings`. */
+  const warned = (warnings: { message: string }[]) => () =>
+    Promise.resolve({ results: [source()], warnings, executionTimeMs: 1, pageApplied: false });
+
+  /**
+   * A script's units run on the session in order, each sent its run id and the script's scope; the last unit asks the
+   * request's page. A non-zero offset on a session that does not honour it is refused by the core as that unit's error.
+   */
+  test("a multi-statement script runs on a package engine's session", async () => {
+    const lines = loggedLines();
+    const connection = connectionOf(SCRIPTED);
+    const handle = { session: randomUUID() };
+    const seen = hooksFor(SCRIPTED, { open: () => Promise.resolve({ handle }) });
+    const queryId = randomUUID();
+
+    const ran = await post("multi-query", { connection, sql: "SELECT 1; SELECT 2", queryId, options: { limit: 5 } });
+    expect(ran).toMatchObject({
+      status: 200,
+      body: {
+        rows: [{ key: "alpha" }],
+        fields: ["key"],
+        multiStatement: true,
+        statementCount: 2,
+        executedCount: 2,
+        hasError: false,
+      },
+    });
+    expect(Object.hasOwn(ran.body as object, "openTransaction")).toBe(false);
+    // Every call reached the one session, its handle first: each unit, then the end of the script's scope once.
+    expect(names(seen)).toEqual(["open", "execute", "execute", "endScope"]);
+    expect(seen.calls.every(({ name, args }) => name === "open" || args[0] === handle)).toBe(true);
+    const executes = callsNamed(seen, "execute").map(({ args }) => args[1] as Record<string, unknown>);
+    const scope = executes[0]?.scope;
+    expect(typeof scope).toBe("string");
+    expect(executes).toEqual([
+      { statement: "SELECT 1", page: { unlimited: true }, runId: queryId, scope },
+      { statement: "SELECT 2", page: { limit: 5, offset: 0 }, runId: queryId, scope },
+    ]);
+    expect(callsNamed(seen, "endScope").map(({ args }) => args[1])).toEqual([{ scope }]);
+
+    // An end that rolled back what the script left open is answered.
+    hooksFor(SCRIPTED, { endScope: () => Promise.resolve({ openTransaction: "rolled-back" }) });
+    expect(await post("multi-query", { connection, sql: "BEGIN; SELECT 1" })).toMatchObject({
+      status: 200,
+      body: { openTransaction: "rolled-back", executedCount: 2 },
+    });
+
+    // A unit's warnings: Studio's sentence naming their count for a code-only package, logged once each.
+    const said = `notice ${randomUUID()}`;
+    hooksFor(SCRIPTED, { execute: warned([{ message: said }]) });
+    lines();
+    const codeOnly = await post("multi-query", { connection, sql: "SELECT 1; SELECT 2" });
+    const sentence = [{ message: "The provider package returned 1 warning; the server's log holds their words." }];
+    expect(codeOnly).toMatchObject({ status: 200, body: { warnings: sentence } });
+    const statements = (codeOnly.body as { statements: { warnings?: unknown }[] }).statements;
+    expect(statements.map((statement) => statement.warnings)).toEqual([sentence, sentence]);
+    expect(JSON.stringify(codeOnly.body)).not.toContain(said);
+    expect(
+      lines()
+        .map(([message]) => message)
+        .filter((message) => message === "A provider package's execute returned a warning"),
+    ).toHaveLength(2);
+
+    // A package granted its words answers them, through core's scrub.
+    hooksFor(WORDS, { execute: warned([{ message: said }]) });
+    expect(await post("multi-query", { connection: connectionOf(WORDS), sql: "SELECT 1" })).toMatchObject({
+      status: 200,
+      body: { warnings: [{ message: said }], statements: [{ warnings: [{ message: said }] }] },
+    });
+  });
+
+  test("the multi-query route refuses an engine stating no SQL text, a catalog and an unbounded page its record does not offer, by name, not-sent, before any open", async () => {
+    const notext = hooksFor(NOTEXT);
+    const bounded = hooksFor(BOUNDED);
+    const rest = hooksFor(REST);
+    const connection = connectionOf(REST);
+
+    expect(await post("multi-query", { connection: connectionOf(NOTEXT), sql: "a; b" })).toEqual(
+      notOffered(
+        "This connection's engine states no SQL text, so Studio has no script to split into statements and ran nothing.",
+      ),
+    );
+    expect(await post("multi-query", { connection, sql: "SELECT 1; SELECT 2", catalog: "other" })).toEqual(
+      notOffered(
+        "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.",
+      ),
+    );
+    expect(await post("multi-query", { connection, sql: "SELECT 1", options: { unlimited: true } })).toEqual(
+      notOffered(
+        "This connection's engine does not offer the request field options.unlimited in this LibreDB Studio, so Studio opened nothing.",
+      ),
+    );
+    // An engine whose record states a console text bound keeps the route's one-statement refusal.
+    expect(await post("multi-query", { connection: connectionOf(BOUNDED), sql: "a; b" })).toEqual({
+      status: 400,
+      body: {
+        error:
+          "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests.",
+      },
+    });
+    // A malformed field keeps its 400, before any refusal by name.
+    expect(await post("multi-query", { connection, sql: "SELECT 1", catalog: "" })).toMatchObject({
+      status: 400,
+      body: { code: "CONFIG_ERROR" },
+    });
+
+    // Nothing opened, and no answer was 501.
+    expect([names(notext), names(bounded), names(rest)]).toEqual([[], [], []]);
+  });
+
+  test("the multi-query route answers a package's open failure as not-sent, a unit's failure by its grant inside the script's answer, logged once, and a malformed end of scope answer as the package's defect", async () => {
+    const lines = loggedLines();
+    for (const engine of [REST, WORDS]) {
+      const granted = engine === WORDS;
+
+      // The open fails, its words naming the connection's secret: not-sent, logged once.
+      const refusedOpen = connectionOf(engine);
+      hooksFor(engine, {
+        open: () => Promise.reject(new Error(`the store is away for ${String(refusedOpen.password)}`)),
+      });
+      const opened = await post("multi-query", { connection: refusedOpen, sql: "SELECT 1; SELECT 2" });
+      expect(opened.status).toBe(503);
+      expect(opened.body).toMatchObject({ code: "CONNECTION_ERROR", outcome: "not-sent" });
+      if (granted) expect((opened.body as { error: string }).error).toBe(PROVIDER_TEXT_WITHHELD);
+      expect(routeLines(lines())).toEqual(["A provider package's open failed"]);
+
+      // The second unit rejects: the script's answer carries Studio's sentence naming its code, or the words as
+      // raised, and the run stops there; the package's failure is logged once.
+      const own = `the store refused ${randomUUID()}`;
+      let units = 0;
+      hooksFor(engine, {
+        execute: () => {
+          units += 1;
+          return units === 2 ? Promise.reject(new Error(own)) : Promise.resolve(ROWS());
+        },
+      });
+      const failed = await post("multi-query", {
+        connection: connectionOf(engine),
+        sql: "SELECT 1; SELECT 2; SELECT 3",
+      });
+      expect(failed).toMatchObject({
+        status: 200,
+        body: { executedCount: 2, hasError: true, rows: [{ key: "alpha" }] },
+      });
+      const statements = (failed.body as { statements: { status: string; error?: string }[] }).statements;
+      expect(statements.map(({ status, error }) => [status, error])).toEqual([
+        ["success", undefined],
+        [
+          "error",
+          granted ? own : "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+        ],
+      ]);
+      if (!granted) expect(JSON.stringify(failed.body)).not.toContain(own);
+      expect(routeLines(lines())).toEqual(["A provider package's execute failed"]);
+      expect(JSON.stringify([opened.body, failed.body])).not.toContain(String(refusedOpen.password));
+    }
+
+    // An end of scope answered outside its form is the package's defect, named by its rule, logged once.
+    hooksFor(SCRIPTED, { endScope: () => Promise.resolve({ openTransaction: "maybe" }) });
+    const malformed = await post("multi-query", { connection: connectionOf(SCRIPTED), sql: "SELECT 1; SELECT 2" });
+    expect(malformed.status).toBe(500);
+    expect((malformed.body as { error: string }).error).toBe(
+      `${PACKAGE_DEFECT_PREFIX} it broke the rule end-scope-answer-unreadable; the server's log names where.`,
+    );
+    const defectLines = lines();
+    expect(routeLines(defectLines)).toEqual(["A provider package's execute failed"]);
+    const defectLine = defectLines.find(([message]) => message === "A provider package's execute failed");
+    expect(defectLine?.[1].startsWith(PACKAGE_DEFECT_PREFIX)).toBe(true);
+  });
+
+  test("cancel, disconnect, a transaction and a multi-statement script run on a package engine's session", async () => {
+    loggedLines();
+    const connection = connectionOf(SCRIPTED);
+    const handle = { session: randomUUID() };
+    let started!: () => void;
+    const executing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let stop!: () => void;
+    const seen = hooksFor(SCRIPTED, {
+      open: () => Promise.resolve({ handle }),
+      execute: (request) => {
+        if (request.transaction === true) return Promise.resolve(ROWS());
+        started();
+        return new Promise((_resolve, reject) => {
+          stop = () => reject(new Error(`the run was stopped ${randomUUID()}`));
+        });
+      },
+      cancel: () => {
+        stop();
+        return Promise.resolve({ cancelled: true });
+      },
+    });
+
+    // The script's first unit waits; the cancel route finds it on the same session by its query id.
+    const queryId = randomUUID();
+    const running = post("multi-query", { connection, sql: "SELECT 1; SELECT 2", queryId });
+    await executing;
+    expect(await post("cancel", { connection, queryId })).toEqual({ status: 200, body: { cancelled: true } });
+    const script = await running;
+    expect(script).toMatchObject({ status: 200, body: { executedCount: 1, hasError: true } });
+    expect(callsNamed(seen, "cancel").map(({ args }) => args[1])).toEqual([{ runId: queryId }]);
+    // The scope the unit was sent with is ended once, after the unit answered its error.
+    const [unit] = callsNamed(seen, "execute");
+    if (unit === undefined) throw new Error("the package saw no execute");
+    const { scope } = unit.args[1] as { scope?: string };
+    expect(typeof scope).toBe("string");
+    expect(callsNamed(seen, "endScope").map(({ args }) => args[1])).toEqual([{ scope }]);
+
+    // A transaction begins, runs a statement and commits on the same session.
+    expect((await post("transaction", { connection, action: "begin" })).status).toBe(200);
+    expect((await post("transaction", { connection, action: "query", sql: "SELECT 3" })).status).toBe(200);
+    expect((await post("transaction", { connection, action: "commit" })).status).toBe(200);
+
+    // The disconnect closes that one session once.
+    expect(await post("disconnect", { connection })).toEqual({ status: 200, body: { success: true } });
+    expect(callsNamed(seen, "open")).toHaveLength(1);
+    expect(callsNamed(seen, "close").map(({ args }) => args[0] === handle)).toEqual([true]);
+    expect(seen.calls.every(({ name, args }) => name === "open" || args[0] === handle)).toBe(true);
   });
 });
 

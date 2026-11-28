@@ -3187,6 +3187,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a transaction runs on a package engine's session through the console's transaction calls",
         "a script inside a package engine's transaction runs each unit through the host core's execute",
         "the transaction route refuses a catalog and an unbounded page a package engine's record does not offer, by name, not-sent, before any open",
+        "a multi-statement script runs on a package engine's session",
+        "the multi-query route refuses an engine stating no SQL text, a catalog and an unbounded page its record does not offer, by name, not-sent, before any open",
+        "cancel, disconnect, a transaction and a multi-statement script run on a package engine's session",
         "under governance a package engine's transaction is rolled back through its own session when its owner's credential changed",
         "disconnect removes every cache entry of a package engine's record, and no other record's",
         "under governance a second user's cancel opens that user's own session and cancels nothing of the first's, and a disconnect closes the caller's sessions only",
@@ -3211,7 +3214,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/seed/resolve-connection-package-engines.test.ts": [
         "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code",
-        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
+        "an admitted engine's connection is refused by name on a route that resolves through resolveConnection, and accepted by the package-aware resolve the tree, edit, key scan, monitoring, health, pool statistics, cancel, disconnect, transaction, multi-query, maintenance, preview, fleet health, provider metadata, column profile and statement analysis routes read",
         "resolveServedConnection answers a package engine's connection with its record, and resolveConnection takes no source parameter",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
@@ -3295,12 +3298,17 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "cancel runs on a package engine's session through the console's cancel",
         "a transaction runs on a package engine's session through the console's transaction calls",
         "a package engine whose session does not offer console.transaction answers the transaction route's one refusal, calling nothing",
+        "cancel, disconnect, a transaction and a multi-statement script run on a package engine's session",
       ],
       "tests/unit/lib/api/editor-query.test.ts": [
         "the cancel runs on any session its target states, a package's and the bridge's alike, and one that does not offer console.cancel is answered not offered without a call",
       ],
+      "tests/unit/lib/api/editor-script.test.ts": [
+        "each unit of a script on a package entry's console target is one host core execute on the session itself with the request's run id and scope, counted on the entry, and the scope is ended once through the session's console.endScope under its declared environment",
+      ],
       "tests/unit/lib/api/session-target.test.ts": [
         "a provider's console target is one bridged session with no environment and no marks, and an entry's is its session by form, the package's counting each call on the entry",
+        "a package entry's console target runs each unit of a script on its session, every row for a unit but the last and the request's limit for the last, its warnings answered by the record's grant of its own words",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
@@ -3352,6 +3360,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/rest-package-engine.test.ts": [
         "the cancel route answers a package's open failure as not-sent, its cancel failure by its grant, and a malformed cancel answer as the package's defect",
         "the transaction route answers a package's open failure as not-sent, its transaction and statement failures by its grant, logged once, and a malformed transaction answer as the package's defect",
+        "the multi-query route answers a package's open failure as not-sent, a unit's failure by its grant inside the script's answer, logged once, and a malformed end of scope answer as the package's defect",
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "a package's open failure and each monitoring read's failure answer the one answer, code-only and granted, logged once, and a malformed answer answers the package's defect",

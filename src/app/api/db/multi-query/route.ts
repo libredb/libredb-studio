@@ -1,26 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { getOrCreateProvider } from "@/lib/db";
 import { splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { createErrorResponse } from "@/lib/api/errors";
 import { pageOptionError } from "@/lib/api/page-probe";
-import { QueryCancelledError } from "@/lib/db/errors";
+import { FacetNotOfferedError, markNotSent, QueryCancelledError } from "@/lib/db/errors";
 import {
+  connectionTextScrub,
   type ProviderTextScrub,
-  providerTextScrub,
   withholdProviderError,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { editorProvider } from "@/lib/api/editor-provider";
-import { providerConsoleTarget } from "@/lib/api/session-target";
+import { type EngineConnection, type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
+import { assertEditorFieldsOffered, editorTarget } from "@/lib/api/editor-provider";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
+import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { rowTextByteLimit } from "@/lib/db/statement-language-row";
-import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
-import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
+import type { QueryResult, QueryWarning } from "@/lib/types";
+import { openWithinBudget, queryTimeoutError } from "@/lib/api/editor-query";
 import { type EditorScript, openEditorScript } from "@/lib/api/editor-script";
 import type { OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -36,6 +35,9 @@ import {
   requestedConnectionId,
 } from "@/lib/query-events/route-events";
 import { uuidv7 } from "@/lib/query-events/uuidv7";
+
+/** The label every log line of this route is written under. */
+const ROUTE = "api/db/multi-query";
 
 export interface StatementResult {
   index: number;
@@ -101,7 +103,7 @@ function shownSet(result: QueryResult, unit: ExecutionUnit) {
  */
 interface UnitEvents {
   readonly request: QueryEventRequest;
-  readonly connection: DatabaseConnection;
+  readonly connection: EngineConnection;
   readonly correlationId: string;
 }
 
@@ -118,8 +120,10 @@ function statementError(scrub: ProviderTextScrub, error: unknown): string {
 /**
  * Run one unit of the script through the editor's script facade and describe the outcome, including the error when it
  * failed: the loop decides what to do about it. The unit's text, and the bound the last one is sent with, are the
- * facade's to send (`openEditorScript`, src/lib/api/editor-script.ts); its answer is built here, from the provider's
- * result by reference, before the facade releases the unit's page.
+ * facade's to send (`openEditorScript`, src/lib/api/editor-script.ts); its answer is built here, from the unit's result
+ * before the facade releases the unit's page: a legacy provider's result by reference, and a provider package's unit
+ * from its page. A failed unit's error is answered once through the request's record of a provider package's failures
+ * (`answers`, as an execute's), and that answer is what its query event records and the script answers.
  */
 async function runStatement(
   script: EditorScript,
@@ -127,6 +131,7 @@ async function runStatement(
   index: number,
   events: UnitEvents,
   scrub: ProviderTextScrub,
+  answers: PackageAnswers,
 ): Promise<StatementResult> {
   const startTime = performance.now();
   const started = queryEventStart();
@@ -157,12 +162,13 @@ async function runStatement(
   });
   if (outcome.kind === "answered") return outcome.value;
   // The last statement's bound, when an error names it, was already said to be Studio's by the facade.
-  recordExecutedUnit(events.request, { ...unit, ended: { error: outcome.error } });
+  const failure = answers.answer("execute", outcome.error);
+  recordExecutedUnit(events.request, { ...unit, ended: { error: failure } });
   return {
     ...identity,
     status: "error",
     executionTime: Math.round(performance.now() - startTime),
-    error: statementError(scrub, outcome.error),
+    error: statementError(scrub, failure),
   };
 }
 
@@ -179,8 +185,9 @@ interface ScriptRun {
  *
  * MAY A SCRIPT LEAVE A TRANSACTION OPEN? No, and the finally below is the answer.
  *
- * The provider this route borrows is cached per `connection.id` for the whole
- * process (`getOrCreateProvider`), so a transaction that outlives the request does
+ * The session this route borrows, the editor's session of the connection's record,
+ * is cached per `connection.id` for the whole process (`editorTarget` in
+ * src/lib/api/editor-provider.ts), so a transaction that outlives the request does
  * not belong to the person who opened it any more: it belongs to whoever borrows
  * the handle next. Measured 2026-09-13 through this route: `BEGIN; CREATE TABLE ...;
  * SELECT * FROM <missing>` broke out of the loop below and the transaction stayed
@@ -194,20 +201,23 @@ interface ScriptRun {
  * It is a finally and not a line after the loop because the loop must not be able to
  * leave by any path that skips this.
  *
- * WHOSE transaction it ends is now named rather than hoped for: the provider is cached
+ * WHOSE transaction it ends is now named rather than hoped for: the session is cached
  * per connection id and shared by every concurrent request on that stored connection,
  * and until D87 this call reached whichever client anybody had recorded last, measured
  * rolling a concurrent script's and an interactive session's work away. The script's
  * scope is this request's own, minted by the facade when the script opened and sent with
  * every unit, and nothing it did not run on can be ended here.
  *
- * It ends through the host: the facade's `end` sends the scope to the legacy bridge's
- * `console.endScope` through the host core's endScope call, under a cleanup context of
- * its own that the request's leaving does not end, and waits for it at most 10 s
- * (docs/providers/CONTRACT.md, clauses C-60 and C-83). After a unit Studio stopped
- * waiting for, it ends once that unit's call settled, in the background, and the script
- * is answered with no `openTransaction`. A provider that ends nothing of its query path
- * is not offered the facet, is sent no scope, and is asked nothing.
+ * It ends through the host: the facade's `end` sends the scope to the session's
+ * `console.endScope`, the legacy bridge's for a legacy provider, through the host core's
+ * endScope call, under a cleanup context of its own that the request's leaving does not
+ * end, and waits for it at most 10 s (docs/providers/CONTRACT.md, clauses C-60 and C-83).
+ * After a unit Studio stopped waiting for, it ends once that unit's call settled, in the
+ * background, and the script is answered with no `openTransaction`. A session that ends
+ * nothing of its query path does not offer the facet, is sent no scope, and is asked
+ * nothing. A failure of the end is answered once through the request's record of a
+ * provider package's failures (`answers`, as an execute's), as the query route answers
+ * the end of its run's scope.
  *
  * What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
  * inside a statement the splitter cannot see through, so the leak is the missing
@@ -220,6 +230,7 @@ async function runScript(
   units: readonly ExecutionUnit[],
   events: UnitEvents,
   scrub: ProviderTextScrub,
+  answers: PackageAnswers,
   signal: AbortSignal,
 ): Promise<ScriptRun> {
   const results: StatementResult[] = [];
@@ -230,17 +241,37 @@ async function runScript(
       if (index > 0 && signal.aborted) break;
       // Each unit runs after the one before it settled.
       // oxlint-disable-next-line no-await-in-loop -- a script's order is its meaning.
-      const outcome = await runStatement(script, unit, index, events, scrub);
+      const outcome = await runStatement(script, unit, index, events, scrub, answers);
       totalExecutionTime += outcome.executionTime;
       results.push(outcome);
       // Stop execution on error
       if (outcome.status === "error") break;
     }
   } finally {
-    const ended = await script.end();
+    const ended = await script.end().catch((error: unknown) => {
+      throw answers.answer("execute", error);
+    });
     if (ended.offered) openTransaction = ended.openTransaction;
   }
   return { results, totalExecutionTime, openTransaction };
+}
+
+/** Studio's sentence for a script on an engine whose record states no SQL text, which no grammar can split. */
+const NO_SQL_TEXT_SENTENCE =
+  "This connection's engine states no SQL text, so Studio has no script to split into statements and ran nothing.";
+
+/**
+ * Refuses a script on `engine` when its record states no SQL text, before any open: `FacetNotOfferedError` of facet
+ * `console`, operation `multiStatement`, outcome not-sent, as the statement analysis refuses it. Every legacy record
+ * states a grammar.
+ *
+ * @throws {FacetNotOfferedError} Not-sent, when the record states no statement grammar.
+ */
+function scriptGrammar(engine: EngineRecord): NonNullable<EngineRecord["statementGrammar"]> {
+  if (engine.statementGrammar !== null) return engine.statementGrammar;
+  const error = new FacetNotOfferedError(NO_SQL_TEXT_SENTENCE, legacyProviderType(engine), "console", "multiStatement");
+  markNotSent(error);
+  throw error;
 }
 
 /**
@@ -266,7 +297,11 @@ export async function POST(req: NextRequest) {
   const started = queryEventStart();
   const events = queryEventRequest("multi-query", guard.session, req);
   let requestedId: string | undefined;
-  let resolved: DatabaseConnection | undefined;
+  let resolved: EngineConnection | undefined;
+  // Core's scrub of the sessions the resolved connection opens and the request's record of a provider package's
+  // failures, held out here for the `catch` below: before the connection resolves no session ran.
+  let scrub: ProviderTextScrub | undefined;
+  let answers: PackageAnswers | undefined;
   let submitted: string | null = null;
   let admitting = false;
 
@@ -281,8 +316,16 @@ export async function POST(req: NextRequest) {
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
-    const connection = await resolveConnection(body, guard.session);
+    // An engine of an admitted provider package is served too: its connection resolves with every guard of every route,
+    // with the server catalog's record of its engine, whose grammar, offers and budget decide each step below that
+    // differs between engines (docs/providers/CONTRACT.md, clause C-107). Every failure of the session's calls is
+    // answered once through the request's record (`packageAnswers`, clause C-112), so the route writes no second line.
+    const { connection, engine } = await resolveServedConnection(body, guard.session);
     resolved = connection;
+    const connectionScrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
+    scrub = connectionScrub;
+    const answering = packageAnswers(engine, connectionScrub, ROUTE);
+    answers = answering;
 
     // A `sql` that is present but not a string, a falsy one (0, false) included, is refused in words: a truthy one
     // reached the splitter and answered 500 with its own TypeError ("input.slice is not a function"). A missing
@@ -308,10 +351,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeoutError }, { status: 400 });
     }
 
-    // The server catalog's record of the connection's engine, read once: its statement language row states the console
-    // text bound, and the confirmation gate below reads the statement under its reading.
-    const engine = servedEngineRecord(connection.type);
-
+    // The server catalog's record of the connection's engine: its statement language row states the console text bound,
+    // its grammar splits the script, and the confirmation gate below reads the statement under its reading.
+    //
     // An engine whose statement language row states a console text bound runs one statement per request. The SQL
     // splitter below would turn one console text into several requests, so such an engine is sent to the
     // single-statement route before anything is split or acquired.
@@ -325,7 +367,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // The resolved connection's dialect, not the compatibility default: this is the
+    // An engine whose record states no SQL text has no grammar to split a script under, so it is refused by name before
+    // anything is split or opened (`scriptGrammar`); then a request field the record does not offer, a catalog or an
+    // unbounded page (`assertEditorFieldsOffered`), refused by name the same way.
+    const grammar = scriptGrammar(engine);
+    assertEditorFieldsOffered(engine, {
+      body,
+      explain: false,
+      database: undefined,
+      unlimited: options.unlimited === true,
+    });
+
+    // The resolved engine's grammar, not the compatibility default: this is the
     // one surface that EXECUTES what the splitter returns, so a fragment invented by
     // a reading the engine does not share is a statement the operator never wrote.
     // Measured on postgres 18, `/* a /* b *\/ ; DROP TABLE t; -- *\/ SELECT 1` is one
@@ -334,7 +387,7 @@ export async function POST(req: NextRequest) {
     // UNITS rather than statements: what one request carries is the dialect's to say, and
     // for T-SQL it is the whole batch between `GO` lines, so a `DECLARE @x` reaches the
     // server in the same request as the `SELECT @x` after it (#1312).
-    const statements = splitExecutionUnits(sql, resolveSqlGrammar(connection.type));
+    const statements = splitExecutionUnits(sql, grammar);
 
     if (statements.length === 0) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
@@ -361,31 +414,35 @@ export async function POST(req: NextRequest) {
     admitQueryExecution();
     admitting = false;
     const unitEvents: UnitEvents = { request: events, connection, correlationId: uuidv7() };
-    // Core's scrub of the providers this connection builds, over every provider text the script answers.
-    const scrub = providerTextScrub(connection, "any");
 
-    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a
-    // request that leaves while its connection opens is answered at once, and an open past its budget answers 504.
-    const provider = await openWithinCall(req.signal, connection.type, (wait) =>
-      editorProvider(guard.session, connection, requestCatalog(body), wait),
-    );
-    // A request already gone, before or while the provider was acquired, starts nothing.
+    // THE OPEN, the query route's: the editor's session of the connection's record in the factory's editor cache
+    // (`editorTarget`), a legacy provider in the request's catalog or a provider package's session, as its console
+    // target. It is waited for within the connect budget the engine's record states (`packageConnectBudget`) and while
+    // the request stays (`openWithinBudget`): a request that leaves while its connection opens is answered at once, and
+    // an open past its budget answers 504, not-sent. A failure of the open is the package's open's.
+    const target = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
+      editorTarget(guard.session, connection, engine, requestCatalog(body), wait),
+    ).catch((error: unknown) => {
+      throw answering.answer("open", error);
+    });
+    // A request already gone, before or while the session was acquired, starts nothing.
     if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
     // The host core is read here, after the open and before any unit, outside every unit's own answer, so a script
     // run before the core is installed fails by name and sends nothing.
-    const script = openEditorScript(providerConsoleTarget(provider), {
+    const script = openEditorScript(target, {
       units: statements,
       options,
       ...(queryId === undefined ? {} : { queryId }),
       signal: req.signal,
-      route: "api/db/multi-query",
-      scrub,
+      route: ROUTE,
+      scrub: connectionScrub,
     });
     const { results, totalExecutionTime, openTransaction } = await runScript(
       script,
       statements,
       unitEvents,
-      scrub,
+      connectionScrub,
+      answering,
       req.signal,
     );
 
@@ -422,10 +479,8 @@ export async function POST(req: NextRequest) {
     if (admitting || (resolved === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection: resolved, statement: submitted, started, error });
     }
-    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
-    return createErrorResponse(error, {
-      route: "api/db/multi-query",
-      scrub: resolved === undefined ? undefined : providerTextScrub(resolved, "any"),
-    });
+    // Once the connection resolved, a session may have run: its error answers with the connection's scrub, and a
+    // provider package's failure the request's record logged is not logged again.
+    return createErrorResponse(error, { route: ROUTE, scrub, logged: answers?.logged(error) === true });
   }
 }

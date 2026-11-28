@@ -43,13 +43,13 @@ import type { DatabaseConnection } from "@/lib/types";
  *
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check; `editorTarget` below opens the same way for any record the server serves, and is how
- * `POST /api/db/query` and `POST /api/db/transaction` open every engine, as `metadataTreeTarget` decides the object
- * tree's session of any record, `editorSourceTarget` the object source read's, `metadataMonitoringTarget` and
- * `editorMonitoringTarget` the monitoring reads' sessions of any record, and `editorMaintenanceOpening` and
- * `metadataMaintenanceOpening` the maintenance requests' sessions of any record, the metadata session for the kill
- * that must not wait for the editor's statements. The cancel, which acts on the whole connection rather than in one
- * database and finds a statement in whichever session runs it, opens through `editorConsoleTarget` below, with no
- * catalog.
+ * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` open every engine, as
+ * `metadataTreeTarget` decides the object tree's session of any record, `editorSourceTarget` the object source read's,
+ * `metadataMonitoringTarget` and `editorMonitoringTarget` the monitoring reads' sessions of any record, and
+ * `editorMaintenanceOpening` and `metadataMaintenanceOpening` the maintenance requests' sessions of any record, the
+ * metadata session for the kill that must not wait for the editor's statements. The cancel, which acts on the whole
+ * connection rather than in one database and finds a statement in whichever session runs it, opens through
+ * `editorConsoleTarget` below, with no catalog.
  *
  * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
  * `getOrCreateProvider` as it is; a catalog session opens after it, on the same connection.
@@ -74,11 +74,11 @@ export async function editorProvider(
  * it: its declared environment, each call counted on the entry, and the connection's own statement timeout. `wait` is
  * the request's own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it
  * is.
- * `POST /api/db/query` and `POST /api/db/transaction` open every engine through it.
+ * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` open every engine through it.
  *
- * @throws {HostDefectError} Studio's own defect, when a provider package's session is handed a catalog: the query and
- *   the transaction routes refuse a catalog for an engine whose record offers none before any open. Its one refusal is
- *   the request's `catalog` field not honoured, a rule whose author is Studio (`isStudioFailure` in
+ * @throws {HostDefectError} Studio's own defect, when a provider package's session is handed a catalog: the query,
+ *   multi-query and transaction routes refuse a catalog for an engine whose record offers none before any open. Its one
+ *   refusal is the request's `catalog` field not honoured, a rule whose author is Studio (`isStudioFailure` in
  *   src/lib/api/package-errors.ts), so the route answers it as Studio's own internal error, never as the package's.
  */
 export async function editorTarget(
@@ -98,10 +98,10 @@ export async function editorTarget(
 /**
  * Refuses `catalog` handed with a provider package's session, which serves no catalog session, as Studio's own defect:
  * every caller refuses a catalog for an engine whose record offers none before any open (`assertCatalogOffered`, which
- * `assertEditorFieldsOffered` reads on the query and the transaction routes), so a catalog reaches a package's session
- * only through a record that offers one, which no package's record does. Its one refusal is the request's `catalog`
- * field not honoured, a rule whose author is Studio (`isStudioFailure` in src/lib/api/package-errors.ts), so a route
- * answers it as Studio's own internal error, never as the package's, and never ignores the catalog.
+ * `assertEditorFieldsOffered` reads on the query, multi-query and transaction routes), so a catalog reaches a package's
+ * session only through a record that offers one, which no package's record does. Its one refusal is the request's
+ * `catalog` field not honoured, a rule whose author is Studio (`isStudioFailure` in src/lib/api/package-errors.ts), so
+ * a route answers it as Studio's own internal error, never as the package's, and never ignores the catalog.
  *
  * @throws {HostDefectError} When `catalog` is named.
  */
@@ -193,11 +193,11 @@ function fieldNotOffered(engine: EngineRecord, field: EditorField): FacetNotOffe
  * keyed by a legacy plan format; a key-space `database`, read from a legacy provider's declarations; a server-level
  * `catalog`, a legacy catalog session, in `assertCatalogOffered`'s sentence; and an unbounded page
  * (`options.unlimited`), since the provider contract always pumps a bounded one (docs/providers/CONTRACT.md, clause
- * C-16). Each is `FacetNotOfferedError` of facet `console`, its operation the field's name, outcome not-sent. The query
- * and the transaction routes read it after every malformed field's 400: the caller reads `explain` and `database`,
- * and a `catalog` is read here first where the record does not offer catalogs, so a malformed one answers its 400
- * before any field is refused; where the record offers them it is not read here, and keeps its answer where the route
- * reads it. A legacy record offers all four, so it is refused nothing.
+ * C-16). Each is `FacetNotOfferedError` of facet `console`, its operation the field's name, outcome not-sent. The
+ * query, multi-query and transaction routes read it after every malformed field's 400: the caller reads `explain` and
+ * `database`, and a `catalog` is read here first where the record does not offer catalogs, so a malformed one answers
+ * its 400 before any field is refused; where the record offers them it is not read here, and keeps its answer where the
+ * route reads it. A legacy record offers all four, so it is refused nothing.
  *
  * @throws {DatabaseConfigError} For a malformed `catalog`, on an engine whose record does not offer catalogs.
  * @throws {FacetNotOfferedError} Not-sent, for the first field set that the record does not offer.
