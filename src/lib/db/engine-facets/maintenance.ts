@@ -6,9 +6,10 @@
  *
  * Both refuse with `FacetNotOfferedError`, answered `400 FACET_NOT_OFFERED`, in a sentence that names the operation,
  * quoted by `quoteTypeId` so a caller's value stays on one line, and the engine, by its record's display name; the
- * error names the record's legacy provider type, none for a provider package's engine.
+ * error names the record's legacy provider type, none for a provider package's engine. Both are raised before any call,
+ * so each error is marked not-sent (`markNotSent`) for every engine.
  */
-import { FacetNotOfferedError } from "@/lib/db/errors";
+import { FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
 import { type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
 import type { MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
@@ -29,7 +30,7 @@ export function maintenanceNotAcceptedSentence(engine: string, operation: string
  * Refuses an operation `engine` does not offer, read from its record's maintenance list before any session opens.
  * Membership is `Array.prototype.includes` on the list, so a prototype key is simply not offered.
  *
- * @throws {FacetNotOfferedError} When the record does not list `operation`.
+ * @throws {FacetNotOfferedError} Not-sent, when the record does not list `operation`.
  */
 export function assertMaintenanceOffered(
   engine: EngineRecord,
@@ -37,12 +38,14 @@ export function assertMaintenanceOffered(
 ): asserts operation is MaintenanceOperation {
   const offered: readonly string[] = engine.maintenance;
   if (offered.includes(operation)) return;
-  throw new FacetNotOfferedError(
+  const error = new FacetNotOfferedError(
     maintenanceNotOfferedSentence(engine.displayName, quoteTypeId(operation), offered),
     legacyProviderType(engine),
     "maintenance",
     operation,
   );
+  markNotSent(error);
+  throw error;
 }
 
 /**
@@ -50,7 +53,7 @@ export function assertMaintenanceOffered(
  * declaration after connect, which PostgreSQL and MySQL narrow to what the server has (`narrowMaintenance`), or a
  * provider package's narrowed maintenance. A session that reports `supportsMaintenance` false accepts none.
  *
- * @throws {FacetNotOfferedError} When the session does not accept `operation`.
+ * @throws {FacetNotOfferedError} Not-sent, when the session does not accept `operation`.
  */
 export function assertMaintenanceAccepted(
   engine: EngineRecord,
@@ -59,10 +62,12 @@ export function assertMaintenanceAccepted(
 ): void {
   const operations = accepted.supportsMaintenance === true ? accepted.maintenanceOperations : [];
   if (operations.includes(operation)) return;
-  throw new FacetNotOfferedError(
+  const error = new FacetNotOfferedError(
     maintenanceNotAcceptedSentence(engine.displayName, quoteTypeId(operation), operations),
     legacyProviderType(engine),
     "maintenance",
     operation,
   );
+  markNotSent(error);
+  throw error;
 }

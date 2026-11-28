@@ -402,6 +402,7 @@ describe("the monitoring routes on a provider package's engine", () => {
     expect(unlisted.body).toMatchObject({
       error: `"vacuum" is not a maintenance operation LibreDB Studio offers on ${servedEngineRecord(BARE).displayName}, which offers none; no connection was opened and nothing was run.`,
       code: "FACET_NOT_OFFERED",
+      outcome: "not-sent",
     });
     expect(names(seen)).toHaveLength(callsBefore);
     expect(names(seen).filter((name) => name !== "open")).toEqual(["health"]);
@@ -606,7 +607,7 @@ describe("the monitoring routes on a provider package's engine", () => {
 });
 
 describe("the maintenance routes and fleet health on a provider package's engine", () => {
-  test("the maintenance routes refuse a package engine by the record's or the session's offer, by name, and never answer 501", async () => {
+  test("the maintenance routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501", async () => {
     const displayName = servedEngineRecord(MAINT).displayName;
     // An operation the record does not list: refused by name before any open.
     const seen = hooksFor(MAINT);
@@ -618,6 +619,7 @@ describe("the maintenance routes and fleet health on a provider package's engine
         expect.objectContaining({
           error: `"optimize" is not a maintenance operation LibreDB Studio offers on ${displayName}, which offers analyze, vacuum, kill; no connection was opened and nothing was run.`,
           code: "FACET_NOT_OFFERED",
+          outcome: "not-sent",
         }),
       ]);
       // A catalog the record does not offer: refused by name, not-sent, before any open.
@@ -653,6 +655,7 @@ describe("the maintenance routes and fleet health on a provider package's engine
     expect(none.body).toMatchObject({
       error: `"vacuum" is not a maintenance operation the ${displayName} server this connection reaches accepts, which accepts none; nothing was run.`,
       code: "FACET_NOT_OFFERED",
+      outcome: "not-sent",
     });
     expect(names(refusing)).toEqual(["open"]);
     expect([auditRowsOf(withdrawn), events]).toEqual([[], []]);

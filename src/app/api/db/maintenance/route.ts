@@ -32,8 +32,9 @@ const ROUTE = "POST /api/db/maintenance";
  * nothing is run or recorded for a request refused on the way: the guard and the admin check; a JSON object body; the
  * connection and the record of its engine (`resolveServedConnection`); `type` present and text; `container` and
  * `target` text or absent; the operation listed in the record's maintenance, before any session opens
- * (`400 FACET_NOT_OFFERED`); a catalog the record does not offer, refused by name before any open (clause C-111); then,
- * on the opened session, the operation its server accepts (the same code) and the placement its spec declares.
+ * (`400 FACET_NOT_OFFERED`, outcome not-sent); a catalog the record does not offer, refused by name before any open
+ * (clause C-111); then, on the opened session, the operation its server accepts (the same code and outcome, before any
+ * call) and the placement its spec declares.
  *
  * The run goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route builds the
  * opening's target, which for a legacy provider reads its declarations as the query route reads them, and runs the

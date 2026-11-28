@@ -6,6 +6,7 @@ import {
   maintenanceNotAcceptedSentence,
   maintenanceNotOfferedSentence,
 } from "@/lib/db/engine-facets/maintenance";
+import { errorOutcome } from "@/lib/db/error-record";
 import { FacetNotOfferedError } from "@/lib/db/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
@@ -171,5 +172,20 @@ describe("both checks read a package engine's record", () => {
     expect(notAccepted.message).toBe(
       '"kill" is not a maintenance operation the Acme Maintenance Check server this connection reaches accepts, which accepts none; nothing was run.',
     );
+  });
+});
+
+describe("both refusals are raised before any call", () => {
+  test("both refusals are not-sent, for a legacy record and a package's alike, since neither is raised after a call", () => {
+    for (const engine of [servedEngineRecord("postgres"), packageRecord(["vacuum"])]) {
+      const notListed = thrownBy(() => assertMaintenanceOffered(engine, "optimize"));
+      expect(notListed).toBeInstanceOf(FacetNotOfferedError);
+      expect(errorOutcome(notListed)).toBe("not-sent");
+      const notAccepted = thrownBy(() =>
+        assertMaintenanceAccepted(engine, "vacuum", { supportsMaintenance: false, maintenanceOperations: [] }),
+      );
+      expect(notAccepted).toBeInstanceOf(FacetNotOfferedError);
+      expect(errorOutcome(notAccepted)).toBe("not-sent");
+    }
   });
 });

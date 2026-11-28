@@ -26,9 +26,10 @@ const ROUTE = "POST /api/db/maintenance/preview";
  * before it runs anything, in the same order, so the two cannot disagree about a request: the connection and the
  * record of its engine (`resolveServedConnection`), for any engine the server serves (docs/providers/CONTRACT.md,
  * clause C-107), `type` present and text, `container` text or absent, the operation listed in the record's maintenance
- * before any session opens (`400 FACET_NOT_OFFERED`), a catalog the record does not offer refused by name before any
- * open (clause C-111), and the operation the opened session's server accepts (the same code). A preview is per object,
- * so a non-empty `target` is required where the maintenance route reads its absence as the whole-database form.
+ * before any session opens (`400 FACET_NOT_OFFERED`, outcome not-sent), a catalog the record does not offer refused by
+ * name before any open (clause C-111), and the operation the opened session's server accepts (the same code and outcome,
+ * before any call). A preview is per object, so a non-empty `target` is required where the maintenance route reads its
+ * absence as the whole-database form.
  *
  * Neither route proves that the target exists, because neither calls the provider before its one method: existence is
  * the provider's, and `previewMaintenance` raises a `QueryError` naming what is missing. Nothing but that method is

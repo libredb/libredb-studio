@@ -3174,7 +3174,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "monitoring, health, pool statistics, maintenance and its preview answer a package engine through its package, each refused by the session's offer where it offers none",
-        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, and never answer 501",
+        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
         "fleet health reads a package engine's health",
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
       ],
@@ -3267,7 +3267,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/api/db/monitoring-package-engine.test.ts": [
         "the monitoring, health and pool statistics routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
-        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, and never answer 501",
+        "the maintenance routes refuse a package engine by the record's or the session's offer, by name, not-sent, and never answer 501",
         "a maintenance run a package engine's session refuses before the call answers Studio's not-sent error, logged as Studio's own, with no audit row",
       ],
       "tests/unit/lib/api/object-tree.test.ts": [
@@ -3280,6 +3280,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/api/provider-maintenance.test.ts": [
         "the maintenance facade reads any session the target states, a package's and the bridge's alike, under its environment and timeout, counting each call on the entry, its maintenance read when the call is made",
+      ],
+      "tests/unit/db/engine-facets/maintenance.test.ts": [
+        "both refusals are not-sent, for a legacy record and a package's alike, since neither is raised after a call",
       ],
       "tests/api/db/objects/package-engine-tree.test.ts": [
         "a package engine whose session does not offer objects.tree is refused by the session's offer, not 501",
