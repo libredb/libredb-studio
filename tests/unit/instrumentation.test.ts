@@ -479,6 +479,7 @@ describe("instrumentation register()", () => {
       "maintenanceRunCall",
       "panelCall",
       "poolStatsCall",
+      "sourceCall",
       "transactionCall",
       "treeCall",
     ]);
