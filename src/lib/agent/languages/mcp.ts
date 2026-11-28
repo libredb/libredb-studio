@@ -144,6 +144,16 @@ const MODULE_MCP_FACETS = Object.freeze({
   sparkplugread: SPARKPLUGREAD_MCP_FACET,
 } satisfies Record<AgentModuleLanguageId, AgentLanguageMcpFacet | null>);
 
+/**
+ * The MCP statement tools the module languages hold, in the facet registry's order: the list `agentLanguageMcpFacets`
+ * hands `declaredMcpFacets`, and the list boot's caller (src/instrumentation.ts) hands the server catalog's set rules
+ * (`admitProvidersAtBoot`), so a package granted a language stating one of them is refused at boot (C-106 `mcp-tool`)
+ * before any facet is composed. Frozen.
+ */
+export const MODULE_MCP_TOOLS: readonly string[] = Object.freeze(
+  Object.values(MODULE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
+);
+
 declare const declaredMcpTool: unique symbol;
 
 /**
@@ -173,8 +183,10 @@ const SERVED_MCP_FACETS = new WeakMap<
 /**
  * Each statement language's MCP facet, or null where the language has no MCP tool: the module languages' facets, then
  * each language the installed catalog serves as data, its facet composed from its data, or null where its data states
- * no MCP statement tool; composed once per installed catalog. A declared tool a module language's tool holds, or one
- * two declared languages state, fails here by name (`declaredMcpFacets`).
+ * no MCP statement tool; composed once per installed catalog. Boot refuses a package granted a language whose tool a
+ * module language, a bundled declared language or another granted language holds (C-106 `mcp-tool`), so a declared
+ * tool a module language's tool holds, or one two declared languages state, fails here by name only for a catalog
+ * composed past the boot or a bundled declaration (`declaredMcpFacets`).
  *
  * @throws {AgentLanguageCompositionOrderError} While boot has begun and not yet installed the server's engine catalog.
  * @throws {AgentLanguageCatalogBootUnfinishedError} After a boot that ended by an error before it installed the
@@ -190,10 +202,7 @@ export function agentLanguageMcpFacets(): Readonly<
   if (facets === undefined) {
     facets = Object.freeze({
       ...MODULE_MCP_FACETS,
-      ...declaredMcpFacets(
-        declared,
-        Object.values(MODULE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
-      ),
+      ...declaredMcpFacets(declared, MODULE_MCP_TOOLS),
     });
     SERVED_MCP_FACETS.set(declared, facets);
   }

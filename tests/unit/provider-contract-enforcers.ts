@@ -1246,12 +1246,18 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "a tool rule naming a tool its workflow does not offer is refused at its pointer",
         "a tool written as an absence is no naming, its no in any letter case and a sentence's first word among them",
+        "a tool description or an omission advice naming a tool the investigation does not offer is refused at its pointer",
+        "an MCP description over the bound or without its engines part is refused at its pointer",
       ],
       "tests/unit/lib/provider-host/admission.test.ts": [
         "admission refuses a declared tool rule naming a tool its workflow does not offer as PROVIDER_SCHEMA_INVALID at the rule's pointer",
+        "admission refuses an over-long or engine-less MCP description as PROVIDER_SCHEMA_INVALID at its pointer",
       ],
       "tests/unit/lib/agent/tool-offer-census.test.ts": [
         "Studio's offered tools of each workflow equal the SDK's vocabulary",
+      ],
+      "tests/unit/mcp/descriptions.test.ts": [
+        "the SDK's MCP description bound, its fills at their longest and the notice fit the 2,048 characters a statement tool's description keeps",
       ],
     },
   },
@@ -3166,6 +3172,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a set rule refusal carries the package's name, version and rule and no value of its declaration",
         "a package whose granted statement language name a module language, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT",
         "a statement language a package's row does not grant, or SQL, is no catalog conflict",
+        "a package whose MCP tool name a module tool, a bundled language or another package holds is refused as PROVIDER_CATALOG_CONFLICT",
+        "an MCP tool a package's row does not grant, or a language with no MCP tool, is no catalog conflict",
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
       ],
       "tests/unit/lib/db/server-catalog-cross-bundle.test.ts": [
@@ -3174,6 +3182,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/provider-host/boot.test.ts": [
         "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines",
         "packages granted one statement language name are logged with PROVIDER_CATALOG_CONFLICT and none is admitted",
+        "packages granted languages of one MCP tool name, or of a module language's tool, are logged with PROVIDER_CATALOG_CONFLICT and none is admitted",
+      ],
+      "tests/unit/mcp/statement-arms.test.ts": [
+        "the module languages' MCP tools boot hands the set rules are the tools the facet registry composes for them",
       ],
       "tests/unit/db/claim-grants.test.ts": [
         "an admitted package with no grant record reads every claim at its restrictive value",

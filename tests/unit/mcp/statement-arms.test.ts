@@ -14,7 +14,9 @@ import {
   type AgentDeclaredMcpTool,
   type AgentLanguageMcpFacet,
   type AgentLanguageMcpTool,
+  MODULE_MCP_TOOLS,
 } from "@/lib/agent/languages/mcp";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { languageServer, serverLanguageClientPack } from "@/lib/agent/languages/server";
 import { namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -233,6 +235,25 @@ describe("the statement arms", () => {
         expect(thrown).toBeInstanceOf(UnknownProviderError);
         expect((thrown as UnknownProviderError).message).toBe(typeIdRefusal(type)?.sentence as string);
       }
+    }
+  });
+
+  test("the module languages' MCP tools boot hands the set rules are the tools the facet registry composes for them", () => {
+    // With nothing installed, the registry holds the module languages and the bundled languages declared as data.
+    const declared = new Set(
+      [...LEGACY_ENGINES.values()].flatMap((record) => record.statementLanguageData?.name ?? []),
+    );
+    expect(declared.size).toBeGreaterThan(0);
+    const composed = Object.entries(agentLanguageMcpFacets()).flatMap(([language, facet]) =>
+      facet === null || declared.has(language) ? [] : [facet.tool],
+    );
+    expect(composed.length).toBeGreaterThan(0);
+    expect(MODULE_MCP_TOOLS).toEqual(composed);
+    expect(Object.isFrozen(MODULE_MCP_TOOLS)).toBe(true);
+    // No bundled declared language's tool is among them: those the catalog's own set rule reads from the records.
+    for (const record of LEGACY_ENGINES.values()) {
+      const tool = record.statementLanguageData?.agent?.mcp?.tool;
+      if (tool !== undefined) expect(MODULE_MCP_TOOLS).not.toContain(tool);
     }
   });
 

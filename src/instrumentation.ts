@@ -118,9 +118,11 @@ export async function register(): Promise<void> {
   // run the catalog's set rules, register the packages they keep and install the server's engine catalog, once per
   // process, before governance, the banner and the samples, so no request is served before it. A lock that cannot be
   // read stops the boot with exit 1; with no providers directory set, nothing is read and the bundled catalog is the
-  // server's. A refused package leaves Studio running without its engines.
+  // server's. A refused package leaves Studio running without its engines. The set rules read the module languages'
+  // MCP statement tools, which only the agent holds, so this composition root hands them (C-106 `mcp-tool`).
   const { admitProvidersAtBoot } = await import("@/lib/provider-host/boot");
-  if (!(await admitProvidersAtBoot())) return;
+  const { MODULE_MCP_TOOLS } = await import("@/lib/agent/languages/mcp");
+  if (!(await admitProvidersAtBoot(MODULE_MCP_TOOLS))) return;
 
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so

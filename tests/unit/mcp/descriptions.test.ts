@@ -5,9 +5,15 @@
  * from the one engine list rather than written out.
  */
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  AGENT_MCP_DESCRIPTION_BOUND,
+  compileManifestValidator,
+  type EngineDeclaration,
+} from "@libredb/provider-sdk/manifest";
+import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
 import { namedList } from "@/lib/agent/engine-support";
 import { agentLanguageMcpFacets, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -16,7 +22,9 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
-import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { MCP_STATEMENT_LIMITS } from "@/lib/mcp/tools/read-query-limits";
+import { type McpStatementTool, mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
@@ -121,6 +129,30 @@ describe("the tool descriptions", () => {
 
   test.each(STATEMENT_ARMS)("%s quotes database content, so it ends with the notice", (_tool, arm) => {
     expect(arm.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+  });
+
+  test("the SDK's MCP description bound, its fills at their longest and the notice fit the 2,048 characters a statement tool's description keeps", () => {
+    const { maxLength, fillLengths } = AGENT_MCP_DESCRIPTION_BOUND;
+    // The description up to the notice, the space before it and the notice.
+    expect(maxLength + 1 + MCP_UNTRUSTED_NOTICE.length).toBeLessThanOrEqual(2_048);
+    // Each fill at its longest: the limits clause Studio fills, and every engine's display name.
+    expect(MCP_STATEMENT_LIMITS.length).toBeLessThanOrEqual(fillLengths.limits);
+    for (const record of LEGACY_ENGINES.values()) {
+      expect(record.displayName.length, record.id).toBeLessThanOrEqual(fillLengths.engines);
+    }
+    // Every bundled declared language's MCP tool passes the SDK's rule, and its arm serves the one engine stating it.
+    const validator = compileManifestValidator(new TextEncoder().encode(MANIFEST_SCHEMA_TEXT));
+    const directory = path.join(import.meta.dir, "..", "..", "..", "src", "lib", "db", "engine-declarations");
+    const stating = readdirSync(directory)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => JSON.parse(readFileSync(path.join(directory, file), "utf8")) as EngineDeclaration)
+      .filter((engine) => engine.statementLanguageData?.agent?.mcp);
+    expect(stating.length).toBeGreaterThan(0);
+    for (const engine of stating) {
+      expect(validator.validateEngine(engine), engine.id).toEqual({ admitted: true, engine });
+      const tool = engine.statementLanguageData?.agent?.mcp?.tool as McpStatementTool;
+      expect(mcpStatementArm(tool).types as readonly string[], engine.id).toEqual([engine.id]);
+    }
   });
 
   test("inspect_schema ends with the notice, and list_connections carries none", () => {

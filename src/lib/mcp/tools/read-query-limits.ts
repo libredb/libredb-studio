@@ -50,6 +50,14 @@ export type ReadOnlyRefusalKind = "rows" | "bytes" | "cut-value" | "serialised" 
  */
 export const MCP_TIMEOUT_BOUNDS_MS = { min: 500, max: 30_000 } as const;
 
+/**
+ * The result limits every MCP statement tool shares, the clause its description is filled with as `limits`. The SDK
+ * counts a declared description's `limits` fill at its bound (`AGENT_MCP_DESCRIPTION_BOUND`), and Studio's census,
+ * tests/unit/mcp/descriptions.test.ts, holds this clause within it.
+ */
+export const MCP_STATEMENT_LIMITS =
+  "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
+
 /** The answer a statement tool gives a failure of each kind before the deadline. */
 type McpFailureClass = Exclude<ReadOnlyRefusalKind, "time"> | "timeout" | "allowance" | "not-sent" | "engine";
 

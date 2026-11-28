@@ -24,7 +24,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { admitted, type LoadRefusalReason, loadPackage } from "@libredb/provider-loader";
 import { PROVIDER_CONTRACT, type ProviderImpl } from "@libredb/provider-sdk/calls";
-import { type ManifestValidator, ManifestSchemaDigestError } from "@libredb/provider-sdk/manifest";
+import {
+  AGENT_MCP_DESCRIPTION_BOUND,
+  type ManifestValidator,
+  ManifestSchemaDigestError,
+} from "@libredb/provider-sdk/manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import {
@@ -755,6 +759,51 @@ describe("before the import", () => {
     // Vacuity: the same package whose rule names only the tools its workflow offers is admitted.
     const offered = declaredAs(`${marker}: read with run_read_query, then answer with compose_report.`);
     const admittedWritten = write({ name: offered.own.name, id: offered.own.id, manifest: offered.manifest });
+    expect(await outcome(verified(admittedWritten))).toBe("admitted");
+  });
+
+  test("admission refuses an over-long or engine-less MCP description as PROVIDER_SCHEMA_INVALID at its pointer", async () => {
+    // The language's name is generated, of the form, and no language Studio holds.
+    const describedAs = (description: unknown): { own: ReturnType<typeof names>; manifest: Manifest } => {
+      const own = names();
+      const manifest = manifestFor(own.id);
+      const language = `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      const data = acmereadData(language);
+      const agent = data.agent as NonNullable<typeof data.agent>;
+      const mcp = agent.mcp as NonNullable<typeof agent.mcp>;
+      Object.assign(manifest.engines[0] as Record<string, unknown>, {
+        agent: { statementLanguage: language, overlay: { dialect: null, grounding: null } },
+        statementLanguageData: { ...data, agent: { ...agent, mcp: { ...mcp, text: { ...mcp.text, description } } } },
+      });
+      return { own, manifest };
+    };
+    const pointer = "/engines/0/statementLanguageData/agent/mcp/text/description";
+    const marker = `m${randomUUID().replaceAll("-", "")}`;
+    const { maxLength } = AGENT_MCP_DESCRIPTION_BOUND;
+
+    for (const [description, rule] of [
+      [[`${marker} ${"a".repeat(maxLength)}`, { fill: "engines" }], "agent-mcp-description-over-bound"],
+      [`${marker}: runs on every engine.`, "agent-mcp-description-engines-unfilled"],
+    ] as const) {
+      const { own, manifest } = describedAs(description);
+      const written = write({ name: own.name, id: own.id, manifest });
+      const refusal = refusalOf(await admit(verified(written)));
+      expect(refusal).toEqual({
+        code: "PROVIDER_SCHEMA_INVALID",
+        rule,
+        name: own.name,
+        version: "1.0.0",
+        pointer,
+        more: 0,
+        sentence: `PROVIDER_SCHEMA_INVALID: ${own.name} 1.0.0: its manifest is not one the provider contract admits: ${rule} at ${pointer}`,
+      });
+      expect(JSON.stringify(refusal).includes(marker)).toBe(false);
+      expect(fs.existsSync(written.sentinel)).toBe(false);
+    }
+
+    // Vacuity: the same package whose description names its engines within the bound is admitted.
+    const bounded = describedAs([`${marker}: runs on `, { fill: "engines" }, ". ", { fill: "limits" }, "."]);
+    const admittedWritten = write({ name: bounded.own.name, id: bounded.own.id, manifest: bounded.manifest });
     expect(await outcome(verified(admittedWritten))).toBe("admitted");
   });
 

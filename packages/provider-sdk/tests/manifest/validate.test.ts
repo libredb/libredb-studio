@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  AGENT_MCP_DESCRIPTION_BOUND,
   AGENT_MCP_TEXT_FILLS,
   AGENT_TEXT_FILLS,
   AGENT_TOOL_NAMES,
@@ -4576,6 +4577,8 @@ describe("rules the schema cannot state", () => {
       mcpManifest((m) => (m.tool = `run_${"a".repeat(55)}_read`)),
       mcpManifest((m) => {
         for (const name of texts) m.text[name] = `The ${name}.`;
+        // The description names the engines it runs on, which the SDK requires of every MCP description.
+        m.text.description = ["The description, on ", { fill: "engines" }, "."];
       }),
       mcpManifest((m) => (m.text.title = Array.from({ length: 64 }, (_, index) => `part ${index} `))),
     ]) {
@@ -4754,6 +4757,84 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(agentManifest((a) => (a.mcp = null)))).toEqual([]);
   });
 
+  test("an MCP description over the bound or without its engines part is refused at its pointer", () => {
+    const DESCRIPTION = `${MCP_PART}/text/description`;
+    const { maxLength, fillLengths } = AGENT_MCP_DESCRIPTION_BOUND;
+    const described = (description: unknown) => mcpManifest((m) => (m.text.description = description));
+    // String parts sized at run time so the description, its two fills counted at their longest, is exactly the bound.
+    const words = (length: number) => "a".repeat(length);
+    const atBound = (extra: number) => [
+      words(maxLength - fillLengths.engines - fillLengths.limits + extra),
+      { fill: "engines" },
+      { fill: "limits" },
+    ];
+
+    expect(refusalsFor(described(atBound(0)))).toEqual([]);
+    expect(refusalsFor(described(atBound(1)))).toEqual([refusal("agent-mcp-description-over-bound", DESCRIPTION)]);
+    // Each fill is counted at its longest value, so a short text of many fills is over the bound.
+    const manyFills = ["Runs on ", { fill: "engines" }, ...Array.from({ length: 16 }, () => ({ fill: "limits" }))];
+    expect(manyFills.filter((part) => typeof part === "string").join("").length).toBeLessThan(maxLength);
+    expect(refusalsFor(described(manyFills))).toEqual([refusal("agent-mcp-description-over-bound", DESCRIPTION)]);
+    // A fill named after an inherited member of a plain object counts at no length, as every unknown fill does, so the
+    // count stays a number and the bound is still read: one code unit over the bound is refused as over it, besides the
+    // unknown fill's own refusal. "constructor" is the inherited member the schema's fill name pattern admits.
+    const overByOne = [words(maxLength - fillLengths.engines + 1), { fill: "constructor" }, { fill: "engines" }];
+    expect(refusalsFor(described(overByOne))).toEqual([
+      refusal("agent-mcp-description-over-bound", DESCRIPTION),
+      refusal("agent-text-fill-unknown", `${DESCRIPTION}/1/fill`),
+    ]);
+    const atBoundInherited = [words(maxLength - fillLengths.engines), { fill: "constructor" }, { fill: "engines" }];
+    expect(refusalsFor(described(atBoundInherited))).toEqual([
+      refusal("agent-text-fill-unknown", `${DESCRIPTION}/1/fill`),
+    ]);
+    // A description that names no engines part: a plain string, or parts filling only the limits.
+    expect(refusalsFor(described("Run one read-only Acme read."))).toEqual([
+      refusal("agent-mcp-description-engines-unfilled", DESCRIPTION),
+    ]);
+    expect(refusalsFor(described(["Run one read. ", { fill: "limits" }, "."]))).toEqual([
+      refusal("agent-mcp-description-engines-unfilled", DESCRIPTION),
+    ]);
+    // Both at once: both refusals at the one pointer, ordered by rule as every refusal list is.
+    expect(refusalsFor(described([words(maxLength + 1)]))).toEqual([
+      refusal("agent-mcp-description-engines-unfilled", DESCRIPTION),
+      refusal("agent-mcp-description-over-bound", DESCRIPTION),
+    ]);
+    // Under validateEngine, the pointer is the engine's own.
+    expect(validator.validateEngine(described(atBound(1)).engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-mcp-description-over-bound", "/statementLanguageData/agent/mcp/text/description")],
+    });
+    expect(validator.validateEngine(described("Run one read.").engines[0])).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("agent-mcp-description-engines-unfilled", "/statementLanguageData/agent/mcp/text/description"),
+      ],
+    });
+    // No MCP tool, no description rule.
+    expect(refusalsFor(agentManifest((a) => (a.mcp = null)))).toEqual([]);
+
+    // The sentences name the pointer and the bound, never a value of the manifest.
+    const marker = `m${randomUUID().replaceAll("-", "")}`;
+    const [unfilled, over] = refusalsFor(described([`${marker} ${words(maxLength)}`])) as ManifestRefusal[];
+    expect(refusalSentence(over as ManifestRefusal)).toBe(
+      `The MCP description at ${DESCRIPTION} is longer than the SDK's bound, AGENT_MCP_DESCRIPTION_BOUND, with each fill counted at its longest value.`,
+    );
+    expect(refusalSentence(unfilled as ManifestRefusal)).toBe(
+      `The MCP description at ${DESCRIPTION} names no engines part, the served engines' names Studio fills, so a client cannot tell which engines the tool runs on.`,
+    );
+    for (const refused of [over, unfilled]) {
+      expect(`${JSON.stringify(refused)} ${refusalSentence(refused as ManifestRefusal)}`).not.toContain(marker);
+    }
+
+    // The bound: the engines fill at the schema's display name bound, since a declared language serves the one engine
+    // its row grants it; frozen whole.
+    const definitions = JSON.parse(SCHEMA_BYTES.toString("utf8")).$defs;
+    expect(fillLengths.engines).toBe(definitions.engineDeclaration.properties.displayName.maxLength);
+    expect(Object.keys(fillLengths)).toEqual([...AGENT_MCP_TEXT_FILLS.description]);
+    expect(Object.isFrozen(AGENT_MCP_DESCRIPTION_BOUND)).toBe(true);
+    expect(Object.isFrozen(fillLengths)).toBe(true);
+  });
+
   test("a tool rule naming a tool its workflow does not offer is refused at its pointer", () => {
     const RULE = `${TEXT}/investigation/toolRule`;
     const ruled = (rule: unknown) => textManifest((t) => (t.investigation.toolRule = rule));
@@ -4815,7 +4896,7 @@ describe("rules the schema cannot state", () => {
     const marker = `m${randomUUID().replaceAll("-", "")}`;
     const [refused] = refusalsFor(ruled(`${marker} with inspect_usage.`));
     expect(refusalSentence(refused as ManifestRefusal)).toBe(
-      `The tool rule at ${RULE} names a tool of Studio's agent that its workflow does not offer.`,
+      `The text at ${RULE} names a tool of Studio's agent that the workflow it is read in does not offer.`,
     );
     for (const value of [marker, "inspect_usage"]) {
       expect(JSON.stringify(refused)).not.toContain(value);
@@ -4845,6 +4926,58 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(ruled("No inspect_schema. Use inspect_plan."))).toEqual([
       refusal("agent-tool-not-offered", RULE),
     ]);
+  });
+
+  test("a tool description or an omission advice naming a tool the investigation does not offer is refused at its pointer", () => {
+    const RULE = `${TEXT}/investigation/toolRule`;
+    const DESCRIPTION = `${TEXT}/investigation/toolDescription`;
+    const ADVICE = `${TEXT}/grounding/omissionAdvice`;
+    const texts = (change: (text: Json) => void) => textManifest(change);
+
+    expect(
+      refusalsFor(texts((t) => (t.investigation.toolDescription = "Run one read, then inspect_plan it."))),
+    ).toEqual([refusal("agent-tool-not-offered", DESCRIPTION)]);
+    expect(refusalsFor(texts((t) => (t.grounding.omissionAdvice = "Call inspect_schema for the rest.")))).toEqual([
+      refusal("agent-tool-not-offered", ADVICE),
+    ]);
+    // A text written as parts is read as its parts joined, and refused at the text's pointer.
+    expect(
+      refusalsFor(texts((t) => (t.grounding.omissionAdvice = ["Read the rest with ", "profile_table", "."]))),
+    ).toEqual([refusal("agent-tool-not-offered", ADVICE)]);
+    // Each text at its own pointer, ordered by pointer as every refusal list is.
+    expect(
+      refusalsFor(
+        texts((t) => {
+          t.investigation.toolDescription = "Use present_answer.";
+          t.investigation.toolRule = "Use compare_plans.";
+          t.grounding.omissionAdvice = "Use inspect_usage.";
+        }),
+      ),
+    ).toEqual([
+      refusal("agent-tool-not-offered", ADVICE),
+      refusal("agent-tool-not-offered", DESCRIPTION),
+      refusal("agent-tool-not-offered", RULE),
+    ]);
+    expect(
+      validator.validateEngine(texts((t) => (t.grounding.omissionAdvice = "Use inspect_plan.")).engines[0]),
+    ).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-tool-not-offered", "/statementLanguageData/agent/text/grounding/omissionAdvice")],
+    });
+    const [refused] = refusalsFor(texts((t) => (t.investigation.toolDescription = "Use inspect_usage.")));
+    expect(refusalSentence(refused as ManifestRefusal)).toBe(
+      `The text at ${DESCRIPTION} names a tool of Studio's agent that the workflow it is read in does not offer.`,
+    );
+
+    // Vacuity: the investigation's own tools, and a tool written as an absence, are admitted in either text.
+    for (const admitted of [
+      "Read with run_read_query, then file the answer with compose_report.",
+      "There is no inspect_schema here; read with run_read_query.",
+      "No inspect_schema: read with run_read_query.",
+    ]) {
+      expect(refusalsFor(texts((t) => (t.investigation.toolDescription = admitted)))).toEqual([]);
+      expect(refusalsFor(texts((t) => (t.grounding.omissionAdvice = admitted)))).toEqual([]);
+    }
   });
 
   test("an agent text holds no control character and no character that makes text read other than it is written", () => {

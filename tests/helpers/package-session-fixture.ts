@@ -15,6 +15,7 @@ import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register
 import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
+import { MODULE_MCP_TOOLS } from "@/lib/agent/languages/mcp";
 import { bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { type EngineRecord, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
@@ -163,7 +164,7 @@ export async function admitSessionPackages(
   );
   // One register, read by the catalog's set rules at admission and by the composition.
   const register = granted.length === 0 ? STUDIO_GRANT_REGISTER : parseGrantRegister(granted, LEGACY_ENGINE_IDS);
-  const answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register);
+  const answer = await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS, register, MODULE_MCP_TOOLS);
   if (!answer.read) throw new Error(`the fixture lock is refused: ${answer.refusal.sentence}`);
   if (answer.refused.length > 0) {
     throw new Error(`fixture packages refused: ${answer.refused.map((pkg) => `${pkg.name} ${pkg.code}`).join(", ")}`);

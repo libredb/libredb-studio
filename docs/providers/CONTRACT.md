@@ -476,7 +476,8 @@ A kind whose names the engine masks for machine readers, and a kind a maintenanc
 
 ### M-90 (normative): Declared agent and MCP text keeps to what Studio offers
 
-A workflow's tool rule in an engine's agent text names only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at the rule's pointer.
+A workflow's tool rule, tool description and omission advice in an engine's agent text name only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at that text's pointer.
+A declared MCP description is at most the SDK's bound and names the engines it serves through its `engines` part, or the manifest is refused at its pointer.
 
 ## Values
 
@@ -1211,7 +1212,7 @@ Only the packages the catalog's set rules keep (C-106) are registered, each refu
 
 A package never shadows a bundled engine: the server's engine catalog, composed once at boot, answers a bundled engine first, then an admitted package's engine, then an engine only refused packages name, and a process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
 A package's engine gets its catalog entry, its connection tables, its field rules and its grants, each claim at its restrictive value where no register row grants it (M-53, M-54), and no SQL writing, connection form, connection string, grammar, migration DDL or generator row, so a request that needs one is refused by name, and a field rule naming a check refuses a field holding a value with core's sentence naming the field.
-The set rules over every admitted package, engine id, fence alias, query dialect, tab type, editor language and granted statement language name, refuse every claimant as `PROVIDER_CATALOG_CONFLICT` whatever the order, Studio's bundled values the reference, its module languages among them, and an engine id equal to a bundled fence alias included, naming the package and the rule and no value of its declaration.
+The set rules over every admitted package, engine id, fence alias, query dialect, tab type, editor language, granted statement language name and MCP statement tool name, refuse every claimant as `PROVIDER_CATALOG_CONFLICT` whatever the order, Studio's bundled values the reference, its module languages and their MCP statement tools among them, and an engine id equal to a bundled fence alias included, naming the package and the rule and no value of its declaration.
 
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 

@@ -16,8 +16,19 @@
  * - `statement-language`: a statement language an admitted engine is granted as its own data's name (its register row
  *   reviewing that data) that a legacy engine of Studio's bundled catalog is granted or states as data, the module
  *   languages agent mode holds among them, or that another admitted engine is granted; a name no row grants is not
- *   read, since no registry composes it.
- * A conflict carries the package's name, version and rule, never an alias, dialect, language or id.
+ *   read, since no registry composes it;
+ * - `mcp-tool`: the MCP statement tool of a statement language an admitted engine is granted as its own data's name
+ *   that a bundled declared language states or another admitted engine's granted language states; the module
+ *   languages' tools, which only the agent holds, are read by `moduleMcpToolConflicts` from the list boot's caller
+ *   hands it.
+ * A conflict carries the package's name, version and rule, never an alias, dialect, language, tool or id.
+ *
+ * `moduleMcpToolConflicts(admitted, register, moduleMcpTools)` reads the `mcp-tool` rule against the module languages'
+ * MCP statement tools, the agent's facets (`MODULE_MCP_TOOLS` in src/lib/agent/languages/mcp.ts), which src/lib/db does
+ * not import, so boot's caller hands them (src/instrumentation.ts, through `admitProvidersAtBoot`).
+ * `composeServerCatalog`'s re-check reads `catalogConflicts` only: a catalog composed past the boot with such a package
+ * fails MCP's composition by name (`declaredMcpFacets` in src/lib/agent/languages/declared-mcp.ts), the host defect it
+ * always was.
  *
  * `composeServerCatalog(admitted, refused, register)` starts from the legacy adapter's records
  * (src/lib/provider-host/legacy-adapter/records.ts), every one by identity, and adds one record per admitted engine
@@ -197,6 +208,61 @@ function bundledLanguageNames(): Set<string> {
 }
 
 /**
+ * The MCP statement tools Studio's bundled catalog holds as data: each legacy engine's statement language data's tool,
+ * read whatever its grant, as `bundledLanguageNames` reads the data's name. The module languages' tools are not here:
+ * only the agent holds them (`moduleMcpToolConflicts`).
+ */
+function bundledMcpTools(): Set<string> {
+  const tools = new Set<string>();
+  for (const record of LEGACY_ENGINES.values()) {
+    const tool = record.statementLanguageData?.agent?.mcp?.tool;
+    if (tool !== undefined) tools.add(tool);
+  }
+  return tools;
+}
+
+/** An admitted engine granted its own data's statement language: the language's name and its MCP tool, or null. */
+interface GrantedLanguage {
+  readonly claim: Claim;
+  readonly name: string;
+  readonly tool: string | null;
+}
+
+/**
+ * Each engine of `claims` granted, by its row of `register`, the statement language its own data names. Only an engine
+ * stating data is read: a package's own name is granted only as its data's name, the selection the agent's registries
+ * compose by (`servedLanguageData` in ./operations/served-language-data).
+ */
+function grantedLanguages(claims: readonly Claim[], register: GrantRegister): GrantedLanguage[] {
+  const granted: GrantedLanguage[] = [];
+  for (const claim of claims) {
+    const data = claim.engine.statementLanguageData;
+    if (data !== null && packageEngineGrants(claim, register).statementLanguage === data.name) {
+      granted.push({ claim, name: data.name, tool: data.agent?.mcp?.tool ?? null });
+    }
+  }
+  return granted;
+}
+
+/**
+ * `conflicts` sorted by name and then rule, frozen: the one order every set rule answers in, which boot reads too
+ * when it merges the rules' answers.
+ */
+export function sortedConflicts(conflicts: Iterable<CatalogConflict>): readonly CatalogConflict[] {
+  return Object.freeze(
+    [...conflicts].sort(
+      (a, b) =>
+        byText(a.name, b.name) || CATALOG_CONFLICT_RULES.indexOf(a.rule) - CATALOG_CONFLICT_RULES.indexOf(b.rule),
+    ),
+  );
+}
+
+/** A refusal of `pkg` by `rule` into `found`, keyed so each package and rule is held once. */
+function refuseInto(found: Map<string, CatalogConflict>, pkg: AdmittedForCatalog, rule: CatalogConflictRule): void {
+  found.set(`${pkg.name}\u0000${rule}`, Object.freeze({ name: pkg.name, version: pkg.version, rule }));
+}
+
+/**
  * Every admitted package a set rule refuses, by each rule it breaks, sorted by name and then rule, each once. Pure: it
  * reads `admitted`, `register`, the grant register each admitted engine's statement language grant is read from, and
  * Studio's bundled catalog only.
@@ -209,9 +275,7 @@ export function catalogConflicts(
   const ids = statedBy(claims, (engine) => [engine.id]);
   const aliases = statedBy(claims, (engine) => engine.editor.fenceAliases);
   const found = new Map<string, CatalogConflict>();
-  const refuse = (pkg: AdmittedForCatalog, rule: CatalogConflictRule) => {
-    found.set(`${pkg.name}\u0000${rule}`, Object.freeze({ name: pkg.name, version: pkg.version, rule }));
-  };
+  const refuse = (pkg: AdmittedForCatalog, rule: CatalogConflictRule) => refuseInto(found, pkg, rule);
   for (const { pkg, engine } of claims) {
     // A bundled fence alias is refused as an engine id too, so no fence tag names a bundled engine and a package's.
     const bundledId = LEGACY_ENGINES.has(engine.id) || Object.hasOwn(BUNDLED_FENCE_ALIASES, engine.id);
@@ -235,26 +299,34 @@ export function catalogConflicts(
   for (const [rule, read, bundled] of editorRules) {
     for (const pkg of editorFactClaimants(claims, read, bundled)) refuse(pkg, rule);
   }
-  // Only an engine stating data is read: a package's own name is granted only as its data's name, the selection the
-  // agent's registries compose by (`servedLanguageData` in ./operations/served-language-data).
-  const granted: { readonly claim: Claim; readonly name: string }[] = [];
-  for (const claim of claims) {
-    const data = claim.engine.statementLanguageData;
-    if (data !== null && packageEngineGrants(claim, register).statementLanguage === data.name) {
-      granted.push({ claim, name: data.name });
-    }
-  }
+  const granted = grantedLanguages(claims, register);
   const bundledLanguages = bundledLanguageNames();
-  for (const { claim, name } of granted) {
+  const bundledTools = bundledMcpTools();
+  for (const { claim, name, tool } of granted) {
     const grantedElsewhere = granted.some((other) => other.claim !== claim && other.name === name);
     if (bundledLanguages.has(name) || grantedElsewhere) refuse(claim.pkg, "statement-language");
+    if (tool === null) continue;
+    const statedElsewhere = granted.some((other) => other.claim !== claim && other.tool === tool);
+    if (bundledTools.has(tool) || statedElsewhere) refuse(claim.pkg, "mcp-tool");
   }
-  return Object.freeze(
-    [...found.values()].sort(
-      (a, b) =>
-        byText(a.name, b.name) || CATALOG_CONFLICT_RULES.indexOf(a.rule) - CATALOG_CONFLICT_RULES.indexOf(b.rule),
-    ),
-  );
+  return sortedConflicts(found.values());
+}
+
+/**
+ * Every admitted package one of whose engines is granted a statement language whose MCP statement tool is one of
+ * `moduleMcpTools`, the module languages' tools boot's caller hands, as `mcp-tool`, sorted as `catalogConflicts` sorts,
+ * each once. Pure: it reads `admitted`, `register` and `moduleMcpTools` only; see the module's docblock.
+ */
+export function moduleMcpToolConflicts(
+  admitted: readonly AdmittedForCatalog[],
+  register: GrantRegister,
+  moduleMcpTools: readonly string[],
+): readonly CatalogConflict[] {
+  const found = new Map<string, CatalogConflict>();
+  for (const { claim, tool } of grantedLanguages(claimsOf(admitted), register)) {
+    if (tool !== null && moduleMcpTools.includes(tool)) refuseInto(found, claim.pkg, "mcp-tool");
+  }
+  return sortedConflicts(found.values());
 }
 
 /**

@@ -128,6 +128,8 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "request-name-refused-unreachable",
   "agent-text-fill-unknown",
   "agent-tool-not-offered",
+  "agent-mcp-description-over-bound",
+  "agent-mcp-description-engines-unfilled",
   "statistics-without-catalog-read",
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
@@ -1054,6 +1056,19 @@ export const AGENT_MCP_TEXT_FILLS = Object.freeze({
 } as const satisfies { readonly [Name in keyof AgentMcpText]: readonly string[] });
 
 /**
+ * The most UTF-16 code units a declared MCP statement tool's description may take up to the notice Studio closes it
+ * with, each fill counted at the longest value Studio fills it with: `engines` at an engine's display name bound, the
+ * schema's `displayName` maxLength, since a declared language is served on the one engine its row grants it; `limits` at
+ * the longest result limits clause Studio fills. Studio's census, tests/unit/mcp/descriptions.test.ts, holds this bound,
+ * the notice and the space before it inside the 2,048 characters it keeps every statement tool's description to.
+ * Frozen whole.
+ */
+export const AGENT_MCP_DESCRIPTION_BOUND = Object.freeze({
+  maxLength: 1_800,
+  fillLengths: Object.freeze({ engines: 64, limits: 160 }),
+});
+
+/**
  * Every tool Studio's agent mode may offer a run, in any workflow and any statement language: the names a rule text is
  * read against (`agentToolsNamedIn`). It holds tools no declared language is offered, so a rule naming one is refused,
  * never read as plain text. Studio's census, tests/unit/lib/agent/tool-offer-census.test.ts, holds it equal to the
@@ -1078,8 +1093,9 @@ type AgentToolVocabularyName = (typeof AGENT_TOOL_NAMES)[number];
 
 /**
  * The tools Studio's agent mode offers each workflow of an engine's declared statement language, by workflow. A
- * declared language's investigation rule, `agent.text.investigation.toolRule`, is the one rule an engine's text states,
- * and names only the investigation's tools (`agentToolRuleRefusals`); the operations rule is Studio's own. Studio's
+ * declared language's investigation rule, `agent.text.investigation.toolRule`, is the one rule an engine's text states;
+ * it, the investigation's tool description and the omission advice name only the investigation's tools
+ * (`agentToolTextRefusals`); the operations rule is Studio's own. Studio's
  * census, tests/unit/lib/agent/tool-offer-census.test.ts, holds each list equal to the tools Studio offers that workflow.
  * Frozen whole, each list included.
  */
@@ -1099,18 +1115,51 @@ export function agentToolsNamedIn(text: string): AgentToolVocabularyName[] {
 }
 
 /**
- * The investigation's tool rule of an agent text, at the text's pointer `at`, where it names a tool the investigation
- * is not offered (`AGENT_WORKFLOW_TOOLS`): one refusal at the rule's pointer, however many such tools it names. A rule
- * written as parts is read as its string parts joined with nothing between them; a fill in it is refused by
- * `agent-text-fill-unknown` already.
+ * The texts of an agent text read in the investigation that name a tool the investigation is not offered
+ * (`AGENT_WORKFLOW_TOOLS`), at pointers under `at`, the text's pointer: its tool description, the description of the
+ * tool that runs a statement, its tool rule, and its omission advice, which only a caller holding that tool reads. One
+ * refusal at each such text's pointer, however many such tools it names. A text written as parts is
+ * read as its string parts joined with nothing between them; a fill in it is refused by `agent-text-fill-unknown`
+ * already.
  */
-function agentToolRuleRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
-  const rule = text.investigation.toolRule;
-  const written = typeof rule === "string" ? rule : rule.map((part) => (typeof part === "string" ? part : "")).join("");
+function agentToolTextRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
   const offered: readonly string[] = AGENT_WORKFLOW_TOOLS.investigation;
-  return agentToolsNamedIn(written).some((tool) => !offered.includes(tool))
-    ? [schemaRefusal("agent-tool-not-offered", `${at}/investigation/toolRule`)]
-    : [];
+  const texts: readonly (readonly [AgentText, string])[] = [
+    [text.investigation.toolDescription, `${at}/investigation/toolDescription`],
+    [text.investigation.toolRule, `${at}/investigation/toolRule`],
+    [text.grounding.omissionAdvice, `${at}/grounding/omissionAdvice`],
+  ];
+  return texts.flatMap(([parts, pointer]) => {
+    const written =
+      typeof parts === "string" ? parts : parts.map((part) => (typeof part === "string" ? part : "")).join("");
+    return agentToolsNamedIn(written).some((tool) => !offered.includes(tool))
+      ? [schemaRefusal("agent-tool-not-offered", pointer)]
+      : [];
+  });
+}
+
+/**
+ * The rules of a declared MCP statement tool's description the schema cannot state, at its pointer `at`: counted with
+ * each fill at its longest value (`AGENT_MCP_DESCRIPTION_BOUND`; a fill that is not one of the bound's own keys, which
+ * `agent-text-fill-unknown` refuses, at none), it is at most the bound, and it names the served engines through an
+ * `engines` part, so a client reads which engines the tool runs on. Both may apply.
+ */
+function mcpDescriptionRefusals(description: AgentText, at: string): SchemaRefusal[] {
+  const parts = typeof description === "string" ? [description] : description;
+  // Read as a map of the bound's own keys, so a fill named after an inherited member, "constructor", reads no length.
+  const fillLengths = new Map(Object.entries(AGENT_MCP_DESCRIPTION_BOUND.fillLengths));
+  const length = parts.reduce(
+    (sum, part) => sum + (typeof part === "string" ? part.length : (fillLengths.get(part.fill) ?? 0)),
+    0,
+  );
+  const refusals: SchemaRefusal[] = [];
+  if (length > AGENT_MCP_DESCRIPTION_BOUND.maxLength) {
+    refusals.push(schemaRefusal("agent-mcp-description-over-bound", at));
+  }
+  if (!parts.some((part) => typeof part !== "string" && part.fill === "engines")) {
+    refusals.push(schemaRefusal("agent-mcp-description-engines-unfilled", at));
+  }
+  return refusals;
 }
 
 /**
@@ -1202,8 +1251,9 @@ function requestFormRefusals(form: AgentRequestForm, at: string): SchemaRefusal[
  * speaks SQL states null; a reader kind that names no operation lists none, since no reader could ever answer one it
  * lists; and an agent part is stated only for an engine whose agent mode sends a statement, with a request form read
  * whole (`requestFormRefusals`), a text, and an MCP statement tool's texts where it states one, whose fills each name a
- * value Studio fills into that text (`agentTextRefusals`, `textFillRefusals`), and whose investigation tool rule names
- * only tools the investigation is offered (`agentToolRuleRefusals`).
+ * value Studio fills into that text (`agentTextRefusals`, `textFillRefusals`), whose investigation tool description,
+ * tool rule and omission advice name only tools the investigation is offered (`agentToolTextRefusals`), and whose MCP
+ * description is at most the SDK's bound and names its engines (`mcpDescriptionRefusals`).
  */
 function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const data = engine.statementLanguageData;
@@ -1223,10 +1273,11 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
     if (requested === null) refusals.push(schemaRefusal("statement-language-agent-unspoken", `${pointer}/agent`));
     refusals.push(...requestFormRefusals(data.agent.request, `${pointer}/agent/request`));
     refusals.push(...agentTextRefusals(data.agent.text, `${pointer}/agent/text`));
-    refusals.push(...agentToolRuleRefusals(data.agent.text, `${pointer}/agent/text`));
+    refusals.push(...agentToolTextRefusals(data.agent.text, `${pointer}/agent/text`));
     if (data.agent.mcp !== null) {
       const texts = data.agent.mcp.text as Readonly<Record<keyof AgentMcpText, AgentText>>;
       refusals.push(...textFillRefusals(texts, AGENT_MCP_TEXT_FILLS, `${pointer}/agent/mcp/text`));
+      refusals.push(...mcpDescriptionRefusals(texts.description, `${pointer}/agent/mcp/text/description`));
     }
   }
   return refusals;
@@ -1604,7 +1655,11 @@ export function refusalSentence(refusal: ManifestRefusal): string {
     case "agent-text-fill-unknown":
       return `The fill at ${at} names a value Studio does not fill into that text.`;
     case "agent-tool-not-offered":
-      return `The tool rule at ${at} names a tool of Studio's agent that its workflow does not offer.`;
+      return `The text at ${at} names a tool of Studio's agent that the workflow it is read in does not offer.`;
+    case "agent-mcp-description-over-bound":
+      return `The MCP description at ${at} is longer than the SDK's bound, AGENT_MCP_DESCRIPTION_BOUND, with each fill counted at its longest value.`;
+    case "agent-mcp-description-engines-unfilled":
+      return `The MCP description at ${at} names no engines part, the served engines' names Studio fills, so a client cannot tell which engines the tool runs on.`;
     case "statistics-without-catalog-read":
       return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
     case "catalog-capture-without-catalog-read":
