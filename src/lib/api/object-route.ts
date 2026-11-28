@@ -30,7 +30,6 @@ import {
   containerDepth,
   enumerableKinds,
   findKind,
-  isSourcePartUnavailable,
   kindAcceptsSourceEdits,
   kindHasSource,
   type ObjectKindView,
@@ -863,17 +862,9 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
 /**
  * The `edit` affordance, kept or DELETED, decided by the route and never by the provider (#789).
  *
- * THREE reasons to delete it, and they are checked in this order because each is a different fact:
+ * TWO reasons to delete it, and they are checked in this order because each is a different fact:
  *
- * 1. THE PART IS A REFUSAL. Representable and not hypothetical: MEASURED against tsc 6.0.3 and
- *    recorded on `ObjectSourcePart`, the excess-property check on a union admits any property
- *    declared on ANY member of it, so a part carrying `unavailable` BESIDE `edit` compiles with no
- *    cast. A provider spreading a conditional affordance onto a refusal would ship an editable
- *    refusal: a client narrows it to the refusal arm, draws "this could not be read", and offers
- *    an Edit button over the text it just said it does not have. On the source route the host
- *    core's `checkSourceAnswer` already refuses such a part, since `edit` is no member of a
- *    refusal; the rule keeps the affordance decision whole for any document handed here.
- * 2. THE PART IS TRUNCATED, whether the PROVIDER marked it or the host core's cut
+ * 1. THE PART IS TRUNCATED, whether the PROVIDER marked it or the host core's cut
  *    (`boundSourceAnswer`) did. A truncated part is a PREFIX, and submitting a prefix back replaces
  *    the object with the part of itself the reader was shown, which is ruling 1b's second clause: a
  *    SUCCESS destroying something the user was not shown. It is the server-side half of the pair
@@ -881,12 +872,19 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
  *    THIS tells the machine not to offer an edit over it. X17 is closed, so the id no longer
  *    resolves and the pairing is named here instead. It WITHDRAWS THE OFFER; it does not make the
  *    submission impossible, and the write-path paragraph below says whose job that is.
- * 3. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
+ * 2. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
  *    the defect where a client's declaration can be a different server's, closed on the read path:
  *    the affordance travels with the document from the server that answered it.
  *
- * WHICH OF THE THREE RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
- * implied by the fact that all three are tested. This paragraph counted ONE producer when PostgreSQL
+ * A REFUSAL PART CARRYING AN OFFER needs no rule here. The excess-property check on a union admits
+ * any property declared on ANY member of it, so a part carrying `unavailable` BESIDE `edit`
+ * compiles with no cast (MEASURED against tsc 6.0.3 and recorded on `ObjectSourcePart`), but the
+ * host core's `checkSourceAnswer` refuses it, since `edit` is no member of a refusal, and the only
+ * caller of this function, `POST` in `src/app/api/db/objects/source/route.ts`, hands it only the
+ * document the core checked and cut.
+ *
+ * WHICH OF THE TWO RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
+ * implied by the fact that both are tested. This paragraph counted ONE producer when PostgreSQL
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
@@ -897,17 +895,17 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
  * key in `providers/keyvalue/etcd/objects.ts`. Every producer sits on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
- * So rules 1 and 3 still have NO live producer, and for the same reason as before: the only thing
- * that can build their population is a DEFECTIVE or a future provider, and the unit tests construct
- * it deliberately, the enforce-rather-than-trust precedent the host core's `checkSourceAnswer` and
+ * So rule 2 still has NO live producer, and for the same reason as before: the only thing that can
+ * build its population is a DEFECTIVE or a future provider, and the unit tests construct it
+ * deliberately, the enforce-rather-than-trust precedent the host core's `checkSourceAnswer` and
  * `boundSourceAnswer` hold for the document's shape and bound, and not an oversight.
  *
- * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
+ * Rule 1's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
  * stated at `RedisProvider.readObjectSource` in `redis.ts`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
- * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
+ * it there would be answering a property of the REQUEST as a property of the object. Rule 1 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
  * re-read are what make it safe on the other two.
  *
@@ -946,23 +944,23 @@ export function offeredSourceEdits(document: ObjectSourceDocument, model: Object
  * `handleObjectRequest` takes its provider from `getOrCreateProvider`, which resolves through a
  * closed `switch (connection.type)` in `src/lib/db/factory.ts` with no registration point for
  * anyone else, and the embedded shell has no API routes, so a host implementing the workspace
- * source seam answers its document straight to the pane. The EMBEDDED half is the client-side predicate in
- * `src/components/object-source/source-editable.ts`, which asks the same three questions of the
- * document it was handed. Two halves, deliberately, because neither one covers the other's
- * population.
+ * source seam answers its document straight to the pane. The EMBEDDED half is the client-side
+ * predicate in `src/components/object-source/source-editable.ts`, which reads the affordance of
+ * the document it was handed from that document alone, a refusal part drawn before it and a hybrid
+ * refused by `isSourceDocumentShape`, since no host core checked that document. Two halves,
+ * deliberately, because neither one covers the other's population.
  *
  * The delete is a REST SPREAD and not a `delete` statement, so the answered part is a new object
  * and the provider's own is not mutated. Each member is read by its VALUE, as the tree's readers
  * read theirs: the host core rebuilt each part to the form its check read it (`boundSourceAnswer`
  * drops every member holding no value), so a part reaching here holds `edit` and `truncated` only
- * with a value, and `isSourcePartUnavailable` reads the form by the value of `unavailable`
- * (clauses C-62 and C-115).
+ * with a value (clauses C-62 and C-115).
  */
 function stripEdit(part: ObjectSourcePart, kindEditable: boolean): ObjectSourcePart {
   if (
     "edit" in part &&
     part.edit !== undefined &&
-    (isSourcePartUnavailable(part) || ("truncated" in part && part.truncated !== undefined) || !kindEditable)
+    (("truncated" in part && part.truncated !== undefined) || !kindEditable)
   ) {
     const { edit: _dropped, ...rest } = part as ObjectSourcePart & { edit?: unknown };
     return rest as ObjectSourcePart;

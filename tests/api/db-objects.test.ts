@@ -2633,6 +2633,24 @@ describe("POST /api/db/objects/source", () => {
     const body = await parseResponseJSON<{ error: string }>(response);
     expect(body.error).not.toContain("uuuu");
   });
+
+  test("a refusal part carrying an edit offer is refused by the host core, 500, so the route never decides an offer on a refusal", async () => {
+    // `edit` is no member of a refusal part, so the core's `checkSourceAnswer` refuses the offer at its pointer before
+    // `offeredSourceEdits` reads the document; the route keeps no rule of its own for that shape.
+    const refusal = { id: "body", label: "Body", unavailable: "The body could not be read.", edit: { offered: true } };
+    activeProvider = sourceProviderReading(documentWithOnePart(refusal as unknown as ObjectSourcePart));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(500);
+    expect(await parseResponseJSON<{ error: string }>(response)).toMatchObject({ code: "INTERNAL_ERROR" });
+  });
+
   test("carries a statement part through with its marker, and the client reads it back as a statement", async () => {
     // The statement member is a superset of the refusal arm, so the route needs no rule of its own
     // for it: the core's bound skips it, and `statement: true` survives the core's check, the rest

@@ -150,18 +150,6 @@ describe("the affordance the route strips", () => {
     expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
   });
 
-  test("a REFUSAL part carrying an offer loses it", () => {
-    // Representable, because the excess-property check on a union admits any property declared on
-    // any member of it, so a provider spreading a conditional affordance onto a refusal would ship
-    // an editable refusal. The test CONSTRUCTS the hybrid deliberately, because that is the only
-    // way to reach it.
-    const offered = offeredSourceEdits(
-      document({ id: "definition", label: "Definition", unavailable: "no", edit: { offered: true } }),
-      EDITABLE,
-    );
-    expect(Object.hasOwn(offered.parts[0], "edit")).toBe(false);
-  });
-
   test("a part the HOST CORE cut loses it, since the route decides the offer after the core's bound", () => {
     // The host core's `boundSourceAnswer` MARKS truncation itself when a provider over-answers, and
     // the route decides the affordance on the document the core answered, so a part the core cut
@@ -327,6 +315,7 @@ const SRC_TRINO = "src/lib/db/providers/sql/trino/index.ts";
 const SRC_REDIS = "src/lib/db/providers/keyvalue/redis.ts";
 const SRC_EDIT_PLAN = "src/app/api/db/objects/edit-plan/route.ts";
 const SRC_EDIT_APPLY = "src/app/api/db/objects/edit-apply/route.ts";
+const SRC_SOURCE = "src/app/api/db/objects/source/route.ts";
 
 const CITED_SITES: CitedSite[] = [
   // The three producers of `edit`, one per day-one engine; Redis states its offer-on-a-truncated-part position there too.
@@ -342,6 +331,8 @@ const CITED_SITES: CitedSite[] = [
   { as: "providers/sql/postgres.ts", file: SRC_POSTGRES, anchor: "PostgresProvider.buildObjectEdit" },
   { as: "providers/keyvalue/redis.ts", file: SRC_REDIS, anchor: "RedisProvider.buildObjectEdit" },
   { as: "providers/sql/trino/index.ts", file: SRC_TRINO, anchor: "TrinoProvider.buildObjectEdit" },
+  // The one caller of `offeredSourceEdits`, which hands it only the document the host core checked and cut.
+  { as: "src/app/api/db/objects/source/route.ts", file: SRC_SOURCE, anchor: "POST" },
 ];
 
 /** The facts each named site rests on, read from the file that holds it. */
@@ -377,6 +368,14 @@ describe("the source sites object-route.ts cites in its docblocks", () => {
     expect(read(SRC_EDIT_PLAN)).toContain("requireEditableKind(provider.getCapabilities(), kind,");
     expect(read(SRC_EDIT_PLAN)).toContain("if (text.length > EDIT_CHARACTER_LIMIT) {");
     expect(read(SRC_EDIT_APPLY)).toContain("requireEditableKind(provider.getCapabilities(), plan.kind,");
+    expect(read(SRC_SOURCE)).toContain("const document = await objectSource(target, req.signal, context.route)");
+    expect(read(SRC_SOURCE)).toContain("offeredSourceEdits(scrubSourceDocument(context.scrub, document),");
+    // The glob answers repo-relative paths, with backslashes on Windows, joined here with slashes on every platform.
+    const callers = [...new Bun.Glob("src/**/*.{ts,tsx}").scanSync(repoRoot)]
+      .filter((file) => read(file).includes("offeredSourceEdits("))
+      .map((file) => file.split("\\").join("/"))
+      .sort();
+    expect(callers).toEqual([SRC_SOURCE, "src/lib/api/object-route.ts"].sort());
   });
 
   test("the docblock names every site in the table", () => {
