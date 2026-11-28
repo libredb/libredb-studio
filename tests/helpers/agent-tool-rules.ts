@@ -6,8 +6,8 @@ import type { AgentToolName } from "@/lib/agent/tools";
  * ("there is no inspect_schema", or "No inspect_schema" at a sentence start), which is a rule saying what the run does
  * not hold.
  *
- * The SDK's reading (`agentToolsNamedIn`), the one its validator refuses a declared tool rule by, so a rule is read the
- * same way here and at admission; tests/unit/lib/agent/tool-offer-census.test.ts holds the SDK's tool names equal to
+ * The SDK's reading (`agentToolsNamedIn`), the one its validator refuses a declared tool rule, tool description or
+ * omission advice by, so a rule is read the same way here and at admission; tests/unit/lib/agent/tool-offer-census.test.ts holds the SDK's tool names equal to
  * `AGENT_TOOL_DEFINITIONS`' names, which makes each answer an `AgentToolName`.
  *
  * Shared by the per-language census in `tests/unit/lib/agent/tool-offer-census.test.ts` and the per-engine contract in

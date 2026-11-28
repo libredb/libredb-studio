@@ -24,6 +24,7 @@ import { MCP_UNTRUSTED_NOTICE } from "../output";
 import { DATABASE_ARGUMENT_DESCRIPTION } from "./database-choice";
 import {
   fenceRefusalText,
+  MCP_STATEMENT_LIMITS,
   MCP_TIMEOUT_BOUNDS_MS,
   moreRowsThanPageableHint,
   ROW_OVER_CAP_TEXT,
@@ -139,9 +140,6 @@ function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why
     .max(MCP_TIMEOUT_BOUNDS_MS.max)
     .default(10000);
 }
-const SHARED_LIMITS =
-  "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
-
 const engineNames = (engines: readonly EngineRecord[]) => namedList(engines.map((engine) => engine.displayName));
 
 /**
@@ -229,7 +227,7 @@ function statementArm(
     holdsNoTables: facet.holdsNoTables,
     answersWarnings: "answersWarnings" in facet && facet.answersWarnings === true,
     withholdsDatabase: "withholdsDatabase" in facet && facet.withholdsDatabase === true,
-    description: `${facet.describe({ engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
+    description: `${facet.describe({ engines, limits: MCP_STATEMENT_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
     ...(facet.fence === "read-only-statement"
       ? READ_ONLY_STATEMENT_READER
       : languageAdmissionReader(language, facet.words)),

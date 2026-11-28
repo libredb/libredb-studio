@@ -476,7 +476,8 @@ A kind whose names the engine masks for machine readers, and a kind a maintenanc
 
 ### M-90 (normative): Declared agent and MCP text keeps to what Studio offers
 
-A workflow's tool rule in an engine's agent text names only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at the rule's pointer.
+A workflow's tool rule, tool description and omission advice in an engine's agent text name only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at that text's pointer.
+A declared MCP description is at most the SDK's bound and names the engines it serves through its `engines` part, or the manifest is refused at its pointer.
 
 ## Values
 

@@ -1246,12 +1246,18 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "packages/provider-sdk/tests/manifest/validate.test.ts": [
         "a tool rule naming a tool its workflow does not offer is refused at its pointer",
         "a tool written as an absence is no naming, its no in any letter case and a sentence's first word among them",
+        "a tool description or an omission advice naming a tool the investigation does not offer is refused at its pointer",
+        "an MCP description over the bound or without its engines part is refused at its pointer",
       ],
       "tests/unit/lib/provider-host/admission.test.ts": [
         "admission refuses a declared tool rule naming a tool its workflow does not offer as PROVIDER_SCHEMA_INVALID at the rule's pointer",
+        "admission refuses an over-long or engine-less MCP description as PROVIDER_SCHEMA_INVALID at its pointer",
       ],
       "tests/unit/lib/agent/tool-offer-census.test.ts": [
         "Studio's offered tools of each workflow equal the SDK's vocabulary",
+      ],
+      "tests/unit/mcp/descriptions.test.ts": [
+        "the SDK's MCP description bound, its fills at their longest and the notice fit the 2,048 characters a statement tool's description keeps",
       ],
     },
   },
