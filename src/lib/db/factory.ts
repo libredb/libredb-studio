@@ -84,6 +84,7 @@ import {
   openedProvider,
   openedSession,
   openEngine,
+  providerForm,
 } from "@/lib/provider-host/open-engine";
 import { teardownContractSession } from "@/lib/provider-host/core/contract-session";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
@@ -539,20 +540,6 @@ export interface CachedSession {
   running: number;
 }
 
-/**
- * The legacy provider `entry` holds.
- *
- * @throws {Error} A host defect, when `entry` holds a provider package's session: a caller that reads a provider of it.
- */
-function heldProvider(entry: CachedSession): HeldProvider {
-  if (entry.opened.form !== "provider") {
-    throw new Error(
-      "The factory's cache holds a provider package's session under this key, and this caller reads a legacy provider of it: a host defect.",
-    );
-  }
-  return entry.opened;
-}
-
 const providerCache = new Map<string, CachedSession>();
 
 // ============================================================================
@@ -694,7 +681,7 @@ async function reusableEntry(
 ): Promise<CachedSession | null> {
   const cached = cache.get(key);
   if (cached === undefined) return null;
-  const held = heldProvider(cached);
+  const held = providerForm(cached.opened);
   if (held.provider.config.queryTimeout !== connection.queryTimeout) {
     try {
       await held.provider.disconnect();
@@ -731,7 +718,7 @@ async function sharedOpen(
   wait?: OpenWait,
 ): Promise<CachedSession> {
   const shared = await openOnce(flights, key, meta, open, wait);
-  if (heldProvider(shared).provider.config.queryTimeout === connection.queryTimeout) return shared;
+  if (providerForm(shared.opened).provider.config.queryTimeout === connection.queryTimeout) return shared;
   return (await reusableEntry(cache, key, connection)) ?? openOnce(flights, key, meta, open, wait);
 }
 
@@ -1057,7 +1044,7 @@ async function teardownProvider(
   noun: CacheNoun = "provider",
 ): Promise<boolean> {
   cache.delete(key);
-  const { provider, scrub } = heldProvider(entry);
+  const { provider, scrub } = providerForm(entry.opened);
   const id = entry.connectionId;
   const shared = entry.owner === undefined;
   const whose = shared ? "a shared provider" : "an owned provider";
@@ -1310,7 +1297,7 @@ export async function getOrCreateProvider(
   execution: EditorExecutionContext = {},
   wait?: OpenWait,
 ): Promise<DatabaseProvider> {
-  return heldProvider(await openWritable(connection, options, execution, wait, "editor")).provider;
+  return providerForm((await openWritable(connection, options, execution, wait, "editor")).opened).provider;
 }
 
 /**
@@ -1340,7 +1327,7 @@ export async function getOrCreateMetadataProvider(
   options: ProviderOptions = {},
   execution: EditorExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return heldProvider(await openWritable(connection, options, execution, undefined, "tree")).provider;
+  return providerForm((await openWritable(connection, options, execution, undefined, "tree")).opened).provider;
 }
 
 /**
@@ -1592,7 +1579,8 @@ async function openEditorProvider(
  * Exported for two callers that must name a cached entry without deriving a second key, as `profiledCacheKey` is for its
  * own. The transaction route records the key a governed `begin` resolved, and a later request that resolves another
  * one, because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
- * provider {@link findCachedProvider} answers for the recorded key (docs/GOVERNANCE.md#per-user-providers). And without
+ * editor entry {@link findCachedEditorEntry} answers for the connection and the recorded key
+ * (docs/GOVERNANCE.md#per-user-providers). And without
  * governance the disconnect route removes only the entries the caller's own record names, its editor entry and its
  * execution-profile entries, by the key scope of `removeProvider` (docs/SECURITY.md, note 0.9). The package does not
  * re-export it.
@@ -1612,16 +1600,22 @@ export async function editorCacheKey(
 }
 
 /**
- * The provider the writable cache holds under `key`, which {@link editorCacheKey} answers, or null when it holds none
- * there: the idle sweep, a disconnect or a teardown removed it, and disconnected it on the way out. A lookup, not a
- * use: it opens nothing and leaves the entry's idle clock alone. A key under which the cache holds a provider package's
- * session is a host defect, raised by name: no legacy caller computes one. For `cachedEditorProvider` in
- * src/lib/api/editor-provider.ts, on which the transaction route rolls back a transaction whose owner's credential
- * changed (docs/GOVERNANCE.md#per-user-providers); the package does not re-export it.
+ * The editor cache's entry of either form whose connection is `connectionId` and whose frame is `frame`, which
+ * {@link editorCacheKey} answers, or null when it holds none: the idle sweep, a disconnect or a teardown removed it,
+ * and closed it on the way out. A lookup, not a use: it opens nothing and leaves the entry's idle clock alone.
+ *
+ * At most one entry matches. A frame frames the connection's type first (`connectionFingerprint` in
+ * ./connection-fingerprint), a type names one record, and an editor entry's key is its frame for a record that offers a
+ * legacy provider and its package's name and its frame for a provider package's, so one connection id and one frame
+ * name one key. For `cachedEditorConsoleTarget` in src/lib/api/editor-provider.ts, on which the transaction route rolls
+ * back a transaction whose owner's credential changed (docs/GOVERNANCE.md#per-user-providers); the package does not
+ * re-export it.
  */
-export function findCachedProvider(key: string): DatabaseProvider | null {
-  const entry = providerCache.get(key);
-  return entry === undefined ? null : heldProvider(entry).provider;
+export function findCachedEditorEntry(connectionId: string, frame: string): CachedSession | null {
+  for (const entry of providerCache.values()) {
+    if (entry.connectionId === connectionId && entry.frame === frame) return entry;
+  }
+  return null;
 }
 
 // ============================================================================
@@ -2154,7 +2148,7 @@ export async function acquireExecutionProfileProvider(
   const owner = providerOwner(connection, requester.owner);
   const cacheKey = await profiledCacheKey(connection, profile, requester);
   const cached = await reusableEntry(profiledProviderCache, cacheKey, connection);
-  if (cached !== null) return heldProvider(cached).provider;
+  if (cached !== null) return providerForm(cached.opened).provider;
 
   const credential = resolveAgentCredential(connection);
   const acquisition = PROFILE_ACQUISITION[profile];
@@ -2305,7 +2299,7 @@ export async function acquireExecutionProfileProvider(
     openProfiledProvider,
     wait,
   );
-  return heldProvider(entry).provider;
+  return providerForm(entry.opened).provider;
 }
 
 /**

@@ -142,7 +142,7 @@ mock.module("@/lib/db", () => ({
 // The maintenance routes open the editor's session, or the metadata session for a kill, through the factory; both are
 // the entry a legacy record's open answers for the provider under test.
 mock.module("@/lib/db/factory", () => ({
-  findCachedProvider: mock(() => null),
+  findCachedEditorEntry: mock(() => null),
   getOrCreateEditorSession: async () => editorEntryOf(provider),
   getOrCreateMetadataSession: async () => editorEntryOf(provider),
 }));

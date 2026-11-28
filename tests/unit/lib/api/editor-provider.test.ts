@@ -34,8 +34,9 @@ mock.module("@/lib/db", () => ({
   },
 }));
 
-/** The writable cache by key, as `findCachedProvider` reads it. */
-const cachedByKey = new Map<string, DatabaseProvider>();
+/** The editor cache's entries by connection id and frame, as `findCachedEditorEntry` reads them, and each lookup. */
+const cachedEntries = new Map<string, CachedSession>();
+const lookups: [string, string][] = [];
 /** Every open of an editor session, as `getOrCreateEditorSession` receives it, and the entry the case sets it to answer. */
 const openedEditor: { connection: EngineConnection; engine: EngineRecord; context: unknown; rest: unknown[] }[] = [];
 let editorEntry: CachedSession;
@@ -57,7 +58,10 @@ mock.module("@/lib/db/factory", () => ({
     openedMetadataSessions.push({ connection, engine, context, rest });
     return metadataEntry;
   },
-  findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
+  findCachedEditorEntry: (connectionId: string, frame: string) => {
+    lookups.push([connectionId, frame]);
+    return cachedEntries.get(`${connectionId}\u0000${frame}`) ?? null;
+  },
   getOrCreateEditorSession: async (
     connection: EngineConnection,
     engine: EngineRecord,
@@ -70,7 +74,8 @@ mock.module("@/lib/db/factory", () => ({
 }));
 
 const {
-  cachedEditorProvider,
+  assertEditorFieldsOffered,
+  cachedEditorConsoleTarget,
   editorMaintenanceOpening,
   editorMonitoringTarget,
   editorProvider,
@@ -205,6 +210,79 @@ describe("editorTarget", () => {
     expect(isStudioFailure(raised)).toBe(true);
     // Studio's own failure returns before the scrub or the route is read, so neither is a working stand-in here.
     expect(packageFailureAnswer(packageEngine, "open", raised, {} as ProviderTextScrub, "/api/db/query")).toBe(raised);
+  });
+});
+
+/** The request fields of the editor's routes a record may not offer, refused by name before any open. */
+describe("assertEditorFieldsOffered", () => {
+  const offering = (offers: Partial<EngineRecord["offers"]>) =>
+    ({
+      id: "acmefields",
+      offers: {
+        legacyProvider: false,
+        explain: false,
+        database: false,
+        catalog: false,
+        unboundedPage: false,
+        ...offers,
+      },
+    }) as unknown as EngineRecord;
+  const NOTHING = offering({});
+  const EVERYTHING = offering({
+    legacyProvider: true,
+    explain: true,
+    database: true,
+    catalog: true,
+    unboundedPage: true,
+  });
+  const request = (fields: { explain?: boolean; database?: number; unlimited?: boolean; catalog?: unknown }) => ({
+    body: fields.catalog === undefined ? {} : { catalog: fields.catalog },
+    explain: fields.explain === true,
+    database: fields.database,
+    unlimited: fields.unlimited === true,
+  });
+  /** What `assertEditorFieldsOffered` raised for `engine` and `fields`, or undefined when it raised nothing. */
+  const refusalOf = (engine: EngineRecord, fields: Parameters<typeof request>[0]): unknown => {
+    try {
+      assertEditorFieldsOffered(engine, request(fields));
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  };
+  const fieldSentence = (field: string) =>
+    `This connection's engine does not offer the request field ${field} in this LibreDB Studio, so Studio opened nothing.`;
+  const CATALOG_SENTENCE =
+    "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing.";
+
+  test("refuses the first field the record does not offer by name, FacetNotOfferedError not-sent, explain before database before catalog before options.unlimited, and reads a catalog only where the record offers none", () => {
+    const all = { explain: true, database: 2, catalog: "shop", unlimited: true };
+    for (const [fields, operation, sentence] of [
+      [all, "explain", fieldSentence("explain")],
+      [{ ...all, explain: false }, "database", fieldSentence("database")],
+      [{ catalog: "shop", unlimited: true }, "catalog", CATALOG_SENTENCE],
+      [{ unlimited: true }, "options.unlimited", fieldSentence("options.unlimited")],
+    ] as const) {
+      const refused = refusalOf(NOTHING, fields);
+      expect(refused).toBeInstanceOf(FacetNotOfferedError);
+      const { message, facet, provider } = refused as FacetNotOfferedError;
+      expect([message, facet, (refused as FacetNotOfferedError).operation, provider]).toEqual([
+        sentence,
+        "console",
+        operation,
+        undefined,
+      ]);
+      expect(errorOutcome(refused)).toBe("not-sent");
+    }
+
+    // A request setting none of them, and a record that offers each field it sets, are refused nothing.
+    expect(refusalOf(NOTHING, {})).toBeUndefined();
+    expect(refusalOf(EVERYTHING, all)).toBeUndefined();
+
+    // A malformed catalog is read where the record offers none, so its 400 comes before any field's refusal; where the
+    // record offers catalogs it is not read here, and keeps its answer where the route reads it.
+    expect(refusalOf(NOTHING, { explain: true, catalog: 7 })).toBeInstanceOf(DatabaseConfigError);
+    expect(refusalOf(EVERYTHING, { catalog: 7 })).toBeUndefined();
   });
 });
 
@@ -632,21 +710,73 @@ describe("editorSourceTarget", () => {
 });
 
 /**
- * The provider an earlier editor request ran on, found again by the key it resolved
+ * The console target of the editor's session an earlier request ran on, found again by the frame it resolved
  * (docs/GOVERNANCE.md#per-user-providers).
  */
-describe("cachedEditorProvider", () => {
-  test("answers the provider cached under the key, in the catalog editorProvider scoped, and opens nothing", async () => {
-    const shop = providerOf({});
-    const server = providerOf({ catalogSessions: true }, { shop });
-    cachedByKey.set("key-of-the-write-credential", server);
-    opened.length = 0;
+describe("cachedEditorConsoleTarget", () => {
+  const packageConnection = { id: "p", name: "p", type: "acmeps", queryTimeout: 1234 } as unknown as EngineConnection;
+  /** A provider package's session entry, its session and environment stand-ins read back by reference. */
+  function sessionEntry() {
+    const packageSession = { calls: {}, marker: randomUUID() };
+    const env = { marker: randomUUID() };
+    const entry = { opened: { form: "session", session: packageSession, env }, running: 0, lastUsed: 0 } as unknown;
+    return { entry: entry as CachedSession, packageSession, env };
+  }
 
-    expect(await cachedEditorProvider("key-of-the-write-credential", undefined)).toBe(server);
-    expect(await cachedEditorProvider("key-of-the-write-credential", "shop")).toBe(shop);
-    // Nothing is cached under another key: the idle sweep or a disconnect removed it, or it was never opened.
-    expect(await cachedEditorProvider("key-of-the-read-credential", undefined)).toBeNull();
-    expect(opened).toEqual([]);
+  test("answers the console target of the editor entry the frame names, a legacy provider in the request's catalog and a package's session counting each call on its entry, null where none is cached, and opens nothing", async () => {
+    const shopCapabilities = {};
+    const serverCapabilities = { catalogSessions: true };
+    const shop = providerOf(shopCapabilities);
+    const server = providerOf(serverCapabilities, { shop });
+    cachedEntries.clear();
+    lookups.length = 0;
+    cachedEntries.set(`${connection.id}\u0000frame-of-the-write-credential`, {
+      opened: { form: "provider", provider: server },
+    } as unknown as CachedSession);
+    const { entry, packageSession, env } = sessionEntry();
+    cachedEntries.set(`${packageConnection.id}\u0000package-frame`, entry);
+    opened.length = 0;
+    openedEditor.length = 0;
+
+    const whole = await cachedEditorConsoleTarget(connection, "frame-of-the-write-credential", undefined);
+    expect(whole?.explainSupport()).toBe(serverCapabilities as never);
+    const inShop = await cachedEditorConsoleTarget(connection, "frame-of-the-write-credential", "shop");
+    expect(inShop?.explainSupport()).toBe(shopCapabilities as never);
+
+    const target = await cachedEditorConsoleTarget(packageConnection, "package-frame", undefined);
+    expect([target?.session as unknown, target?.env as unknown, target?.timeout()]).toEqual([
+      packageSession,
+      env,
+      1234,
+    ]);
+    target?.started();
+    expect(entry.running).toBe(1);
+    target?.ended({ kind: "page" });
+    expect(entry.running).toBe(0);
+
+    // Nothing is cached under another frame: the idle sweep or a disconnect removed it, or it was never opened.
+    expect(await cachedEditorConsoleTarget(connection, "frame-of-the-read-credential", undefined)).toBeNull();
+    // Each lookup names the connection's own id and the frame, and nothing was opened.
+    expect(lookups).toEqual([
+      [connection.id, "frame-of-the-write-credential"],
+      [connection.id, "frame-of-the-write-credential"],
+      [packageConnection.id, "package-frame"],
+      [connection.id, "frame-of-the-read-credential"],
+    ]);
+    expect([opened, openedEditor]).toEqual([[], []]);
+  });
+
+  test("a package's entry handed a catalog is refused as Studio's own defect", async () => {
+    cachedEntries.clear();
+    cachedEntries.set(`${packageConnection.id}\u0000package-frame`, sessionEntry().entry);
+
+    const raised = await cachedEditorConsoleTarget(packageConnection, "package-frame", "shop").catch(
+      (error: unknown) => error,
+    );
+    const refusal = { rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" } as const;
+    expect(raised).toBeInstanceOf(HostDefectError);
+    expect((raised as HostDefectError).refusals).toEqual([refusal]);
+    expect(isStudioFailure(raised)).toBe(true);
   });
 });
 

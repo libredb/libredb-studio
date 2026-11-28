@@ -518,7 +518,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [dbRoute("multi-query"), "POST", "providerTextScrub"],
   [dbRoute("multi-query"), "runStatement", "withScrubbedWarnings"],
   [dbRoute("multi-query"), "statementError", "withholdProviderError"],
-  [dbRoute("transaction"), "POST", "providerTextScrub"],
+  [dbRoute("transaction"), "POST", "connectionTextScrub"],
   [dbRoute("transaction"), "runScriptInTransaction", "withholdProviderError"],
   [dbRoute("transaction"), "eventError", "withheldProviderError"],
   [dbRoute("transaction"), "rollBackOnProvider", "withholdProviderError"],

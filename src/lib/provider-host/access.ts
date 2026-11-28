@@ -16,10 +16,14 @@
  * deadline ended, at any wait of the run, is the view's own time refusal, built fresh for the call; every other refusal
  * answers as `refusalError` answers it.
  *
- * Three rows are reached only by a provider package's session, which may offer less than Studio's bridge (clause C-111),
- * each refused before the call and answered `not-sent`: a non-zero offset the session does not honour is
- * `StudioOffsetRefusal`, Studio's own offset refusal, bound params it does not honour are `FacetNotOfferedError` naming the field, and a facet it
- * does not offer is `FacetNotOfferedError` naming the call by its contract name, never a value of the package's.
+ * Four rows are reached by a session that may offer less than a legacy caller asks for, each refused before the call and
+ * answered `not-sent`: three only by a provider package's session, which may offer less than Studio's bridge (clause
+ * C-111), and the fourth also by the bridged session of a legacy provider that holds no transaction session. A non-zero
+ * offset the session does not honour is `StudioOffsetRefusal`, Studio's own offset refusal, bound params it does not
+ * honour are `FacetNotOfferedError` naming the field, a facet it does not offer is `FacetNotOfferedError` naming the
+ * call by its contract name, never a value of the package's, and a statement sent inside a transaction to a session
+ * that does not offer `console.transaction` (`request-transaction-not-offered`) is `FacetNotOfferedError` naming
+ * `console.transaction` in the facet row's sentence.
  *
  * A tree request naming a container level or an object kind the session's object model does not state
  * (`request-level-not-stated`, `request-kind-not-stated`, clause M-89), and a source request naming a kind it does
@@ -135,10 +139,22 @@ const OFFSET_NOT_HONOURED =
 /** Studio's sentence for bound params a provider package's session does not honour. */
 const PARAMS_NOT_HONOURED = "This connection's provider package takes no bound parameters, so Studio sent nothing.";
 
+/** The facet row's sentence for `name`, a call by its contract name, `<group>.<call>`. */
+function facetNotOffered(name: string): FacetNotOfferedError {
+  const [group, call] = name.split(".") as [DeclaredFacet, string];
+  return new FacetNotOfferedError(
+    `This connection's provider package does not offer ${name}, so Studio did not call it.`,
+    undefined,
+    group,
+    call,
+  );
+}
+
 /**
- * The error of a request field or a facet a provider package's session does not offer, refused before the call and
- * marked not-sent, or undefined for any other refusal: the three rows of clause C-111. A facet's `name` is the SDK's
- * own call name, `<group>.<call>`, never a value of the package's.
+ * The error of a request field or a facet a session does not offer, refused before the call and marked not-sent, or
+ * undefined for any other refusal: the three rows of clause C-111, then a statement sent inside a transaction to a
+ * session that does not offer `console.transaction`, answered in the facet row's sentence naming that call. A facet's
+ * `name` is the SDK's own call name, `<group>.<call>`, never a value of the package's.
  */
 function notOfferedError(refusals: readonly CallRefusal[]): Error | undefined {
   const field = refusals.find((refusal) => refusal.rule === "request-field-not-honoured");
@@ -147,15 +163,9 @@ function notOfferedError(refusals: readonly CallRefusal[]): Error | undefined {
   if (field?.name === "offset") error = new StudioOffsetRefusal(OFFSET_NOT_HONOURED);
   else if (field?.name === "params")
     error = new FacetNotOfferedError(PARAMS_NOT_HONOURED, undefined, "console", "params");
-  else if (facet?.name !== undefined) {
-    const [group, call] = facet.name.split(".") as [DeclaredFacet, string];
-    error = new FacetNotOfferedError(
-      `This connection's provider package does not offer ${facet.name}, so Studio did not call it.`,
-      undefined,
-      group,
-      call,
-    );
-  } else return undefined;
+  else if (facet?.name !== undefined) error = facetNotOffered(facet.name);
+  else if (hasRule(refusals, "request-transaction-not-offered")) error = facetNotOffered("console.transaction");
+  else return undefined;
   markNotSent(error);
   return error;
 }

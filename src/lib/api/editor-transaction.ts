@@ -1,5 +1,5 @@
 import type { ExecuteRequest, TransactionAction, TransactionRequest } from "@libredb/provider-sdk/calls";
-import { CLEANUP_DEADLINE_MS } from "@libredb/provider-sdk/calls";
+import { CLEANUP_DEADLINE_MS, checkConsoleFacet } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
 import {
   callContext,
@@ -32,7 +32,8 @@ import { hostCore } from "@/lib/provider-host/instance";
  * call builds a fresh request and context, so the core freezes nothing a caller holds, and the facade keeps no state:
  * every outcome carries the session state its own call answered, never one kept from an earlier call (clause C-58).
  * A script of several statements inside the transaction runs its units through `openTransactionScript` in
- * src/lib/api/editor-script.ts (clause C-84), whose stopped unit is this module's `UnansweredCall`.
+ * src/lib/api/editor-script.ts (clause C-84), whose stopped unit is this module's `UnansweredCall`. Whether a target's
+ * session offers the transaction at all is `transactionOffered`, which the route reads before any call.
  *
  * Deadlines (clause C-59). A begin, a COMMIT, a ROLLBACK and a statement wait until `executeDeadlineFor` the target's
  * statement timeout, that timeout plus `EXECUTE_SLACK_MS`, and the state read until `CLEANUP_DEADLINE_MS`, each also ended by the caller's
@@ -391,6 +392,16 @@ export async function rollBackAfterCredentialChange(
   } catch (error) {
     return { kind: "unconfirmed", error };
   }
+}
+
+/**
+ * Whether `target`'s session offers `console.transaction`, read from its calls as the host core reads them
+ * (`checkConsoleFacet`): a provider package's session as its open answered them, and a legacy provider's bridged
+ * session exactly where the provider holds a transaction session. The transaction route answers its one refusal where
+ * it does not, before any call, and the rollback after a credential change finds no transaction there.
+ */
+export function transactionOffered(target: ConsoleTarget): boolean {
+  return checkConsoleFacet(target.session.calls, "transaction").length === 0;
 }
 
 /** The `inTransaction` an answer carries for `state`: `null` when the state is unknown, which is neither. */

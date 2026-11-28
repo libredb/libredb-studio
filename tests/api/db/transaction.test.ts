@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { editorEntryOf } from "../../helpers/editor-session-entry";
 import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { API_CODES } from "@/lib/governance/contract";
@@ -35,7 +36,8 @@ import type { ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
-import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
+import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider } from "@/lib/db/types";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
 import {
@@ -95,12 +97,19 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
+  const resolveConnection = async (body: Record<string, unknown>) => {
+    if (!body.connection && !body.connectionId) {
+      throw new SeedConnectionError("Either connection or connectionId is required", 400);
+    }
+    return body.connection as { type: string };
+  };
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection;
+    resolveConnection: mock(resolveConnection),
+    // The route's resolve: the connection with the server catalog's record of its type, as the real one answers a
+    // legacy engine's.
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
+      const connection = await resolveConnection(body);
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -133,23 +142,24 @@ mock.module("@/lib/db", () => ({
 // ─── The factory's writable cache as the route reads it under governance (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // `editorCacheKey` frames what the factory's key frames for these tests: the connection, the credential it opens with,
-// and the owner. `findCachedProvider` answers nothing until a test registers its providers.
+// and the owner. The route opens the editor's session of a legacy record, whose entry holds the provider
+// `getOrCreateProvider` answers, handed the factory's arguments, so `args[2]` is the execution context and `args[3]`
+// the request's wait. `findCachedEditorEntry` answers nothing until a test registers its providers.
 const mockEditorCacheKey = mock(async (connection: { id: string; user?: string }, execution?: { owner?: string }) =>
   JSON.stringify([connection.id, connection.user ?? null, execution?.owner ?? null]),
 );
-const mockFindCachedProvider = mock<(key: string) => unknown>(() => null);
+const mockFindCachedEditorEntry = mock<(connectionId: string, frame: string) => unknown>(() => null);
 
 mock.module("@/lib/db/factory", () => ({
   editorCacheKey: mockEditorCacheKey,
-  findCachedProvider: mockFindCachedProvider,
+  findCachedEditorEntry: mockFindCachedEditorEntry,
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route runs no kill.
   getOrCreateMetadataProvider: mock(async () => {
     throw new Error("getOrCreateMetadataProvider is not read by this route");
   }),
-  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route opens no editor session.
-  getOrCreateEditorSession: mock(async () => {
-    throw new Error("getOrCreateEditorSession is not read by this route");
-  }),
+  getOrCreateEditorSession: mock(async (connection: unknown, _engine: unknown, execution: unknown, wait: unknown) =>
+    editorEntryOf((await mockGetOrCreateProvider(connection, {}, execution, wait)) as DatabaseProvider),
+  ),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no object tree.
   getOrCreateMetadataSession: mock(async () => {
     throw new Error("getOrCreateMetadataSession is not read by this route");
@@ -1209,7 +1219,7 @@ describe("POST /api/db/transaction", () => {
     // provider exactly as it always did.
     openableProvider();
     mockEditorCacheKey.mockClear();
-    mockFindCachedProvider.mockClear();
+    mockFindCachedEditorEntry.mockClear();
 
     asSession("alice");
     expect((await call("d72-credential", { action: "begin" })).status).toBe(200);
@@ -1223,7 +1233,7 @@ describe("POST /api/db/transaction", () => {
     expect(res.status).toBe(200);
     expect(mockTxProvider.commitTransaction).toHaveBeenCalledTimes(1);
     expect(mockEditorCacheKey).not.toHaveBeenCalled();
-    expect(mockFindCachedProvider).not.toHaveBeenCalled();
+    expect(mockFindCachedEditorEntry).not.toHaveBeenCalled();
   });
 
   test("status is answered for every session and says who holds the transaction", async () => {
@@ -2175,7 +2185,7 @@ describe("POST /api/db/transaction under governance", () => {
     if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
     else process.env.GOVERNANCE_SOURCE = savedSource;
     mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
-    mockFindCachedProvider.mockImplementation(() => null);
+    mockFindCachedEditorEntry.mockImplementation(() => null);
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
     mockAdmitQueryExecution.mockReset();
     recordedEvents.length = 0;
@@ -2221,7 +2231,7 @@ describe("POST /api/db/transaction under governance", () => {
 
   /**
    * The factory as it caches providers under governance: one per key, and the key frames the credential the connection
-   * opens with as well as the owner, so a grant level that changes resolves another provider. `findCachedProvider`
+   * opens with as well as the owner, so a grant level that changes resolves another provider. `findCachedEditorEntry`
    * answers from the same providers, and `evict` stands in for the idle sweep or a disconnect removing one.
    */
   function providerPerKey() {
@@ -2231,7 +2241,10 @@ describe("POST /api/db/transaction under governance", () => {
       if (!providers.has(key)) providers.set(key, transactionProvider());
       return providers.get(key) as never;
     });
-    mockFindCachedProvider.mockImplementation((key: string) => providers.get(key) ?? null);
+    mockFindCachedEditorEntry.mockImplementation((_connectionId: string, frame: string) => {
+      const provider = providers.get(frame);
+      return provider === undefined ? null : editorEntryOf(provider as unknown as DatabaseProvider);
+    });
     const keyOf = (user: string, owner: string) => JSON.stringify(["seed:orders", user, owner]);
     return {
       of: (user: string, owner: string) => providers.get(keyOf(user, owner)),
@@ -3449,7 +3462,7 @@ describe("POST /api/db/transaction under governance", () => {
       as("alice@example.com", "alice-subject");
       expect((await send({ action: "begin" }, "writer")).status).toBe(200);
       const unreadable = new Error(crypto.randomUUID());
-      mockFindCachedProvider.mockImplementationOnce(() => {
+      mockFindCachedEditorEntry.mockImplementationOnce(() => {
         throw unreadable;
       });
 

@@ -6,15 +6,13 @@ import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorTarget } from "@/lib/api/editor-provider";
+import { assertEditorFieldsOffered, editorTarget } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, openWithinBudget, runEditorQuery } from "@/lib/api/editor-query";
 import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
-import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import {
   type EngineConnection,
-  type EngineOffers,
   type EngineRecord,
   legacyConnection,
   legacyProviderType,
@@ -72,28 +70,6 @@ function readExplainRequest(value: unknown): ExplainRequestResult {
   if (mode !== "estimate" && mode !== "analyze") return { valid: false, message: EXPLAIN_REQUEST_MESSAGE };
 
   return { valid: true, explain: { mode } };
-}
-
-/**
- * The first request field a query sets that the engine's record does not offer, by the name the answer gives it, or
- * null when it sets none: a plan (`explain`), whose statement is built by the connected provider's strategy, keyed by
- * a legacy plan format; a key-space `database`, read from a legacy provider's declarations; a server-level `catalog`,
- * a legacy catalog session; and an unbounded page (`options.unlimited`), since the provider contract always pumps a
- * bounded one (clause C-16). Each malformed field keeps its 400, read before this: the caller reads `explain` and
- * `database`, and a `catalog` is read here first where the record does not offer catalogs, so a malformed one answers
- * its 400 before any field is refused, and where the record offers them it is read where the gate reads it.
- *
- * @throws {DatabaseConfigError} For a malformed `catalog`, on an engine whose record does not offer catalogs.
- */
-function unofferedField(
-  offers: EngineOffers,
-  request: { body: Record<string, unknown>; explain: boolean; database: number | undefined; unlimited: boolean },
-): string | null {
-  const catalog = offers.catalog ? undefined : requestCatalog(request.body);
-  if (request.explain && !offers.explain) return "explain";
-  if (request.database !== undefined && !offers.database) return "database";
-  if (catalog !== undefined) return "catalog";
-  return request.unlimited && !offers.unboundedPage ? "options.unlimited" : null;
 }
 
 export async function POST(req: NextRequest) {
@@ -231,20 +207,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
     }
 
-    // A field the engine's record does not offer is refused by name, after every malformed field's 400 and before
-    // the gate, so nothing is classified, opened or run for it.
-    const unoffered = unofferedField(engine.offers, {
+    // A field the engine's record does not offer is refused by name, 400 not-sent, after every malformed field's 400
+    // and before the gate, so nothing is classified, opened or run for it (`assertEditorFieldsOffered`).
+    assertEditorFieldsOffered(engine, {
       body,
       explain: explain.explain !== undefined,
       database,
       unlimited: options.unlimited === true,
     });
-    if (unoffered !== null) {
-      throw new PackageEngineUnsupportedError(
-        `This LibreDB Studio does not serve ${unoffered} in a query on an engine of a provider package yet.`,
-        engine.id,
-      );
-    }
 
     if (database !== undefined) {
       /*
@@ -351,8 +321,8 @@ export async function POST(req: NextRequest) {
     let statement = sql;
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {
-      // Only an engine whose record offers a plan reaches here (`unofferedField`): the connected provider's capabilities,
-      // which its console target reads when asked.
+      // Only an engine whose record offers a plan reaches here (`assertEditorFieldsOffered`): the connected provider's
+      // capabilities, which its console target reads when asked.
       const capabilities = target.explainSupport();
       // `getExplainStrategy` indexes a Record, so a format outside this build's union
       // (an external implementer of the published interface can declare anything)

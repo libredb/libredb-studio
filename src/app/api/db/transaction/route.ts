@@ -1,26 +1,25 @@
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import { isTransactionProvider, type QueryPrepareOptions } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import type { QueryPrepareOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
-import { cachedEditorProvider, editorProvider } from "@/lib/api/editor-provider";
-import { type ConsoleTarget, providerConsoleTarget } from "@/lib/api/session-target";
+import { type EngineConnection, type EngineRecord, legacyProviderType } from "@/lib/db/server-catalog";
+import { assertEditorFieldsOffered, cachedEditorConsoleTarget, editorTarget } from "@/lib/api/editor-provider";
+import type { ConsoleTarget } from "@/lib/api/session-target";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isDatabaseError, NO_ACTIVE_TRANSACTION, NO_TRANSACTION_OPENED, QueryError } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
-import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
+import { openWithinBudget, queryTimeoutError } from "@/lib/api/editor-query";
+import { type PackageAnswers, packageAnswers } from "@/lib/api/package-errors";
+import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { openTransactionScript, type TransactionScript } from "@/lib/api/editor-script";
 import {
   beginInTransaction,
@@ -34,12 +33,13 @@ import {
   rollBackAfterCredentialChange,
   runInTransaction,
   type TransactionCaller,
+  transactionOffered,
   type UnansweredCall,
 } from "@/lib/api/editor-transaction";
 import { logger } from "@/lib/logger";
 import {
+  connectionTextScrub,
   type ProviderTextScrub,
-  providerTextScrub,
   withheldProviderError,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
@@ -110,10 +110,17 @@ interface ScriptStatement {
  * the transaction and their work is still there to commit or roll back. A statement that ends the transaction ends the
  * run as well, because the next one is refused by the provider ("No active transaction") rather than autocommitted. A
  * statement Studio stopped waiting for is its error too, and is answered as `stopped`: its outcome is unknown, and it
- * goes on in the database. A statement's error answers the message of what core's scrub answers for it, so one whose
- * text holds a credential of the connection answers the withheld sentence.
+ * goes on in the database. A statement's error is answered once through the request's record of a provider package's
+ * failures (`answers`, as an execute's), and the script answers the message of what core's scrub answers for that, so
+ * one whose text holds a credential of the connection answers the withheld sentence; the stopped unit's answered error
+ * is the one `stopped` carries.
  */
-async function runScriptInTransaction(script: TransactionScript, units: ExecutionUnit[], scrub: ProviderTextScrub) {
+async function runScriptInTransaction(
+  script: TransactionScript,
+  units: ExecutionUnit[],
+  scrub: ProviderTextScrub,
+  answers: PackageAnswers,
+) {
   const statements: ScriptStatement[] = [];
   let totalExecutionTime = 0;
   let stopped: UnansweredCall | undefined;
@@ -133,14 +140,15 @@ async function runScriptInTransaction(script: TransactionScript, units: Executio
       statements.push({ ...identity, status: "success", ...outcome.value, executionTime });
       continue;
     }
-    const answered = withholdProviderError(scrub, outcome.error);
+    const failure = answers.answer("execute", outcome.error);
+    const answered = withholdProviderError(scrub, failure);
     statements.push({
       ...identity,
       status: "error",
       executionTime,
       error: answered instanceof Error ? answered.message : "Unknown error",
     });
-    if (outcome.kind === "unanswered") stopped = outcome;
+    if (outcome.kind === "unanswered") stopped = { ...outcome, error: failure as Error };
     break;
   }
   // The last successful statement is the script's own outcome (#2271): a write or an empty
@@ -170,37 +178,45 @@ const CREDENTIAL_CHANGED_OUTCOME_UNKNOWN =
   "Your access to this connection changed while your transaction was open, so the transaction cannot continue. A call of yours whose outcome Studio does not know may have ended it before Studio's rollback, so Studio cannot tell whether its changes were committed or rolled back; check the data before you run its work again. Begin a new transaction to continue with your current access.";
 
 /**
- * Roll back the transaction a governed owner opened on the provider cached under `providerKey`, the key its `begin`
- * resolved, once a request of theirs resolves another key (docs/GOVERNANCE.md#per-user-providers), and answer how it
- * ended. `providerScrub` is core's scrub of that provider's credential, the one `begin` resolved.
+ * Roll back the transaction a governed owner opened on the editor session cached under `providerKey`, the frame its
+ * `begin` resolved, once a request of theirs resolves another key (docs/GOVERNANCE.md#per-user-providers), and answer
+ * how it ended. `providerScrub` is core's scrub of that session's credential, the one `begin` resolved.
  *
- * A provider that is no longer cached was disconnected when it was removed, which ended its transaction, so it holds
- * none. Otherwise the state is read and the rollback sent through the provider host within Studio's own allowance,
- * `CREDENTIAL_CHANGE_ROLLBACK_MS` (`rollBackAfterCredentialChange`): a transaction its provider already ended
+ * A session that is no longer cached was closed when it was removed, which ended its transaction, so it holds none, and
+ * so does one whose session does not offer `console.transaction` (`transactionOffered`). Otherwise the state is read
+ * and the rollback sent through the provider host on its console target (`cachedEditorConsoleTarget`), a legacy
+ * provider's bridged session or a provider package's own, within Studio's own allowance,
+ * `CREDENTIAL_CHANGE_ROLLBACK_MS` (`rollBackAfterCredentialChange`): a transaction its session already ended
  * (PostgresProvider and MySQLProvider roll back after their own TX_TIMEOUT_MS) is not sent a second rollback, which the
  * provider would refuse with "No active transaction". A rollback that fails, or that the host stopped waiting for at
  * the allowance, is logged and answered as unconfirmed rather than waited for: the transaction runs on a credential its
- * owner no longer resolves, so their requests no longer reach it, and what is left of it ends with its provider.
+ * owner no longer resolves, so their requests no longer reach it, and what is left of it ends with its session.
+ *
+ * The session runs on the credential its begin resolved, which this request no longer carries, so its failure is
+ * answered through a record of `engine`'s failures built with `providerScrub` (`packageAnswers`, as a transaction
+ * call's): a provider package's failure is logged there once, through the scrub of that credential, and the route's
+ * line carries it only where the record did not log it, through the same scrub.
  */
 async function rollBackOnProvider(
   providerKey: string,
   providerScrub: ProviderTextScrub,
   catalog: string | undefined,
-  connection: DatabaseConnection,
+  connection: EngineConnection,
+  engine: EngineRecord,
 ): Promise<CredentialRollback["kind"]> {
+  const answers = packageAnswers(engine, providerScrub, ROUTE);
   let failure: unknown;
   try {
-    const session = await cachedEditorProvider(providerKey, catalog);
-    if (session === null || !isTransactionProvider(session)) return "none-open";
-    const answer = await rollBackAfterCredentialChange(providerConsoleTarget(session), ROUTE);
+    const target = await cachedEditorConsoleTarget(connection, providerKey, catalog);
+    if (target === null || !transactionOffered(target)) return "none-open";
+    const answer = await rollBackAfterCredentialChange(target, ROUTE);
     if (answer.kind !== "unconfirmed") return answer.kind;
     failure = answer.error;
   } catch (error) {
     failure = error;
   }
-  // The provider runs on the credential its begin resolved, which this request no longer carries, so its error is
-  // logged through core's scrub of that credential, kept in the transaction's record.
-  const logged = withholdProviderError(providerScrub, failure);
+  const answered = answers.answer("transaction", failure);
+  const logged = answers.logged(answered) ? undefined : withholdProviderError(providerScrub, answered);
   logger.error("A transaction whose credential changed was released without a confirmed rollback", logged, {
     route: ROUTE,
     connectionId: connection.id,
@@ -230,7 +246,7 @@ const ACTION_NAMES: Readonly<Record<string, string>> = {
 function transactionEventScope(
   session: UserPayload,
   subject: string,
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   req: NextRequest,
 ): TransactionEventScope {
   return {
@@ -322,6 +338,8 @@ interface ScriptCall {
   readonly options: QueryPrepareOptions;
   readonly caller: TransactionCaller;
   readonly scrub: ProviderTextScrub;
+  /** The request's record of a provider package's failures, which answers each failed unit's error once. */
+  readonly answers: PackageAnswers;
   readonly owned: string;
   readonly ownCall: OwnerCall;
   readonly owner: TransactionOwner | null;
@@ -346,7 +364,7 @@ async function answerScriptInTransaction(call: ScriptCall): Promise<NextResponse
     signal: call.caller.signal,
     route: ROUTE,
   });
-  const { answer, stopped } = await runScriptInTransaction(script, call.units, call.scrub);
+  const { answer, stopped } = await runScriptInTransaction(script, call.units, call.scrub, call.answers);
   if (stopped !== undefined) {
     settleFailure(
       call.owned,
@@ -370,9 +388,10 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/transaction", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
-  // Core's scrub of the providers the resolved connection builds, held out here for the `catch` below: before the
-  // connection resolves no provider ran.
+  // Core's scrub of the sessions the resolved connection opens and the request's record of a provider package's
+  // failures, held out here for the `catch` below: before the connection resolves no session ran.
   let scrub: ProviderTextScrub | undefined;
+  let answers: PackageAnswers | undefined;
   // The caller's call on its transaction's record, counted from before it is sent until it answers (`startOwnerCall`);
   // held out here so the `finally` below drops its count on every path, after the answer settled the record.
   let counted: OwnerCall | undefined;
@@ -391,9 +410,15 @@ export async function POST(req: NextRequest) {
       options?: QueryPrepareOptions & Record<string, unknown>;
     } & Record<string, unknown>;
 
-    const connection = await resolveConnection(body, guard.session);
-    const connectionScrub = providerTextScrub(connection, "any");
+    // An engine of an admitted provider package is served too: its connection resolves with every guard of every route,
+    // with the server catalog's record of its engine, whose offers and statement grammar decide each step below that
+    // differs between engines (docs/providers/CONTRACT.md, clause C-107). Every failure of the session's calls is
+    // answered once through the request's record (`packageAnswers`, clause C-112), so the route writes no second line.
+    const { connection, engine } = await resolveServedConnection(body, guard.session);
+    const connectionScrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
     scrub = connectionScrub;
+    const answering = packageAnswers(engine, connectionScrub, ROUTE);
+    answers = answering;
 
     if (!action) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
@@ -410,12 +435,11 @@ export async function POST(req: NextRequest) {
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
 
-    // A query action's own fields, then the server's confirmation gate,
-    // both before any provider is built or the admission gate is asked, so a request either refuses opens
-    // nothing and runs nothing. BEGIN, COMMIT and ROLLBACK are Studio's own statements and are not classified.
-    let query:
-      | { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean }
-      | undefined;
+    // A query action's own fields, then a request field the engine's record does not offer, refused by name
+    // (`assertEditorFieldsOffered`), then the server's confirmation gate, all before any session is opened or the
+    // admission gate is asked, so a request either refuses opens nothing and runs nothing. BEGIN, COMMIT and ROLLBACK
+    // are Studio's own statements and are not classified.
+    let checked: { readonly sql: string; readonly params: unknown[] | undefined } | undefined;
     if (action === "query") {
       if (!sql || typeof sql !== "string") {
         return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
@@ -437,19 +461,33 @@ export async function POST(req: NextRequest) {
       if (timeoutError !== null) {
         return NextResponse.json({ error: timeoutError }, { status: 400 });
       }
+      checked = { sql, params: bound.params };
+    }
+    // The route reads a `catalog` for every action and an unbounded page for a query's statement; neither an explain
+    // nor a key-space `database` is a field of it.
+    assertEditorFieldsOffered(engine, {
+      body,
+      explain: false,
+      database: undefined,
+      unlimited: action === "query" && options.unlimited === true,
+    });
+    let query:
+      | { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean }
+      | undefined;
+    if (checked !== undefined) {
       const gate = await gateRun({
         route: "transaction",
         issuer: runConfirmationIssuerForSession(guard.session),
         connection,
-        engine: servedEngineRecord(connection.type),
+        engine,
         catalog,
-        sql,
-        params: bound.params,
+        sql: checked.sql,
+        params: checked.params,
         confirmation: body.confirmation,
         explain: false,
       });
       if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
-      query = { sql, params: bound.params, unconfirmed: gate.unconfirmed };
+      query = { ...checked, unconfirmed: gate.unconfirmed };
     }
     // Under governance each user's transaction is held on that user's own provider
     // (docs/GOVERNANCE.md#per-user-providers), so ownership is per user as well: the key and the record carry the owner
@@ -471,7 +509,13 @@ export async function POST(req: NextRequest) {
       // rollback is still sent, to end whatever transaction that call leaves, but its answer says nothing of how the
       // transaction ended. Taken before the rollback, from the record's own count.
       const callRan = callsRunning(released);
-      const rollback = await rollBackOnProvider(released.providerKey, released.providerScrub, catalog, connection);
+      const rollback = await rollBackOnProvider(
+        released.providerKey,
+        released.providerScrub,
+        catalog,
+        connection,
+        engine,
+      );
       // So is a rollback that found no transaction on a record whose state was unknown: a call of the owner's whose
       // outcome Studio does not know may have committed it.
       const outcomeUnknown = callRan || (released.unresolved && rollback === "none-open");
@@ -492,31 +536,38 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a wait
-    // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
-    const resolved = connection;
-    const provider = await openWithinCall(req.signal, resolved.type, (wait) =>
-      editorProvider(guard.session, resolved, catalog, wait),
-    );
+    // THE OPEN, the query route's: the editor's session of the connection's record in the factory's editor cache
+    // (`editorTarget`), a legacy provider in the request's catalog or a provider package's session, as its console
+    // target. It is waited for within the connect budget the engine's record states (`packageConnectBudget`) and while
+    // the request stays (`openWithinBudget`): a wait that ends answers 504 or 499, not-sent, and the open goes on for
+    // the next request. A failure of the open is the package's open's.
+    const target = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
+      editorTarget(guard.session, connection, engine, catalog, wait),
+    ).catch((error: unknown) => {
+      throw answering.answer("open", error);
+    });
 
-    if (!isTransactionProvider(provider)) {
+    // A session that does not offer `console.transaction` is answered the route's one refusal for every engine, before
+    // any call: a legacy provider's bridged session offers it exactly where the provider holds a transaction session.
+    if (!transactionOffered(target)) {
       return NextResponse.json(
         { error: "Transaction control is not supported for this database type" },
         { status: 400 },
       );
     }
 
-    // The provider holds ONE transaction, and without governance every Studio user who reaches it
+    // The session holds ONE transaction, and without governance every Studio user who reaches it
     // drives it, so the caller's right to act on it is decided here, before any action runs. See
     // src/lib/api/transaction-ownership.ts for what was measured. Every call on the session below, this state read
     // included, runs through the provider host under a deadline the host owns and the request's signal
-    // (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clause C-59), on the provider's console target.
-    const target = providerConsoleTarget(provider);
+    // (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clause C-59), on the session's console target.
     const caller: TransactionCaller = { signal: req.signal, route: ROUTE };
     // The record as it was before the read: a read that answers after another request of the owner's claimed, changed or
     // ended it is not about it, so it neither releases nor settles it (`resolveTransaction`).
     const readMark = markTransaction(owned);
-    const sessionState = await readTransactionState(target, caller);
+    const sessionState = await readTransactionState(target, caller).catch((error: unknown) => {
+      throw answering.answer("transaction", error);
+    });
     // Whether the record changed while the read ran, taken before this request's own resolve changes it.
     const readChanged = recordChangedSince(owned, readMark);
     let owner = transactionOwner(owned);
@@ -578,7 +629,7 @@ export async function POST(req: NextRequest) {
     // outside a transaction with NO_ACTIVE_TRANSACTION anyway, so this is refused with that same sentence, before the
     // provider runs anything, and the editor reads it as the end of its transaction as it does the provider's.
     if (subject !== undefined && owner === null && IN_TRANSACTION_ACTIONS.has(action)) {
-      throw new QueryError(NO_ACTIVE_TRANSACTION, connection.type);
+      throw new QueryError(NO_ACTIVE_TRANSACTION, legacyProviderType(engine));
     }
 
     // A call that changes the session is counted on the record before it is sent, and its mark taken after its own
@@ -612,7 +663,7 @@ export async function POST(req: NextRequest) {
         // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
         // server that never says whether a transaction is open is refused rather than trusted.
         const opened = await beginInTransaction(target, body.requireReportedState === true, caller);
-        if (opened.kind === "failed" || opened.kind === "not-sent") throw opened.error;
+        if (opened.kind === "failed" || opened.kind === "not-sent") throw answering.answer("transaction", opened.error);
         if (opened.kind === "unanswered") {
           // Studio stopped waiting for a BEGIN that may have opened a transaction only its caller can own: it is
           // claimed for the caller, its state unknown, when no record holds the key and the session held no
@@ -622,10 +673,12 @@ export async function POST(req: NextRequest) {
             settleTransaction(owned, "unknown", markTransaction(owned));
             awaitStoppedCall(owned, opened.settled);
           } else stopOwnerCall(owned, ownCall, opened.settled);
-          throw opened.error;
+          throw answering.answer("transaction", opened.error);
         }
         // A server that accepted BEGIN and opened nothing holds no transaction to claim.
-        if (opened.sessionState === "not-in-transaction") throw new QueryError(NO_TRANSACTION_OPENED, connection.type);
+        if (opened.sessionState === "not-in-transaction") {
+          throw new QueryError(NO_TRANSACTION_OPENED, legacyProviderType(engine));
+        }
         claim();
         settleTransaction(owned, opened.sessionState, markTransaction(owned));
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
@@ -641,15 +694,16 @@ export async function POST(req: NextRequest) {
         const started = queryEventStart();
         const ended = await endTransaction(target, "commit", caller);
         if (ended.kind !== "answered") {
+          const failure = answering.answer("transaction", ended.error);
           settleFailure(
             owned,
             ownCall,
             owner,
             ended,
-            { statement: "COMMIT", status: "error", started, ...eventError(connectionScrub, ended.error) },
-            ended.kind === "failed" ? failedCommitEnd(ended.error) : "unknown",
+            { statement: "COMMIT", status: "error", started, ...eventError(connectionScrub, failure) },
+            ended.kind === "failed" ? failedCommitEnd(failure) : "unknown",
           );
-          throw ended.error;
+          throw failure;
         }
         // The reconcile above would also drop this record, on whatever call comes next. This is
         // not the authorization boundary and no test can tell it apart from that reconcile: it is
@@ -666,15 +720,16 @@ export async function POST(req: NextRequest) {
         const started = queryEventStart();
         const ended = await endTransaction(target, "rollback", caller);
         if (ended.kind !== "answered") {
+          const failure = answering.answer("transaction", ended.error);
           settleFailure(
             owned,
             ownCall,
             owner,
             ended,
-            { statement: "ROLLBACK", status: "error", started, ...eventError(connectionScrub, ended.error) },
+            { statement: "ROLLBACK", status: "error", started, ...eventError(connectionScrub, failure) },
             "rolled-back",
           );
-          throw ended.error;
+          throw failure;
         }
         settleTransaction(owned, ended.sessionState, ownCall.mark);
         if (owner !== null) {
@@ -709,9 +764,11 @@ export async function POST(req: NextRequest) {
         // bound values: they belong to one statement's placeholders. One statement is sent as the
         // splitter read it, as `/api/db/multi-query` sends it: without the comment-only fragment
         // after it and without a script separator line (Oracle's `/`), which the engine refuses.
+        // The splitter reads the grammar the engine's record states; a record that states no SQL text states none, and
+        // its text is sent as one statement.
         let statementSql: string = sql;
-        if (bound.params === undefined) {
-          const grammar = resolveSqlGrammar(connection.type);
+        const grammar = engine.statementGrammar;
+        if (bound.params === undefined && grammar !== null) {
           const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
           if (units.length > 1) {
             // Each statement runs through the provider host, and the state after them is read through it too
@@ -722,6 +779,7 @@ export async function POST(req: NextRequest) {
               options,
               caller,
               scrub: connectionScrub,
+              answers: answering,
               owned,
               ownCall,
               owner,
@@ -743,15 +801,16 @@ export async function POST(req: NextRequest) {
           // A statement can fail and leave no transaction behind: the provider found its database session ended
           // (TRANSACTION_LOST), or the statement was a COMMIT the server ended in failure. The record goes now, with
           // the transaction's terminal event, so the next request's reconcile does not record it as timed out.
+          const failure = answering.answer("execute", ran.error);
           settleFailure(
             owned,
             ownCall,
             owner,
             ran,
-            { statement: sql, status: "error", started, ...eventError(connectionScrub, ran.error) },
+            { statement: sql, status: "error", started, ...eventError(connectionScrub, failure) },
             "rolled-back",
           );
-          throw ran.error;
+          throw failure;
         }
         recordStatement("success", { rowCount: eventRowCount(ran.body.rowCount) });
 
@@ -810,7 +869,7 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/transaction", scrub });
+    return createErrorResponse(error, { route: ROUTE, scrub, logged: answers?.logged(error) === true });
   } finally {
     if (counted !== undefined) finishOwnerCall(counted);
   }

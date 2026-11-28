@@ -63,7 +63,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "getOrCreateMetadataProvider",
     "acquireExecutionProfileProvider",
     "withOneShotTunnel",
-    "findCachedProvider",
+    "findCachedEditorEntry",
     "getOrCreateEditorSession",
     "getOrCreateMetadataSession",
     "openEngineOnce",
@@ -80,7 +80,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "editorSourceTarget",
     "editorMaintenanceOpening",
     "metadataMaintenanceOpening",
-    "cachedEditorProvider",
+    "cachedEditorConsoleTarget",
   ],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
   "src/lib/api/maintenance-route.ts": ["handleMaintenanceRequest"],
@@ -155,7 +155,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   resolveConnection: {
     "src/app/api/db/multi-query/route.ts": RESOLVED_BY_THE_ROUTE,
-    "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
   },
   resolveServedConnection: {
     "src/app/api/admin/fleet-health/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
@@ -172,6 +171,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
+    "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_SERVED_ROUTE,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the tree, source, edit and key scan requests' connection here before it builds",
@@ -262,7 +262,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   getOrCreateProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/api/editor-provider.ts":
       "editorProvider builds for the connection its caller hands it, and every caller is a route listed under editorProvider here, which resolved it through resolveConnection or resolveServedConnection first",
     "src/lib/api/object-route.ts":
@@ -281,7 +280,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getOrCreateEditorSession: {
     "src/lib/api/editor-provider.ts":
-      "editorTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query, handleObjectRequest, a route listed under editorMonitoringTarget or editorConsoleTarget or the maintenance route helper listed under editorMaintenanceOpening here, resolved it through resolveServedConnection first",
+      "editorTarget, editorMonitoringTarget, editorConsoleTarget, editorSourceTarget and editorMaintenanceOpening open for the connection their caller hands them, and every caller, POST /api/db/query, POST /api/db/transaction, handleObjectRequest, a route listed under editorMonitoringTarget or editorConsoleTarget or the maintenance route helper listed under editorMaintenanceOpening here, resolved it through resolveServedConnection first",
   },
   openEngineOnce: {
     "src/lib/api/test-connection.ts":
@@ -291,18 +290,18 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/api/test-connection.ts":
       "testConnection opens the tunnel of the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveServedConnection first",
   },
-  findCachedProvider: {
+  findCachedEditorEntry: {
     "src/lib/api/editor-provider.ts":
-      "cachedEditorProvider's lookup of a provider editorProvider already built; it builds nothing",
+      "cachedEditorConsoleTarget's lookup of an editor entry editorTarget already opened; it opens nothing",
   },
   editorProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
-    "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
   },
   editorTarget: {
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
+    "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
   },
   metadataMonitoringTarget: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_SERVED_ROUTE_RESOLVED,
@@ -335,9 +334,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/api/object-route.ts":
       "handleObjectRequest opens the source route's editor session only after resolving the request's connection through resolveServedConnection",
   },
-  cachedEditorProvider: {
+  cachedEditorConsoleTarget: {
     "src/app/api/db/transaction/route.ts":
-      "opens no connection: it finds the provider an earlier request of the same transaction built through editorProvider for a connection resolveConnection resolved, or nothing",
+      "opens no connection: it finds the editor entry an earlier request of the same transaction opened through editorTarget for a connection resolveServedConnection resolved, or nothing",
   },
   handleObjectRequest: {
     "src/app/api/db/keys/scan/route.ts": OBJECT_ROUTE,
@@ -1429,10 +1428,10 @@ describe("the caller census of the seed lookups, the access review and the provi
 
   // A reader that found nothing would make every test below pass vacuously.
   test("finds the importers it is meant to find", () => {
-    // Two files import resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile,
-    // provider metadata and statement analysis routes, the object source read and agent mode's three routes and drive
-    // moved to the served resolve, so the floor sits at the count the census finds today.
-    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(2);
+    // One file imports resolveConnection: the cancel, disconnect, maintenance, preview, fleet health, profile, provider
+    // metadata, statement analysis and transaction routes, the object source read and agent mode's three routes and
+    // drive moved to the served resolve, so the floor sits at the count the census finds today.
+    expect(census.importers.get("resolveConnection")?.size ?? 0).toBeGreaterThanOrEqual(1);
     expect(pairs(census.importers).length).toBeGreaterThanOrEqual(40);
   });
 

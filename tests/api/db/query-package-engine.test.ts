@@ -5,8 +5,8 @@
  * through one open, one gate and one run; every statement of an engine whose grammar no register row reviews is asked
  * about, and the statement of one whose grammar its row reviewed is read under that grammar with the claims that loosen
  * the gate its row grants; the session opens once per key through the package; the run answers the
- * package's rows keyed by column name; a request field the package does not honour, and one the route does not serve
- * for such an engine, is refused before any call; a caller that leaves sends the package's cancel; a package's own
+ * package's rows keyed by column name; a request field the package does not honour, and one the engine's record does
+ * not offer, is refused before any call; a caller that leaves sends the package's cancel; a package's own
  * words reach the client only where its register row grants them, and then through core's scrub; and each run records one editor event naming its engine by its id, whose record decides
  * what the event keeps of its text.
  *
@@ -651,6 +651,12 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  /** The sentence a request field the record does not offer is refused in, by the name the answer gives it. */
+  const notOfferedSentence = (field: string) =>
+    field === "catalog"
+      ? "This connection's engine offers no catalog session in this LibreDB Studio, so Studio opened nothing."
+      : `This connection's engine does not offer the request field ${field} in this LibreDB Studio, so Studio opened nothing.`;
+
   test("explain, database, catalog and unlimited are refused by name before any open", async () => {
     const seen = hooksFor(MAIN);
     const connection = connectionOf(MAIN);
@@ -661,10 +667,11 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       [{ options: { unlimited: true } }, "options.unlimited"],
     ] as const) {
       const { status, body } = await post({ connection, sql: "SELECT 1", ...fields });
-      expect([status, body.code, body.error]).toEqual([
-        501,
-        "PACKAGE_ENGINE_UNSUPPORTED",
-        `This LibreDB Studio does not serve ${field} in a query on an engine of a provider package yet.`,
+      expect([status, body.code, body.outcome, body.error]).toEqual([
+        400,
+        "FACET_NOT_OFFERED",
+        "not-sent",
+        notOfferedSentence(field),
       ]);
     }
     // A malformed field keeps its 400.
@@ -679,7 +686,7 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(names(seen)).toEqual([]);
   });
 
-  test("a field the record does not offer is refused by name with today's 501, after the malformed-field 400s", async () => {
+  test("a field the record does not offer is refused by name, 400 not-sent, after the malformed-field 400s", async () => {
     const seen = hooksFor(MAIN);
     const connection = connectionOf(MAIN);
     const answer = async (fields: Record<string, unknown>, onto: Record<string, unknown> = connection) => {
@@ -694,14 +701,16 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
       [{ options: { unlimited: true } }, "options.unlimited"],
     ] as const) {
       const { status, body } = await answer(fields);
-      expect([field, status, body.code, body.error]).toEqual([
+      expect([field, status, body.code, body.outcome, body.error]).toEqual([
         field,
-        501,
-        "PACKAGE_ENGINE_UNSUPPORTED",
-        `This LibreDB Studio does not serve ${field} in a query on an engine of a provider package yet.`,
+        400,
+        "FACET_NOT_OFFERED",
+        "not-sent",
+        notOfferedSentence(field),
       ]);
     }
-    // Each malformed field answers its own 400 before any 501, alone and beside a field the record does not offer.
+    // Each malformed field answers its own 400 before any refusal by name, alone and beside a field the record does not
+    // offer.
     const explain400 = { error: 'explain must be { "mode": "estimate" } or { "mode": "analyze" }' };
     const database400 = { error: '"database" must be a non-negative integer' };
     const catalog400 = {

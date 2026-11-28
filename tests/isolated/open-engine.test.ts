@@ -20,7 +20,7 @@ import { type EngineConnection, type EngineRecord, forgetServerCatalog } from "@
 import * as legacyOpen from "@/lib/provider-host/legacy-adapter/open";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { logger } from "@/lib/logger";
-import { openedProvider, openedSession, openEngine } from "@/lib/provider-host/open-engine";
+import { openedProvider, openedSession, openEngine, providerForm } from "@/lib/provider-host/open-engine";
 import { admitSessionPackages, setHooks } from "../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../helpers/provider-artifacts";
 
@@ -226,6 +226,37 @@ describe("the one open function", () => {
     })() as Error;
     expect(asSession.constructor).toBe(Error);
     expect(asSession.message).toContain("legacy provider");
+  });
+
+  test("providerForm answers a held provider form itself, with the holder's own facts, and raises the host defect openedProvider raises on a session", async () => {
+    const legacy = await openEngine(LEGACY, {
+      connection: legacyConnection(),
+      execution: {},
+      purpose: "declarations",
+      options: {},
+    });
+    const session = await openEngine(pkg, {
+      connection: packageConnection(),
+      execution: {},
+      purpose: "connect",
+      options: {},
+      within: within(),
+    });
+    const held = { form: "provider" as const, provider: openedProvider(legacy), fact: "the holder's own" };
+    expect(providerForm(held)).toBe(held);
+    expect(providerForm(held).fact).toBe("the holder's own");
+
+    const raised = (() => {
+      try {
+        providerForm(session);
+      } catch (error) {
+        return error;
+      }
+    })() as Error;
+    expect(raised.constructor).toBe(Error);
+    expect(raised.message).toBe(
+      "The engine opened to a provider package's session, and this caller reads a legacy provider of it: a host defect.",
+    );
   });
 
   test("a package record's open without a deadline and a signal is a host defect raised before the package's open is called", async () => {

@@ -37,11 +37,11 @@
  * 5. Start the standalone server with LIBREDB_PROVIDERS_DIR set, sign in through the API, save a connection of the
  *    fixture engine (`POST /api/db/test-connection`, what the connection dialog's Save posts), run each statement of
  *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, each answer marked unconfirmed, and that an
- *    explain request is refused by name, 501. The fixture states no SQL text, so no register row reviews a grammar of
- *    its engine, the confirmation gate asks about every statement of its engine, and the default advisory mode runs a
- *    request that sends no confirmation field and marks its answer unconfirmed. The statement acceptance.json lists as
- *    refused, which the fixture refuses in its own words, is answered with Studio's sentence naming its code and holds
- *    none of the package's words (clause C-112).
+ *    explain request is refused by name, 400 FACET_NOT_OFFERED, not-sent. The fixture states no SQL text, so no
+ *    register row reviews a grammar of its engine, the confirmation gate asks about every statement of its engine, and
+ *    the default advisory mode runs a request that sends no confirmation field and marks its answer unconfirmed. The
+ *    statement acceptance.json lists as refused, which the fixture refuses in its own words, is answered with Studio's
+ *    sentence naming its code and holds none of the package's words (clause C-112).
  * 6. Start the server again on a data directory of its own, sign in, save the connection, and send the two statements
  *    of acceptance.json's `textBound`: first one a byte over the text bound the fixture's own statement language
  *    states (`confirmation.maxTextBytes` of the engine's `statementLanguageData`), then one at the bound. No register
@@ -138,7 +138,7 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
  * and module and the lock file, the build output check, the manifest file a package carries, the providers directory's
  * variable, the refusal and answer codes, the session cookie, the admin's sign-in, the routes, and the line the
  * confirmation gate logs for each statement it lets run unconfirmed. The predicates beside it (`refusalLines`,
- * `unavailableProblems`, `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`,
+ * `unavailableProblems`, `notOfferedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`,
  * `textBoundProblems`, `gateLineProblems`) read the answers and the server's output.
  */
 export const STUDIO = Object.freeze({
@@ -151,7 +151,7 @@ export const STUDIO = Object.freeze({
   providersDirVariable: "LIBREDB_PROVIDERS_DIR",
   digestMismatch: "PROVIDER_DIGEST_MISMATCH",
   unavailable: "PROVIDER_UNAVAILABLE",
-  unsupported: "PACKAGE_ENGINE_UNSUPPORTED",
+  notOffered: "FACET_NOT_OFFERED",
   sessionCookie: SESSION_COOKIE,
   adminEmail: "admin@libredb.org",
   unconfirmedRunLine: "A statement that needs a confirmation ran without one",
@@ -838,15 +838,18 @@ export function unavailableProblems(answer: Answer, refusalCode: string): string
 }
 
 /**
- * The problems with an answer to a request field the engine's record does not offer: the status 501, the code
- * PACKAGE_ENGINE_UNSUPPORTED exactly, and a sentence naming `field` as a whole word, so the refusal is the one read
- * from the record and no other.
+ * The problems with an answer to a request field the engine's record does not offer: the status 400, the code
+ * FACET_NOT_OFFERED exactly, the outcome `not-sent`, and a sentence naming `field` as a whole word, so the refusal is
+ * the one read from the record and no other.
  */
-export function unsupportedProblems(answer: Answer, field: string): string[] {
+export function notOfferedProblems(answer: Answer, field: string): string[] {
   const problems: string[] = [];
-  if (answer.status !== 501) problems.push(`answered ${answer.status}, not 501`);
-  if (answer.body.code !== STUDIO.unsupported) {
-    problems.push(`answered code ${JSON.stringify(answer.body.code)}, not ${STUDIO.unsupported}`);
+  if (answer.status !== 400) problems.push(`answered ${answer.status}, not 400`);
+  if (answer.body.code !== STUDIO.notOffered) {
+    problems.push(`answered code ${JSON.stringify(answer.body.code)}, not ${STUDIO.notOffered}`);
+  }
+  if (answer.body.outcome !== "not-sent") {
+    problems.push(`answered outcome ${JSON.stringify(answer.body.outcome)}, not not-sent`);
   }
   if (!new RegExp(`\\b${escapeRegExp(field)}\\b`).test(String(answer.body.error))) {
     problems.push(`answered a sentence naming no ${field}`);
@@ -1721,7 +1724,7 @@ async function queryEngine(ctx: Context): Promise<string> {
     const first = (fixture.acceptance.statements[0] as Expectation).statement;
     const explain = { connection, sql: first, explain: { mode: "estimate" } };
     const explained = await postJson(server, STUDIO.routes.query, explain, cookie);
-    assertNone(unsupportedProblems(explained, "explain").map((problem) => `the explain request ${problem}`));
+    assertNone(notOfferedProblems(explained, "explain").map((problem) => `the explain request ${problem}`));
     answered.push(`an explain request -> ${explained.status} ${JSON.stringify(explained.body)}`);
     return `engine ${connection.type} on 127.0.0.1:${port}, saved (${save.status} ${JSON.stringify(save.body)}) and answered: ${answered.join("; ")}`;
   });

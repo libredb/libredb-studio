@@ -6,8 +6,9 @@
  * ./legacy-adapter/open), and a package's record through its package's own `open` (`openContractSession` in
  * ./core/contract-session.ts) with the context core builds (`packageOpenContext` in ./open-context).
  *
- * What it answers is `OpenedEngine`, read through `openedProvider` and `openedSession`, each of which refuses the other
- * form as a host defect, so a caller reads the form it was answered and never who serves the engine:
+ * What it answers is `OpenedEngine`, read through `openedProvider` (or `providerForm`, for a holder's own shape of it)
+ * and `openedSession`, each of which refuses the other form as a host defect, so a caller reads the form it was answered
+ * and never who serves the engine:
  * - `"provider"`: a legacy provider, built and not connected, whose caller connects it under its own deadline;
  * - `"session"`: a package's connected session, with the package's declared environment every later call is given.
  * A legacy open reads the caller's `options` and is bounded by nothing, since it connects nothing; a package's open
@@ -141,17 +142,28 @@ export async function openEngine(engine: EngineRecord, open: EngineOpen): Promis
 }
 
 /**
- * The legacy provider `opened` holds.
+ * `opened` itself, narrowed to its provider form, with every fact its holder keeps beside it: what `openEngine`
+ * answered, or a holder's own shape of it (the provider factory's cache entry, `CachedSession` in
+ * src/lib/db/factory.ts). The form is checked at run time before the narrowing.
  *
  * @throws {Error} A host defect, when `opened` is a package's session: a caller that reads a provider of it.
  */
-export function openedProvider(opened: OpenedEngine): DatabaseProvider {
+export function providerForm<T extends OpenedEngine>(opened: T): Extract<T, { readonly form: "provider" }> {
   if (opened.form !== "provider") {
     throw new Error(
       "The engine opened to a provider package's session, and this caller reads a legacy provider of it: a host defect.",
     );
   }
-  return opened.provider;
+  return opened as Extract<T, { readonly form: "provider" }>;
+}
+
+/**
+ * The legacy provider `opened` holds (`providerForm`).
+ *
+ * @throws {Error} A host defect, when `opened` is a package's session: a caller that reads a provider of it.
+ */
+export function openedProvider(opened: OpenedEngine): DatabaseProvider {
+  return providerForm(opened).provider;
 }
 
 /**

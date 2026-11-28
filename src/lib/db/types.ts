@@ -1249,7 +1249,8 @@ export interface ProviderCapabilities {
    * somewhere: SQLite has `BEGIN`, and this provider still declares `false`, because
    * it holds no session for one and the route refuses the call.
    *
-   * It exists because the route's own gate is `isTransactionProvider(provider)`, a
+   * It exists because the route's own gate is the session's offer of `console.transaction`,
+   * which for a legacy provider's bridged session is `isTransactionProvider(provider)`, a
    * runtime shape check no client can read. `Studio.tsx` therefore supplied
    * BEGIN/COMMIT/ROLLBACK — and SANDBOX, which auto-rolls-back through the same
    * route — on every connection. Measured 2026-08-19 on OpenSearch: HTTP 400,

@@ -493,7 +493,8 @@ export default function Studio() {
   const onToggleEditing = canEditRows ? handleToggleEditing : undefined;
 
   // The transaction trio and the sandbox toggle are offered only where the provider
-  // declares it holds a transaction session (#464). The server's gate is
+  // declares it holds a transaction session (#464). The server's gate is the session's
+  // offer of `console.transaction`, for a legacy provider's bridged session
   // `isTransactionProvider(provider)` — a runtime shape check no client can read — so
   // both shells used to supply all four unconditionally and POST /api/db/transaction
   // answered 400 "Transaction control is not supported for this database type"

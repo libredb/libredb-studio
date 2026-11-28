@@ -132,7 +132,7 @@ mock.module("@/lib/db/factory", () => ({
     throw new Error("readProviderDeclarations is not read by this route");
   }),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module.
-  findCachedProvider: mock(() => null),
+  findCachedEditorEntry: mock(() => null),
   // The barrel `@/lib/db` re-exports it from this module too; this route reads no object tree.
   getOrCreateMetadataProvider: mock(async () => {
     throw new Error("getOrCreateMetadataProvider is not read by this route");

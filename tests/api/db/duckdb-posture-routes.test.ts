@@ -178,11 +178,13 @@ function onTheMetadataSession(route: string): boolean {
 
 /**
  * The routes that open the editor's session of the connection's record rather than its editor provider: the query
- * route, the object source read, pool statistics, which reads the editor's pool, the cancel, which finds a run on the
- * editor's session, and the maintenance run and its preview, which run every operation but a kill there.
+ * route, the transaction route, which runs its transaction on the query route's session, the object source read, pool
+ * statistics, which reads the editor's pool, the cancel, which finds a run on the editor's session, and the maintenance
+ * run and its preview, which run every operation but a kill there.
  */
 const OPENS_THE_EDITOR_SESSION = new Set([
   "query",
+  "transaction",
   "objects/source",
   "pool-stats",
   "cancel",
