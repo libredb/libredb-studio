@@ -201,12 +201,13 @@ describe("the cancel route on a provider package's engine", () => {
     expect((await running).status).toBe(200);
     // One session: the cancel found the run on the editor's session the query opened, its handle first.
     expect(names(seen)).toEqual(["open", "execute", "cancel"]);
-    const [execute] = callsNamed(seen, "execute");
-    const [cancel] = callsNamed(seen, "cancel");
-    expect(cancel?.args[0]).toBe(execute?.args[0]);
-    expect(cancel?.args[1]).toEqual({ runId: queryId });
-    expect((execute?.args[1] as { runId?: string }).runId).toBe(queryId);
-    expect((cancel?.args[2] as CallContext).signal.aborted).toBe(false);
+    const [execute] = callsNamed(seen, "execute").map(({ args }) => args);
+    const [cancel] = callsNamed(seen, "cancel").map(({ args }) => args);
+    if (execute === undefined || cancel === undefined) throw new Error("the package saw no execute or no cancel");
+    expect(cancel[0]).toBe(execute[0]);
+    expect(cancel[1]).toEqual({ runId: queryId });
+    expect((execute[1] as { runId?: string }).runId).toBe(queryId);
+    expect((cancel[2] as CallContext).signal.aborted).toBe(false);
 
     // A run the package does not know answers not cancelled, on the same session.
     hooksFor(REST);
