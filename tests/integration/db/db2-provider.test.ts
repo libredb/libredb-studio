@@ -100,7 +100,8 @@ import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
-import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { providerAuthor, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { runEditorQuery } from "@/lib/api/editor-query";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { legacyRegisterTable } from "../../helpers/legacy-register";
@@ -1157,6 +1158,28 @@ describe("Db2Provider: query", () => {
 
     expect(sent.at(-1)?.params).toEqual(["false", 1]);
     expect(result.rowCount).toBe(1);
+  });
+
+  // IBM documents SQLERRD(3) as -1 for a TRUNCATE ("The number of rows that were deleted from the
+  // table is not returned", Db2 LUW 11.5, TRUNCATE statement, Notes), and db2-node reads its count
+  // from SQLERRD3 (K19), so -1 is the driver's real answer there. Studio answers a count the
+  // driver did not read as the rows returned, here none.
+  test("a statement whose count Db2 does not return (SQLERRD3 -1, as after TRUNCATE) answers the rows returned through the host core", async () => {
+    userQuery = async () => ({ rows: [], rowCount: -1, columns: [], diagnostics: [] });
+    const provider = await connected();
+    const answer = await runEditorQuery(
+      { form: "provider", provider },
+      {
+        statement: "TRUNCATE TABLE APP.EVENTS IMMEDIATE",
+        options: {},
+        signal: new AbortController().signal,
+        route: "test",
+        scrub: providerTextScrub(provider.config, "any"),
+      },
+    );
+
+    expect(answer.body.rowCount).toBe(0);
+    expect(answer.body.rows).toEqual([]);
   });
 
   // db2-node 1.0.24 classifies a statement past its leading comments (K18) and binds a bigint
