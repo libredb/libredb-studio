@@ -149,6 +149,39 @@ describe("the accessor", () => {
     }
   });
 
+  test("a source request refused by the object model is Studio's model refusal, not-sent, in Studio's words", () => {
+    const source: CallRefusal = { rule: "request-source-not-stated", pointer: "/kind" };
+    const path: CallRefusal = { rule: "request-path-not-admitted", pointer: "/path" };
+    const kind: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
+    const sourceSentence =
+      "The request names an object kind whose source this connection's object model does not state, so Studio did not call the provider.";
+    const pathSentence =
+      "The request names an object path deeper than this connection's object model admits for its kind, so Studio did not call the provider.";
+    const kindSentence =
+      "The request names an object kind this connection's object model does not state, so Studio did not call the provider.";
+    const view = { caller: callerOf(), deadlineSentence };
+
+    const cases: [readonly CallRefusal[], string][] = [
+      [[source], sourceSentence],
+      [[path], pathSentence],
+      [[path, source], `${pathSentence} ${sourceSentence}`],
+      [[path, kind], `${pathSentence} ${kindSentence}`],
+    ];
+    for (const [refusals, message] of cases) {
+      const error = refusalError(refused(refusals, false), view);
+      expect(error).toBeInstanceOf(StudioObjectModelRefusal);
+      expect(error.message).toBe(message);
+      expect(errorKind(error)).toBe("studio-object-model-refusal");
+      expect(errorOutcome(error)).toBe("not-sent");
+    }
+
+    // Beside a rule no row reads, the record is the host defect of every refusal it holds.
+    const other: CallRefusal = { rule: "request-field-empty", pointer: "/path", name: "path" };
+    const mixed = refusalError(refused([other, source], false), view);
+    expect(mixed).toBeInstanceOf(HostDefectError);
+    expect((mixed as HostDefectError).refusals).toEqual([other, source]);
+  });
+
   test("a refused record holding an object model refusal beside a refusal no row reads is a host defect naming every refusal, none dropped", () => {
     const level: CallRefusal = { rule: "request-level-not-stated", pointer: "/container" };
     const kind: CallRefusal = { rule: "request-kind-not-stated", pointer: "/kind" };
@@ -161,6 +194,8 @@ describe("the accessor", () => {
       "facet-not-offered",
       "request-level-not-stated",
       "request-kind-not-stated",
+      "request-source-not-stated",
+      "request-path-not-admitted",
     ]);
     const others = CALL_REFUSAL_RULES.filter((rule) => !handled.has(rule));
 
@@ -234,6 +269,8 @@ describe("the accessor", () => {
       "facet-not-offered",
       "request-level-not-stated",
       "request-kind-not-stated",
+      "request-source-not-stated",
+      "request-path-not-admitted",
     ]);
     const others = CALL_REFUSAL_RULES.filter((rule) => !handled.has(rule));
 
@@ -249,7 +286,7 @@ describe("the accessor", () => {
       expect(Object.hasOwn(error, "outcome")).toBe(false);
       expect(errorKind(error)).toBe("internal");
     }
-    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 6);
+    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 8);
   });
 
   test("a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal", () => {

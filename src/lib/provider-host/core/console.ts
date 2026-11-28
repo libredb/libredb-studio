@@ -58,8 +58,8 @@
  * Core answers plain records and passes a provider's errors by reference; it constructs no class a caller in another
  * bundle would test with `instanceof`, so the caller's accessor builds its own classes from the records. It imports only
  * the SDK's public subpaths other than `testing`, Node built-ins and its own files, and keeps no module state
- * (tests/unit/lib/provider-host/core-boundary.test.ts). The tree call (src/lib/provider-host/core/objects.ts) reads the
- * same machinery, `refusedBefore`, `stoppedBy`, `lateFailure`, `settledOf` and `startCall`, exported from here.
+ * (tests/unit/lib/provider-host/core-boundary.test.ts). The tree and source calls (src/lib/provider-host/core/objects.ts)
+ * read the same machinery, `refusedBefore`, `stoppedBy`, `lateFailure`, `settledOf` and `startCall`, exported from here.
  */
 import {
   awaitWithin,

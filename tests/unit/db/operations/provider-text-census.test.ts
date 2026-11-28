@@ -593,6 +593,14 @@ const LEGACY_MAINTENANCE_ANSWER =
   "a legacy maintenance answer carried by reference through the host core's maintenance calls and providerMaintenance to its route, which answers it through its core scrubs";
 
 /**
+ * The reason the legacy bridge's source read is no crossing of its own: the bridge hands the provider's document by
+ * reference to the host core's source call, which checks and cuts it and answers it to no route yet; the source route
+ * reads the provider's own reader and answers its document through `scrubSourceDocument`.
+ */
+const LEGACY_SOURCE_ANSWER =
+  "a legacy source document carried by reference to the host core's source call, which no route reads yet";
+
+/**
  * The reason the server engine catalog's refusal of a connection's type is no provider text: `legacyProviderRefusal`
  * (src/lib/db/server-catalog.ts) writes each of its sentences, quoting only the type the operator's seed entry gave
  * and the closed refusal codes (C-96), and no package's code runs to build one.
@@ -655,6 +663,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${providerHost("legacy-bridge.ts")}: legacyDescribeMany: provider.describeObjects`]: LEGACY_TREE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: legacyRun: provider.runMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: bridgedConsole: provider.previewMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: bridgedConsole: provider.readObjectSource`]: LEGACY_SOURCE_ANSWER,
   [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
     "the accessor's own sentence for a state read the host stopped waiting for or refused before the call, Studio's: no provider text reaches it",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:

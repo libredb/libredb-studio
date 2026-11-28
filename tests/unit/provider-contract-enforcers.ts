@@ -3236,7 +3236,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/provider-host/core/contract-session.test.ts": [
         "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
-        "the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged",
+        "the host core's execute, cancel, endScope, tree, source, panel, pool statistics and health run on the session unchanged",
       ],
       "tests/isolated/editor-cache-package-engines.test.ts": [
         "a call the package does not offer is refused before the call",
@@ -3406,6 +3406,23 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/provider-sdk/call-surface-parity.test.ts": ["the object source document is Studio's own shape"],
       "tests/unit/db/object-kinds.test.ts": [
         "object-kinds states no source bound, reason or bound helper, so every reader imports the SDK's",
+      ],
+      "tests/unit/lib/provider-host/core/objects.test.ts": [
+        "the source call runs only where the session offers objects.source, under the call's deadline",
+        "a source call naming a kind the model does not state or states without source, or a path the model does not admit, is refused as a record before the call, and the provider is never called",
+        "a session that offers objects.source and states no object model or holds no source function is a host defect, named",
+        "a source call answers the provider's document cut by the SDK's bound helper, a new document with the request and context frozen, and a part with its own undefined unavailable read as the check read it",
+        "a malformed source answer is refused at the core as source-answer-unreadable at its pointer, and the provider's error reaches the caller as the same object",
+        "a source call the caller stops waiting for answers a stop at once, its later failure reaches the late handler once, and a later answer is dropped",
+      ],
+      "tests/unit/lib/provider-host/legacy-bridge.test.ts": [
+        "a bridged session offers objects.source exactly where the provider defines readObjectSource, and its source call reads the method with the provider as receiver, a fresh path and the source bound",
+      ],
+      "tests/unit/db/object-model-declarations.test.ts": [
+        "each shipped provider's bridged session offers objects.source exactly where it defines readObjectSource, under each connection variant",
+      ],
+      "tests/unit/lib/provider-host/access.test.ts": [
+        "a source request refused by the object model is Studio's model refusal, not-sent, in Studio's words",
       ],
     },
     schema: ["/$defs/objectsCalls/properties/source"],

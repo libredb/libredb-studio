@@ -21,8 +21,8 @@
  * 6. The session's calls are `sessionCalls` of the manifest's calls and the refinement, its maintenance
  *    `sessionMaintenance` of the engine's, and it is a read-only statement session exactly when the open policy says
  *    `readOnly` and `sendsStatements` (clause C-78). A session that offers `objects.tree` or `objects.source` states the
- *    object model the engine's admitted declaration states, by reference, which the host core holds every tree call to
- *    (clause M-89); one that offers neither states none, since nothing reads it.
+ *    object model the engine's admitted declaration states, by reference, which the host core holds every tree and
+ *    source call to (clauses M-89 and C-115); one that offers neither states none, since nothing reads it.
  *
  * `teardownContractSession` tears a session down under the teardown's deadlines (clause C-45): its close under a cleanup
  * context with the package's environment, waited for at most the close deadline, with no rollback step, since a contract

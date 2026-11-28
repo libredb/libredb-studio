@@ -28,6 +28,7 @@ import {
   PAGE_MAX_BYTES,
   pumpPage,
   type ResultSource,
+  SOURCE_CHARACTER_LIMIT,
   type TreeContainersRequest,
   type TreeCountRequest,
   type TreeDescribeManyRequest,
@@ -224,6 +225,49 @@ describe("bridgedConsole", () => {
       expect(checkObjectsFacet(session.calls, "tree")).toEqual([]);
       expect(typeof session.tree).toBe("function");
     }
+  });
+
+  test("a bridged session offers objects.source exactly where the provider defines readObjectSource, and its source call reads the method with the provider as receiver, a fresh path and the source bound", async () => {
+    const document = { path: [marker(), marker()], kind: "routine", parts: [] };
+    const receivers: unknown[] = [];
+    const readObjectSource = mock(async function (this: unknown, ..._args: unknown[]) {
+      receivers.push(this);
+      return document;
+    });
+    const reading = fake(resultOf([]), { readObjectSource });
+    const plain = bridgedConsole(fake(resultOf([])), {});
+    const offering = bridgedConsole(reading, {});
+
+    expect(plain.session.calls.objects).toEqual({ tree: "offered", source: "not-offered" });
+    expect(checkObjectsFacet(plain.session.calls, "source")).toEqual([
+      { rule: "facet-not-offered", pointer: "/objects/source", name: "objects.source" },
+    ]);
+    expect(Object.hasOwn(plain.session, "source")).toBe(false);
+    expect(offering.session.calls.objects).toEqual({ tree: "offered", source: "offered" });
+    expect(checkObjectsFacet(offering.session.calls, "source")).toEqual([]);
+
+    const path = freezeData([marker(), marker()]);
+    const source = offering.session.source as NonNullable<typeof offering.session.source>;
+    const answered = await source(freezeData({ path, kind: "routine" }), contextOf());
+
+    expect(answered).toBe(document as never);
+    expect(callsOf(readObjectSource)).toEqual([[path, "routine", SOURCE_CHARACTER_LIMIT]]);
+    const handed = callsOf(readObjectSource)[0]?.[0];
+    expect(handed).not.toBe(path);
+    expect(Object.isFrozen(handed)).toBe(false);
+    expect(receivers).toEqual([reading]);
+
+    // A provider's error passes by reference.
+    const thrown = new Error(marker());
+    const failing = bridgedConsole(
+      fake(resultOf([]), {
+        readObjectSource: mock(async () => {
+          throw thrown;
+        }),
+      }),
+      {},
+    ).session.source as NonNullable<typeof offering.session.source>;
+    expect(await failure(() => failing({ path: [marker()], kind: "routine" }, contextOf()))).toBe(thrown);
   });
 
   test("the bridged session states the object model its provider's capabilities answer", () => {

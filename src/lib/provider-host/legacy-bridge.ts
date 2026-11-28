@@ -12,7 +12,8 @@
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
- * session, since every legacy provider holds the five tree members. `maintenance.run` is offered on every session,
+ * session, since every legacy provider holds the five tree members, and `objects.source` exactly where the provider
+ * defines `readObjectSource`. `maintenance.run` is offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
  * `previewMaintenance`. `monitoring.panel` is offered on every session, and `monitoring.poolStats` exactly where the
  * provider holds a pool statistics read (`getPoolStats`, a function on the provider or its prototype). The session's
@@ -26,7 +27,9 @@
  * the session is built, projected into the declaration's form (`declaredObjectModel` in
  * src/lib/provider-host/legacy-object-model.ts), so a connected provider's per-connection model is the one served. The
  * host core holds every tree call to it, so a request naming a level or a kind the provider's model does not state is
- * refused before the provider is called (clause M-89). The other bridged sessions offer no tree and state no model.
+ * refused before the provider is called (clause M-89), and every source call to it, so a request naming a kind the
+ * model does not state or states without source, or a path deeper than it admits, is refused the same way (clause
+ * C-115). The other bridged sessions offer no tree and no source and state no model.
  *
  * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
  * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
@@ -63,6 +66,13 @@
  * allowance hands a fresh `{ readAllowance }` as the trailing argument of `countObjects`, `listObjects` and
  * `describeObjects`, and one built without passes today's arguments. The facades that read it are `objectTree` and
  * `grantedObjectTree` in src/lib/api/object-tree.ts.
+ *
+ * Its source call runs the provider's own `readObjectSource`, bound to the provider, with a fresh copy of the frozen
+ * request's path, so a legacy member may write what it receives, the request's kind, and `SOURCE_CHARACTER_LIMIT` as
+ * the limit, the bound the source route always passed. It answers the provider's document by reference, never calls
+ * `forCatalog`, and passes a provider's error by reference; the host core's source call checks and cuts the answer. No
+ * route reads it yet: the source route still calls the provider's own `readObjectSource` (`requireSourceReader` in
+ * src/lib/api/object-route.ts).
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
@@ -144,11 +154,14 @@ import {
   type MaintenanceRunRequest,
   type MaintenanceAccepted,
   type MonitoringPanelRequest,
+  type ObjectSourceDocument,
   PAGE_MAX_BYTES,
   type PoolStats,
   type PumpLimits,
   type ResultSource,
   type RowBatch,
+  SOURCE_CHARACTER_LIMIT,
+  type SourceRequest,
   sessionCalls,
   sessionMaintenance,
   type TransactionAnswer,
@@ -564,8 +577,8 @@ export function bridgedObjectModel(provider: DatabaseProvider): ObjectModel {
 }
 
 /**
- * `provider` served as one session of console execute, cancel and transaction, of the object tree, of maintenance and
- * of monitoring, its execute run with a copy of `options`, the caller's own page options. `objectReads` is the
+ * `provider` served as one session of console execute, cancel and transaction, of the object tree and source, of
+ * maintenance and of monitoring, its execute run with a copy of `options`, the caller's own page options. `objectReads` is the
  * host-side input a tree request does not carry: the billed-read allowance its count, listing and bulk describe are
  * handed.
  */
@@ -578,6 +591,7 @@ export function bridgedConsole(
   const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
   const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
   const previewer = provider.previewMaintenance === undefined ? undefined : provider.previewMaintenance.bind(provider);
+  const sourceReader = provider.readObjectSource === undefined ? undefined : provider.readObjectSource.bind(provider);
   const pooled: PoolStatsReader | undefined = readsPoolStats(provider) ? provider : undefined;
   const run: LegacyRun = { cancelSent: false };
 
@@ -625,7 +639,7 @@ export function bridgedConsole(
         endScope: ender === undefined ? "not-offered" : "offered",
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
-      objects: { tree: "offered", source: "not-offered" },
+      objects: { tree: "offered", source: sourceReader === undefined ? "not-offered" : "offered" },
       maintenance: { run: "offered", preview: previewer === undefined ? "not-offered" : "offered" },
       monitoring: { panel: "offered", poolStats: pooled === undefined ? "not-offered" : "offered" },
     },
@@ -663,6 +677,12 @@ export function bridgedConsole(
         : {
             preview: (request: MaintenancePreviewRequest): Promise<MaintenancePreview> =>
               previewer(request.operation, [...request.path]),
+          }),
+      ...(sourceReader === undefined
+        ? {}
+        : {
+            source: (request: SourceRequest): Promise<ObjectSourceDocument> =>
+              sourceReader([...request.path], request.kind, SOURCE_CHARACTER_LIMIT),
           }),
       ...(canceller === undefined
         ? {}

@@ -8,7 +8,8 @@
  * by `declaredObjectModel` (src/lib/provider-host/legacy-object-model.ts), and its committed declaration with that model
  * added is held to the SDK's schema and every object model rule through `validateEngine`. So an engine's model, its
  * maintenance kinds and its catalog capture kind words are read against one another as a package's would be. The legacy
- * bridge's session of each provider states that same projection, the model the host core holds its tree calls to.
+ * bridge's session of each provider states that same projection, the model the host core holds its tree and source
+ * calls to, and offers `objects.source` exactly where the provider reads source.
  *
  * A provider whose model depends on its connection is projected under every variant this census can reach without a
  * server: the census connection, the same connection naming no database and no connection string (a server-level
@@ -225,6 +226,21 @@ describe("the object model of every shipped engine", () => {
 
     expect(differing.map(({ type, variant }) => `${type} ${variant}`)).toEqual([]);
     expect(projections.length).toBeGreaterThan(SHIPPED_DATABASE_TYPES.length * 2);
+  });
+
+  test("each shipped provider's bridged session offers objects.source exactly where it defines readObjectSource, under each connection variant", () => {
+    const differing = projections.filter(({ provider }) => {
+      const { session } = bridgedConsole(provider, {});
+      const reads = typeof provider.readObjectSource === "function";
+      return (
+        session.calls.objects.source !== (reads ? "offered" : "not-offered") || (session.source !== undefined) !== reads
+      );
+    });
+
+    expect(differing.map(({ type, variant }) => `${type} ${variant}`)).toEqual([]);
+    // Vacuity: the census reaches providers on both sides of the offer.
+    expect(projections.some(({ provider }) => typeof provider.readObjectSource === "function")).toBe(true);
+    expect(projections.some(({ provider }) => provider.readObjectSource === undefined)).toBe(true);
   });
 
   test("every object kind reader answers the same over each projected model as over its provider's capabilities", () => {
