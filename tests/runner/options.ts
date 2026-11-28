@@ -26,6 +26,8 @@ export type RunnerOptions = {
   mergeInto: string | null;
   /** How long one file may take before the runner kills it and fails it. */
   fileTimeoutMs: number;
+  /** The per-test timeout every child is given, or null for the platform's default (see perTestTimeoutArgs). */
+  testTimeoutMs: number | null;
   /** Print what would run and exit. */
   list: boolean;
   /** Arguments after `--`, handed to every `bun test` child verbatim. */
@@ -71,11 +73,16 @@ export const WINDOWS_PER_TEST_TIMEOUT_MS = 60_000;
 /**
  * The `--timeout` a child is started with, or nothing at all.
  *
- * Windows only, and deliberately not "a bigger number everywhere": Linux is the leg
- * that has to keep failing when a test really does get slow, and it is the leg every
- * contributor and the coverage gate run on.
+ * Without `--test-timeout`, Windows only, and deliberately not "a bigger number
+ * everywhere": Linux is the leg that has to keep failing when a test really does get
+ * slow, and it is the leg every contributor and the coverage gate run on.
+ *
+ * With `--test-timeout`, that value on every platform, in place of the Windows default.
+ * The main-only cross-platform CI legs pass it (docs/TOOLCHAIN.md, "What a file's
+ * verdict is read from, and how a run ends"); the Linux suite passes nothing.
  */
-export function perTestTimeoutArgs(platform: NodeJS.Platform): string[] {
+export function perTestTimeoutArgs(platform: NodeJS.Platform, overrideMs: number | null): string[] {
+  if (overrideMs !== null) return [`--timeout=${overrideMs}`];
   return platform === "win32" ? [`--timeout=${WINDOWS_PER_TEST_TIMEOUT_MS}`] : [];
 }
 
@@ -95,6 +102,7 @@ export function parseRunnerArgs(argv: string[], { cpuCount }: { cpuCount: number
     coverageDir: DEFAULT_COVERAGE_DIR,
     mergeInto: null,
     fileTimeoutMs: DEFAULT_FILE_TIMEOUT_MS,
+    testTimeoutMs: null,
     list: false,
     bunArgs: [],
   };
@@ -133,6 +141,11 @@ export function parseRunnerArgs(argv: string[], { cpuCount }: { cpuCount: number
           throw new Error(`${name} takes its value with an equals sign, as ${name}=${argv[index + 1] ?? "SECONDS"}.`);
         options.fileTimeoutMs = positiveInteger(name, value) * 1000;
         break;
+      case "--test-timeout":
+        if (value === null)
+          throw new Error(`${name} takes its value with an equals sign, as ${name}=${argv[index + 1] ?? "SECONDS"}.`);
+        options.testTimeoutMs = positiveInteger(name, value) * 1000;
+        break;
       case "--coverage-dir":
         if (value === null)
           throw new Error(`${name} takes its value with an equals sign, as ${name}=${argv[index + 1] ?? "DIR"}.`);
@@ -146,7 +159,7 @@ export function parseRunnerArgs(argv: string[], { cpuCount }: { cpuCount: number
         break;
       default:
         throw new Error(
-          `Unknown option "${name}". The runner's own options are --jobs, --coverage, --coverage-dir, --merge-into, --file-timeout and --list; everything for bun test goes after --. ` +
+          `Unknown option "${name}". The runner's own options are --jobs, --coverage, --coverage-dir, --merge-into, --file-timeout, --test-timeout and --list; everything for bun test goes after --. ` +
             "If you did write one: `bun run` removes the first --, and so does bun when it sits straight after the script path, " +
             "so the form that arrives whole is `bun tests/run-tests.ts <selector> -- <flags>`.",
         );

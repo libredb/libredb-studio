@@ -444,6 +444,11 @@ Raising it hides no hang, because a file that genuinely stops is still killed an
 The same thing happened one order of magnitude up, which is why the flag says 60000 and not the 30000 it said first: the runner's own coverage test, which spawns a second runner that spawns bun with coverage and then merges the report, died at 30671ms on windows-latest against 16.3s for that whole file on linux-x64.
 Linux and macOS are left on bun's default on purpose: Linux is the leg the coverage gate and every contributor run on, and it is where a test that really did get slow has to stay visible.
 The flag is placed before the forwarded arguments, so `-- --timeout=...` still wins, bun taking the last of a repeated option; `tests/unit/test-runner-cli.test.ts` measures that precedence against the real bun binary rather than assuming it.
+`--test-timeout=SECONDS` replaces that default with one value on every platform, and `--file-timeout=SECONDS` replaces the 300-second per-file budget.
+The main-only cross-platform CI legs run `bun run test --file-timeout=600 --test-timeout=60` on windows-latest and macos-latest.
+600 seconds is twice the slowest file measured on windows-latest, `tests/unit/lib/agent/language-boundary.test.ts` at 291.8 s and 298.8 s, which timed out at 300.1 s on #2656.
+60 seconds a test is the Windows value above, given on macOS too, where the timing failures measured were 5,031 to 5,522 ms against bun's 5,000.
+The Linux suite passes neither option, so it stays the leg where a slow test shows.
 
 One shape hangs a file on Windows that no per-test timeout catches.
 Measured on windows-latest with Bun 1.4.4 (#2331): a test that awaits a timer (`Bun.sleep`, or a promise around `setTimeout`) and then calls `expect(promise).rejects` or `.resolves` on a promise a later timer settles spins at 100% CPU, no timer fires again, bun's per-test timeout included, and only the runner's 300-second per-file budget ends it.

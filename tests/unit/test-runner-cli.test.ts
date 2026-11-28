@@ -913,4 +913,29 @@ describe("the test runner, end to end", () => {
     const longLast = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--", "--timeout=50", "--timeout=100000"]);
     expect(longLast.exitCode).toBe(0);
   });
+
+  /*
+    --test-timeout is the per-test budget the main-only cross-platform legs give every
+    child, on every platform. The fixture sleeps 1.5 s and asserts nothing after the
+    sleep, so it holds on all three platforms (no promise a later timer settles is
+    asserted on, the Windows rule): with bun's own 5 s, or the Windows 60 s, it passes,
+    and with a 1 s budget it fails as a timeout.
+  */
+  test("--test-timeout reaches every child on every platform", () => {
+    const sandbox = sandboxWith(
+      [
+        'import { test } from "bun:test";',
+        'test("sleeps a second and a half", async () => {',
+        "  await Bun.sleep(1500);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+
+    expect(runInSandbox(sandbox).exitCode).toBe(0);
+
+    const short = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--test-timeout=1"]);
+    expect(short.exitCode).toBe(1);
+    expect(`${short.stdout}${short.stderr}`).toContain("timed out after 1000ms");
+  });
 });

@@ -227,3 +227,27 @@ describe("what a pull request runs", () => {
     expect((ci.on.push as { branches: string[] }).branches).toContain("main");
   });
 });
+
+describe("the main-only cross-platform legs", () => {
+  const ci = workflow("ci.yml");
+
+  test("the main-only cross-platform legs carry their measured budgets", () => {
+    // 600 s a file: twice the slowest file measured on windows-latest. 60 s a test: the
+    // measured Windows value, given on macOS too. 45 minutes a job: the slowest leg
+    // measured, plus one file allowed its whole budget.
+    const job = ci.jobs["test-cross-platform"] as Job & { "timeout-minutes"?: number };
+    const suite = job.steps?.find((step) => step.name === "Run the test suite");
+    expect(suite?.run).toBe("bun run test --file-timeout=600 --test-timeout=60");
+    expect(job["timeout-minutes"]).toBe(45);
+  });
+
+  test("the Linux suite passes neither budget, so a slow test still shows there", () => {
+    for (const [id, job] of Object.entries(ci.jobs)) {
+      if (id === "test-cross-platform") continue;
+      for (const step of job.steps ?? []) {
+        expect({ id, run: step.run ?? "" }).not.toEqual({ id, run: expect.stringContaining("--test-timeout") });
+        expect({ id, run: step.run ?? "" }).not.toEqual({ id, run: expect.stringContaining("--file-timeout") });
+      }
+    }
+  });
+});

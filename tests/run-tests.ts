@@ -15,6 +15,8 @@
  *   bun tests/run-tests.ts tests/api             one layer
  *   bun tests/run-tests.ts tests/api/db.test.ts  one file
  *   bun tests/run-tests.ts --jobs=4              bound the concurrency
+ *   bun tests/run-tests.ts --file-timeout=600    a file's budget, in seconds
+ *   bun tests/run-tests.ts --test-timeout=60     every test's budget, in seconds
  *   bun tests/run-tests.ts --list                what would run
  *   bun tests/run-tests.ts --coverage --merge-into=coverage/lcov.info
  *   bun tests/run-tests.ts tests/unit -- --bail  pass flags to bun test
@@ -214,7 +216,7 @@ function childEnvironment(): Record<string, string | undefined> {
   return wantsColour ? { ...process.env, FORCE_COLOR: "1" } : { ...process.env };
 }
 
-function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
+function spawnTestFile(bunArgs: string[], testTimeoutMs: number | null, junitDir: string): RunFile {
   return async ({ file, index, coverageDir, timeoutMs }): Promise<SpawnOutcome> => {
     const coverageArgs = coverageDir ? ["--coverage", "--coverage-reporter=lcov", `--coverage-dir=${coverageDir}`] : [];
     // Every child writes a junit report, and it is the runner's only source of truth
@@ -233,8 +235,8 @@ function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
       "test",
       // BEFORE the forwarded arguments, so a contributor's own `-- --timeout=...` still
       // decides: bun takes the last of a repeated option, the same rule the reporter
-      // flags below rely on. Empty everywhere but Windows.
-      ...perTestTimeoutArgs(process.platform),
+      // flags below rely on. Empty everywhere but Windows, unless --test-timeout is given.
+      ...perTestTimeoutArgs(process.platform, testTimeoutMs),
       ...bunArgs,
       // AFTER the user's arguments, because bun takes the last of a repeated option:
       // a forwarded `-- --reporter-outfile=x` would otherwise send the report
@@ -385,7 +387,7 @@ async function main(): Promise<number> {
     coverage: options.coverage,
     coverageDir: options.coverageDir,
     coverageExempt: COVERAGE_EXEMPT_FILES,
-    runFile: spawnTestFile(options.bunArgs, junitDir),
+    runFile: spawnTestFile(options.bunArgs, options.testTimeoutMs, junitDir),
     shouldStop: () => stopping,
     onResult: (outcome, position, total) => {
       // Belt and braces. The intent is that what a child has just been killed for is

@@ -321,13 +321,23 @@ jobs:
   # forever for a check that can no longer report. This job is deliberately not a
   # required check yet; promote it once it has a history of being green.
   #
-  # It runs on push to main and by dispatch, not on a pull request.
+  # It runs on push to main and by dispatch, not on a pull request, with budgets
+  # measured on these runners rather than the Linux defaults:
+  #   --file-timeout=600: twice the slowest file measured on windows-latest
+  #     (tests/unit/lib/agent/language-boundary.test.ts, 291.8 s and 298.8 s; it
+  #     timed out at 300.1 s on #2656 against the default 300 s).
+  #   --test-timeout=60: the Windows per-test value of tests/runner/options.ts
+  #     (CI run 35242402285), on macOS too, whose timing failures were 5,031 to
+  #     5,522 ms against bun's 5,000.
+  #   timeout-minutes 45: the slowest leg measured took 23 minutes, plus one file
+  #     allowed its whole 10-minute budget.
+  # The Linux suite passes neither option, so a slow test still fails there first.
   test-cross-platform:
     name: Cross-platform Tests (${{ matrix.os }})
     # Main only (see the note at the top of this file).
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -382,7 +392,7 @@ jobs:
         # PATH carries the whole unix toolset, and the contributor this job stands
         # in for runs the command from PowerShell. Running it the way they do is
         # what makes this job evidence.
-        run: bun run test
+        run: bun run test --file-timeout=600 --test-timeout=60
         env:
           # Optional on a contributor's machine, mandatory here: this job installs Helm and
           # builds the chart dependency, so a chart test that did not run is a defect, and the
