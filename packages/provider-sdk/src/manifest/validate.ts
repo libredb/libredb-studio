@@ -127,6 +127,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "request-name-length-empty",
   "request-name-refused-unreachable",
   "agent-text-fill-unknown",
+  "agent-tool-not-offered",
   "statistics-without-catalog-read",
   "catalog-capture-without-catalog-read",
   "capture-kind-word-duplicate",
@@ -1053,6 +1054,65 @@ export const AGENT_MCP_TEXT_FILLS = Object.freeze({
 } as const satisfies { readonly [Name in keyof AgentMcpText]: readonly string[] });
 
 /**
+ * Every tool Studio's agent mode may offer a run, in any workflow and any statement language: the names a rule text is
+ * read against (`agentToolsNamedIn`). It holds tools no declared language is offered, so a rule naming one is refused,
+ * never read as plain text. Studio's census, tests/unit/lib/agent/tool-offer-census.test.ts, holds it equal to the
+ * tools Studio's agent defines. Frozen.
+ */
+export const AGENT_TOOL_NAMES = Object.freeze([
+  "inspect_schema",
+  "run_read_query",
+  "inspect_plan",
+  "profile_table",
+  "compare_plans",
+  "recommend_change",
+  "inspect_operations",
+  "inspect_usage",
+  "profile_workloads",
+  "present_answer",
+  "compose_report",
+] as const);
+
+/** A tool of Studio's agent mode, by name. */
+type AgentToolVocabularyName = (typeof AGENT_TOOL_NAMES)[number];
+
+/**
+ * The tools Studio's agent mode offers each workflow of an engine's declared statement language, by workflow. A
+ * declared language's investigation rule, `agent.text.investigation.toolRule`, is the one rule an engine's text states,
+ * and names only the investigation's tools (`agentToolRuleRefusals`); the operations rule is Studio's own. Studio's
+ * census, tests/unit/lib/agent/tool-offer-census.test.ts, holds each list equal to the tools Studio offers that workflow.
+ * Frozen whole, each list included.
+ */
+export const AGENT_WORKFLOW_TOOLS = Object.freeze({
+  investigation: Object.freeze(["run_read_query", "compose_report"] as const),
+  operations: Object.freeze(["inspect_operations", "recommend_change", "compose_report"] as const),
+} as const satisfies { readonly [Workflow: string]: readonly AgentToolVocabularyName[] });
+
+/**
+ * The tools of `AGENT_TOOL_NAMES` that `text`, a rule text, names, in the vocabulary's order: each name as a whole word,
+ * except one written as an absence ("there is no inspect_schema"), which says what a run does not hold. A tool name is
+ * lower-case letters and underscores, so it is written into the expression as it stands.
+ */
+export function agentToolsNamedIn(text: string): AgentToolVocabularyName[] {
+  return AGENT_TOOL_NAMES.filter((tool) => new RegExp(`(?<!\\bno )\\b${tool}\\b`).test(text));
+}
+
+/**
+ * The investigation's tool rule of an agent text, at the text's pointer `at`, where it names a tool the investigation
+ * is not offered (`AGENT_WORKFLOW_TOOLS`): one refusal at the rule's pointer, however many such tools it names. A rule
+ * written as parts is read as its string parts joined with nothing between them; a fill in it is refused by
+ * `agent-text-fill-unknown` already.
+ */
+function agentToolRuleRefusals(text: AgentLanguageText, at: string): SchemaRefusal[] {
+  const rule = text.investigation.toolRule;
+  const written = typeof rule === "string" ? rule : rule.map((part) => (typeof part === "string" ? part : "")).join("");
+  const offered: readonly string[] = AGENT_WORKFLOW_TOOLS.investigation;
+  return agentToolsNamedIn(written).some((tool) => !offered.includes(tool))
+    ? [schemaRefusal("agent-tool-not-offered", `${at}/investigation/toolRule`)]
+    : [];
+}
+
+/**
  * The fills of the texts in `texts`, at pointers under `at`, their group's pointer, that name a value Studio does not
  * fill into that text: one rule for every agent text, `fills` listing the values each text of the group takes.
  */
@@ -1141,7 +1201,8 @@ function requestFormRefusals(form: AgentRequestForm, at: string): SchemaRefusal[
  * speaks SQL states null; a reader kind that names no operation lists none, since no reader could ever answer one it
  * lists; and an agent part is stated only for an engine whose agent mode sends a statement, with a request form read
  * whole (`requestFormRefusals`), a text, and an MCP statement tool's texts where it states one, whose fills each name a
- * value Studio fills into that text (`agentTextRefusals`, `textFillRefusals`).
+ * value Studio fills into that text (`agentTextRefusals`, `textFillRefusals`), and whose investigation tool rule names
+ * only tools the investigation is offered (`agentToolRuleRefusals`).
  */
 function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const data = engine.statementLanguageData;
@@ -1161,6 +1222,7 @@ function statementLanguageDataRefusals(engine: EngineDeclaration, at: string): S
     if (requested === null) refusals.push(schemaRefusal("statement-language-agent-unspoken", `${pointer}/agent`));
     refusals.push(...requestFormRefusals(data.agent.request, `${pointer}/agent/request`));
     refusals.push(...agentTextRefusals(data.agent.text, `${pointer}/agent/text`));
+    refusals.push(...agentToolRuleRefusals(data.agent.text, `${pointer}/agent/text`));
     if (data.agent.mcp !== null) {
       const texts = data.agent.mcp.text as Readonly<Record<keyof AgentMcpText, AgentText>>;
       refusals.push(...textFillRefusals(texts, AGENT_MCP_TEXT_FILLS, `${pointer}/agent/mcp/text`));
@@ -1540,6 +1602,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The refused name or prefix at ${at} is or opens no name the rule admits, so it refuses nothing.`;
     case "agent-text-fill-unknown":
       return `The fill at ${at} names a value Studio does not fill into that text.`;
+    case "agent-tool-not-offered":
+      return `The tool rule at ${at} names a tool of Studio's agent that its workflow does not offer.`;
     case "statistics-without-catalog-read":
       return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
     case "catalog-capture-without-catalog-read":

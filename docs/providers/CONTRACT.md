@@ -474,6 +474,10 @@ An engine that offers `objects.tree` states its object model in its declaration'
 Studio reads an engine's tree, its source and its row actions only through that model, and refuses before any call, by name and with outcome not-sent, a request naming a level or a kind the model does not state.
 A kind whose names the engine masks for machine readers, and a kind a maintenance spec names, is one the model states.
 
+### M-90 (normative): Declared agent and MCP text keeps to what Studio offers
+
+A workflow's tool rule in an engine's agent text names only tools that workflow offers, as the SDK's vocabulary of each workflow's tools lists them, or the manifest is refused at the rule's pointer.
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.

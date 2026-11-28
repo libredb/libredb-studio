@@ -1241,6 +1241,19 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     },
     schema: ["/$defs/engineDeclaration/properties/objects", "/$defs/objectModel"],
   },
+  "M-90": {
+    tests: {
+      "packages/provider-sdk/tests/manifest/validate.test.ts": [
+        "a tool rule naming a tool its workflow does not offer is refused at its pointer",
+      ],
+      "tests/unit/lib/provider-host/admission.test.ts": [
+        "admission refuses a declared tool rule naming a tool its workflow does not offer as PROVIDER_SCHEMA_INVALID at the rule's pointer",
+      ],
+      "tests/unit/lib/agent/tool-offer-census.test.ts": [
+        "Studio's offered tools of each workflow equal the SDK's vocabulary",
+      ],
+    },
+  },
   "V-1": {
     tests: {
       "packages/provider-sdk/tests/values/tags.test.ts": [

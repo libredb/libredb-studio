@@ -42,6 +42,7 @@ import {
   PROVIDER_REFUSAL_RULES,
 } from "@/lib/provider-host/provider-refusals";
 import { readProvidersLock, type VerifiedPackage } from "@/lib/provider-host/providers-lock";
+import { acmereadData } from "../../../helpers/declared-agent-language";
 import { describeIf, MISSING_POSIX_FILE_MODES } from "../../../helpers/posix-tools";
 import {
   lockEntryOf,
@@ -716,6 +717,45 @@ describe("before the import", () => {
       1,
     ]);
     expect(fs.existsSync(written.sentinel)).toBe(false);
+  });
+
+  test("admission refuses a declared tool rule naming a tool its workflow does not offer as PROVIDER_SCHEMA_INVALID at the rule's pointer", async () => {
+    // The language's name is generated, of the form, and no language Studio holds.
+    const declaredAs = (toolRule: string): { own: ReturnType<typeof names>; manifest: Manifest } => {
+      const own = names();
+      const manifest = manifestFor(own.id);
+      const language = `acme${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      const data = acmereadData(language);
+      const agent = data.agent as NonNullable<typeof data.agent>;
+      const text = { ...agent.text, investigation: { ...agent.text.investigation, toolRule } };
+      Object.assign(manifest.engines[0] as Record<string, unknown>, {
+        agent: { statementLanguage: language, overlay: { dialect: null, grounding: null } },
+        statementLanguageData: { ...data, agent: { ...agent, text } },
+      });
+      return { own, manifest };
+    };
+    const pointer = "/engines/0/statementLanguageData/agent/text/investigation/toolRule";
+    const marker = `m${randomUUID().replaceAll("-", "")}`;
+
+    const { own, manifest } = declaredAs(`${marker}: read the plan with inspect_plan.`);
+    const written = write({ name: own.name, id: own.id, manifest });
+    const refusal = refusalOf(await admit(verified(written)));
+    expect(refusal).toEqual({
+      code: "PROVIDER_SCHEMA_INVALID",
+      rule: "agent-tool-not-offered",
+      name: own.name,
+      version: "1.0.0",
+      pointer,
+      more: 0,
+      sentence: `PROVIDER_SCHEMA_INVALID: ${own.name} 1.0.0: its manifest is not one the provider contract admits: agent-tool-not-offered at ${pointer}`,
+    });
+    expect(JSON.stringify(refusal).includes(marker)).toBe(false);
+    expect(fs.existsSync(written.sentinel)).toBe(false);
+
+    // Vacuity: the same package whose rule names only the tools its workflow offers is admitted.
+    const offered = declaredAs(`${marker}: read with run_read_query, then answer with compose_report.`);
+    const admittedWritten = write({ name: offered.own.name, id: offered.own.id, manifest: offered.manifest });
+    expect(await outcome(verified(admittedWritten))).toBe("admitted");
   });
 
   test("admission admits every such name a legacy declaration states", async () => {
