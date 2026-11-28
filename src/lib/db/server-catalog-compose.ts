@@ -244,10 +244,13 @@ function grantedLanguages(claims: readonly Claim[], register: GrantRegister): Gr
   return granted;
 }
 
-/** The conflicts of `found`, sorted by name and then rule, frozen. */
-function sortedConflicts(found: ReadonlyMap<string, CatalogConflict>): readonly CatalogConflict[] {
+/**
+ * `conflicts` sorted by name and then rule, frozen: the one order every set rule answers in, which boot reads too
+ * when it merges the rules' answers.
+ */
+export function sortedConflicts(conflicts: Iterable<CatalogConflict>): readonly CatalogConflict[] {
   return Object.freeze(
-    [...found.values()].sort(
+    [...conflicts].sort(
       (a, b) =>
         byText(a.name, b.name) || CATALOG_CONFLICT_RULES.indexOf(a.rule) - CATALOG_CONFLICT_RULES.indexOf(b.rule),
     ),
@@ -306,7 +309,7 @@ export function catalogConflicts(
     const statedElsewhere = granted.some((other) => other.claim !== claim && other.tool === tool);
     if (bundledTools.has(tool) || statedElsewhere) refuse(claim.pkg, "mcp-tool");
   }
-  return sortedConflicts(found);
+  return sortedConflicts(found.values());
 }
 
 /**
@@ -323,7 +326,7 @@ export function moduleMcpToolConflicts(
   for (const { claim, tool } of grantedLanguages(claimsOf(admitted), register)) {
     if (tool !== null && moduleMcpTools.includes(tool)) refuseInto(found, claim.pkg, "mcp-tool");
   }
-  return sortedConflicts(found);
+  return sortedConflicts(found.values());
 }
 
 /**

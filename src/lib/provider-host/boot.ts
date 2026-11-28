@@ -61,13 +61,13 @@ import {
   composeServerCatalog,
   moduleMcpToolConflicts,
   type RefusedForCatalog,
+  sortedConflicts,
 } from "@/lib/db/server-catalog-compose";
 import { STUDIO_HELD_NAMES } from "@/lib/db/studio-held-names";
 import { logger } from "@/lib/logger";
 import * as admission from "./admission";
 import { recordPackageDirectories } from "./package-directories";
 import {
-  CATALOG_CONFLICT_RULES,
   catalogConflictRefusal,
   type LockRefusal,
   type PackageRefusal,
@@ -206,13 +206,13 @@ export async function bootAdmission(
 
 /**
  * The conflicts of the catalog's set rules over `admitted`: `catalogConflicts` and `moduleMcpToolConflicts` merged, each
- * package and rule once, sorted by name and then by rule, as each answers its own.
+ * package and rule once, in `sortedConflicts`' order, the one each answers its own in.
  */
 function setRuleConflicts(
   admitted: readonly AdmittedForCatalog[],
   register: GrantRegister,
   moduleMcpTools: readonly string[],
-): CatalogConflict[] {
+): readonly CatalogConflict[] {
   const merged = new Map<string, CatalogConflict>();
   for (const conflict of [
     ...catalogConflicts(admitted, register),
@@ -220,11 +220,7 @@ function setRuleConflicts(
   ]) {
     merged.set(`${conflict.name}\u0000${conflict.rule}`, conflict);
   }
-  return [...merged.values()].sort(
-    (a, b) =>
-      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
-      CATALOG_CONFLICT_RULES.indexOf(a.rule) - CATALOG_CONFLICT_RULES.indexOf(b.rule),
-  );
+  return sortedConflicts(merged.values());
 }
 
 /** Prints the boot banner of a lock refused as a whole, and stops the boot with exit 1. */
