@@ -4,12 +4,11 @@ on:
   push:
     branches:
       - main
-      - 'feat/**'
-      - 'fix/**'
-  # Version and latest tags are published ONLY from a release: a branch push
-  # (including any PR merge to main) must never overwrite a pinned version tag
-  # or move latest. main pushes publish the mutable "main" tag; feature/fix
-  # branches publish "dev"; both always publish an immutable sha- tag.
+  # Version and latest tags are published ONLY from a release: a push to main
+  # (any PR merge) must never overwrite a pinned version tag or move latest.
+  # main pushes publish the mutable "main" tag and an immutable sha- tag.
+  # Other branches build no image: the "dev" tag they used to move is no longer
+  # published (tests/unit/workflow-triggers.test.ts, "image builds").
   release:
     types: [published]
   workflow_dispatch:
@@ -35,7 +34,7 @@ on:
           - alpine-slim
 
 # Cancel an in-progress build when a newer commit is pushed to the same ref,
-# so rapid pushes to a feature/fix branch don't stack multi-arch builds.
+# so rapid pushes to main don't stack multi-arch builds.
 concurrency:
   group: docker-build-${{ github.ref }}
   cancel-in-progress: true
@@ -43,10 +42,14 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+  # Every build is a two-architecture manifest: main, releases and dispatches all
+  # publish tags users pull. arm64 has no native runner in this job, so buildx
+  # emulates it through QEMU, which is most of this job's runtime.
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   # Everything that is the same for all three image variants, resolved once:
-  # the gates, the version, the platform list and whether the Docker Hub mirror
+  # the gates, the version and whether the Docker Hub mirror
   # is in play. The build job below fans out over the variants and would
   # otherwise run ESLint and tsc three times on one commit and ask
   # distribution/channels.yaml the same question three times.
@@ -62,7 +65,6 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
-      platforms: ${{ steps.platforms.outputs.list }}
       dockerhub: ${{ steps.dockerhub.outputs.enabled }}
       variants: ${{ steps.variants.outputs.matrix }}
 
@@ -113,29 +115,6 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
-
-      - name: Resolve build platforms
-        id: platforms
-        # arm64 has no native runner in this job, so buildx emulates it through
-        # QEMU: native module compilation in the deps stage plus a full
-        # `next build` run under emulation, which is most of this job's runtime.
-        # A feature-branch push only produces the mutable "dev" tag, consumed by
-        # the amd64 Channel E2E job below and nothing else, so paying for arm64
-        # on every commit of a PR buys nothing. main, releases and manual
-        # dispatches (the release chain) always build the full manifest.
-        # Single source of truth: the QEMU step and the build step below both
-        # read this output, so they cannot drift into "two arches, no emulator".
-        env:
-          # Via env, not inline interpolation: a branch name reaches this step
-          # and git allows characters a shell would reinterpret.
-          EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-        run: |
-          if [ "$EVENT_NAME" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
-            echo "list=linux/amd64" >> "$GITHUB_OUTPUT"
-          else
-            echo "list=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-          fi
 
       # The image variants, and the one place they are listed (#840). The build
       # and Channel E2E jobs both consume this output, so they cannot drift into
@@ -229,7 +208,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up QEMU for multi-platform builds
-        if: contains(needs.prepare.outputs.platforms, 'arm64')
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
@@ -295,7 +273,7 @@ jobs:
           # The variant suffix is written into each tag rather than set through
           # the action's `flavor`, which would have to carry an empty suffix for
           # the default image. `:0.16.2`, `:0.16.2-alpine`, `:0.16.2-alpine-slim`
-          # and the same three for latest/main/dev and the immutable sha- tag.
+          # and the same three for latest/main and the immutable sha- tag.
           tags: |
             type=raw,value=${{ needs.prepare.outputs.version }}${{ matrix.suffix }},enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
             # latest moves on a real release event, or on the release chain's
@@ -308,7 +286,6 @@ jobs:
             # chart dispatch and the latest tag disagree on what a release is.
             type=raw,value=latest${{ matrix.suffix }},enable=${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true) }}
             type=raw,value=main${{ matrix.suffix }},enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=dev${{ matrix.suffix }},enable=${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
             type=sha,prefix=sha-,suffix=${{ matrix.suffix }}
 
       - name: Build and push Docker image
@@ -325,14 +302,14 @@ jobs:
           # them evicting each other's cache on every run.
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
-          platforms: ${{ needs.prepare.outputs.platforms }}
+          platforms: ${{ env.PLATFORMS }}
           build-args: |
             JWT_SECRET_BUILD=build-time-placeholder-secret-32ch
             ADMIN_PASSWORD_BUILD=build
             USER_PASSWORD_BUILD=build
 
       # Release-context builds only, matching the version-tag condition above:
-      # branch pushes move the mutable main/dev tags, and signing an image no
+      # main pushes move the mutable main tag, and signing an image no
       # user installs only adds noise to the transparency log.
       #
       # Subject is the digest, never a tag - latest/main move, and the manifest
@@ -358,7 +335,7 @@ jobs:
           echo "**Variant:** ${{ matrix.variant }} (${{ matrix.dockerfile }})" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Docker Hub mirror:** ${{ needs.prepare.outputs.dockerhub }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms:** ${{ needs.prepare.outputs.platforms }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** ${{ env.PLATFORMS }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ steps.image.outputs.name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags:" >> $GITHUB_STEP_SUMMARY
@@ -370,7 +347,7 @@ jobs:
   # Browser E2E of the embedded samples against the image THIS run pushed
   # (docker channel of scripts/channel-embedded-sample-e2e.sh). The image is
   # already on GHCR - this cannot un-push it - but a red run blocks the
-  # release chain below and flags broken packaging on branch builds.
+  # release chain below and flags broken packaging on main builds.
   #
   # ONE RUN PER VARIANT, and that is the point of the matrix rather than a
   # convenience. `e2e/embedded-samples.spec.ts` waits on `.monaco-editor`, and
@@ -441,7 +418,7 @@ jobs:
     # runs only AFTER a successful publish: the version-bump merge's own
     # helm-release run ends as a no-op at its image gate, and this dispatch
     # re-triggers it now that the image exists. Release context only -
-    # main/dev branch builds must not publish charts - and a failed build
+    # main branch builds must not publish charts - and a failed build
     # dispatches nothing, so the chart correctly stays unpublished. Separate
     # job so actions:write is never granted to ordinary branch builds, and
     # the dispatch targets THIS run's ref so the chart is released from the
