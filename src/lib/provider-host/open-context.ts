@@ -16,9 +16,12 @@
  * - `egress`: core's egress decision (src/lib/db/egress-decision.ts). `trust`: core's trust material
  *   (src/lib/db/trust-material.ts) when the declaration reads it, an empty list otherwise, so the file
  *   `NODE_EXTRA_CA_CERTS` names is read only for such an engine.
- * - `policy`: no read-only statement session (the editor's and Test Connection's sessions are not one, clause C-78), the
- *   caller's file-access posture as a definite boolean, no write refusal (a read-only connection never reaches the open,
- *   since no package's engine keeps that mode), the operator's grant (`managed`) and the literal seed file marker.
+ * - `policy`: a read-only statement session (both `readOnly` and `sendsStatements`) exactly where the caller's execution
+ *   context asks for both, the provider factory's read-only statement session (`getOrCreateReadOnlyStatementSession` in
+ *   src/lib/db/factory.ts), and neither otherwise: the editor's, the metadata session's and Test Connection's are not
+ *   one (clause C-78); the caller's file-access posture as a definite boolean, no write refusal (a read-only connection
+ *   never reaches the open, since no package's engine keeps that mode, and a read-only statement session's boundary is
+ *   the package's, clause C-78), the operator's grant (`managed`) and the literal seed file marker.
  * - `pool`: core's defaults for a session every caller shares, or the owner's share for an owned one
  *   (docs/GOVERNANCE.md#per-user-providers), or the smaller pool the open asks for, the metadata session's, shared or
  *   owned alike (`PackageOpenRequest.pool`; docs/providers/CONTRACT.md, clause C-66).
@@ -43,15 +46,18 @@ import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, markNotSent } from "@/lib/db/errors";
 import { type EngineConnection, type EngineRecord, servedPackage } from "@/lib/db/server-catalog";
 import { trustMaterial } from "@/lib/db/trust-material";
-import { DEFAULT_POOL_CONFIG, type EditorExecutionContext } from "@/lib/db/types";
+import { DEFAULT_POOL_CONFIG, type ProviderExecutionContext } from "@/lib/db/types";
 import { LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
 
 /** What `packageOpenContext` builds an open context from. */
 export interface PackageOpenRequest {
   readonly connection: EngineConnection & WithLiteralSeedFile;
   readonly engine: EngineRecord;
-  /** The caller's file-access posture and, under governance, the owner and the owner's pool size. */
-  readonly execution: EditorExecutionContext;
+  /**
+   * The caller's file-access posture, under governance the owner and the owner's pool size, and, for a read-only
+   * statement session, `readOnly` and `sendsStatements` both set.
+   */
+  readonly execution: ProviderExecutionContext;
   /** When the open must have answered: its start plus `packageConnectBudget(engine)`. */
   readonly deadline: number;
   readonly signal: AbortSignal;
@@ -153,7 +159,7 @@ function tlsOf(connection: EngineConnection, engine: EngineRecord): TlsSettings 
 function poolOf(
   asked: PackageOpenRequest["pool"],
   owner: string | undefined,
-  execution: EditorExecutionContext,
+  execution: ProviderExecutionContext,
 ): OpenContext["pool"] {
   if (asked !== undefined) return { ...DEFAULT_POOL_CONFIG, min: asked.min, max: asked.max };
   if (owner === undefined) return { ...DEFAULT_POOL_CONFIG };
@@ -171,6 +177,8 @@ export function packageOpenContext(request: PackageOpenRequest): OpenContext {
   const { connection, engine, execution } = request;
   const owner = execution.owner;
   const tls = tlsOf(connection, engine);
+  // One session or the other, never one flag alone: a read-only statement session is opened to be sent statements.
+  const readOnlyStatements = execution.readOnly === true && execution.sendsStatements === true;
   return {
     engine: engine.id,
     connectionId: connection.id,
@@ -179,8 +187,8 @@ export function packageOpenContext(request: PackageOpenRequest): OpenContext {
     egress: egressDecision(),
     trust: engine.connection.readsTrustMaterial ? trustMaterial() : { certificates: [] },
     policy: {
-      readOnly: false,
-      sendsStatements: false,
+      readOnly: readOnlyStatements,
+      sendsStatements: readOnlyStatements,
       allowExternalFileAccess: execution.allowExternalFileAccess === true,
       refuseWrites: false,
       managed: connection.managed === true,

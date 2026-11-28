@@ -14,8 +14,8 @@ import { type EngineRecord, servedEngines } from "@/lib/db/server-catalog";
  * until its own change opens it. The acquisition and the core read path read the agent execution grant again at run
  * time, so an engine without it is refused by name there too.
  *
- * A package engine's record offers no execution profile, since its session opens through its package and Studio opens
- * no read-only statement session through a package yet, so no statement tool lists an engine it could only refuse.
+ * A package engine's record offers no execution profile, since its session opens through its package and MCP opens no
+ * read-only statement session through a package yet, so no statement tool lists an engine it could only refuse.
  *
  * Every record the server serves is asked, in catalog order (`servedEngines`): the installed catalog's records, or the
  * legacy records with nothing installed. The statement tools read this set through one accessor that composes it after

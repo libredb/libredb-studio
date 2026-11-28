@@ -3,6 +3,7 @@ import { encodeValue, ValueCodecError, type WireValue } from "@libredb/provider-
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type ReadOnlyPageAnswer, runReadOnlyPage } from "@/lib/api/read-only-execute";
+import { providerReadOnlyTarget } from "@/lib/api/session-target";
 import {
   ExecutionProfileError,
   OffsetUnsupportedError,
@@ -474,7 +475,7 @@ async function statementOnHost(
   const remaining = Math.floor(deadline - Date.now());
   if (remaining <= 0) return { kind: "timeout" };
   try {
-    const value = await runReadOnlyPage(provider, {
+    const value = await runReadOnlyPage(providerReadOnlyTarget(provider), {
       type,
       statement,
       page,

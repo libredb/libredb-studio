@@ -78,6 +78,7 @@ import {
   type MonitoringTarget,
   type ObjectRead,
   providerMonitoringTarget,
+  providerReadOnlyTarget,
   providerTreeTarget,
   raisedByTreeRead,
   recordingRaised,
@@ -1669,7 +1670,7 @@ async function runStatement(
   // Through the host core's read-only execute, which holds the provider's answer to the rows, bytes and time this run
   // handed out, so an over-budget answer is refused before any of it is mapped or rendered. A stopped call keeps this
   // execution counted until it settles, also when the time refusal answered the run first.
-  return runReadOnlyExecute(provider, {
+  return runReadOnlyExecute(providerReadOnlyTarget(provider), {
     type: legacyRunType(context),
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
@@ -2970,7 +2971,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * Any other record, a provider package's engine: its metadata session, opened through the record
  * (`context.sessions.metadataTree()`), the same session the tree routes and MCP's `inspect_schema` read, after two
  * refusals by name that no package open precedes. A grounding the run takes under the execution profile is refused,
- * since Studio opens no read-only statement session through a package yet; and a connection that names an agent
+ * since agent mode opens no read-only statement session through a package yet; and a connection that names an agent
  * credential is refused, since the package's session opens with the connection's own credential
  * (docs/providers/CONTRACT.md, clause C-109), which would read as a login the seed did not name for the agent. A failed
  * open is answered by the record (`answers`), a not-sent `ConnectionError` logged once as the package's where it is one,

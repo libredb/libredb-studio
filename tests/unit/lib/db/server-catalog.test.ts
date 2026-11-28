@@ -124,6 +124,7 @@ const OFFER_KEYS = [
   "keyScan",
   "legacyProvider",
   "objectEdit",
+  "readOnlyStatements",
   "sshTunnel",
   "testCautions",
   "unboundedPage",
@@ -606,6 +607,53 @@ describe("one engine record for every engine", () => {
       catalog: false,
       unboundedPage: false,
     });
+  });
+
+  test("a package engine offers a read-only statement session exactly where its package's console execute honours readOnly", () => {
+    /** A package of the engines `ids` whose console execute honours `honours`, admitted by the SDK's validator. */
+    const packageOf = (name: string, ids: readonly string[], honours: readonly string[]) => {
+      const raw = rawManifest(ids[0] as string);
+      const engines = raw.engines as Record<string, unknown>[];
+      const compatibility = raw.compatibility as Record<string, unknown>[];
+      for (const id of ids.slice(1)) {
+        engines.push({ ...structuredClone(engines[0]), id });
+        compatibility.push({ ...structuredClone(compatibility[0]), engine: id });
+      }
+      ((raw.calls as Record<string, Record<string, unknown>>).console as Record<string, unknown>).execute = {
+        honours: [...honours],
+      };
+      const verdict = VALIDATOR.validate(raw);
+      if (!verdict.admitted) throw new Error(`the manifest of ${name} is refused: ${JSON.stringify(verdict.refusals)}`);
+      return admittedFor(name, verdict.manifest);
+    };
+    installServerCatalog(
+      composeServerCatalog(
+        [
+          packageOf("acme-ro-both", ["acmeroone", "acmerotwo"], ["readOnly"]),
+          packageOf("acme-ro-all", ["acmeroall"], ["params", "offset", "readOnly"]),
+          packageOf("acme-ro-none", ["acmeronone"], []),
+          packageOf("acme-ro-paged", ["acmeropaged"], ["params", "offset"]),
+        ],
+        [],
+        STUDIO_GRANT_REGISTER,
+      ),
+    );
+    const offered = (id: string) => servedRecord(id).offers.readOnlyStatements;
+    expect(["acmeroone", "acmerotwo", "acmeroall", "acmeronone", "acmeropaged"].map(offered)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // Two engines of one package share one offers object, as every engine of a package did before the member.
+    expect(servedRecord("acmeroone").offers).toBe(servedRecord("acmerotwo").offers);
+    // The member is the only offer the honour changes.
+    expect({ ...servedRecord("acmeroone").offers, readOnlyStatements: false }).toEqual(
+      servedRecord("acmeronone").offers,
+    );
+    // Every legacy record offers it: its statements go through the execution-profile acquisition.
+    for (const id of SHIPPED_DATABASE_TYPES) expect([id, offered(id)]).toEqual([id, true]);
   });
 
   test("the composed catalog holds every legacy record by identity, then the admitted engines", () => {

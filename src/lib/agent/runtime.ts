@@ -235,7 +235,7 @@ export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOut
   const scrub = connectionTextScrub(connection, legacyProviderType(engine), "any");
   try {
     // An agent-mode run whose workflow sends statements on an engine whose record offers no execution profiles (a
-    // provider package's) is refused by name before its first model turn and before anything opens: Studio opens no
+    // provider package's) is refused by name before its first model turn and before anything opens: agent mode opens no
     // read-only statement session through a package yet, and the start route refuses such a run before it exists, so
     // only a run recorded before is refused here. Recorded `engine-unsupported` (`PROFILE_REFUSAL_REASON`).
     if (

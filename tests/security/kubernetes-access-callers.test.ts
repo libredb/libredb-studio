@@ -66,6 +66,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "findCachedEditorEntry",
     "getOrCreateEditorSession",
     "getOrCreateMetadataSession",
+    "getOrCreateReadOnlyStatementSession",
     "openEngineOnce",
   ],
   "src/lib/provider-host/open-engine.ts": ["openEngine"],
@@ -80,6 +81,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "editorSourceTarget",
     "editorMaintenanceOpening",
     "metadataMaintenanceOpening",
+    "readOnlyStatementSession",
     "cachedEditorConsoleTarget",
   ],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
@@ -259,6 +261,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   getOrCreateMetadataSession: {
     "src/lib/api/editor-provider.ts":
       "metadataTreeTarget, metadataMonitoringTarget and metadataMaintenanceOpening open for the connection their caller hands them, and every caller reached it through a reviewed path first: handleObjectRequest, a route listed under metadataMonitoringTarget, the maintenance route helper listed under metadataMaintenanceOpening here and the agent runtime through resolveServedConnection, and MCP's metadataTarget from its own getManagedConnections list",
+  },
+  getOrCreateReadOnlyStatementSession: {
+    "src/lib/api/editor-provider.ts":
+      "readOnlyStatementSession opens for the connection its caller hands it, and no module calls it yet: its callers, agent mode and MCP's package arm, each list themselves under readOnlyStatementSession here once they reach it through a reviewed path",
   },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":

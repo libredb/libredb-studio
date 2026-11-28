@@ -8,6 +8,7 @@ import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { openWithinCall } from "@/lib/api/editor-query";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
+import { providerReadOnlyTarget } from "@/lib/api/session-target";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
@@ -56,7 +57,7 @@ import type { DatabaseConnection } from "@/lib/types";
  *    a statement another database approved. An engine whose record offers no execution
  *    profiles, a provider package's, is refused by name before anything opens
  *    (`statementSessionRefusal`), since the replay runs on a read-only statement session
- *    and Studio opens none through a package yet.
+ *    and the hand-over opens none through a package.
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
  *
@@ -155,7 +156,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     // path, so `query()` is never the fallback; it holds the answer to the hand-over budget before any of it is written
     // into the response, stops waiting at the budget's timeout, the ceiling stated beside it, and answers at once a
     // client that leaves.
-    const result = await runReadOnlyExecute(provider, {
+    const result = await runReadOnlyExecute(providerReadOnlyTarget(provider), {
       type: connection.type,
       statement: answer.sql,
       budget: {

@@ -6,8 +6,10 @@ import {
   findCachedEditorEntry,
   getOrCreateEditorSession,
   getOrCreateMetadataSession,
+  getOrCreateReadOnlyStatementSession,
 } from "@/lib/db/factory";
 import { type DeclaredFacet, FacetNotOfferedError, markNotSent } from "@/lib/db/errors";
+import { connectionTextScrub } from "@/lib/db/operations/provider-text";
 import {
   type EngineConnection,
   type EngineRecord,
@@ -19,6 +21,7 @@ import {
   type ConsoleTarget,
   entryConsoleTarget,
   entryMonitoringTarget,
+  entryReadOnlyTarget,
   entrySourceTarget,
   entryTreeTarget,
   type MaintenanceOpening,
@@ -27,6 +30,7 @@ import {
   providerConsoleTarget,
   providerMaintenanceTarget,
   providerMonitoringTarget,
+  type ReadOnlyStatementTarget,
   type SessionTarget,
   type TreeTarget,
 } from "@/lib/api/session-target";
@@ -150,6 +154,38 @@ export async function metadataTreeTarget(
 ): Promise<TreeTarget> {
   const entry = await getOrCreateMetadataSession(connection, engine, editorExecutionContext(session, connection), wait);
   return entryTreeTarget(entry, connection);
+}
+
+/**
+ * The read-only statement session of `connection`'s engine `engine`, a provider package's (docs/providers/CONTRACT.md,
+ * clauses C-78 and C-109): the entry `getOrCreateReadOnlyStatementSession` answers (src/lib/db/factory.ts), opened
+ * through the package under the read-only statement policy and the session's editor posture as `editorProvider` opens
+ * the editor's provider, with the same owner, refused by name before any open for every engine the factory opens none
+ * for. It answers the read-only execute's target of that session (`entryReadOnlyTarget` in ./session-target), with
+ * core's scrub of the connection over every field the package receives, since the session opens with the connection's
+ * own credential, and the tree target of the same entry (`entryTreeTarget`), so a run grounds and sends its statements
+ * on the one session. `wait` is a caller's own wait for the open, handed to the factory as it is.
+ */
+export async function readOnlyStatementSession(
+  session: { role: string; idpSubject?: string },
+  connection: EngineConnection,
+  engine: EngineRecord,
+  wait?: OpenWait,
+): Promise<{ readonly statements: ReadOnlyStatementTarget; readonly tree: TreeTarget }> {
+  const entry = await getOrCreateReadOnlyStatementSession(
+    connection,
+    engine,
+    editorExecutionContext(session, connection),
+    wait,
+  );
+  return {
+    statements: entryReadOnlyTarget(
+      entry,
+      connection,
+      connectionTextScrub(connection, legacyProviderType(engine), "any"),
+    ),
+    tree: entryTreeTarget(entry, connection),
+  };
 }
 
 /**

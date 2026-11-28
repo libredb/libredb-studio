@@ -635,7 +635,9 @@ export type ExecutionProfileDenyCode =
    * The connection configures an agent credential, and its engine's session opens through its provider package with
    * the connection's own credential, which takes no agent credential (docs/providers/CONTRACT.md, clause C-109), so
    * agent mode reads nothing on it rather than read as a login the seed did not name for the agent. Raised by the
-   * agent's grounding walk before the package's open, and its own code because no other one's repair is this one.
+   * agent's grounding walk before the package's open, and by the provider factory before it opens a provider package's
+   * read-only statement session (`getOrCreateReadOnlyStatementSession`), and its own code because no other one's repair
+   * is this one.
    */
   | "AGENT_CREDENTIAL_NOT_TAKEN";
 

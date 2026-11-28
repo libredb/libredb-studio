@@ -47,14 +47,15 @@
  * row from that data (`statementLanguageRow` in ./statement-language-row; none where it declares none) and holds the
  * data itself by reference, reads its
  * grammar's explain claim under either value, and gives each the package's source, its digest and the session its
- * declaration states, and the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot
+ * declaration states, and the offers of an engine served through the provider contract (`packageOffers`: a read-only
+ * statement session exactly where its package's console execute honours `readOnly`, `PACKAGE_OFFERS` otherwise). The boot
  * hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a
  * refused package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine
  * id is transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain
  * object is read by a client's value.
  */
 import type { GrantRegister } from "@libredb/grant-register";
-import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
+import type { Calls, EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { type EngineGrants, grantEngineClaims, type LanguageDataRequest, type SqlTextRequest } from "./claim-grants";
@@ -78,7 +79,10 @@ import {
 } from "./engine-catalog/query-editor.generated";
 import type { EngineId, EngineOffers, EngineRecord, ServerCatalog, ServingPackage } from "./server-catalog";
 
-/** What every engine an admitted package serves offers: nothing beyond the provider contract's own calls. */
+/**
+ * What an engine an admitted package serves offers where its package takes no read-only execute: nothing beyond the
+ * provider contract's own calls.
+ */
 const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   legacyProvider: false,
   explain: false,
@@ -93,7 +97,20 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   objectEdit: false,
   keyScan: false,
   connectionDeclarations: false,
+  readOnlyStatements: false,
 });
+
+/** What an engine offers whose package's console execute honours `readOnly`: a read-only statement session too. */
+const READ_ONLY_PACKAGE_OFFERS: EngineOffers = Object.freeze({ ...PACKAGE_OFFERS, readOnlyStatements: true });
+
+/**
+ * The offers of every engine of a package whose calls are `calls`: `READ_ONLY_PACKAGE_OFFERS` where its console execute
+ * honours `readOnly` (docs/providers/CONTRACT.md, clause C-78), `PACKAGE_OFFERS` otherwise, so every engine of a package
+ * shares one frozen offers object.
+ */
+function packageOffers(calls: Calls): EngineOffers {
+  return calls.console.execute.honours.includes("readOnly") ? READ_ONLY_PACKAGE_OFFERS : PACKAGE_OFFERS;
+}
 
 /** An admitted package as boot hands it to the composer. */
 export type AdmittedForCatalog = ServingPackage;
@@ -457,7 +474,7 @@ export function composeServerCatalog(
         explainReading: "either",
         // The frozen manifest's list, the one the session's declared maintenance above holds by reference.
         maintenance: engine.facets.maintenance,
-        offers: PACKAGE_OFFERS,
+        offers: packageOffers(pkg.manifest.calls),
       }) as EngineRecord,
     );
   }

@@ -69,6 +69,7 @@ export const LEGACY_OFFERS: EngineOffers = Object.freeze({
   objectEdit: true,
   keyScan: true,
   connectionDeclarations: true,
+  readOnlyStatements: true,
 });
 
 /** Each engine's credential warnings, read by id as text: the generated table holds a row only for an engine with one. */

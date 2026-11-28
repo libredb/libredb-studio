@@ -413,6 +413,13 @@ const MCP_STATEMENT = join("src", "lib", "mcp", "tools", "run-statement.ts");
 const MCP_STATEMENT_HELPER = "statementOnHost";
 /** The paged read-only execute, the one opener of the read-only statement session. */
 const PAGE_FACADE = "runReadOnlyPage";
+/** The facade's arm that runs a statement on a provider package's read-only statement session. */
+const SESSION_ARM = "readOnlySessionPage";
+/** The provider factory's opener of a provider package's read-only statement session. */
+const PACKAGE_SESSION_OPENER = "getOrCreateReadOnlyStatementSession";
+/** The one builder of that session's facade target. */
+const EDITOR_PROVIDER = join("src", "lib", "api", "editor-provider.ts");
+const PACKAGE_SESSION_BUILDER = "readOnlyStatementSession";
 
 /** The core statement call MCP was the last to use, removed with that use. */
 const RETIRED = "runReadOnlyStatement";
@@ -548,6 +555,30 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     expect(helper.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${MCP_STATEMENT} in executeOpened`]);
     expect(literalArguments(declaredFunction(MCP_STATEMENT, "executeOpened"), "acquireWithinCall")).toEqual([
       ["agent-read-only"],
+    ]);
+    // Each of the three hands the facade the provider it acquired under that profile, as its provider target.
+    expect(
+      callsOutsideProviders("providerReadOnlyTarget")
+        .map((call) => `${call.file} in ${call.declaration}`)
+        .sort(),
+    ).toEqual(
+      [
+        `${AGENT_TOOLS} in runStatement`,
+        `${HANDOVER_ROUTE} in POST`,
+        `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`,
+      ].sort(),
+    );
+    // A provider package's read-only statement session is opened by the factory under the read-only statement policy,
+    // through one builder, which alone reads its entry as a facade target.
+    expect(callsOutsideProviders(PACKAGE_SESSION_OPENER).map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,
+    ]);
+    expect(callsOutsideProviders("entryReadOnlyTarget").map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${EDITOR_PROVIDER} in ${PACKAGE_SESSION_BUILDER}`,
+    ]);
+    // The facade's session arm is reached only from the paged facade, after its gates.
+    expect(callsOutsideProviders(SESSION_ARM).map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${EXECUTE_FACADE} in ${PAGE_FACADE}`,
     ]);
   }, 60_000);
 
@@ -849,11 +880,17 @@ describe("the review record gates the protected read path", () => {
 
   test("runReadOnlyPage reads the review record before it reads the budget, the host core or the provider", () => {
     const body = declaredFunction(EXECUTE_FACADE, PAGE_FACADE);
-    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "hostCore", BRIDGE_SESSION])).toEqual({
+    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "hostCore", BRIDGE_SESSION, SESSION_ARM])).toEqual({
       assertReadOnlyBudget: "gated",
       hostCore: "gated",
       [BRIDGE_SESSION]: "gated",
+      [SESSION_ARM]: "gated",
     });
+  });
+
+  test("getOrCreateReadOnlyStatementSession reads the review record before it opens a package's session", () => {
+    const body = declaredFunction(FACTORY, PACKAGE_SESSION_OPENER);
+    expect(gatedBefore(body, REVIEW_GATE, ["openPackageEntry"])).toEqual({ openPackageEntry: "gated" });
   });
 
   test("runReadOnlyReading reads the review record before it makes the read", () => {

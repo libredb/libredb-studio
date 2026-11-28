@@ -132,8 +132,8 @@ export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promi
 
 /** What `holdReadOnlyRows` holds served rows to, and the refusals it raises past each bound. */
 export interface ReadOnlyRowsHold {
-  /** The connection's type, named in a shared refusal. */
-  readonly type: DatabaseType;
+  /** The connection's type, named in a shared refusal; none for a provider package's engine, which has no published type. */
+  readonly type: DatabaseType | undefined;
   /** The statement, or a reading's label, named in a shared refusal. */
   readonly statement: string;
   /** As `ReadOnlyReadingCall.maxRows`: `null` holds the rows to the byte budget only. */
@@ -169,11 +169,14 @@ export function holdReadOnlyRows(rows: readonly Record<string, unknown>[], hold:
   }
 }
 
-function sharedRowRefusal(type: DatabaseType, statement: string): (rows: number, allowed: number) => Error {
+function sharedRowRefusal(type: DatabaseType | undefined, statement: string): (rows: number, allowed: number) => Error {
   return (rows, allowed) => new StudioRowBudgetRefusal(rowBudgetSentence(rows, allowed), type, statement);
 }
 
-function sharedByteRefusal(type: DatabaseType, statement: string): (bytes: number, allowed: number) => Error {
+function sharedByteRefusal(
+  type: DatabaseType | undefined,
+  statement: string,
+): (bytes: number, allowed: number) => Error {
   return (bytes, allowed) => new StudioByteBudgetRefusal(byteBudgetSentence(bytes, allowed), type, statement);
 }
 
