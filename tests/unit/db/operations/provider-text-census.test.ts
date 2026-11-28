@@ -475,6 +475,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [agent("tools.ts"), "runTextScrub", "connectionTextScrub"],
   [agent("tools.ts"), "legacyRunReading", "runTextScrub"],
   [agent("tools.ts"), "readObjectInventoryForGrounding", "runTextScrub"],
+  [agent("tools.ts"), "runCuratedRead", "runTextScrub"],
   [agent("tools.ts"), "runAuditedAgentCall", "runTextScrub"],
   [agent("tools.ts"), "runAuditedAgentCall", "scrubProviderText"],
   [agent("tools.ts"), "runAuditedAgentCall", "withScrubbedWarnings"],

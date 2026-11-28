@@ -31,7 +31,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
-import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { metadataMonitoringTarget, metadataTreeTarget } from "@/lib/api/editor-provider";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { clearProviderCache } from "@/lib/db/factory";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -237,7 +237,10 @@ async function openRun(
     artifacts,
     deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
     repairs: new AgentRepairLedger(),
-    sessions: { metadataTree: () => metadataTreeTarget({ role: "user" }, connection, engine) },
+    sessions: {
+      metadataTree: () => metadataTreeTarget({ role: "user" }, connection, engine),
+      monitoring: () => metadataMonitoringTarget({ role: "user" }, connection, engine, undefined),
+    },
     acquireProvider,
   };
   return { store, service, runId: started.runId, resources, acquireProvider };

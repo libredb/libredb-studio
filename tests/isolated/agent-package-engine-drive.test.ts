@@ -3,7 +3,8 @@
  * (`driveAgentRunOutcome` in src/lib/agent/runtime.ts): the drive resolves the run's connection through the served
  * resolve under the run's persisted actor, grounds a plan-mode run through the package's metadata session, refuses by
  * name before its first model turn an agent-mode run whose workflow sends statements and a run recorded with a database
- * its engine offers no catalog session for.
+ * its engine offers no catalog session for, and reads the operations workflow's granted readings on the package's
+ * metadata session, a reading's failure answered by the engine's record and logged once.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts), each function calling the hook a case sets; the ledger is a local world in
@@ -12,7 +13,7 @@
  * each recorder calls the captured function. Paths are built with `path.join`, no file mode, link or line ending is
  * read, and no case awaits a timer.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,8 +25,9 @@ import { statementSessionRefusal } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
-import { StudioProfileRefusal } from "@/lib/db/errors";
+import { ConnectionError, StudioProfileRefusal } from "@/lib/db/errors";
 import { type EngineConnection, servedEngineRecord } from "@/lib/db/server-catalog";
+import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
@@ -38,6 +40,8 @@ import {
   answersProse,
   callsTool,
   modelOver,
+  promptText,
+  reportOnAll,
   type ScriptedTurn,
   scriptedModel,
   type Turn,
@@ -124,19 +128,24 @@ const TREE_MODEL: ObjectModel = {
 };
 
 /**
- * A package whose row grants the health reading; one with no register row; and one whose row grants `sql` and agent
- * execution and reviews no grammar (its manifest states SQL text, its row no digest).
+ * A package whose row grants the health reading; the same with its words granted; one with no register row; and one
+ * whose row grants `sql` and agent execution and reviews no grammar (its manifest states SQL text, its row no digest).
  */
 const READS = "acmedrivereads";
+const WORDS = "acmedrivewords";
 const BARE = "acmedrivebare";
 const EXEC = "acmedriveexec";
 const withModel = (engine: EditableEngine) => {
   (engine as Record<string, unknown>).objects = structuredClone(TREE_MODEL);
 };
-/** The tree model and a request of the health reading. */
-const withModelAndHealth = (engine: EditableEngine) => {
+/** The tree model, the active sessions panel, and a request of the health and sessions readings. */
+const withModelAndReadings = (engine: EditableEngine) => {
   withModel(engine);
-  engine.facets = { ...engine.facets, agentReadings: ["health"] };
+  engine.facets = {
+    ...engine.facets,
+    monitoring: { ...(engine.facets.monitoring as Record<string, unknown>), activeSessions: "offered" },
+    agentReadings: ["health", "sessions"],
+  };
 };
 /** Opens the engine for a caller whose file access is denied, the run's actor being no administrator. */
 const OPEN = { deniedFileAccessRefusal: null } as const;
@@ -148,12 +157,24 @@ beforeAll(async () => {
   await admitSessionPackages(
     providers,
     [
-      { name: "acme-drive-reads", engine: READS, offered: ["objects.tree"], edit: withModelAndHealth },
+      {
+        name: "acme-drive-reads",
+        engine: READS,
+        offered: ["objects.tree", "monitoring.panel"],
+        edit: withModelAndReadings,
+      },
+      {
+        name: "acme-drive-words",
+        engine: WORDS,
+        offered: ["objects.tree", "monitoring.panel"],
+        edit: withModelAndReadings,
+      },
       { name: "acme-drive-bare", engine: BARE, offered: ["objects.tree"], edit: withModel },
       { name: "acme-drive-exec", engine: EXEC, offered: ["objects.tree", "monitoring.panel"], edit: withLoosestClaims },
     ],
     {
       [READS]: HEALTH,
+      [WORDS]: { ...HEALTH, ownWords: "scrubbed" },
       [EXEC]: { ...OPEN, statementLanguage: "sql", agentExecution: true },
     },
   );
@@ -207,18 +228,39 @@ function treeAnswer(request: TreeRequest): unknown {
 /** The names of the package's functions a case's hooks were called by, in order. */
 type Seen = string[];
 
-/** Hooks for `engine`'s package: a fresh handle per open, and the two-collection tree. */
-function hooksFor(engine: string): Seen {
+/** Hooks for `engine`'s package: `open`'s answer or a fresh handle per open, the two-collection tree, and `health`. */
+function hooksFor(
+  engine: string,
+  options: { open?: () => Promise<unknown>; health?: () => Promise<unknown> } = {},
+): Seen {
   const seen: Seen = [];
   setHooks(engine, {
     open: () => {
       seen.push("open");
-      return Promise.resolve({ handle: { session: randomUUID() } });
+      return (options.open ?? (() => Promise.resolve({ handle: { session: randomUUID() } })))();
     },
     close: () => Promise.resolve(),
     tree: (_handle: unknown, request: unknown) => {
       seen.push("tree");
       return Promise.resolve(treeAnswer(request as TreeRequest));
+    },
+    health: () => {
+      seen.push("health");
+      return (
+        options.health ??
+        (() =>
+          Promise.resolve({
+            activeConnections: 3,
+            databaseSize: "1 MB",
+            cacheHitRatio: "99%",
+            slowQueries: [],
+            activeSessions: [],
+          }))
+      )();
+    },
+    panel: () => {
+      seen.push("panel");
+      return Promise.resolve({ tables: [] });
     },
   });
   return seen;
@@ -286,6 +328,14 @@ function finishedOf(events: readonly AgentRunEvent[]): Extract<AgentRunEvent, { 
   const finished = events.find((event) => event.kind === "run-finished");
   if (finished?.kind !== "run-finished") throw new Error("the run did not finish");
   return finished;
+}
+
+/** Every prompt the model was sent, as prose. */
+const transcriptOf = (turns: readonly Turn[]): string => turns.map((turn) => promptText(turn)).join("\n");
+
+/** The calls of a logger spy whose line is `line`. */
+function linesOf(spy: { readonly mock: { readonly calls: readonly unknown[][] } }, line: string): unknown[][] {
+  return spy.mock.calls.filter(([logged]) => logged === line);
 }
 
 describe("an agent run's drive on a provider package's engine", () => {
@@ -380,5 +430,110 @@ describe("an agent run's drive on a provider package's engine", () => {
     expect(createAgentModel).not.toHaveBeenCalled();
     expect(seen).toEqual([]);
     expect(acquired).not.toHaveBeenCalled();
+  });
+
+  test("the operations workflow reads a package engine's granted readings through its package, and refuses every other by name", async () => {
+    const seen = hooksFor(READS);
+    const run = await drive(connectionOf(READS), "agent", "operations", [
+      callsTool("inspect_operations", { kind: "health" }, "call_health"),
+      callsTool("inspect_operations", { kind: "sessions" }, "call_sessions"),
+      reportOnAll("The engine answers three connections."),
+    ]);
+
+    expect(run.thrown).toBeUndefined();
+    // The health reading is answered by the package's health call and stored as an artifact of one row.
+    expect(seen.filter((call) => call === "health")).toEqual(["health"]);
+    expect(run.events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool-completed",
+        artifact: expect.objectContaining({
+          operationId: "db.operations.read",
+          summary: expect.objectContaining({
+            rowCount: 1,
+            columnNames: ["activeConnections", "databaseSize", "cacheHitRatio"],
+          }),
+        }),
+      }),
+    );
+    // A reading the record does not grant is refused by name, naming the engine by its record.
+    expect(transcriptOf(run.turns)).toContain(
+      `"sessions" is not a reading the ${servedEngineRecord(READS).displayName} connection offers agent mode; it offers health.`,
+    );
+    // One metadata session, opened once through the package, for the walk and the reading alike; no legacy acquisition.
+    expect(seen.filter((call) => call === "open")).toEqual(["open"]);
+    expect(acquired).not.toHaveBeenCalled();
+  });
+
+  test("a package engine's reading failure is answered by its record and logged once, and an agent credential is refused by name before its package opens", async () => {
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      // A code-only row: Studio's sentence reaches the run, the package's words only the log, once.
+      const marker = randomUUID();
+      hooksFor(READS, { health: () => Promise.reject(new Error(`the health probe lost ${marker}`)) });
+      const refused = await drive(connectionOf(READS), "agent", "operations", [
+        callsTool("inspect_operations", { kind: "health" }, "call_health"),
+        answersProse("No report."),
+      ]);
+      const told = transcriptOf(refused.turns);
+      expect(told).toContain("The provider package's health failed (");
+      expect(told).not.toContain(marker);
+      expect(JSON.stringify(refused.events)).not.toContain(marker);
+      expect(linesOf(error, "A provider package's health failed")).toHaveLength(1);
+      expect(linesOf(error, "A provider package's health failed")[0]?.[2]).toEqual({
+        route: "agent/inspect_operations",
+      });
+
+      // A row granting its words: the package's own sentence reaches the run, through the scrub of its connection.
+      error.mockClear();
+      const own = randomUUID();
+      const words = connectionOf(WORDS);
+      hooksFor(WORDS, { health: () => Promise.reject(new Error(`the health probe lost ${own}`)) });
+      const granted = await drive(words, "agent", "operations", [
+        callsTool("inspect_operations", { kind: "health" }, "call_health"),
+        answersProse("No report."),
+      ]);
+      expect(transcriptOf(granted.turns)).toContain(own);
+      expect(transcriptOf(granted.turns)).not.toContain(words.password as string);
+      expect(linesOf(error, "A provider package's health failed")).toHaveLength(1);
+
+      // The package's open fails: the reading is answered by the record as a failed open, before its call is sent, and
+      // logged under the reading's route, as the walk's open before it is under the walk's.
+      error.mockClear();
+      const signIn = randomUUID();
+      const failing = hooksFor(READS, {
+        open: () => Promise.reject(new Error(`the package could not sign in ${signIn}`)),
+      });
+      const unopened = await drive(connectionOf(READS), "agent", "operations", [
+        callsTool("inspect_operations", { kind: "health" }, "call_health"),
+        answersProse("No report."),
+      ]);
+      expect(failing.filter((call) => call === "health")).toEqual([]);
+      // A failed open is the environment's, as a legacy reading's acquisition that cannot connect is: the drive ends.
+      const failed = unopened.outcome?.kind === "failed" ? unopened.outcome.error : undefined;
+      expect(failed).toBeInstanceOf(ConnectionError);
+      expect((failed as Error).message).toStartWith("The provider package's open failed (");
+      expect((failed as Error).message).not.toContain(signIn);
+      expect(JSON.stringify(unopened.events)).not.toContain(signIn);
+      expect(transcriptOf(unopened.turns)).not.toContain(signIn);
+      expect(linesOf(error, "A provider package's open failed").map(([, , context]) => context)).toContainEqual({
+        route: "agent/inspect_operations",
+      });
+
+      // An agent credential: refused by name before the package opens, for the walk and the reading alike.
+      const seen = hooksFor(READS);
+      const credentialed = connectionOf(READS, { agentUser: `agent-${randomUUID()}`, agentPassword: randomUUID() });
+      const run = await drive(credentialed, "agent", "operations", [
+        callsTool("inspect_operations", { kind: "health" }, "call_health"),
+        answersProse("No report."),
+      ]);
+      expect(seen).toEqual([]);
+      expect(acquired).not.toHaveBeenCalled();
+      expect(run.events).toContainEqual(
+        expect.objectContaining({ kind: "context-unavailable", profileReasonCode: "AGENT_CREDENTIAL_NOT_TAKEN" }),
+      );
+      expect(finishedOf(run.events)).toMatchObject({ status: "failed", reason: "agent-credential-unusable" });
+    } finally {
+      error.mockRestore();
+    }
   });
 });

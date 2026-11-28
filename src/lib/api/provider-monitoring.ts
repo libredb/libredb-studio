@@ -74,15 +74,16 @@ import { hostCore } from "@/lib/provider-host/instance";
  * dashboard's to within that, and the dashboard has no deadline of its own.
  *
  * `readGrantedPanel` and `readGrantedHealth` are the agent's curated readings' reads (src/lib/agent/tools.ts, clause
- * C-76): one panel call or one health call on the session of the target the run built for the provider it acquired,
- * under the deadline its call was granted and, as its caller's signal, one that never aborts (`driveCaller`), since the
- * agent's drive has none. Each reads the core synchronously, so a read made before the install throws
- * `HostCoreBootOrderError` before any promise, and builds a fresh request copy and a fresh context of the grant's
- * deadline, its deadline signal and the target's environment, the call counted on the target's entry. Their failures
- * are answered as raised: the agent acquires only a legacy provider. A panel the session does not offer answers
- * `not-offered` with no call. A read its deadline stopped hands the stopped call's settlement to the grant's
- * `holdUntilSettled`, so the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the
- * grant's sentence.
+ * C-76): one panel call or one health call on the session of the target the run built, for the provider it acquired or
+ * for a provider package's metadata session, under the deadline its call was granted and, as its caller's signal, one
+ * that never aborts (`driveCaller`), since the agent's drive has none. Each reads the core synchronously, so a read
+ * made before the install throws `HostCoreBootOrderError` before any promise, and builds a fresh request copy and a
+ * fresh context of the grant's deadline, its deadline signal and the target's environment, the call counted on the
+ * target's entry. Their failures are answered as raised: a legacy provider's are the reading's as they are, and a
+ * provider package's are answered by the run's `PackageAnswers` (src/lib/agent/tools.ts). A panel the session does not
+ * offer answers `not-offered` with no call. A read its deadline stopped hands the stopped call's settlement to the
+ * grant's `holdUntilSettled`, so the run counts the provider call until it settles, and throws `StudioTimeoutRefusal`
+ * with the grant's sentence.
  *
  * Answers. A read answers the provider's own answer by reference, which the host core read with its call's SDK check
  * (`checkPanelAnswer`, `checkPoolStatsAnswer`, `checkHealthAnswer`, clause C-112), and throws every refusal and stop as
