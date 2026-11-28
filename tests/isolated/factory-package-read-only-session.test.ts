@@ -393,9 +393,10 @@ describe("a provider package's read-only statement session", () => {
       const error = await rejection(getOrCreateReadOnlyStatementSession(connectionOf(id), engineOf(id), ADMIN));
       expect(error).toBeInstanceOf(StudioProfileRefusal);
       const refused = readOnlyStatementRecordRefusal(engineOf(id));
+      if (refused === null) throw new Error(`the record of ${id} is refused by the predicate`);
       expect([(error as StudioProfileRefusal).reasonCode, (error as Error).message]).toEqual([
-        refused?.code,
-        refused?.sentence,
+        refused.code,
+        refused.sentence,
       ]);
       expect(names(hooks)).toEqual([]);
     }

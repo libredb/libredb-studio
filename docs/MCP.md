@@ -8,8 +8,10 @@ It is off by default.
 MCP and agent mode, Studio's in-app agent, are separate features that share one read-only core.
 MCP needs neither agent mode nor an LLM provider: it runs with `LIBREDB_AGENT_ENABLED` set to `false` and no `LLM_*` variable set.
 The shared core is the statement languages under `src/lib/agent/languages/`, and those an engine's declaration states as data, each of which declares its MCP tool, or none yet, in the facets `agentLanguageMcpFacets()` answers, the read profiles `agent-read-only` and `agent-operations`, and the seed fields `agentUser`, `agentPassword` and `agentReadRoots`, so those names keep the word agent.
-In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens its connection, and `agent-operations` is the profile `inspect_schema` opens under for an engine Studio bundles, which sends no statement.
-An engine a provider package serves is read by `inspect_schema` on its package's metadata session, which sends no statement either, and no statement tool serves it yet.
+In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens the connection of an engine Studio bundles, and `agent-operations` is the profile `inspect_schema` opens under for an engine Studio bundles, which sends no statement.
+An engine a provider package serves is read by `inspect_schema` on its package's metadata session, which sends no statement either.
+Where its register row grants it its own declared statement language, that language's statement tool sends its statements through a read-only statement session the package opens.
+`run_read_query` serves only engines Studio bundles.
 `agentUser` and `agentPassword` are a seed's read credential of its own, `agentReadRoots` an OPC UA seed's read roots, and each engine record's `agentExecution` grant Studio's review record of the engines the shared core runs statements on.
 
 ## What it is

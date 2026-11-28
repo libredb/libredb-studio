@@ -16,9 +16,16 @@
  * honours `readOnly` its row also grants `readRootsRequired: false`, so the factory opens its read-only statement
  * session; a case may name the digest its row grants the language under (`offByOneByte` of the declared one).
  *
+ * `mcpPackageLanguageCatalog` is Studio's engines beside one package engine MCP serves on its own language's statement
+ * tool: it declares the language data a case names (`acmereadData` with a name and tool of its own), requests MCP exposure and statement reads, and
+ * its row grants the language under its digest, agent execution and every MCP claim, with no agent credential, read
+ * roots or one session; its package honours `readOnly` unless the case names other request fields, and a case changes
+ * any member of its row.
+ *
  * No file is written and no package is imported; ids are fixture ids no bundled engine serves.
  */
-import { parseGrantRegister } from "@libredb/grant-register";
+import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
+import type { StatementLanguageData } from "@libredb/provider-sdk/manifest";
 import type { ServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
@@ -27,6 +34,7 @@ import {
   admittedFor,
   admittedManifest,
   declaredLanguageSha256,
+  type EditableEngine,
   packageRow,
   withLoosestClaims,
   withStatementLanguageData,
@@ -96,6 +104,71 @@ export function agentPackageLanguageCatalog(options: AgentPackageLanguageOptions
         agentExecution: true,
         agentReadings: Object.freeze(["health"] as const),
         ...(honours.includes("readOnly") && { readRootsRequired: false }),
+      }),
+    ],
+    LEGACY_ENGINE_IDS,
+  );
+  return composeServerCatalog([spoken], [], register);
+}
+
+/** What `mcpPackageLanguageCatalog` plants: a package engine `id` declaring the statement language data `data`. */
+export interface McpPackageLanguageOptions {
+  /** The engine's id, a fixture id no bundled engine serves. */
+  readonly id: string;
+  /**
+   * The language data its declaration states, `acmereadData(name, tool)` with a name and an MCP tool of the case's: one
+   * language per package and one tool per granted language (the catalog's set rules).
+   */
+  readonly data: NonNullable<StatementLanguageData>;
+  /** The request fields its package's console execute honours; `readOnly` by default. */
+  readonly honours?: readonly string[];
+  /** Members its register row grants beyond the plant's own, which they replace. */
+  readonly row?: Partial<RegisterGrants>;
+}
+
+/**
+ * The register row grants of a package engine that MCP serves on its own language's statement tool: the language under
+ * `digest`, agent execution, every MCP claim, and neither an agent credential, read roots nor one session.
+ */
+export function mcpPackageLanguageRow(name: string, digest: string): Partial<RegisterGrants> {
+  return {
+    statementLanguage: name,
+    languageSha256: digest,
+    agentExecution: true,
+    exposable: true,
+    statementRead: true,
+    agentCredentialRequired: false,
+    readRootsRequired: false,
+  };
+}
+
+/**
+ * The engine declaration edit of a package engine MCP serves on its own language's tool: it requests MCP exposure and
+ * statement reads with no agent credential, and states the language `data` as its agent statement language.
+ */
+export function withMcpPackageLanguage(data: NonNullable<StatementLanguageData>): (engine: EditableEngine) => void {
+  return (engine) => {
+    engine.mcp = { ...engine.mcp, exposable: true, statementRead: true, agentCredentialRequired: false };
+    engine.agent = { statementLanguage: data.name, overlay: { dialect: null, grounding: null } };
+    withStatementLanguageData(engine, data);
+  };
+}
+
+/**
+ * The catalog of Studio's engines and one more package engine, `options.id`, that declares the language data
+ * `options.data`, its row granting that language under the digest of its data, agent execution and every MCP claim
+ * (`mcpPackageLanguageRow`), changed by `options.row`; its package honours `readOnly` unless the case names other
+ * request fields.
+ */
+export function mcpPackageLanguageCatalog(options: McpPackageLanguageOptions): ServerCatalog {
+  const { data } = options;
+  const manifest = admittedManifest(options.id, withMcpPackageLanguage(data), options.honours ?? ["readOnly"]);
+  const spoken = admittedFor(`${options.id}-package`, manifest);
+  const register = parseGrantRegister(
+    [
+      packageRow(spoken, options.id, {
+        ...mcpPackageLanguageRow(data.name, declaredLanguageSha256(manifest)),
+        ...options.row,
       }),
     ],
     LEGACY_ENGINE_IDS,

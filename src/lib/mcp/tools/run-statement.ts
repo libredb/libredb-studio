@@ -2,8 +2,9 @@ import type { PageBound } from "@libredb/provider-sdk/calls";
 import { encodeValue, ValueCodecError, type WireValue } from "@libredb/provider-sdk/values";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { isPackageFailure, packageFailureAnswer } from "@/lib/api/package-errors";
 import { type ReadOnlyPageAnswer, runReadOnlyPage } from "@/lib/api/read-only-execute";
-import { providerReadOnlyTarget } from "@/lib/api/session-target";
+import { providerReadOnlyTarget, type ReadOnlyStatementTarget } from "@/lib/api/session-target";
 import {
   ExecutionProfileError,
   OffsetUnsupportedError,
@@ -12,15 +13,15 @@ import {
   StudioTimeBudgetRefusal,
 } from "@/lib/db/errors";
 import {
+  engineAuthor,
   isStudioRefusal,
-  providerAuthor,
   type ProviderTextScrub,
   providerTextScrub,
   scrubProviderText,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { hostCore } from "@/lib/provider-host/instance";
@@ -55,6 +56,7 @@ import {
   MCP_RESULT_CAP_BYTES,
   ownWordsError,
   ownWordsFailure,
+  packageWordsAnswer,
   providerTextError,
   recordOrRefuse,
   untrustedResult,
@@ -72,6 +74,7 @@ import {
   profileRefusalText,
   type Raced,
   raceDeadline,
+  statementTargetWithinCall,
   timeoutText,
 } from "./read-query-limits";
 import {
@@ -87,9 +90,11 @@ import {
  * can bound it itself, in the arm's language.
  *
  * The order is run_read_query's: the host core, signal, resolve, availability, the served-engine gate, canonicalize,
- * fence, the decision record, the open's `textScrub`, the acquisition under "agent-read-only" within the call
- * (`acquireWithinCall`), `providerInDatabase`, whose database listing is a host core tree call under the call's
- * deadline and the request's signal (clause C-82) while its catalog session open is not yet bounded, the page, the
+ * fence, the decision record, the open's `textScrub`, the target within the call: on an engine whose record offers
+ * execution profiles, the acquisition under "agent-read-only" (`acquireWithinCall`) then `providerInDatabase`, whose
+ * database listing is a host core tree call under the call's deadline and the request's signal (clause C-82) while its
+ * catalog session open is not yet bounded, and on a provider package's engine its read-only statement session
+ * (`statementTargetWithinCall`), which takes no database; then the page, the
  * statement through the host core's read-only execute with that page (`runReadOnlyPage`) under the provider budgets,
  * which refuses an answer past either budget again in core, the cut to max_rows and the result cap, the outcome record
  * (docs/providers/CONTRACT.md, clauses C-81 and C-85). An arm that pages asks for one row past max_rows from the
@@ -100,8 +105,10 @@ import {
  *
  * The boundary is the agent-read-only acquisition, which the factory refuses to hand out for an engine without a
  * read-only statement path, and the read-only statement session the legacy bridge opens over the provider, which
- * refuses one without `queryReadOnly` by name (clause C-39); this module never calls query(), and that is what makes
- * every statement tool's readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
+ * refuses one without `queryReadOnly` by name (clause C-39), or, on a provider package's engine, the read-only statement
+ * session the factory opens through the package under the read-only statement policy (`statementTarget` in
+ * ../context), which takes read-only executes only (clause C-78); this module never calls query(), and that is what
+ * makes every statement tool's readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
  * statement, is answered in the tool's own sentence: Studio's own refusal in Studio's words, and a provider's behind a
  * notice naming the provider that wrote it, since it may quote database names. Every provider text an answer or a log
  * line carries passes core's scrub of the connection's credential first, taken from the open (`textScrub`) so a
@@ -124,7 +131,14 @@ import {
  * OffsetUnsupportedError, answered in its words behind a notice naming it, and any offset on an engine whose
  * accepted-forms row says its SQL has none, refused before the statement's execute with the way to page there; such
  * an engine is never offered a next offset either. An arm that does not page sends every row as its page and the
- * statement as written, and the row budget, the provider's and core's, bounds it.
+ * statement as written, and the row budget, the provider's and core's, bounds it; it names no next offset and reports
+ * no page limit, since it asked for none, whatever the provider says it applied.
+ *
+ * Every name an answer gives the provider that relayed a text is its engine record's (`engineAuthor`): a legacy
+ * engine's connection form label, and a provider package's engine's display name with its package. A provider
+ * package's failure, already answered and logged once by its record (`packageFailureAnswer` for its open,
+ * `packageStatementFailure` for its execute, in src/lib/api/package-errors.ts), reaches the client by its register
+ * row's grant of its own words (`packageWordsAnswer`, clause C-112); Studio's own failures are answered as Studio's.
  *
  * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
  * must carry: there they are its `notes`, in the order the provider gave them.
@@ -164,10 +178,15 @@ const StatementOutputSchema = z.object({
 /** A result, and the reason its outcome event records when it is a failure. */
 type Answer = readonly [ToolResult, McpToolAuditReason?];
 
-/** One call: its arm, its arguments, the statement text the arm read from them, and the offset it pages from. */
+/**
+ * One call: its arm, its connection's engine record and the name of the provider that relays its texts, its arguments,
+ * the statement text the arm read from them, and the offset it pages from.
+ */
 interface StatementCall {
   readonly arm: McpStatementArm;
   readonly type: DatabaseType;
+  readonly engine: EngineRecord;
+  readonly author: string;
   readonly args: McpStatementInput;
   readonly statement: string;
   readonly offset: number;
@@ -202,14 +221,19 @@ function failureAnswer(
   if (failure.kind === "too-large")
     return [ownWordsFailure(scrubProviderText(scrub, failure.text), error, scrub), "mcp_result_too_large"];
   if (failure.kind === "not-sent") {
-    return [providerTextError(NOT_SENT_LEAD, failure.error, scrub, providerAuthor(call.type)), "mcp_statement_refused"];
+    return [providerTextError(NOT_SENT_LEAD, failure.error, scrub, call.author), "mcp_statement_refused"];
   }
+  // A provider package's failure was answered and logged once by its record; it is only given the notice its row grants.
   return [
-    engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub, providerAuthor(call.type)),
+    call.engine.offers.legacyProvider
+      ? engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub, call.author)
+      : packageWordsAnswer(call.engine, failure.error, scrub, call.author),
     "mcp_execution_failed",
   ];
 }
 
+/** The route every log line and every read-only execute of this module names. */
+const MCP_ROUTE = "/api/mcp";
 const NOT_SENT_LEAD = "The statement was refused before it reached the database: ";
 const DATABASE_REFUSED_LEAD = "The database could not be opened: ";
 const OFFSET_REFUSED_LEAD = "The offset was refused before the statement was sent: ";
@@ -231,7 +255,7 @@ function profileRefusal(call: StatementCall, error: ExecutionProfileError, scrub
       `${arm.tool} cannot run on this connection: `,
       error,
       scrub,
-      providerAuthor(call.type),
+      call.author,
       `It runs on ${arm.engines}.`,
     ),
     "mcp_execution_failed",
@@ -246,12 +270,14 @@ function resultOf(
 ): Answer {
   const { args, arm, offset } = call;
   const { result: raw, pageApplied } = answer;
+  // A non-paging arm asked for no page, so it reports none, whatever the provider says it applied.
+  const pages = arm.paging === "offset";
   // Only the rows an answer can carry: a value in the row past the page, which proves more exist, never refuses it.
   let page: { [column: string]: WireValue }[];
   try {
     page = encodeValue(raw.rows.slice(0, args.max_rows)) as { [column: string]: WireValue }[];
   } catch (error) {
-    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, providerAuthor(type)), "mcp_execution_failed"];
+    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, call.author), "mcp_execution_failed"];
   }
   const columns = raw.fields.map((name) => {
     const type = raw.columnTypes?.[name];
@@ -260,8 +286,9 @@ function resultOf(
   const build = (count: number) => {
     const truncatedBy = count < page.length ? "result_bytes" : raw.rows.length > args.max_rows ? "max_rows" : null;
     const hasMore = raw.rows.length > count;
-    // Only a query the provider paged, on an engine whose SQL has an offset to page the next call with.
-    const nextOffset = hasMore && pageApplied && pagesWithOffset(type) ? offset + count : null;
+    // Only a query the provider paged, on an arm that asked for a page, on an engine whose SQL has an offset to page
+    // the next call with.
+    const nextOffset = hasMore && pageApplied && pages && pagesWithOffset(type) ? offset + count : null;
     return withByteSize(
       {
         connection_id: args.connection_id,
@@ -271,7 +298,7 @@ function resultOf(
         row_count: count,
         truncated: truncatedBy !== null,
         truncated_by: truncatedBy,
-        pagination: { offset, limit: args.max_rows, hasMore, nextOffset, wasLimited: pageApplied },
+        pagination: { offset, limit: args.max_rows, hasMore, nextOffset, wasLimited: pages && pageApplied },
         hint:
           nextOffset !== null
             ? nextPageHint(nextOffset)
@@ -284,7 +311,7 @@ function resultOf(
         byte_size: 0,
         execution_time_ms: raw.executionTime,
       },
-      (structured) => untrustedResult(structured, providerAuthor(type)),
+      (structured) => untrustedResult(structured, call.author),
     );
   };
   const whole = build(page.length);
@@ -330,7 +357,7 @@ function statementFailure(
 ): Answer {
   const { error } = failed;
   if (error instanceof ValueCodecError) {
-    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, providerAuthor(call.type)), "mcp_execution_failed"];
+    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, call.author), "mcp_execution_failed"];
   }
   if (error instanceof StudioOffsetRefusal) {
     return [ownWordsError(offsetRefusalText(call.statement, call.type)), "mcp_offset_unsupported"];
@@ -338,7 +365,7 @@ function statementFailure(
   // An engine whose SQL cannot page refuses the offset, and its sentence says what to do instead. Any other failure,
   // and this one with no offset asked for, is the engine's, never masked as an offset refusal.
   if (error instanceof OffsetUnsupportedError && call.offset > 0) {
-    return [providerTextError(OFFSET_REFUSED_LEAD, error, scrub, providerAuthor(call.type)), "mcp_offset_unsupported"];
+    return [providerTextError(OFFSET_REFUSED_LEAD, error, scrub, call.author), "mcp_offset_unsupported"];
   }
   return acquisitionFailure(call, failed, deadline, record, scrub);
 }
@@ -363,7 +390,7 @@ async function execute(
   try {
     return await executeOpened(call, tool, connection, record, deadline, scrub);
   } catch (error) {
-    return [engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, providerAuthor(call.type)), "mcp_execution_failed"];
+    return [engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, call.author), "mcp_execution_failed"];
   }
 }
 
@@ -403,21 +430,35 @@ async function callDatabase(
         return { answer: [ownWordsError(timeoutText(call.args.timeout_ms)), "mcp_timeout"] };
       case "provider-refused":
         return {
-          answer: [
-            providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, providerAuthor(call.type)),
-            "mcp_execution_failed",
-          ],
+          answer: [providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, call.author), "mcp_execution_failed"],
         };
       // The databases the call could name are database content: behind the notice naming the provider, never spliced
       // into Studio's sentence.
       case "database-required":
-        return { answer: [databaseRequiredAnswer(choice, providerAuthor(call.type)), "mcp_execution_failed"] };
+        return { answer: [databaseRequiredAnswer(choice, call.author), "mcp_execution_failed"] };
     }
   } catch (error) {
     if (error instanceof McpDatabaseChoiceError)
       return { answer: [ownWordsError(error.message), "mcp_execution_failed"] };
     throw error;
   }
+}
+
+/**
+ * A failed open of a provider package's read-only statement session: a failure the package's open raised answered by
+ * its record (`packageFailureAnswer`, which logs it once) and given the notice its row grants (`packageWordsAnswer`);
+ * anything else, the opener's refusals among them, as a failed acquisition is.
+ */
+function sessionOpenFailure(
+  call: StatementCall,
+  failed: { readonly error: unknown; readonly settledAt: number },
+  deadline: number,
+  record: McpCallRecord,
+  scrub: ProviderTextScrub,
+): Answer {
+  if (!isPackageFailure(call.engine, failed.error)) return acquisitionFailure(call, failed, deadline, record, scrub);
+  const answered = packageFailureAnswer(call.engine, "open", failed.error, scrub, MCP_ROUTE);
+  return [packageWordsAnswer(call.engine, answered, scrub, call.author), "mcp_execution_failed"];
 }
 
 async function executeOpened(
@@ -429,16 +470,28 @@ async function executeOpened(
   scrub: ProviderTextScrub,
 ): Promise<Answer> {
   const { args } = call;
-  const acquired = await acquireWithinCall(tool, connection, "agent-read-only", deadline);
-  if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
-  if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
-  if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);
-  const chosen = await callDatabase(call, tool, acquired.value, deadline, scrub);
-  if ("answer" in chosen) return chosen.answer;
-  const { provider } = chosen;
+  // The target by what the record offers: a provider package's read-only statement session, which takes no database
+  // (a declared arm's strict schema refuses one, and the SQL arm serves no package's record), or the provider acquired
+  // under the agent-read-only profile in the database the call names.
+  let target: ReadOnlyStatementTarget;
+  if (!call.engine.offers.executionProfiles) {
+    const opened = await statementTargetWithinCall(tool, connection, deadline);
+    if (opened.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
+    if (opened.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
+    if (opened.kind === "failed") return sessionOpenFailure(call, opened, deadline, record, scrub);
+    target = opened.value;
+  } else {
+    const acquired = await acquireWithinCall(tool, connection, "agent-read-only", deadline);
+    if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
+    if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
+    if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);
+    const chosen = await callDatabase(call, tool, acquired.value, deadline, scrub);
+    if ("answer" in chosen) return chosen.answer;
+    target = providerReadOnlyTarget(chosen.provider);
+  }
   const paged = pageOf(call, connection.type);
   if ("refused" in paged) return paged.refused;
-  const executed = await statementOnHost(tool, provider, connection.type, call.statement, paged.page, deadline);
+  const executed = await statementOnHost(tool, target, connection.type, call.statement, paged.page, deadline);
   if (executed.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (executed.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   // A provider whose principal check runs before every statement, rather than at the open, refuses there, in the
@@ -454,9 +507,10 @@ async function executeOpened(
 
 /**
  * The statement through the host core's read-only execute with its page (`runReadOnlyPage`, docs/providers/CONTRACT.md,
- * clauses C-79, C-81 and C-85), which opens the legacy bridge's read-only statement session over the provider, refusing
- * one without `queryReadOnly` by name, applies a bounded page through the provider's own paging or refuses an offset it
- * did not apply, and holds the answer to the read budget before it is cut to max_rows and the answer cap. Its
+ * clauses C-79, C-81 and C-85) on `target`: a legacy provider's, where it opens the legacy bridge's read-only statement
+ * session over the provider, refusing one without `queryReadOnly` by name, or a provider package's read-only statement
+ * session. It applies a bounded page through the provider's own paging or refuses an offset it did not apply, and
+ * holds the answer to the read budget before it is cut to max_rows and the answer cap. Its
  * deadline is the call's, as the time left, and its caller is the request's signal, so the host core ends the wait and
  * no race of this module's runs beside it. A call whose request left, or whose deadline passed while the connection
  * opened, sends nothing, as a raced step starts nothing late. The facade's ends are read into the race's kinds: its
@@ -465,7 +519,7 @@ async function executeOpened(
  */
 async function statementOnHost(
   tool: McpToolCall,
-  provider: DatabaseProvider,
+  target: ReadOnlyStatementTarget,
   type: DatabaseType,
   statement: string,
   page: PageBound,
@@ -475,7 +529,7 @@ async function statementOnHost(
   const remaining = Math.floor(deadline - Date.now());
   if (remaining <= 0) return { kind: "timeout" };
   try {
-    const value = await runReadOnlyPage(providerReadOnlyTarget(provider), {
+    const value = await runReadOnlyPage(target, {
       type,
       statement,
       page,
@@ -487,7 +541,7 @@ async function statementOnHost(
         readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
       },
       caller: tool.signal,
-      route: "/api/mcp",
+      route: MCP_ROUTE,
     });
     return { kind: "settled", value };
   } catch (error) {
@@ -500,7 +554,7 @@ async function statementOnHost(
 /**
  * The sentence an engine this arm does not serve is refused with, naming it by its record's display name, a legacy
  * engine's connection form label, and the tool that does serve it, or `inspect_schema` where none does, as for a
- * provider package's engine, whose record offers no execution profile.
+ * provider package's engine no arm serves.
  */
 function notServedText(arm: McpStatementArm, type: DatabaseType): string {
   const elsewhere = mcpStatementToolFor(type) ?? "inspect_schema";
@@ -553,7 +607,17 @@ export async function runStatement(
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 
-  const call: StatementCall = { arm, type: connection.type, args, statement, offset: args.offset ?? 0 };
+  // Availability refused every type the catalog serves no record of, so the record is read.
+  const engine = servedEngineRecord(connection.type);
+  const call: StatementCall = {
+    arm,
+    type: connection.type,
+    engine,
+    author: engineAuthor(engine),
+    args,
+    statement,
+    offset: args.offset ?? 0,
+  };
   const finish = ([result, failure]: Answer): ToolResult =>
     recordOrRefuse(() => recordMcpOutcome(resolved, Date.now() - startedAt, failure)) ?? result;
   return finish(await execute(call, tool, connection, resolved, deadline));

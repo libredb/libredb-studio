@@ -463,10 +463,10 @@ A register row states the digest of the statement language data it reviewed, `la
 A package row that grants `readsSqlText: false`, `decidesAlone: true` or a statement language other than SQL with a null digest is refused, so a package engine that states no statement language data is never granted any of the three.
 For an engine that states no SQL text, whose register row reviews no grammar, the row's grant of `readsSqlText: false` and of the whole-answer claim under the language digest alone makes the language's confirmation reading the gate's whole answer.
 
-### M-88 (informative): A package engine's statement language in agent mode and on MCP
+### M-88 (normative): A package engine's statement language in agent mode and on MCP
 
-A package engine's statements are sent in agent mode only in the statement language its register row grants (M-87), and only through a read-only statement session (C-78), which Studio opens only where its package lists `readOnly` in `honours` and its open keeps it there.
-MCP sends a package engine no statement yet, so nothing checks the first sentence on MCP.
+A package engine's statements are sent in agent mode and on MCP only in the statement language its register row grants (M-87), and only through a read-only statement session (C-78), which Studio opens only where its package lists `readOnly` in `honours` and its open keeps it there.
+On MCP a package engine is served by the statement tool its own statement language data states (M-85), never by `run_read_query`.
 
 ### M-89 (normative): An engine's object model is data of its declaration
 

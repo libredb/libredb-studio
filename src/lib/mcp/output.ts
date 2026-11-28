@@ -1,5 +1,6 @@
 import type { ValueTag } from "@libredb/provider-sdk/values";
 import { errorRecord, type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
+import type { EngineRecord } from "@/lib/db/server-catalog";
 import { logger } from "@/lib/logger";
 import { MCP_AUDIT_FAILURE_TEXT } from "./audit";
 import { redactError, redactErrorMessage } from "./serializer";
@@ -174,6 +175,23 @@ export function engineError(prefix: string, error: unknown, scrub: ProviderTextS
     structuredContent: failureRecord(error, scrub),
     isError: true,
   };
+}
+
+/**
+ * The client's answer to a provider package's failure that its record already answered (`answered`, the answer of
+ * `packageFailureAnswer` or `packageStatementFailure` in src/lib/api/package-errors.ts, logged once there): behind the
+ * notice naming the package, `author`, where its register row grants the package its own words, as a legacy
+ * provider's engine error is; and otherwise as Studio's sentence with its error record and no notice, since no package
+ * wrote it (docs/providers/CONTRACT.md, clause C-112).
+ */
+export function packageWordsAnswer(
+  engine: EngineRecord,
+  answered: unknown,
+  scrub: ProviderTextScrub,
+  author: string,
+): ToolResult {
+  if (engine.grants.ownWords === "scrubbed") return engineError(MCP_ENGINE_ERROR_PREFIX, answered, scrub, author);
+  return ownWordsFailure(answered instanceof Error ? answered.message : String(answered), answered, scrub);
 }
 
 /**

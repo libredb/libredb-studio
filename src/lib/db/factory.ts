@@ -1752,7 +1752,8 @@ function notSentRefusal(sentence: string, code: ExecutionProfileDenyCode): Studi
  * The refusal `getOrCreateReadOnlyStatementSession` throws for every connection of `engine` by its record alone, with
  * its sentence and code, or null where its record keeps none of them: an engine read only beneath the read roots a seed
  * declares (`grants.readRootsRequired`), then an engine whose connections serve one session (`grants.servesOneSession`).
- * Pure: it reads the record and throws nothing.
+ * Read by the opener and by MCP's served set (src/lib/mcp/tools/served-engines.ts), so a statement tool never names an
+ * engine whose session it could never open. Pure: it reads the record and throws nothing.
  */
 export function readOnlyStatementRecordRefusal(
   engine: EngineRecord,
@@ -1774,8 +1775,8 @@ export function readOnlyStatementRecordRefusal(
 
 /**
  * A provider package's read-only statement session of `engine` for `connection` (docs/providers/CONTRACT.md, clauses
- * C-78 and C-109), the cache's entry: the session agent mode, and from MCP's package arm MCP, sends read-only executes
- * through (`readOnlyStatementSession` in src/lib/api/editor-provider.ts, the one caller). It is opened through the
+ * C-78 and C-109), the cache's entry: the session agent mode and MCP's statement tools send read-only executes through
+ * (`readOnlyStatementSession` in src/lib/api/editor-provider.ts, the one caller). It is opened through the
  * package's own `open` as the editor's session is (`openPackageEntry`), with the editor's checks and key, under the
  * read-only statement policy, both `readOnly` and `sendsStatements` (`packageOpenContext` in
  * src/lib/provider-host/open-context.ts), so the session takes read-only executes only. One session per package and

@@ -62,7 +62,7 @@ import { mcpStatementEngines } from "./served-engines";
  * the agent's own `admit`, both from `languageServer(language)`, so an MCP client is refused the commands an agent run
  * is refused with the same sentence; it takes no offset, and its row refusals carry the language's own `rowCapAdvice`.
  * The fence is defence in depth in every arm: the boundary is the agent read-only acquisition and the provider's
- * `queryReadOnly` (`run-statement.ts`).
+ * `queryReadOnly`, or a provider package's read-only statement session (`run-statement.ts`).
  */
 
 /** The statement tools' names, from the facets: each is an audit action of its own. */

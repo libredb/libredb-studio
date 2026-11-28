@@ -28,6 +28,8 @@ import { MCP_READ_ONLY_ANNOTATIONS } from "@/lib/mcp/output";
 import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import { mcpStatementToolFor, mcpWithholdsDatabase } from "@/lib/mcp/tools/statement-arms";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { ManagedConnection } from "@/lib/seed";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -171,7 +173,7 @@ describe("the MCP readers of a grant", () => {
       expect(metadataReadAnnotations(new Set(["acmerowed" as DatabaseType]))).toBe(MCP_READ_ONLY_ANNOTATIONS);
       // No module language reaches a package engine (M-87), so its database is withheld by no arm.
       expect(mcpWithholdsDatabase("acmerowed" as DatabaseType)).toBe(false);
-      // No arm serves an engine whose record offers no execution profile, as no package engine's record does.
+      // The row grants the engine no statement language, so no arm serves it.
       expect(mcpStatementToolFor("acmerowed" as DatabaseType)).toBeNull();
 
       // No row: each claim's restrictive value.
@@ -189,5 +191,13 @@ describe("the MCP readers of a grant", () => {
       expect(mcpConnectionUnavailable(USER, listed("acmebare"))).toBe(MCP_ENGINE_NOT_OFFERED_TEXT);
     });
     expect(serverCatalogInstalled()).toBe(false);
+
+    // A package engine its row grants its own declared language is served by that language's tool.
+    const data = acmereadData("acmerowedlangql", "run_acmerowedlang_read");
+    await withCatalog(mcpPackageLanguageCatalog({ id: "acmerowedlang", data }), () => {
+      expect<string | null | undefined>(mcpStatementToolFor("acmerowedlang" as DatabaseType)).toBe(
+        data.agent?.mcp?.tool,
+      );
+    });
   });
 });

@@ -1,8 +1,8 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
-import { metadataTreeTarget } from "@/lib/api/editor-provider";
+import { metadataTreeTarget, readOnlyStatementSession } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import type { TreeTarget } from "@/lib/api/session-target";
+import type { ReadOnlyStatementTarget, TreeTarget } from "@/lib/api/session-target";
 import type { EngineGrants } from "@/lib/db/claim-grants";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { type EngineRecord, legacyProviderType, servedEngineRecord } from "@/lib/db/server-catalog";
@@ -32,13 +32,15 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
  * depend on it, and within one request it is read once.
  *
  * Acquisition goes through the provider factory alone, by what the connection's engine record offers:
- * `acquireExecutionProfileProvider` (`acquire`) for a record that offers execution profiles, a legacy engine's, and the
- * record's metadata session (`metadataTarget`, `metadataTreeTarget` in src/lib/api/editor-provider.ts) for a provider
- * package's, whose session opens through its package with no agent credential and no read roots (clause C-109), so
- * MCP reads only its schema there. The factory joins concurrent first opens of one connection and profile or session
- * into one open, on its own key, and a failed one is retried by the next caller (docs/providers/CONTRACT.md, clause
- * C-44), so this context keeps no table of its own. Every acquisition hands the factory the caller's wait, so the open
- * releases a call that stopped waiting (clause C-81, `acquireWithinCall` and `metadataTargetWithinCall`).
+ * `acquireExecutionProfileProvider` (`acquire`) for a record that offers execution profiles, a legacy engine's, and for
+ * a provider package's record, whose sessions open through its package with no agent credential and no read roots
+ * (clause C-109), its metadata session for its schema (`metadataTarget`, `metadataTreeTarget` in
+ * src/lib/api/editor-provider.ts) and its read-only statement session for its own language's statements
+ * (`statementTarget`, `readOnlyStatementSession` there). The factory joins concurrent first opens of one connection and
+ * profile or session into one open, on its own key, and a failed one is retried by the next caller
+ * (docs/providers/CONTRACT.md, clause C-44), so this context keeps no table of its own. Every acquisition hands the
+ * factory the caller's wait, so the open releases a call that stopped waiting (clause C-81, `acquireWithinCall`,
+ * `metadataTargetWithinCall` and `statementTargetWithinCall`).
  *
  * A seed file that cannot be loaded answers MCP_CONNECTIONS_UNREADABLE, which every tool turns
  * into its own explicit error.
@@ -268,6 +270,28 @@ export class McpConnectionContext {
       );
     }
     return metadataTreeTarget(this.caller, connection, engine, wait);
+  }
+
+  /**
+   * The read-only execute's target of the listed connection's read-only statement session, for a provider package's
+   * record, opened with the caller's `wait` as `metadataTarget` opens its metadata session (`readOnlyStatementSession`
+   * in src/lib/api/editor-provider.ts, clauses C-78 and C-109): through the package's own `open` under the read-only
+   * statement policy and the caller's editor posture, shared with agent mode's session of the same connection, owner
+   * and posture, and refused by name by the opener for every engine it opens none for.
+   *
+   * @throws {Error} A host defect: for a record that offers execution profiles, whose statements MCP sends on the
+   *   provider it acquires under the agent-read-only profile (`acquire`).
+   * @throws As `getOrCreateReadOnlyStatementSession` in src/lib/db/factory.ts throws.
+   */
+  async statementTarget(listed: ManagedConnection, wait: OpenWait): Promise<ReadOnlyStatementTarget> {
+    const connection = await this.open(listed);
+    const engine = servedEngineRecord(connection.type);
+    if (engine.offers.executionProfiles) {
+      throw new Error(
+        "MCP sends a legacy engine's statements on the provider it acquires under agent-read-only (`acquire`), never on a package's read-only statement session: a host defect.",
+      );
+    }
+    return (await readOnlyStatementSession(this.caller, connection, engine, wait)).statements;
   }
 
   /** The listed connection checked and its Vault references read, once per request (`opened`). */

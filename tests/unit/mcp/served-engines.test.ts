@@ -13,6 +13,7 @@ import {
   beginServerCatalogBoot,
   endServerCatalogBootUnfinished,
   forgetServerCatalog,
+  type EngineRecord,
   installServerCatalog,
   servedEngines,
   serverCatalogInstalled,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/mcp/tools/statement-arms";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseType } from "@/lib/types";
+import { mcpPackageLanguageCatalog } from "../../helpers/agent-package-catalog";
+import { acmereadData } from "../../helpers/declared-agent-language";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import {
   legacyRegisterEngines,
@@ -330,7 +333,19 @@ describe("mcpStatementEngines", () => {
   });
 
   test("a package engine a row grants every MCP statement claim is served by no statement tool while its record offers no execution profile", async () => {
-    const pkg = admittedFor("acme-served", admittedManifest("acmeserved", withLoosestClaims));
+    for (const honours of [[], ["readOnly"]]) {
+      // oxlint-disable-next-line no-await-in-loop -- each variant installs the one server catalog, one after the other
+      await sqlPackageServedByNoTool(honours);
+    }
+  });
+
+  /**
+   * A package engine granted `sql`, every MCP statement claim and agent execution, whose package honours `honours`: no
+   * statement tool serves it, since run_read_query serves only an engine whose record offers execution profiles,
+   * whether or not its package takes a read-only execute.
+   */
+  async function sqlPackageServedByNoTool(honours: readonly string[]): Promise<void> {
+    const pkg = admittedFor("acme-served", admittedManifest("acmeserved", withLoosestClaims, honours));
     const register = parseGrantRegister(
       [
         packageRow(pkg, "acmeserved", {
@@ -355,6 +370,7 @@ describe("mcpStatementEngines", () => {
         statementLanguage: "sql",
       });
       expect(engine?.offers.executionProfiles).toBe(false);
+      expect(engine?.offers.readOnlyStatements).toBe(honours.includes("readOnly"));
       for (const language of LANGUAGES) expect(servedIds(language)).not.toContain("acmeserved");
       for (const arm of Object.values(mcpStatementSurface().arms)) expect(typesOf(arm)).not.toContain("acmeserved");
       expect(mcpStatementToolFor("acmeserved" as DatabaseType)).toBeNull();
@@ -362,5 +378,47 @@ describe("mcpStatementEngines", () => {
       expect(servedIds("sql")).toContain("postgres");
     });
     expect(serverCatalogInstalled()).toBe(false);
+  }
+
+  test("a package engine granted exposure by its row is served", async () => {
+    const data = acmereadData("acmemcpservedql", "run_acmemcpserved_read");
+    const plant = { id: "acmemcpserved", data } as const;
+    const language = data.name as AgentStatementLanguageId;
+    await withCatalog(mcpPackageLanguageCatalog(plant), () => {
+      const engine = servedEngines().get(plant.id);
+      // The premise: a package's record, which offers no execution profile, and takes a read-only execute.
+      expect(engine?.offers).toMatchObject({ executionProfiles: false, readOnlyStatements: true });
+      expect(servedIds(language)).toEqual([plant.id]);
+      expect(mcpStatementEngines(language)[0]).toBe(engine as EngineRecord);
+      const surface = mcpStatementSurface();
+      expect(typesOf(surface.arms[language])).toEqual([plant.id]);
+      expect<string | undefined>(surface.arms[language]?.tool).toBe(data.agent?.mcp?.tool);
+      expect<string | null | undefined>(mcpStatementToolFor(plant.id as DatabaseType)).toBe(data.agent?.mcp?.tool);
+      // One composition per installed catalog.
+      expect(mcpStatementSurface()).toBe(surface);
+      // Vacuity: the installed catalog's legacy engines are served as before.
+      expect(servedIds("sql")).toEqual(RUN_READ_QUERY_TYPES);
+    });
+    expect(serverCatalogInstalled()).toBe(false);
+
+    // Each condition the served set reads of a package's record, failed alone, leaves it served by no tool.
+    const variants: ReadonlyArray<readonly [string, Parameters<typeof mcpPackageLanguageCatalog>[0]]> = [
+      ["a package that takes no read-only execute", { ...plant, honours: [] }],
+      ["a row requiring read roots", { ...plant, row: { readRootsRequired: true } }],
+      ["a row granting one session", { ...plant, row: { servesOneSession: "One session per connection." } }],
+      ["a row requiring an agent credential", { ...plant, row: { agentCredentialRequired: true } }],
+    ];
+    for (const [label, variant] of variants) {
+      // oxlint-disable-next-line no-await-in-loop -- each variant installs the one server catalog, one after the other
+      await withCatalog(mcpPackageLanguageCatalog(variant), () => {
+        // The premise: every grant MCP's exposure reads still lets the engine through.
+        expect([label, servedEngines().get(plant.id)?.grants]).toEqual([
+          label,
+          expect.objectContaining({ agentExecution: true, statementRead: true, statementLanguage: data.name }),
+        ]);
+        expect([label, servedIds(language)]).toEqual([label, []]);
+        expect([label, mcpStatementToolFor(plant.id as DatabaseType)]).toEqual([label, null]);
+      });
+    }
   });
 });
